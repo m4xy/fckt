@@ -52,14 +52,39 @@ class Parser(private val tokens: List<Token>) {
 
     private fun decl(): Decl {
         val pos = peek.pos
+        if (accept(T.PRIVATE) != null) {
+            return when (val d = decl()) {
+                is Decl.Record -> d.copy(isPrivate = true)
+                is Decl.Sealed -> d.copy(isPrivate = true)
+                is Decl.Function -> d.copy(isPrivate = true)
+                is Decl.Module -> d.copy(isPrivate = true)
+            }
+        }
         return when {
+            accept(T.MODULE) != null -> {
+                val name = upperIdent("a module name")
+                expect(T.LBRACE, "'{' after the module name")
+                skipNewlines()
+                val decls = mutableListOf<Decl>()
+                while (!at(T.RBRACE)) {
+                    decls += decl()
+                    if (!at(T.RBRACE)) {
+                        if (!at(T.NEWLINE) && !at(T.SEMI)) throw error("expected end of line after declaration but found ${describe(peek)}")
+                        skipNewlines()
+                    }
+                }
+                expect(T.RBRACE, "'}'")
+                Decl.Module(pos, name, decls)
+            }
             accept(T.TYPE) != null -> {
                 val name = upperIdent("a type name")
                 val typeParams = typeParams()
+                // type Name private(...): like Kotlin's private constructor
+                val privateConstructor = accept(T.PRIVATE) != null
                 expect(T.LPAREN, "'(' after the type name")
                 val fields = fieldList(pos)
                 expect(T.RPAREN, "')'")
-                Decl.Record(pos, name, typeParams, fields)
+                Decl.Record(pos, name, typeParams, fields, privateConstructor = privateConstructor)
             }
             accept(T.INTERFACE) != null -> {
                 val name = upperIdent("an interface name")
@@ -76,9 +101,11 @@ class Parser(private val tokens: List<Token>) {
                         includes += type() as? TypeRef.Named ?: throw error("'*' takes an interface", variantPos)
                     } else {
                         val variantName = upperIdent("a variant name")
-                        if (accept(T.DOT) != null) {
-                            // Other.Case: one case of another interface
-                            caseRefs += CaseRefDef(variantPos, variantName, upperIdent("a case name"))
+                        if (at(T.DOT)) {
+                            // Other.Case: one case of another interface, which may itself be qualified
+                            val path = mutableListOf(variantName)
+                            while (accept(T.DOT) != null) path += upperIdent("a case name")
+                            caseRefs += CaseRefDef(variantPos, path.dropLast(1).joinToString("."), path.last())
                         } else {
                             val fields = if (accept(T.LPAREN) != null) fieldList(variantPos).also { expect(T.RPAREN, "')'") } else emptyList()
                             variants += VariantDef(variantPos, variantName, fields)
@@ -175,7 +202,12 @@ class Parser(private val tokens: List<Token>) {
             }
             return TypeRef.Function(pos, params, type())
         }
-        val name = upperIdent("a type")
+        // A type may be qualified by modules: Ratios.Ratio
+        var name = upperIdent("a type")
+        while (at(T.DOT) && peekAt(1).kind == T.IDENT && peekAt(1).text[0].isUpperCase()) {
+            next()
+            name += "." + next().text
+        }
         val args = mutableListOf<TypeRef>()
         if (accept(T.LT) != null) {
             do args += type() while (accept(T.COMMA) != null)
@@ -421,17 +453,16 @@ class Parser(private val tokens: List<Token>) {
                 Pattern.ListPattern(pos, items, rest)
             }
             accept(T.IS) != null -> {
-                val first = upperIdent("a type after 'is'")
-                if (accept(T.DOT) != null) Pattern.Constructor(pos, upperIdent("a case name"), null, isCheck = true, qualifier = first)
-                else Pattern.Constructor(pos, first, null, isCheck = true)
+                val path = mutableListOf(upperIdent("a type after 'is'"))
+                while (accept(T.DOT) != null) path += upperIdent("a name")
+                Pattern.Constructor(pos, path.last(), null, isCheck = true, qualifier = path.dropLast(1).joinToString(".").ifEmpty { null })
             }
             at(T.IDENT) && peek.text[0].isUpperCase() -> {
-                var qualifier: String? = null
-                var name = next().text
-                if (accept(T.DOT) != null) {
-                    qualifier = name
-                    name = upperIdent("a case name")
-                }
+                // Shape.Circle, or with modules, Shapes.Shape.Circle: all but the last name qualify it.
+                val path = mutableListOf(next().text)
+                while (accept(T.DOT) != null) path += upperIdent("a case name")
+                val qualifier = path.dropLast(1).joinToString(".").ifEmpty { null }
+                val name = path.last()
                 val args = if (accept(T.LPAREN) != null) {
                     val args = mutableListOf<Pattern>()
                     while (!at(T.RPAREN)) {

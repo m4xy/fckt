@@ -43,10 +43,26 @@ object Printer {
     // ---- Structure items ----
 
     private fun item(n: ResolvedNode): String = when (n.name) {
+        "module" -> {
+            val sig = n.children.firstOrNull { it.name == "sig" }
+            val items = n.children.filter { it.name != "sig" }
+            "module ${n.str("name")}" + (sig?.let { " : " + signature(it.children) } ?: "") +
+                " = struct\n" + items.joinToString("\n\n") { indent(item(it)) } + "\nend"
+        }
         "comment" -> "(* ${n.str("text")} *)"
         "types" -> "type " + n.children.joinToString("\n\nand ") { typeDef(it) }
         "let" -> (if (n.attributes["rec"] == true) "let rec " else "let ") + n.children.joinToString("\n\nand ") { binding(it) }
         else -> error("unexpected ${n.name} at the top level")
+    }
+
+    private fun signature(items: List<ResolvedNode>): String =
+        "sig\n" + items.joinToString("\n") { indent(sigItem(it)) } + "\nend"
+
+    private fun sigItem(n: ResolvedNode): String = when (n.name) {
+        "types" -> "type " + n.children.joinToString("\n\nand ") { typeDef(it) }
+        "sig-value" -> "val ${n.str("name")} : ${n.str("type")}"
+        "sig-module" -> "module ${n.str("name")} : " + signature(n.children)
+        else -> error("unexpected ${n.name} in a signature")
     }
 
     private fun typeParams(params: List<String>) = when (params.size) {
@@ -65,8 +81,9 @@ object Printer {
             val oneLine = "$head [ ${tags.joinToString(" | ")} ]"
             return if (oneLine.length <= WIDTH) oneLine else "$head [\n" + tags.joinToString("\n") { "  | $it" } + "\n]"
         }
+        val private = if (n.attributes["isPrivate"] == true) " private" else ""
         return if (first.name == "field-decl") {
-            head + " " + fields(n.children)
+            head + private + " " + fields(n.children)
         } else {
             head + n.children.joinToString("") { v ->
                 "\n  | " + v.str("name") + if (v.children.isEmpty()) "" else " of " + fields(v.children)

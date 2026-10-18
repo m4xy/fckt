@@ -1,0 +1,51 @@
+// Modules group declarations under a name, like OCaml's modules. Inside one, members use each
+// other directly; outside, they're named through it: Ratios.make. `private` keeps a member inside
+// its module, and `type Ratio private(...)` lets anyone read a Ratio but only Ratios build one,
+// so every Ratio is in lowest terms.
+
+module Ratios {
+  type Ratio private(num: Int, denom: Int)
+
+  make(n: Int, d: Int): Ratio = {
+    g = gcd(n, d)
+    Ratio(n / g, d / g)
+  }
+
+  add(a: Ratio, b: Ratio) = make(a.num * b.denom + b.num * a.denom, a.denom * b.denom)
+
+  private gcd(a: Int, b: Int): Int = if (b == 0) abs(a) else gcd(b, a % b)
+}
+
+module Shapes {
+  interface Shape { Circle(radius: Float), Square(side: Float) }
+
+  area(s: Shape) = when (s) {
+    Circle(r) -> 3.0 * r * r
+    Square(side) -> side * side
+  }
+
+  module Units {
+    twice(s: Shape) = when (s) {
+      Circle(r) -> Circle(r * 2)
+      Square(side) -> Square(side * 2)
+    }
+  }
+}
+
+half = Ratios.make(1, 2)
+
+describe(s: Shapes.Shape) = when (s) {
+  Shapes.Circle(_) -> "circle"
+  Shapes.Square(_) -> "square"
+}
+
+main() = {
+  assertEquals(1, half.num)
+  r = Ratios.add(half, Ratios.make(2, 6))
+  assertEquals("Ratio(num=5, denom=6)", "$r")
+  sq = Shapes.Square(3.0)
+  assertEquals(36.0, Shapes.area(Shapes.Units.twice(sq)))
+  assertEquals("circle", describe(Shapes.Circle(1.0)))
+  shape: Shapes.Shape = Circle(1.0)
+  assertEquals("Circle(radius=1.0)", shape.toString())
+}

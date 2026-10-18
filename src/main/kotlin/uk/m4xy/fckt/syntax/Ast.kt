@@ -31,16 +31,32 @@ data class FieldDef(val pos: Pos, val name: String, val type: TypeRef)
 
 data class Param(val pos: Pos, val name: String, val type: TypeRef?)
 
+/**
+ * A declaration. The parser gives each its own [name]; the checker renames them to their full
+ * name, so `make` in `module Ratios` becomes `Ratios.make`.
+ */
 sealed interface Decl {
     val pos: Pos
     val name: String
 
-    /** `type Name<T>(a: A, b: B)`, or `type Name(A)`, whose one field is called `value`. */
+    /** `private`: visible only inside the module that declares it. */
+    val isPrivate: Boolean
+
+    /** The modules around it, from its full name: `Ratios.make` is in `[Ratios]`. */
+    val path: List<String> get() = name.split('.').dropLast(1)
+    val simpleName: String get() = name.substringAfterLast('.')
+
+    /**
+     * `type Name<T>(a: A, b: B)`, or `type Name(A)`, whose one field is called `value`. With
+     * [privateConstructor] (`type Name private(...)`), only its module can build one.
+     */
     data class Record(
         override val pos: Pos,
         override val name: String,
         val typeParams: List<String>,
         val fields: List<FieldDef>,
+        override val isPrivate: Boolean = false,
+        val privateConstructor: Boolean = false,
     ) : Decl
 
     /**
@@ -55,6 +71,7 @@ sealed interface Decl {
         val variants: List<VariantDef>,
         val caseRefs: List<CaseRefDef> = emptyList(),
         val includes: List<TypeRef.Named> = emptyList(),
+        override val isPrivate: Boolean = false,
     ) : Decl
 
     /** `name<T>(params): R = body`; [params] is null for a value (`name = body`). */
@@ -65,12 +82,21 @@ sealed interface Decl {
         val params: List<Param>?,
         val returnType: TypeRef?,
         val body: Expr,
+        override val isPrivate: Boolean = false,
+    ) : Decl
+
+    /** `module Name { declarations }`: a namespace whose `private` members stay inside it. */
+    data class Module(
+        override val pos: Pos,
+        override val name: String,
+        val decls: List<Decl>,
+        override val isPrivate: Boolean = false,
     ) : Decl
 }
 
 data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>)
 
-/** `Owner.Case` in an interface body: a case declared by another interface. */
+/** `Owner.Case` in an interface body: a case declared by another interface. [owner] may be qualified: `Letters.Alphabet`. */
 data class CaseRefDef(val pos: Pos, val owner: String, val case: String)
 
 data class SourceFile(val decls: List<Decl>)
@@ -269,6 +295,9 @@ sealed interface MemberRef {
 
     /** A field of a tag the subject was smart-cast to, bound directly to [variable]. */
     data class CastTagField(val variable: String) : MemberRef
+
+    /** `Ratios.make`: a function or value named through its module. */
+    data class Global(val decl: Decl.Function) : MemberRef
 
     /** `Alphabet.A`: a case named through its interface. */
     data class Case(val ref: ConstructorRef) : MemberRef

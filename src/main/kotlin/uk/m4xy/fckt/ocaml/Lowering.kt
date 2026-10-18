@@ -62,17 +62,32 @@ class Lowering(private val program: Program) {
     private val showTypes = linkedSetOf<String>()
     private val helpers = linkedSetOf<String>()
 
+    /** The module being lowered: names are written relative to it. */
+    private var currentPath: List<String> = emptyList()
+
+    /** Show functions for user types, by type, once generated. */
+    private val showBodies = linkedMapOf<String, Pair<List<String>, Gen>>()
+
     fun lower(): StructureElement<Unit> {
-        val types = StructureElement.build<Unit> {
-            for (group in typeGroups()) types { typeDefinitions(group) }
-        }
-        val functions = StructureElement.build<Unit> {
-            for (group in program.groups) {
+        // Lower every function first; that finds which show functions are needed.
+        val functionItems = program.groups.associateWith { group ->
+            currentPath = group.decls.first().path
+            StructureElement.build<Unit> {
                 let(group.recursive) {
                     for (decl in group.decls) function(decl)
                 }
-            }
-            program.main?.let {
+            }.children.single()
+        }
+        // Each show function can need those of its fields' types.
+        while (true) {
+            val name = showTypes.firstOrNull { it !in showBodies } ?: break
+            currentPath = name.split('.').dropLast(1)
+            showBodies[name] = showBody(name)
+        }
+        currentPath = emptyList()
+        val helperItems = StructureElement.build<Unit> { if (helpers.isNotEmpty()) helperFunctions() }.children
+        val main = program.main?.let {
+            StructureElement.build<Unit> {
                 let(false) {
                     binding("()") {
                         apply {
@@ -83,24 +98,168 @@ class Lowering(private val program: Program) {
                         }
                     }
                 }
+            }.children
+        }.orEmpty()
+        return StructureElement(helperItems + moduleItems(emptyList(), program.root, functionItems) + main)
+    }
+
+    // ---- Modules ----
+
+    /**
+     * The items of the module at [path]: its types (each followed by its show functions), nested
+     * modules and functions, ordered so each comes after what it uses.
+     */
+    private fun moduleItems(
+        path: List<String>,
+        decls: List<Decl>,
+        functionItems: Map<uk.m4xy.fckt.types.FunctionGroup, StructureChild<Unit>>,
+    ): List<StructureChild<Unit>> {
+        currentPath = path
+        val types = decls.filter { it is Decl.Record || it is Decl.Sealed }
+        val modules = decls.filterIsInstance<Decl.Module>()
+        val groups = program.groups.filter { it.decls.first().path == path }
+
+        // Graph nodes, in the order they'd be emitted given no constraints: types, modules, functions.
+        val typeGroups = typeGroups(types)
+        val nodes: List<Any> = typeGroups + modules + groups
+        fun insideOf(m: Decl.Module, name: String) = name.startsWith(m.name + ".")
+        val edges = nodes.associateWith { node ->
+            when (node) {
+                is Decl.Module -> {
+                    // A module comes after the functions here that its own functions use.
+                    val used = functionsIn(node).flatMap { program.uses[it].orEmpty() }
+                    groups.filter { g -> g.decls.any { it in used } }
+                }
+                is uk.m4xy.fckt.types.FunctionGroup -> {
+                    val used = node.decls.flatMap { program.uses[it].orEmpty() }
+                    modules.filter { m -> used.any { insideOf(m, it.name) } }
+                }
+                else -> {
+                    // A type comes after the modules whose types it uses.
+                    @Suppress("UNCHECKED_CAST")
+                    val names = (node as List<Decl>).flatMap { typeRefsOf(it) }
+                    modules.filter { m -> names.any { insideOf(m, it) } }
+                }
             }
         }
-        // Lowering the functions found which show functions they use; emit those before them.
-        val shows = StructureElement.build<Unit> { showFunctions() }
-        return StructureElement(types.children + shows.children + functions.children)
+        val ordered = uk.m4xy.fckt.types.stronglyConnected(nodes) { edges.getValue(it) }.map { component ->
+            if (component.size > 1) {
+                val names = component.map { n -> if (n is Decl.Module) "module ${n.simpleName}" else "its functions" }
+                throw CompileError((component.first { it is Decl.Module } as Decl.Module).pos, "${names.joinToString(" and ")} use each other")
+            }
+            component.single()
+        }
+        return ordered.flatMap { node ->
+            currentPath = path
+            when (node) {
+                is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems)))
+                is uk.m4xy.fckt.types.FunctionGroup -> listOf(functionItems.getValue(node))
+                else -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val group = node as List<Decl>
+                    StructureElement.build<Unit> {
+                        types { typeDefinitions(group, forSignature = false) }
+                        showFunctions(group.map { it.name })
+                    }.children
+                }
+            }
+        }
     }
+
+    private fun moduleDef(m: Decl.Module, functionItems: Map<uk.m4xy.fckt.types.FunctionGroup, StructureChild<Unit>>): ModuleDefElement<Unit> {
+        val path = m.name.split('.')
+        val items = moduleItems(path, m.decls, functionItems).map { child ->
+            when (child) {
+                is StructureChild.TypeGroup -> ModuleDefChild.TypeGroup(child.element)
+                is StructureChild.LetGroup -> ModuleDefChild.LetGroup(child.element)
+                is StructureChild.Comment -> ModuleDefChild.Comment(child.element)
+                is StructureChild.ModuleDef -> ModuleDefChild.ModuleDef(child.element)
+            }
+        }
+        // A module with private members states what it shows; otherwise OCaml infers it.
+        currentPath = path
+        val signature = if (hasPrivate(m)) {
+            listOf(ModuleDefChild.Signature(SignatureElement.build<Unit> { signatureItems(m) }))
+        } else {
+            emptyList()
+        }
+        return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(m.simpleName), children = signature + items)
+    }
+
+    private fun hasPrivate(m: Decl.Module): Boolean = m.decls.any {
+        it.isPrivate || (it is Decl.Record && it.privateConstructor) || (it is Decl.Module && hasPrivate(it))
+    }
+
+    private fun functionsIn(m: Decl.Module): List<Decl.Function> = m.decls.flatMap {
+        when (it) {
+            is Decl.Function -> listOf(it)
+            is Decl.Module -> functionsIn(it)
+            else -> emptyList()
+        }
+    }
+
+    /** The full names of the user types a type declaration's fields use. */
+    private fun typeRefsOf(d: Decl): List<String> {
+        fun refs(ref: TypeRef): List<String> = when (ref) {
+            is TypeRef.Named -> listOfNotNull(program.typeNames[ref]) + ref.args.flatMap(::refs)
+            is TypeRef.Function -> ref.params.flatMap(::refs) + refs(ref.result)
+            is TypeRef.Tuple -> ref.elements.flatMap(::refs)
+        }
+        val fields = when (d) {
+            is Decl.Record -> d.fields
+            is Decl.Sealed -> program.cases.getValue(d.name).flatMap { it.fields }
+            else -> emptyList()
+        }
+        val origins = (d as? Decl.Sealed)?.let { s -> program.cases.getValue(s.name).map { it.origin.name } }.orEmpty()
+        return fields.flatMap { refs(it.type) } + origins
+    }
+
+    /** What module [m] shows outside: its public types, nested modules, show functions and values. */
+    private fun <S> S.signatureItems(m: Decl.Module) where S : TypeGroupParent<Unit>, S : SigValueParent<Unit>, S : SigModuleParent<Unit> {
+        val path = m.name.split('.')
+        currentPath = path
+        val types = m.decls.filter { (it is Decl.Record || it is Decl.Sealed) && !it.isPrivate }
+        for (group in typeGroups(types)) types { typeDefinitions(group, forSignature = true) }
+        for (inner in m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate }) {
+            sigModule(inner.simpleName) { signatureItems(inner) }
+            currentPath = path
+        }
+        for (type in types) {
+            if (type.name !in showBodies) continue
+            val params = if (type is Decl.Record) type.typeParams else (type as Decl.Sealed).typeParams
+            val shown = applied(type.name, params.map { typeVar(it) to false })
+            sigValue(showName(type.name), (params.map { "(${typeVar(it)} -> string)" } + shown + "string").joinToString(" -> "))
+        }
+        for (f in m.decls.filterIsInstance<Decl.Function>().filter { !it.isPrivate }) {
+            val type = program.functionTypes.getValue(f)
+            sigValue(snake(f.simpleName), typeText(type, mutableMapOf()))
+        }
+    }
+
+    /** [full] as written from the current module: `Ratios.make` is `make` inside Ratios, and `Ratios.make` outside. */
+    private fun ref(full: String, transform: (String) -> String): String {
+        val parts = full.split('.')
+        val module = parts.dropLast(1)
+        val common = module.zip(currentPath).takeWhile { (a, b) -> a == b }.size
+        return (module.drop(common) + transform(parts.last())).joinToString(".")
+    }
+
+    /** What to put before a record's labels from here: `Ratios.` outside Ratios, else nothing. */
+    private fun labelPrefix(record: Decl.Record): String = ref((record.path + "x").joinToString("."), { "" })
 
     // ---- Types ----
 
-    private fun TypeGroupScope<Unit>.typeDefinitions(group: List<Decl>) {
+    /** A group of type definitions; [forSignature] makes a record with a private constructor `private`. */
+    private fun TypeGroupScope<Unit>.typeDefinitions(group: List<Decl>, forSignature: Boolean) {
         for (decl in group) {
             when (decl) {
-                is Decl.Record -> typeDef(snake(decl.name)) {
+                is Decl.Record -> typeDef(snake(decl.simpleName)) {
                     params = decl.typeParams.map(::typeVar)
+                    if (forSignature && decl.privateConstructor) isPrivate = true
                     for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams))
                 }
                 is Decl.Sealed -> if (decl.name in program.polymorphic) {
-                    typeDef(snake(decl.name)) {
+                    typeDef(snake(decl.simpleName)) {
                         params = decl.typeParams.map(::typeVar)
                         polymorphic = true
                         for (case in program.cases.getValue(decl.name)) {
@@ -109,7 +268,7 @@ class Lowering(private val program: Program) {
                             }
                         }
                     }
-                } else typeDef(snake(decl.name)) {
+                } else typeDef(snake(decl.simpleName)) {
                     params = decl.typeParams.map(::typeVar)
                     for (variant in decl.variants) {
                         variant(variant.name) {
@@ -117,29 +276,16 @@ class Lowering(private val program: Program) {
                         }
                     }
                 }
-                is Decl.Function -> {}
+                is Decl.Function, is Decl.Module -> {}
             }
         }
     }
 
-    /** Type declarations in dependency order, grouped only where they're mutually recursive. */
-    private fun typeGroups(): List<List<Decl>> {
-        val decls = (program.records + program.sealeds).sortedWith(compareBy({ it.pos.line }, { it.pos.col }))
-        val byName = decls.associateBy { it.name }
-        fun refs(ref: TypeRef): List<String> = when (ref) {
-            is TypeRef.Named -> listOf(ref.name) + ref.args.flatMap(::refs)
-            is TypeRef.Function -> ref.params.flatMap(::refs) + refs(ref.result)
-            is TypeRef.Tuple -> ref.elements.flatMap(::refs)
-        }
-        return stronglyConnected(decls) { decl ->
-            val fields = when (decl) {
-                is Decl.Record -> decl.fields
-                is Decl.Sealed -> program.cases.getValue(decl.name).flatMap { it.fields }
-                is Decl.Function -> emptyList()
-            }
-            val included = (decl as? Decl.Sealed)?.let { s -> program.cases.getValue(s.name).map { it.origin.name } + s.includes.map { it.name } }.orEmpty()
-            (fields.flatMap { refs(it.type) } + included).filter { it != decl.name }.mapNotNull { byName[it] }.distinct() +
-                listOfNotNull(decl.takeIf { d -> fields.any { decl.name in refs(it.type) } })
+    /** [types] in dependency order, grouped only where they're mutually recursive. */
+    private fun typeGroups(types: List<Decl>): List<List<Decl>> {
+        val byName = types.associateBy { it.name }
+        return stronglyConnected(types) { decl ->
+            typeRefsOf(decl).mapNotNull { byName[it] }.distinct()
         }
     }
 
@@ -149,7 +295,7 @@ class Lowering(private val program: Program) {
         is TypeRef.Tuple -> tupleText(ref.elements.map { typeText(it, typeParams) to compound(it) })
         is TypeRef.Named ->
             if (ref.name in typeParams) typeVar(ref.name)
-            else applied(ref.name, ref.args.map { typeText(it, typeParams) to compound(it) })
+            else applied(program.typeNames[ref] ?: ref.name, ref.args.map { typeText(it, typeParams) to compound(it) })
     }
 
     /** Whether a type needs parentheses as an argument or a tuple element. */
@@ -159,13 +305,16 @@ class Lowering(private val program: Program) {
     private fun tupleText(elements: List<Pair<String, Boolean>>) =
         elements.joinToString(" * ") { (text, paren) -> if (paren) "($text)" else text }
 
-    /** OCaml syntax for an inferred type; unknown parts become `_`. */
-    private fun typeText(type: Type): String = when (val t = type.prune()) {
-        is Type.Var -> "_"
-        is Type.Fn -> functionText(t.params.map { typeText(it) to compound(it) }, typeText(t.result))
+    /**
+     * OCaml syntax for an inferred type. Unknown parts become `_`, or, given [vars] (for a
+     * signature), named type variables.
+     */
+    private fun typeText(type: Type, vars: MutableMap<Type.Var, String>? = null): String = when (val t = type.prune()) {
+        is Type.Var -> vars?.getOrPut(t) { "'" + ('a' + vars.size) } ?: "_"
+        is Type.Fn -> functionText(t.params.map { typeText(it, vars) to compound(it) }, typeText(t.result, vars))
         is Type.Con ->
-            if (t.name == Type.TUPLE) tupleText(t.args.map { typeText(it) to compound(it) })
-            else applied(t.name, t.args.map { typeText(it) to compound(it) })
+            if (t.name == Type.TUPLE) tupleText(t.args.map { typeText(it, vars) to compound(it) })
+            else applied(t.name, t.args.map { typeText(it, vars) to compound(it) })
     }
 
     private fun functionText(params: List<Pair<String, Boolean>>, result: String): String {
@@ -177,7 +326,7 @@ class Lowering(private val program: Program) {
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"
             "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"
-            else -> snake(name)
+            else -> ref(name, ::snake)
         }
         return when (args.size) {
             0 -> base
@@ -189,7 +338,7 @@ class Lowering(private val program: Program) {
     // ---- Functions ----
 
     private fun LetGroupScope<Unit>.function(decl: Decl.Function) {
-        binding(snake(decl.name)) {
+        binding(snake(decl.simpleName)) {
             decl.params?.let { params = paramTexts(it, decl.typeParams) }
             decl.returnType?.let { returnType = typeText(it, decl.typeParams) }
             expr(decl.body)
@@ -244,7 +393,7 @@ class Lowering(private val program: Program) {
             )
             is Expr.Name -> when (val r = e.resolved!!) {
                 is NameRef.Local -> ident(r.ocamlName)
-                is NameRef.Global -> ident(snake(r.decl.name))
+                is NameRef.Global -> ident(ref(r.decl.name, ::snake))
                 is NameRef.Builtin -> {
                     if (r.ocaml == ASSERT || r.ocaml == ASSERT_EQUALS) throw CompileError(e.pos, "${r.ocaml} must be called")
                     ident(r.ocaml)
@@ -262,9 +411,10 @@ class Lowering(private val program: Program) {
             is Expr.ListLit -> gen(listExpr(e.items))
             is Expr.Call -> call(e)
             is Expr.Member -> when (val r = e.resolved!!) {
-                is MemberRef.Field -> fieldGet(r.ocamlName) { gen(qualified(Gen.Src(e.target), r)) }
+                is MemberRef.Field -> fieldGet(labelPrefix(records.getValue(r.record)) + r.ocamlName) { gen(qualified(Gen.Src(e.target), r)) }
                 is MemberRef.CastField -> fieldGet(r.ocamlName) { ident(r.recordVar) }
                 is MemberRef.CastTagField -> ident(r.variable)
+                is MemberRef.Global -> ident(ref(r.decl.name, ::snake))
                 is MemberRef.Case -> {
                     val fn = e.type!!.prune()
                     if (fn is Type.Fn) {
@@ -335,7 +485,7 @@ class Lowering(private val program: Program) {
             }
             is CallRef.Construct -> gen(construct(r.ref, e.type!!, r.order.map { Gen.Src(e.args[it].value) }))
             is CallRef.Extension -> apply {
-                ident(snake(r.decl.name))
+                ident(ref(r.decl.name, ::snake))
                 expr((e.callee as Expr.Member).target)
                 e.args.forEach { expr(it.value) }
             }
@@ -350,7 +500,9 @@ class Lowering(private val program: Program) {
                 val ambiguous = e.args.any { snake(it.name!!) in program.ambiguousLabels }
                 val update: RecordUpdateScope<Unit>.() -> Unit = {
                     expr(target)
-                    for (arg in e.args) entry(snake(arg.name!!)) { expr(arg.value) }
+                    e.args.forEachIndexed { i, arg ->
+                        entry((if (i == 0) labelPrefix(r.record) else "") + snake(arg.name!!)) { expr(arg.value) }
+                    }
                 }
                 if (ambiguous) annotated(typeText(e.type!!)) { recordUpdate(update) } else recordUpdate(update)
             }
@@ -421,7 +573,8 @@ class Lowering(private val program: Program) {
     /** `{ a = x; ... }`, `Variant { ... }` or `Some x`, annotated with [type] when OCaml can't tell which it is. */
     private fun construct(ref: ConstructorRef, type: Type, args: List<Gen>): Gen = when (ref) {
         is ConstructorRef.Record -> {
-            val record = Gen.Record(ref.decl.fields.map { snake(it.name) }.zip(args))
+            val prefix = labelPrefix(ref.decl)
+            val record = Gen.Record(ref.decl.fields.mapIndexed { i, f -> (if (i == 0) prefix else "") + snake(f.name) }.zip(args))
             if (ref.decl.fields.any { snake(it.name) in program.ambiguousLabels }) Gen.Ann(record, typeText(type)) else record
         }
         is ConstructorRef.Variant -> {
@@ -438,17 +591,22 @@ class Lowering(private val program: Program) {
                     },
                 )
             }
+            val name = ctorName(ref)
             val value = when {
-                variant == null -> Gen.Ctor(ref.name, args.singleOrNull())
-                variant.fields.isEmpty() -> Gen.Ctor(ref.name, null)
-                else -> Gen.Ctor(ref.name, Gen.Record(variant.fields.map { snake(it.name) }.zip(args)))
+                variant == null -> Gen.Ctor(name, args.singleOrNull())
+                variant.fields.isEmpty() -> Gen.Ctor(name, null)
+                else -> Gen.Ctor(name, Gen.Record(variant.fields.map { snake(it.name) }.zip(args)))
             }
             if (ref.name in program.ambiguousConstructors) Gen.Ann(value, typeText(type)) else value
         }
     }
 
     /** A shared case's tag, named after the interface that declares it: `Alphabet_A`. */
-    private fun tagName(origin: Decl.Sealed, variant: VariantDef) = "${origin.name}_${variant.name}"
+    private fun tagName(origin: Decl.Sealed, variant: VariantDef) = "${origin.name.replace('.', '_')}_${variant.name}"
+
+    /** An ordinary constructor as written from here: `Circle` inside Shapes, `Shapes.Circle` outside. */
+    private fun ctorName(ref: ConstructorRef.Variant): String =
+        ref.sealed?.let { ref((it.path + ref.name).joinToString("."), { name -> name }) } ?: ref.name
 
     /** The record of a field access, annotated with its type when the label belongs to several records. */
     private fun qualified(record: Gen, field: MemberRef.Field): Gen {
@@ -502,7 +660,7 @@ class Lowering(private val program: Program) {
         is Pattern.Wildcard -> "_"
         is Pattern.Bind -> p.ocamlName
         is Pattern.Literal -> literalText(p.expr)
-        is Pattern.Tuple -> p.record?.let { r -> recordPattern(r.fields.map { it.name }, p.elements.map { pattern(it) }) }
+        is Pattern.Tuple -> p.record?.let { r -> recordPattern(r.fields.map { it.name }, p.elements.map { pattern(it) }, labelPrefix(r)) }
             ?: p.elements.joinToString(", ", "(", ")") { pattern(it) }
         is Pattern.ListPattern -> {
             val rest = p.rest
@@ -519,7 +677,7 @@ class Lowering(private val program: Program) {
                 // `is Vowel`: any of Vowel's tags, rebinding the subject at the narrower type.
                 narrowTo != null ->
                     if (narrowTo.name !in program.polymorphic) "_"
-                    else "#${snake(narrowTo.name)}" + (p.narrowVar?.let { " as $it" } ?: "")
+                    else "#" + ref(narrowTo.name, ::snake) + (p.narrowVar?.let { " as $it" } ?: "")
                 origin != null && variant != null && origin.name in program.polymorphic -> {
                     val tag = "`" + tagName(origin, variant)
                     val payload = args ?: p.castFieldVars ?: variant.fields.map { "_" }
@@ -535,17 +693,17 @@ class Lowering(private val program: Program) {
     }
 
     private fun ordinaryPattern(p: Pattern.Constructor, args: List<String>?, ref: ConstructorRef): String = when (ref) {
-        is ConstructorRef.Record -> args?.let { recordPattern(ref.decl.fields.map { it.name }, it) } ?: "_"
+        is ConstructorRef.Record -> args?.let { recordPattern(ref.decl.fields.map { it.name }, it, labelPrefix(ref.decl)) } ?: "_"
         is ConstructorRef.Variant -> when {
             ref.variant == null -> if (ref.name == "None") "None" else "Some ${args?.single()?.let(::atomPattern) ?: "_"}"
-            ref.variant.fields.isEmpty() -> ref.name
-            args != null -> "${ref.name} ${recordPattern(ref.variant.fields.map { it.name }, args)}"
-            else -> "${ref.name} ${p.castVar ?: "_"}"
+            ref.variant.fields.isEmpty() -> ctorName(ref)
+            args != null -> "${ctorName(ref)} ${recordPattern(ref.variant.fields.map { it.name }, args)}"
+            else -> "${ctorName(ref)} ${p.castVar ?: "_"}"
         }
     }
 
-    private fun recordPattern(fields: List<String>, args: List<String>) =
-        "{ " + fields.zip(args).joinToString("; ") { (f, a) -> "${snake(f)} = $a" } + " }"
+    private fun recordPattern(fields: List<String>, args: List<String>, prefix: String = "") =
+        "{ " + fields.zip(args).withIndex().joinToString("; ") { (i, fa) -> "${if (i == 0) prefix else ""}${snake(fa.first)} = ${fa.second}" } + " }"
 
     private fun atomPattern(p: String) =
         if (' ' in p && !p.startsWith("{") && !p.startsWith("(") && !p.startsWith("[") || p.startsWith("-")) "($p)" else p
@@ -671,11 +829,13 @@ class Lowering(private val program: Program) {
         "Option" -> Gen.App(Gen.Id(helper("fk_show_option")), args)
         else -> {
             showTypes += name
-            if (args.isEmpty()) Gen.Id(showName(name)) else Gen.App(Gen.Id(showName(name)), args)
+            // A type's show function lives in the type's module.
+            val show = ref((name.split('.').dropLast(1) + showName(name)).joinToString("."), { it })
+            if (args.isEmpty()) Gen.Id(show) else Gen.App(Gen.Id(show), args)
         }
     }
 
-    private fun showName(type: String) = "show_${snake(type).removeSuffix("_")}"
+    private fun showName(type: String) = "show_${snake(type.substringAfterLast('.')).removeSuffix("_")}"
 
     private fun helper(name: String) = name.also { helpers += it }
 
@@ -685,28 +845,20 @@ class Lowering(private val program: Program) {
         is TypeRef.Tuple -> showCon(Type.TUPLE, ref.elements.map { showRef(it, typeParams) })
         is TypeRef.Named ->
             if (ref.name in typeParams) Gen.Id("show_${ref.name.lowercase()}")
-            else showCon(if (ref.name == "Double") "Float" else ref.name, ref.args.map { showRef(it, typeParams) })
+            else showCon(program.typeNames[ref] ?: if (ref.name == "Double") "Float" else ref.name, ref.args.map { showRef(it, typeParams) })
     }
 
-    private fun StructureScope<Unit>.showFunctions() {
-        // Generate show functions until no new type is needed; each can need the types of its fields.
-        val bodies = linkedMapOf<String, Pair<List<String>, Gen>>()
-        while (true) {
-            val name = showTypes.firstOrNull { it !in bodies } ?: break
-            bodies[name] = showBody(name)
-        }
-        if (helpers.isNotEmpty()) helperFunctions()
-        if (bodies.isEmpty()) return
-        // Only show functions that call each other share a `let rec`.
-        val types = bodies.keys.toList()
-        val groups = stronglyConnected(types) { type ->
-            types.filter { mentions(bodies.getValue(type).second, setOf(showName(it))) }
+    /** The show functions for whichever of [types] need one; only those that call each other share a `let rec`. */
+    private fun StructureScope<Unit>.showFunctions(types: List<String>) {
+        val needed = types.filter { it in showBodies }
+        val groups = stronglyConnected(needed) { type ->
+            needed.filter { mentions(showBodies.getValue(type).second, setOf(showName(it))) }
         }
         for (group in groups) {
-            val recursive = group.size > 1 || mentions(bodies.getValue(group[0]).second, setOf(showName(group[0])))
+            val recursive = group.size > 1 || mentions(showBodies.getValue(group[0]).second, setOf(showName(group[0])))
             let(recursive) {
                 for (name in group) {
-                    val (params, body) = bodies.getValue(name)
+                    val (params, body) = showBodies.getValue(name)
                     binding(showName(name)) {
                         this.params = params
                         gen(body)
@@ -748,7 +900,7 @@ class Lowering(private val program: Program) {
         records[name]?.let { r ->
             val params = r.typeParams.map { "show_${it.lowercase()}" } +
                 "(v : ${applied(r.name, r.typeParams.map { typeVar(it) to false })})"
-            return params to fieldsText(r.name, r.fields, r.typeParams, v)
+            return params to fieldsText(r.simpleName, r.fields, r.typeParams, v)
         }
         val s = sealeds.getValue(name)
         val params = s.typeParams.map { "show_${it.lowercase()}" } + "(v : ${applied(s.name, s.typeParams.map { typeVar(it) to false })})"

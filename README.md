@@ -33,6 +33,9 @@ tour of the core language, translated section by section.
 | `type R(A)` | `type r = { value : a }` | The same as `type R(value: A)`. |
 | `interface S { V(x: X) W }` | `type s = V of { x : x } \| W` | A sealed sum type. |
 | `interface Vowel { Alphabet.A, Alphabet.E }` | `type vowel = [ `Alphabet_A \| `Alphabet_E ]` | An interface can take in other interfaces' cases, one at a time (`Alphabet.A`) or all of them (`*Vowel`). A `Vowel` can then be used wherever an `Alphabet` is expected, and `is Vowel` narrows an `Alphabet` to a `Vowel`. When branches give different interfaces, the result is the smallest declared interface with all their cases. Interfaces that share cases become polymorphic variants; the rest stay ordinary ones. See `examples/shared-cases.fk`. |
+| `module Ratios { ... }` | `module Ratios = struct ... end` | Groups declarations. Inside, members use each other directly; outside, they're named through the module: `Ratios.make(1, 2)`, `Shapes.Circle(1.0)`, `Shapes.Shape`. Modules can nest. See `examples/modules.fk`. |
+| `private gcd(...)` | left out of the module's `sig` | Visible only inside its module. A public member can't expose a private type. |
+| `type Ratio private(n: Int, d: Int)` | `type ratio = private { ... }` in the `sig` | Like Kotlin's `private constructor`: readable and matchable anywhere, but only its module can build or `copy` one. |
 | `type Box<T>(value: T)` | `type 't box = { value : 't }` | Type parameters work on types and functions. |
 | `f(x: Int, y: Int): Int = e` | `let f (x : int) (y : int) : int = e` | Top-level order doesn't matter; mutual recursion becomes `let rec ... and`. |
 | `name = e` | `let name = e` | A top-level value or a binding in a block. |

@@ -32,6 +32,14 @@ class Program(
     val cases: Map<String, List<CaseDecl>>,
     /** Interfaces that share cases with another, which become OCaml polymorphic variants. */
     val polymorphic: Set<String>,
+    /** The declarations as written, nesting included, renamed to their full names. */
+    val root: List<Decl>,
+    /** Each function's type, generalized. */
+    val functionTypes: Map<Decl.Function, Type>,
+    /** The functions each function uses. */
+    val uses: Map<Decl.Function, List<Decl.Function>>,
+    /** The full name each written user type refers to. */
+    val typeNames: Map<TypeRef.Named, String>,
 )
 
 /** A case of an interface: [variant], declared by [origin], with [fields] typed in the interface's own terms. */
@@ -58,8 +66,19 @@ private class Scope(val parent: Scope?) {
     fun lookup(name: String): Local? = vars[name] ?: parent?.lookup(name)
 }
 
-class Checker(private val file: SourceFile) {
+class Checker(file: SourceFile) {
     private val u = Unifier()
+
+    /** The declarations with their full names: `make` in `module Ratios` is `Ratios.make`. */
+    private val root: List<Decl> = file.decls.map { qualify(it, "") }
+    private val modules = linkedMapOf<String, Decl.Module>()
+    private val decls: List<Decl> = flatten(root)
+
+    /** The module being checked, which decides what names mean and what's visible. */
+    private var currentPath: List<String> = emptyList()
+    private val typeNames = java.util.IdentityHashMap<TypeRef.Named, String>()
+    private val uses = mutableMapOf<Decl.Function, List<Decl.Function>>()
+
     private val records = linkedMapOf<String, Decl.Record>()
     private val sealeds = linkedMapOf<String, Decl.Sealed>()
     private val variantsByName = mutableMapOf<String, MutableList<Pair<Decl.Sealed, VariantDef>>>()
@@ -77,6 +96,7 @@ class Checker(private val file: SourceFile) {
         collectGlobals()
         val groups = dependencyGroups()
         for (group in groups) checkGroup(group)
+        checkExposure()
 
         val labelCounts = records.values.flatMap { r -> r.fields.map { snake(it.name) } }.groupingBy { it }.eachCount()
         val main = globals["main"]?.also {
@@ -97,16 +117,124 @@ class Checker(private val file: SourceFile) {
             main = main,
             cases = caseDecls,
             polymorphic = polymorphic,
+            root = root,
+            functionTypes = schemes.mapValues { it.value.type.zonk() },
+            uses = uses,
+            typeNames = typeNames,
         )
+    }
+
+    /**
+     * A public function or type can't mention a type that's private to its module: callers outside
+     * could see it but not name it.
+     */
+    private fun checkExposure() {
+        fun privateTypes(t: Type): List<Decl> = when (val x = t.prune()) {
+            is Type.Var -> emptyList()
+            is Type.Fn -> x.params.flatMap { privateTypes(it) } + privateTypes(x.result)
+            is Type.Con -> listOfNotNull((records[x.name] ?: sealeds[x.name])?.takeIf { it.isPrivate }) + x.args.flatMap { privateTypes(it) }
+        }
+        // Visible beyond the private type's module, unless it's in a module nested inside it.
+        fun exposes(user: Decl, hidden: Decl) =
+            !user.isPrivate && hidden.path.isNotEmpty() && !(user.path.size > hidden.path.size && user.path.take(hidden.path.size) == hidden.path)
+        fun complain(user: Decl, hidden: Decl): Nothing = throw CompileError(
+            user.pos,
+            "'${user.simpleName}' is public, but its type uses ${hidden.simpleName}, which is private to ${hidden.path.joinToString(".")}",
+        )
+        for (f in globals.values) {
+            privateTypes(schemes.getValue(f).type).firstOrNull { exposes(f, it) }?.let { complain(f, it) }
+        }
+        for (d in records.values + sealeds.values) {
+            val fields = if (d is Decl.Record) d.fields else caseDecls.getValue(d.name).flatMap { it.fields }
+            val withParams = if (d is Decl.Record) d.typeParams else (d as Decl.Sealed).typeParams
+            currentPath = d.path
+            withTypeParams(withParams) {
+                fields.flatMap { privateTypes(resolve(it.type)) }.firstOrNull { exposes(d, it) }?.let { complain(d, it) }
+            }
+        }
+        currentPath = emptyList()
+    }
+
+    // ---- Modules and names ----
+
+    private fun qualify(d: Decl, prefix: String): Decl = when (d) {
+        is Decl.Record -> d.copy(name = prefix + d.name)
+        is Decl.Sealed -> d.copy(name = prefix + d.name)
+        is Decl.Function -> d.copy(name = prefix + d.name)
+        is Decl.Module -> d.copy(name = prefix + d.name, decls = d.decls.map { qualify(it, prefix + d.name + ".") })
+    }
+
+    private fun flatten(ds: List<Decl>): List<Decl> = ds.flatMap { d ->
+        if (d is Decl.Module) {
+            if (d.name in modules) throw CompileError(d.pos, "module '${d.simpleName}' is declared twice")
+            modules[d.name] = d
+            flatten(d.decls)
+        } else {
+            listOf(d)
+        }
+    }
+
+    /** Whether the current module is [path] or inside it. */
+    private fun inside(path: List<String>) = currentPath.take(path.size) == path
+
+    /** Whether [d], and every module around it, can be seen from the current module. */
+    private fun visible(d: Decl): Boolean {
+        if (d.isPrivate && !inside(d.path)) return false
+        return (1..d.path.size).all { n -> modules[d.path.take(n).joinToString(".")]?.let { visible(it) } ?: true }
+    }
+
+    /**
+     * Finds what [name] means from the current module: in module `A.B`, `x` could be `A.B.x`, `A.x`
+     * or `x`, innermost first, and `C.x` could be `A.B.C.x`, `A.C.x` or `C.x`. Reports a private
+     * declaration at [pos], or, without [pos], skips it.
+     */
+    private fun <D : Decl> find(name: String, table: Map<String, D>, pos: Pos?): D? {
+        for (n in currentPath.size downTo 0) {
+            val d = table[(currentPath.take(n) + name).joinToString(".")] ?: continue
+            if (!visible(d)) {
+                if (pos == null) continue
+                val owner = d.path.joinToString(".").ifEmpty { "this file" }
+                throw CompileError(pos, "'${d.simpleName}' is private to $owner")
+            }
+            return d
+        }
+        return null
+    }
+
+    private fun lookupGlobal(name: String, pos: Pos?) = find(name, globals, pos)
+    private fun lookupModule(name: String, pos: Pos?) = find(name, modules, pos)
+    private fun lookupSealed(name: String, pos: Pos?) = find(name, sealeds, pos)
+    private fun lookupRecord(name: String, pos: Pos?) = find(name, records, pos)
+
+    /** The dotted name an expression spells, like `Ratios.make` or `A.B.C`, unless it starts with a local. */
+    private fun dotted(e: Expr, scope: Scope?): String? = when (e) {
+        is Expr.Name -> e.name.takeIf { scope?.lookup(it) == null }
+        is Expr.Member -> dotted(e.target, scope)?.let { "$it.${e.name}" }
+        else -> null
+    }
+
+    /** The module an expression names, if it names one: `Ratios`, or `Shapes.Inner`. */
+    private fun moduleOf(e: Expr, scope: Scope?): Decl.Module? {
+        val name = dotted(e, scope) ?: return null
+        if (e is Expr.Name && (lookupGlobal(name, null) != null)) return null
+        return lookupModule(name, e.pos)
+    }
+
+    /** `Ratios.make`: a function or value in a module, named through it. */
+    private fun moduleMember(member: Expr.Member, scope: Scope): Decl.Function? {
+        val module = moduleOf(member.target, scope) ?: return null
+        val d = globals[module.name + "." + member.name] ?: return null
+        if (!visible(d)) throw CompileError(member.pos, "'${member.name}' is private to ${module.name}")
+        return d
     }
 
     // ---- Declarations ----
 
     private fun collectTypes() {
-        for (decl in file.decls) {
+        for (decl in decls) {
             if (decl is Decl.Function) continue
-            if (decl.name in BUILTIN_TYPES) throw CompileError(decl.pos, "'${decl.name}' is a built-in type")
-            if (decl.name in records || decl.name in sealeds) throw CompileError(decl.pos, "type '${decl.name}' is declared twice")
+            if (decl.simpleName in BUILTIN_TYPES) throw CompileError(decl.pos, "'${decl.simpleName}' is a built-in type")
+            if (decl.name in records || decl.name in sealeds) throw CompileError(decl.pos, "type '${decl.simpleName}' is declared twice")
             when (decl) {
                 is Decl.Record -> records[decl.name] = decl
                 is Decl.Sealed -> {
@@ -121,21 +249,25 @@ class Checker(private val file: SourceFile) {
                         variantsByName.getOrPut(variant.name) { mutableListOf() } += decl to variant
                     }
                 }
-                is Decl.Function -> {}
+                is Decl.Function, is Decl.Module -> {}
             }
         }
         for ((name, variants) in variantsByName) {
-            if (name in records) throw CompileError(variants.first().second.pos, "'$name' is both a type and a variant")
+            variants.firstOrNull { (s, _) -> (s.path + name).joinToString(".") in records }?.let {
+                throw CompileError(it.second.pos, "'$name' is both a type and a variant")
+            }
             variants.groupBy { it.first }.values.firstOrNull { it.size > 1 }?.let {
                 throw CompileError(it[1].second.pos, "variant '$name' is declared twice in ${it[1].first.name}")
             }
         }
         // Resolve every field type now, so bad references are reported at the declaration.
         for (r in records.values) {
+            currentPath = r.path
             checkFieldNames(r.fields.map { it.name to it.pos })
             withTypeParams(r.typeParams) { r.fields.forEach { resolve(it.type) } }
         }
         for (s in sealeds.values) {
+            currentPath = s.path
             withTypeParams(s.typeParams) {
                 s.variants.forEach { v ->
                     checkFieldNames(v.fields.map { it.name to it.pos })
@@ -145,6 +277,7 @@ class Checker(private val file: SourceFile) {
             }
         }
         for (s in sealeds.values) computeCases(s, emptySet())
+        currentPath = emptyList()
         // An interface that takes in another's cases, and the interfaces it takes them from, share
         // values, so they become polymorphic variants.
         for ((name, cases) in caseDecls) {
@@ -160,7 +293,9 @@ class Checker(private val file: SourceFile) {
     /** [s]'s own variants, then the cases it names one by one, then the ones it includes. */
     private fun computeCases(s: Decl.Sealed, visiting: Set<String>): List<CaseDecl> {
         caseDecls[s.name]?.let { return it }
-        if (s.name in visiting) throw CompileError(s.pos, "interface '${s.name}' includes itself")
+        if (s.name in visiting) throw CompileError(s.pos, "interface '${s.simpleName}' includes itself")
+        val outerPath = currentPath
+        currentPath = s.path
         val result = mutableListOf<CaseDecl>()
         fun add(case: CaseDecl, pos: Pos) {
             val same = result.firstOrNull { it.sameCase(case) }
@@ -172,30 +307,31 @@ class Checker(private val file: SourceFile) {
         }
         s.variants.forEach { add(CaseDecl(s, it, it.fields), it.pos) }
         for (ref in s.caseRefs) {
-            val owner = sealeds[ref.owner] ?: throw CompileError(ref.pos, "unknown interface '${ref.owner}'")
+            val owner = lookupSealed(ref.owner, ref.pos) ?: throw CompileError(ref.pos, "unknown interface '${ref.owner}'")
             if (owner.typeParams.isNotEmpty()) {
-                throw CompileError(ref.pos, "can't take single cases from the generic interface ${owner.name}; include it whole with *${owner.name}<...>")
+                throw CompileError(ref.pos, "can't take single cases from the generic interface ${owner.simpleName}; include it whole with *${owner.simpleName}<...>")
             }
             val matches = computeCases(owner, visiting + s.name).filter { it.name == ref.case }
             val case = matches.singleOrNull()
-                ?: throw CompileError(ref.pos, if (matches.isEmpty()) "${owner.name} has no case '${ref.case}'" else "${owner.name} has several cases named '${ref.case}'")
+                ?: throw CompileError(ref.pos, if (matches.isEmpty()) "${owner.simpleName} has no case '${ref.case}'" else "${owner.simpleName} has several cases named '${ref.case}'")
             add(case, ref.pos)
         }
         for (include in s.includes) {
-            val other = sealeds[include.name] ?: throw CompileError(include.pos, "'*' takes an interface, and '${include.name}' isn't one")
+            val other = lookupSealed(include.name, include.pos) ?: throw CompileError(include.pos, "'*' takes an interface, and '${include.name}' isn't one")
             val substitution = other.typeParams.zip(include.args).toMap()
             for (case in computeCases(other, visiting + s.name)) {
                 add(CaseDecl(case.origin, case.variant, case.fields.map { it.copy(type = substitute(it.type, substitution)) }), include.pos)
             }
         }
         caseDecls[s.name] = result
+        currentPath = outerPath
         return result
     }
 
     private fun substitute(ref: TypeRef, substitution: Map<String, TypeRef>): TypeRef = when (ref) {
         is TypeRef.Named ->
             if (ref.args.isEmpty() && ref.name in substitution) substitution.getValue(ref.name)
-            else ref.copy(args = ref.args.map { substitute(it, substitution) })
+            else ref.copy(args = ref.args.map { substitute(it, substitution) }).also { copy -> typeNames[ref]?.let { typeNames[copy] = it } }
         is TypeRef.Function -> ref.copy(params = ref.params.map { substitute(it, substitution) }, result = substitute(ref.result, substitution))
         is TypeRef.Tuple -> ref.copy(elements = ref.elements.map { substitute(it, substitution) })
     }
@@ -222,8 +358,8 @@ class Checker(private val file: SourceFile) {
     }
 
     private fun collectGlobals() {
-        for (decl in file.decls.filterIsInstance<Decl.Function>()) {
-            if (decl.name in globals) throw CompileError(decl.pos, "'${decl.name}' is declared twice")
+        for (decl in decls.filterIsInstance<Decl.Function>()) {
+            if (decl.name in globals) throw CompileError(decl.pos, "'${decl.simpleName}' is declared twice")
             globals[decl.name] = decl
         }
     }
@@ -252,13 +388,10 @@ class Checker(private val file: SourceFile) {
                     arity(it)
                     Type.Con(if (ref.name == "Double") "Float" else ref.name, args)
                 }
-                ?: records[ref.name]?.let {
-                    arity(it.typeParams.size)
-                    Type.Con(ref.name, args)
-                }
-                ?: sealeds[ref.name]?.let {
-                    arity(it.typeParams.size)
-                    Type.Con(ref.name, args)
+                ?: (lookupRecord(ref.name, ref.pos) ?: lookupSealed(ref.name, ref.pos))?.let {
+                    arity(if (it is Decl.Record) it.typeParams.size else (it as Decl.Sealed).typeParams.size)
+                    typeNames[ref] = it.name
+                    Type.Con(it.name, args)
                 }
                 ?: throw CompileError(ref.pos, "unknown type '${ref.name}'")
         }
@@ -283,12 +416,26 @@ class Checker(private val file: SourceFile) {
             val refs = linkedSetOf<String>()
             val bound = (decl.params?.map { it.name } ?: emptyList()).toSet()
             collectRefs(decl.body, bound, refs)
-            refs.mapNotNull { globals[it] }
+            // A name may be plain (`gcd`) or go through modules (`Ratios.make`), seen from the decl's module.
+            currentPath = decl.path
+            refs.mapNotNull { ref ->
+                lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
+                    lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
+                }
+            }.distinct().also { uses[decl] = it }
         }
+        currentPath = emptyList()
         return stronglyConnected(decls) { deps.getValue(it) }.map { component ->
             val recursive = component.size > 1 || component[0] in deps.getValue(component[0])
             component.firstOrNull { it.params == null && recursive }?.let {
-                throw CompileError(it.pos, "value '${it.name}' is defined in terms of itself")
+                throw CompileError(it.pos, "value '${it.simpleName}' is defined in terms of itself")
+            }
+            // OCaml modules can't call each other, so neither can functions in different ones.
+            component.map { it.path }.distinct().takeIf { it.size > 1 }?.let {
+                throw CompileError(
+                    component.first().pos,
+                    "${component.joinToString(" and ") { "'${it.name}'" }} call each other but are in different modules",
+                )
             }
             FunctionGroup(component, recursive)
         }
@@ -311,6 +458,7 @@ class Checker(private val file: SourceFile) {
             is Expr.Member -> {
                 go(e.target)
                 if (e.name !in bound) into += e.name // possibly an extension call
+                dotted(e, null)?.takeIf { it.substringBefore('.') !in bound }?.let { into += it } // possibly Module.member
             }
             is Expr.Binary -> {
                 go(e.left)
@@ -367,6 +515,7 @@ class Checker(private val file: SourceFile) {
 
     private fun checkGroup(group: FunctionGroup) {
         val declaredParams = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
+        currentPath = group.decls.first().path
         for (decl in group.decls) {
             val vars = decl.typeParams.associateWith { u.fresh() }
             declaredParams[decl] = vars
@@ -609,7 +758,7 @@ class Checker(private val file: SourceFile) {
             e.resolved = NameRef.Local(it.ocamlName)
             return it.type
         }
-        globals[e.name]?.let {
+        lookupGlobal(e.name, e.pos)?.let {
             e.resolved = NameRef.Global(it)
             return globalType(it)
         }
@@ -625,49 +774,70 @@ class Checker(private val file: SourceFile) {
     }
 
     /**
-     * Finds the constructor [name] (a record type, a variant, `Some` or `None`), or with a
-     * [qualifier], the case [name] of that interface (`Alphabet.A`). Where [hint], the type the
-     * constructor should build, is an interface with that case, the result has that type; so a
-     * variant name used by several interfaces is told apart by what's expected.
+     * Finds the constructor [name] (a record type, a variant, `Some` or `None`). A [qualifier] names
+     * where to look: an interface (`Alphabet.A`) or a module (`Ratios.Ratio`, `Shapes.Circle`).
+     * Where [hint], the type the constructor should build, is an interface with that case, the
+     * result has that type; so a variant name used by several interfaces is told apart by what's
+     * expected. [building] is false in patterns, which may take apart a record they couldn't build.
      */
-    private fun constructor(name: String, hint: Type?, pos: Pos, asValue: Boolean = false, qualifier: String? = null): ConstructorShape? {
-        if (qualifier == null) {
-            records[name]?.let { r ->
-                val args = r.typeParams.map { u.fresh() }
-                return ConstructorShape(ConstructorRef.Record(r), r.fields.map { it.name }, fieldTypes(r.typeParams, r.fields, args), Type.Con(r.name, args))
+    private fun constructor(
+        name: String,
+        hint: Type?,
+        pos: Pos,
+        asValue: Boolean = false,
+        qualifier: String? = null,
+        building: Boolean = true,
+    ): ConstructorShape? {
+        val qualifierSealed = qualifier?.let { lookupSealed(it, pos) }
+        val qualifierModule = if (qualifier != null && qualifierSealed == null) lookupModule(qualifier, pos) ?: return null else null
+        val record = when {
+            qualifierModule != null -> records[qualifierModule.name + "." + name]?.also {
+                if (!visible(it)) throw CompileError(pos, "'$name' is private to ${qualifierModule.simpleName}")
             }
-            if (name == "Some" || name == "None") {
-                val a = u.fresh()
-                val ref = ConstructorRef.Variant(null, null, name)
-                return if (name == "Some") ConstructorShape(ref, listOf("value"), listOf(a), Type.option(a))
-                else ConstructorShape(ref, emptyList(), emptyList(), Type.option(a))
+            qualifier == null -> lookupRecord(name, pos)
+            else -> null
+        }
+        if (record != null) {
+            if (building && record.privateConstructor && !inside(record.path)) {
+                throw CompileError(pos, "${record.simpleName}'s constructor is private to ${record.path.joinToString(".")}")
             }
+            val args = record.typeParams.map { u.fresh() }
+            return ConstructorShape(ConstructorRef.Record(record), record.fields.map { it.name }, fieldTypes(record.typeParams, record.fields, args), Type.Con(record.name, args))
+        }
+        if (qualifier == null && (name == "Some" || name == "None")) {
+            val a = u.fresh()
+            val ref = ConstructorRef.Variant(null, null, name)
+            return if (name == "Some") ConstructorShape(ref, listOf("value"), listOf(a), Type.option(a))
+            else ConstructorShape(ref, emptyList(), emptyList(), Type.option(a))
         }
         val hinted = when (val h = hint?.prune()) {
             is Type.Con -> h.name
             is Type.Fn -> if (asValue) (h.result.prune() as? Type.Con)?.name else null
             else -> null
         }?.takeIf { it in sealeds }
-        val case: CaseDecl = if (qualifier != null) {
-            val owner = sealeds[qualifier] ?: return null
-            val matches = caseDecls.getValue(owner.name).filter { it.name == name }
+        val case: CaseDecl = if (qualifierSealed != null) {
+            val matches = caseDecls.getValue(qualifierSealed.name).filter { it.name == name }
             matches.singleOrNull()
-                ?: throw CompileError(pos, if (matches.isEmpty()) "${owner.name} has no case '$name'" else "${owner.name} has several cases named '$name'")
+                ?: throw CompileError(pos, if (matches.isEmpty()) "${qualifierSealed.simpleName} has no case '$name'" else "${qualifierSealed.simpleName} has several cases named '$name'")
         } else {
             val inHint = hinted?.let { h -> caseDecls.getValue(h).filter { it.name == name } }.orEmpty()
             inHint.singleOrNull() ?: run {
-                val candidates = variantsByName[name] ?: return null
+                // Unqualified, a variant is in scope inside its module; through a module, it's that module's.
+                val candidates = variantsByName[name].orEmpty().filter { (s, _) ->
+                    visible(s) && if (qualifierModule != null) s.path == qualifierModule.name.split('.') else inside(s.path)
+                }
+                if (candidates.isEmpty()) return null
                 val (origin, variant) = candidates.singleOrNull()
                     ?: throw CompileError(
                         pos,
-                        "'$name' is a case of ${candidates.joinToString(" and ") { it.first.name }}; " +
-                            "write ${candidates.first().first.name}.$name, or annotate the expected type",
+                        "'$name' is a case of ${candidates.joinToString(" and ") { it.first.simpleName }}; " +
+                            "write ${candidates.first().first.simpleName}.$name, or annotate the expected type",
                     )
                 caseDecls.getValue(origin.name).first { it.variant === variant }
             }
         }
         // The type it builds: the expected interface if that has the case, else the one named.
-        val home = hinted?.takeIf { h -> caseDecls.getValue(h).any { it.sameCase(case) } } ?: qualifier ?: case.origin.name
+        val home = hinted?.takeIf { h -> caseDecls.getValue(h).any { it.sameCase(case) } } ?: qualifierSealed?.name ?: case.origin.name
         val args = sealeds.getValue(home).typeParams.map { u.fresh() }
         val fieldTypes = cases(home, args).first { it.first.sameCase(case) }.second
         return ConstructorShape(
@@ -678,10 +848,11 @@ class Checker(private val file: SourceFile) {
         )
     }
 
-    /** `Interface.Case` in an expression: the qualifier names an interface, not a value. */
+    /** `Alphabet.A`, `Ratios.Ratio` or `Shapes.Circle`: what qualifies a constructor, if [member] names one. */
     private fun qualifiedCase(member: Expr.Member, scope: Scope): String? {
-        val target = member.target as? Expr.Name ?: return null
-        return target.name.takeIf { it in sealeds && scope.lookup(it) == null && it !in globals }
+        val qualifier = dotted(member.target, scope) ?: return null
+        if (member.target is Expr.Name && lookupGlobal(qualifier, null) != null) return null
+        return qualifier.takeIf { lookupSealed(it, null) != null || lookupModule(it, null) != null }
     }
 
     /** Maps declared parameter names to argument indices: `order[i]` is the argument for parameter i. */
@@ -705,23 +876,34 @@ class Checker(private val file: SourceFile) {
 
     private fun inferCall(e: Expr.Call, expected: Type?, scope: Scope): Type {
         val callee = e.callee
-        if (callee is Expr.Name && scope.lookup(callee.name) == null) {
-            val global = globals[callee.name]
-            if (global?.params != null) {
-                val fn = globalType(global) as Type.Fn
-                callee.resolved = NameRef.Global(global)
-                callee.type = fn
-                val order = argOrder(e.args, global.params.map { it.name }, e.pos, "'${global.name}'")
-                checkArgs(e.args, order, fn.params, scope)
-                e.resolved = CallRef.Function(order)
-                return fn.result
-            }
-            if (global == null) constructor(callee.name, expected, callee.pos)?.let { return construct(e, it, callee.name, expected, scope) }
+        // A declared function, by name or through its module, is called with its parameters' names.
+        val global = when (callee) {
+            is Expr.Name -> if (scope.lookup(callee.name) == null) lookupGlobal(callee.name, callee.pos) else null
+            is Expr.Member -> moduleMember(callee, scope)
+            else -> null
         }
-        if (callee is Expr.Member) {
+        if (global?.params != null) {
+            val fn = globalType(global) as Type.Fn
+            when (callee) {
+                is Expr.Name -> callee.resolved = NameRef.Global(global)
+                is Expr.Member -> callee.resolved = MemberRef.Global(global)
+                else -> {}
+            }
+            callee.type = fn
+            val order = argOrder(e.args, global.params.map { it.name }, e.pos, "'${global.simpleName}'")
+            checkArgs(e.args, order, fn.params, scope)
+            e.resolved = CallRef.Function(order)
+            return fn.result
+        }
+        if (callee is Expr.Name && global == null && scope.lookup(callee.name) == null) {
+            constructor(callee.name, expected, callee.pos)?.let { return construct(e, it, callee.name, expected, scope) }
+        }
+        if (callee is Expr.Member && global == null) {
             qualifiedCase(callee, scope)?.let { qualifier ->
-                val shape = constructor(callee.name, expected, callee.pos, qualifier = qualifier)!!
-                return construct(e, shape, "$qualifier.${callee.name}", expected, scope)
+                constructor(callee.name, expected, callee.pos, qualifier = qualifier)?.let {
+                    return construct(e, it, "$qualifier.${callee.name}", expected, scope)
+                }
+                throw CompileError(callee.pos, "$qualifier has no '${callee.name}'")
             }
         }
         if (callee is Expr.Member) inferMethodCall(e, callee, scope)?.let { return it }
@@ -763,6 +945,9 @@ class Checker(private val file: SourceFile) {
         }
         if (member.name == "copy" && receiver is Type.Con && receiver.name in records) {
             val record = records.getValue(receiver.name)
+            if (record.privateConstructor && !inside(record.path)) {
+                throw CompileError(member.pos, "${record.simpleName}'s constructor is private to ${record.path.joinToString(".")}, so only it can copy one")
+            }
             if (e.args.any { it.name == null }) throw CompileError(e.pos, "copy takes named arguments: copy(field = value)")
             val types = fieldTypes(record.typeParams, record.fields, receiver.args)
             val seen = mutableSetOf<String>()
@@ -786,7 +971,7 @@ class Checker(private val file: SourceFile) {
             e.resolved = CallRef.Builtin(builtin.translation)
             return builtin.result
         }
-        val global = globals[member.name]?.takeIf { scope.lookup(member.name) == null }
+        val global = lookupGlobal(member.name, null)?.takeIf { scope.lookup(member.name) == null }
         if (global?.params != null && global.params.size == e.args.size + 1) {
             val fn = globalType(global) as Type.Fn
             assign(member.target, receiver, fn.params[0])
@@ -818,8 +1003,13 @@ class Checker(private val file: SourceFile) {
     }
 
     private fun inferMember(e: Expr.Member, expected: Type?, scope: Scope): Type {
+        moduleMember(e, scope)?.let {
+            e.resolved = MemberRef.Global(it)
+            return globalType(it)
+        }
         qualifiedCase(e, scope)?.let { qualifier ->
-            val shape = constructor(e.name, expected, e.pos, asValue = true, qualifier = qualifier)!!
+            val shape = constructor(e.name, expected, e.pos, asValue = true, qualifier = qualifier)
+                ?: throw CompileError(e.pos, "$qualifier has no '${e.name}'")
             e.resolved = MemberRef.Case(shape.ref)
             return if (shape.fieldTypes.isEmpty()) shape.result else Type.Fn(shape.fieldTypes, shape.result)
         }
@@ -933,7 +1123,7 @@ class Checker(private val file: SourceFile) {
         if (f is Expr.Call && f.args.none { it.name != null } && f.callee !is Expr.Member) {
             val callee = f.callee
             val isConstructor = callee is Expr.Name && scope.lookup(callee.name) == null &&
-                globals[callee.name] == null && constructor(callee.name, null, callee.pos) != null
+                lookupGlobal(callee.name, null) == null && constructor(callee.name, null, callee.pos) != null
             if (!isConstructor) {
                 val fn = infer(callee, null, scope).prune()
                 if (fn is Type.Fn && fn.params.size == f.args.size + 1) {
@@ -1027,14 +1217,21 @@ class Checker(private val file: SourceFile) {
         val t = type.prune()
         val subjectSealed = (t as? Type.Con)?.takeIf { it.name in sealeds }
         // `is Vowel`, naming an interface rather than one of the subject's cases, narrows the subject.
-        if (p.isCheck && p.qualifier == null && p.name in sealeds && caseDecls[subjectSealed?.name]?.none { it.name == p.name } != false) {
-            narrow(p, t, scope, subject)
-            return
+        if (p.isCheck) {
+            val target = lookupSealed(listOfNotNull(p.qualifier, p.name).joinToString("."), null)
+            val isCase = p.qualifier == null && caseDecls[subjectSealed?.name]?.any { it.name == p.name } == true
+            if (target != null && !isCase) {
+                narrow(p, target, t, scope, subject)
+                return
+            }
         }
         val shape = if (subjectSealed != null) {
             // Match against the subject's own cases, so Alphabet.A matches a Vowel.
+            // Through an interface, its cases; through a module, those of the interfaces in it.
             val qualifierCases = p.qualifier?.let { q ->
-                caseDecls[q] ?: throw CompileError(p.pos, "unknown interface '$q'")
+                lookupSealed(q, p.pos)?.let { caseDecls.getValue(it.name) }
+                    ?: lookupModule(q, p.pos)?.let { m -> caseDecls.filterKeys { it.substringBeforeLast('.') == m.name }.values.flatten() }
+                    ?: throw CompileError(p.pos, "unknown interface or module '$q'")
             }
             val matches = cases(subjectSealed.name, subjectSealed.args).filter { (case, _) ->
                 case.name == p.name && (qualifierCases == null || qualifierCases.any { it.sameCase(case) })
@@ -1047,7 +1244,7 @@ class Checker(private val file: SourceFile) {
                 )
             ConstructorShape(ConstructorRef.Variant(case.origin, case.variant, p.name), case.variant.fields.map { it.name }, fieldTypes, subjectSealed)
         } else {
-            constructor(p.name, type, p.pos, qualifier = p.qualifier)?.also { expect(it.result, type, p.pos) }
+            constructor(p.name, type, p.pos, qualifier = p.qualifier, building = false)?.also { expect(it.result, type, p.pos) }
                 ?: throw CompileError(p.pos, "unknown type or variant '${p.name}'")
         }
         p.resolved = shape.ref
@@ -1082,8 +1279,7 @@ class Checker(private val file: SourceFile) {
     }
 
     /** `is Vowel`: the subject is one of Vowel's cases, which must all be cases of the subject's type. */
-    private fun narrow(p: Pattern.Constructor, subjectType: Type, scope: Scope, subject: Expr?) {
-        val target = sealeds.getValue(p.name)
+    private fun narrow(p: Pattern.Constructor, target: Decl.Sealed, subjectType: Type, scope: Scope, subject: Expr?) {
         val subjectSealed = (subjectType as? Type.Con)?.takeIf { it.name in sealeds }
             ?: throw CompileError(p.pos, "'is ${p.name}' needs the subject to be an interface, not $subjectType")
         val narrowed = Type.Con(target.name, target.typeParams.map { u.fresh() })

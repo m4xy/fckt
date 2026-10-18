@@ -263,6 +263,39 @@ class CompilerTest {
     }
 
     @Test
+    fun `modules group declarations and hide private ones`() {
+        assertEquals("", run(File("examples/modules.fk").readText()))
+    }
+
+    @Test
+    fun `module errors`() {
+        val ratios = """
+            module Ratios {
+              type Ratio private(num: Int, denom: Int)
+              make(n: Int, d: Int) = Ratio(n, d)
+              private gcd(a: Int, b: Int): Int = a
+              private type Secret(x: Int)
+            }
+
+        """.trimIndent()
+        assertContains(error(ratios + "f() = Ratios.gcd(1, 2)"), "'gcd' is private to Ratios")
+        assertContains(error(ratios + "f() = Ratios.Ratio(1, 2)"), "Ratio's constructor is private to Ratios")
+        assertContains(error(ratios + "f(r: Ratios.Ratio) = r.copy(num = 3)"), "only it can copy one")
+        assertContains(error(ratios + "f() = Ratios.Secret(1)"), "'Secret' is private to Ratios")
+        assertContains(error(ratios + "f() = make(1, 2)"), "unknown name 'make'")
+        assertContains(
+            error("module M {\n  private type T(x: Int)\n  leak() = T(1)\n}"),
+            "'leak' is public, but its type uses T, which is private to M",
+        )
+        assertContains(
+            error("module A {\n  f(): Int = B.g()\n}\nmodule B {\n  g(): Int = A.f()\n}"),
+            "call each other but are in different modules",
+        )
+        // Taking a record apart doesn't need its constructor.
+        compile(ratios + "f(r: Ratios.Ratio) = when (r) {\n  Ratios.Ratio(n, d) -> n + d\n}")
+    }
+
+    @Test
     fun `type errors`() {
         assertContains(error("f(x: Int) = x + \"a\""), "expected String but found Int")
         assertContains(error("id<T>(x: T): Int = x"), "type parameter T of 'id' is always Int")

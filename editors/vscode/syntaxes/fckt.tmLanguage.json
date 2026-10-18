@@ -292,9 +292,12 @@
       }
     },
     "function-declaration": {
-      "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(?::[^=]*)?=(?![=>]))",
+      "match": "^\\s*(?:(private)\\s+)?([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(?::[^=]*)?=(?![=>]))",
       "captures": {
         "1": {
+          "name": "storage.modifier.fckt"
+        },
+        "2": {
           "name": "entity.name.function.fckt"
         }
       }
@@ -316,9 +319,12 @@
       ]
     },
     "binding": {
-      "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?::[^=]*)?=(?![=>]))",
+      "match": "^\\s*(?:(private)\\s+)?([a-z_][A-Za-z0-9_]*)(?=\\s*(?::[^=]*)?=(?![=>]))",
       "captures": {
         "1": {
+          "name": "storage.modifier.fckt"
+        },
+        "2": {
           "name": "variable.other.definition.fckt"
         }
       }
@@ -331,7 +337,11 @@
         },
         {
           "name": "keyword.declaration.fckt",
-          "match": "\\b(type|interface)\\b"
+          "match": "\\b(type|interface|module)\\b"
+        },
+        {
+          "name": "storage.modifier.fckt",
+          "match": "\\bprivate\\b"
         }
       ]
     },

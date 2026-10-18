@@ -9,10 +9,39 @@ import uk.m4xy.kastor.Required
 
 // ---- Structure ----
 
-/** A compilation unit (`.ml` file): type groups and let definitions, in order. */
+/** A compilation unit (`.ml` file): type groups, let definitions and modules, in order. */
 @Element("structure", function = "structure")
-@Children(TypeGroup::class, LetGroup::class, Comment::class)
+@Children(TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class)
 interface Structure
+
+/**
+ * `module Name [: sig ... end] = struct ... end`. Children: an optional [Signature], then the
+ * module's items.
+ */
+@Element("module", function = "moduleDef")
+@Children(Signature::class, TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class)
+interface ModuleDef {
+    @Required val name: String
+}
+
+/** `sig ... end`: what a module shows outside it. */
+@Element("sig", function = "signature")
+@Children(TypeGroup::class, SigValue::class, SigModule::class)
+interface Signature
+
+/** `val name : type` in a signature. */
+@Element("sig-value", function = "sigValue")
+interface SigValue {
+    @Required val name: String
+    @Required val type: String
+}
+
+/** `module Name : sig ... end` inside a signature. */
+@Element("sig-module", function = "sigModule")
+@Children(TypeGroup::class, SigValue::class, SigModule::class)
+interface SigModule {
+    @Required val name: String
+}
 
 /** `(* text *)` */
 @Element("comment", function = "comment")
@@ -35,6 +64,9 @@ interface TypeDef {
     @Required val name: String
     val params: List<String>
     val polymorphic: Boolean
+
+    /** `= private { ... }`: readable outside its module, but only built inside it. */
+    val isPrivate: Boolean
 }
 
 /** `name : type` in a record or inline record. */
