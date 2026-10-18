@@ -1,0 +1,5 @@
+node_modules/**
+scripts/**
+sample.fk
+package-lock.json
+*.vsix

@@ -1,0 +1,47 @@
+{
+  "name": "fckt",
+  "displayName": "fckt",
+  "description": "Syntax highlighting for fckt, a functional language with Kotlin syntax that compiles to OCaml",
+  "version": "0.1.0",
+  "publisher": "m4xy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m4xy/fckt"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "fckt",
+        "aliases": [
+          "fckt"
+        ],
+        "extensions": [
+          ".fk"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "fckt",
+        "scopeName": "source.fckt",
+        "path": "./syntaxes/fckt.tmLanguage.json"
+      }
+    ]
+  },
+  "scripts": {
+    "tokens": "node scripts/tokenize.js",
+    "package": "vsce package --skip-license"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "3.6.0",
+    "vscode-oniguruma": "2.0.1",
+    "vscode-textmate": "9.2.0"
+  }
+}

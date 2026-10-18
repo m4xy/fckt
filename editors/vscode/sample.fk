@@ -1,0 +1,28 @@
+// Every construct fckt has, for checking the highlighting.
+/* A block
+   comment */
+type Box<T>(value: T)
+type Pair<A, B>(first: A, second: List<Option<B>>)
+
+interface Tree<T> {
+  Leaf
+  Node(left: Tree<T>, value: T, right: Tree<T>)
+}
+
+size<T>(t: Tree<T>): Int = when (t) {
+  Leaf -> 0
+  Node(l, _, r) -> size(l) + 1 + size(r)
+}
+
+twice(f: (Int) -> Int, x: Int) = f(f(x))
+isSmall(n: Int) = n < 10 && n >= 0 || n != -1
+
+main() = {
+  fact(n: Int): Int = if (n <= 1) 1 else n * fact(n - 1)
+  ratio: Float = 2.5e3 / 4
+  label = "fact=${fact(5)} nested=${ { 1 }.toString()} escaped=\$ \t"
+  xs = [1, 2, 3].map((x: Int) -> x * 2).filter(x -> x > 2)
+  ignore: (String, Int) -> Boolean = ~false
+  println("${xs.size |> twice(x -> x + 1)} ${ignore("a", 1)} $ratio $label")
+  println(Box(3).toString())
+}

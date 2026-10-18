@@ -1,0 +1,481 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "fckt",
+  "scopeName": "source.fckt",
+  "fileTypes": [
+    "fk"
+  ],
+  "patterns": [
+    {
+      "include": "#code"
+    }
+  ],
+  "repository": {
+    "code": {
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#interface-declaration"
+        },
+        {
+          "include": "#type-declaration"
+        },
+        {
+          "include": "#function-declaration"
+        },
+        {
+          "include": "#binding"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#constants"
+        },
+        {
+          "include": "#type-arguments"
+        },
+        {
+          "include": "#builtin-types"
+        },
+        {
+          "include": "#option"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#lambda-parameter-list"
+        },
+        {
+          "include": "#lambda-parameter"
+        },
+        {
+          "include": "#parameter-name"
+        },
+        {
+          "include": "#named-argument"
+        },
+        {
+          "include": "#builtin-functions"
+        },
+        {
+          "include": "#method-call"
+        },
+        {
+          "include": "#property"
+        },
+        {
+          "include": "#call"
+        },
+        {
+          "include": "#wildcard"
+        },
+        {
+          "include": "#operators"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#braces"
+        },
+        {
+          "include": "#identifiers"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.fckt",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.fckt",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.fckt",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.fckt"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.fckt"
+        }
+      },
+      "patterns": [
+        {
+          "name": "constant.character.escape.fckt",
+          "match": "\\\\[ntr\\\\\"$]"
+        },
+        {
+          "name": "invalid.illegal.escape.fckt",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.template.expression.fckt",
+          "contentName": "meta.embedded.line.fckt",
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.template-expression.begin.fckt"
+            }
+          },
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.template-expression.end.fckt"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#code"
+            }
+          ]
+        },
+        {
+          "name": "meta.template.expression.fckt",
+          "match": "(\\$)([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.template-expression.begin.fckt"
+            },
+            "2": {
+              "name": "variable.other.fckt"
+            }
+          }
+        }
+      ]
+    },
+    "interface-declaration": {
+      "begin": "\\b(interface)\\s+([A-Z][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.declaration.interface.fckt"
+        },
+        "2": {
+          "name": "entity.name.type.interface.fckt"
+        }
+      },
+      "end": "(?<=\\})",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#type-arguments"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "begin": "\\{",
+          "end": "\\}",
+          "patterns": [
+            {
+              "include": "#comments"
+            },
+            {
+              "begin": "\\(",
+              "end": "\\)",
+              "patterns": [
+                {
+                  "include": "#code"
+                }
+              ]
+            },
+            {
+              "name": "entity.name.type.variant.fckt",
+              "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        }
+      ]
+    },
+    "type-declaration": {
+      "match": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "keyword.declaration.type.fckt"
+        },
+        "2": {
+          "name": "entity.name.type.fckt"
+        }
+      }
+    },
+    "function-declaration": {
+      "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(?::[^=]*)?=(?![=>]))",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.fckt"
+        }
+      }
+    },
+    "binding": {
+      "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?::[^=]*)?=(?![=>]))",
+      "captures": {
+        "1": {
+          "name": "variable.other.definition.fckt"
+        }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.fckt",
+          "match": "\\b(when|if|else|is)\\b"
+        },
+        {
+          "name": "keyword.declaration.fckt",
+          "match": "\\b(type|interface)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "name": "constant.language.boolean.fckt",
+      "match": "\\b(true|false)\\b"
+    },
+    "builtin-types": {
+      "name": "support.type.builtin.fckt",
+      "match": "\\b(Int|Float|Double|String|Boolean|Unit|Char|List|Option)\\b"
+    },
+    "option": {
+      "name": "support.constant.option.fckt",
+      "match": "\\b(Some|None)\\b"
+    },
+    "types": {
+      "name": "entity.name.type.fckt",
+      "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+    },
+    "type-arguments": {
+      "begin": "<(?=[A-Z][A-Za-z0-9_\\s,<>]*>)",
+      "end": ">",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.typeparameters.begin.fckt"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.typeparameters.end.fckt"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#type-arguments"
+        },
+        {
+          "include": "#builtin-types"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#punctuation"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.fckt",
+          "match": "\\b\\d[\\d_]*(?:\\.\\d+(?:[eE][+-]?\\d+)?|[eE][+-]?\\d+)\\b"
+        },
+        {
+          "name": "constant.numeric.integer.fckt",
+          "match": "\\b\\d[\\d_]*\\b"
+        }
+      ]
+    },
+    "lambda-parameter-list": {
+      "begin": "\\((?=[^()]*\\)\\s*->)",
+      "end": "\\)",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#keywords"
+        },
+        {
+          "include": "#constants"
+        },
+        {
+          "include": "#builtin-types"
+        },
+        {
+          "include": "#option"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#wildcard"
+        },
+        {
+          "name": "variable.parameter.fckt",
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+        },
+        {
+          "include": "#operators"
+        },
+        {
+          "include": "#punctuation"
+        }
+      ]
+    },
+    "lambda-parameter": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=->)",
+      "captures": {
+        "1": {
+          "name": "variable.parameter.fckt"
+        }
+      }
+    },
+    "parameter-name": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=:)",
+      "captures": {
+        "1": {
+          "name": "variable.parameter.fckt"
+        }
+      }
+    },
+    "named-argument": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?==(?![=>]))",
+      "captures": {
+        "1": {
+          "name": "variable.parameter.named-argument.fckt"
+        }
+      }
+    },
+    "builtin-functions": {
+      "match": "\\b(print|println|max|min|abs|identity|error)\\s*(?=\\()",
+      "captures": {
+        "1": {
+          "name": "support.function.builtin.fckt"
+        }
+      }
+    },
+    "method-call": {
+      "match": "(\\.)\\s*([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": {
+          "name": "punctuation.accessor.fckt"
+        },
+        "2": {
+          "name": "entity.name.function.member.fckt"
+        }
+      }
+    },
+    "property": {
+      "match": "(\\.)\\s*([a-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "punctuation.accessor.fckt"
+        },
+        "2": {
+          "name": "variable.other.property.fckt"
+        }
+      }
+    },
+    "call": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": {
+          "name": "entity.name.function.call.fckt"
+        }
+      }
+    },
+    "wildcard": {
+      "name": "variable.language.wildcard.fckt",
+      "match": "\\b_\\b"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.fckt",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.pipe.fckt",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.thunk.fckt",
+          "match": "~"
+        },
+        {
+          "name": "keyword.operator.comparison.fckt",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.fckt",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.assignment.fckt",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.arithmetic.fckt",
+          "match": "[+\\-*/%]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.comma.fckt",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.colon.fckt",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.terminator.statement.fckt",
+          "match": ";"
+        }
+      ]
+    },
+    "braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [
+        {
+          "include": "#code"
+        }
+      ]
+    },
+    "identifiers": {
+      "name": "variable.other.fckt",
+      "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+    }
+  }
+}
