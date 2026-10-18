@@ -12,7 +12,7 @@ integerPart(r: Ratio) = when (r) {
   Ratio(num, denom) -> num / denom
 }
 
-// *or, as there's only one case, by destructuring the fields in order, as in Kotlin.
+// ...or, as there's only one case, by destructuring the fields in order, as in Kotlin.
 integerPartDestructured(r: Ratio) = {
   (num, denom) = r
   num / denom
