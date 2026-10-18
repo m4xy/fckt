@@ -1,0 +1,68 @@
+// Interfaces that share cases. A case belongs to the interface that declares it (Alphabet.A), and
+// other interfaces can take it in, one at a time or all at once with *Other. A Vowel is then also
+// an Alphabet, so it can be passed wherever an Alphabet is expected, and `is Vowel` narrows an
+// Alphabet back down.
+
+interface Alphabet { A, B, C, D, E, I, O, U, W, Y }
+interface Digit { Zero, One }
+
+interface Vowel { Alphabet.A, Alphabet.E, Alphabet.I, Alphabet.O, Alphabet.U }
+interface SemiVowel { Alphabet.W, Alphabet.Y }
+interface VowelLike { *Vowel, *SemiVowel }
+interface Symbol { *Vowel, Digit.Zero, Digit.One }
+
+interface Shape { Circle(radius: Float), Rect(w: Float, h: Float) }
+
+interface VList<T> { Nil, Cons(head: T, tail: VList<T>) }
+interface WList<T> { *VList<T>, Snoc(init: WList<T>, last: T) }
+
+vowelOrder(v: Vowel) = when (v) {
+  Alphabet.A -> 1
+  Alphabet.E -> 2
+  Alphabet.I -> 3
+  Alphabet.O -> 4
+  Alphabet.U -> 5
+}
+
+describe(c: Alphabet) = when (c) {
+  is Vowel -> "vowel number ${vowelOrder(c)}"
+  is SemiVowel -> "semivowel"
+  else -> "consonant"
+}
+
+widen(v: Vowel): Alphabet = v
+
+pick(flag: Boolean) = if (flag) Alphabet.A else Digit.Zero
+
+toWList<T>(l: VList<T>): WList<T> = l
+
+size<T>(l: WList<T>): Int = when (l) {
+  Nil -> 0
+  Cons(_, tail) -> 1 + size(toWList(tail))
+  Snoc(init, _) -> size(init) + 1
+}
+
+area(s: Shape) = when (s) {
+  is Circle -> 3.0 * s.radius * s.radius
+  is Rect -> s.w * s.h
+}
+
+firstOf<T>(l: WList<T>) = when (l) {
+  is Cons -> Some(l.head)
+  else -> None
+}
+
+main() = {
+  assertEquals(2, vowelOrder(Alphabet.E))
+  assertEquals("vowel number 1", describe(widen(Alphabet.A)))
+  assertEquals("semivowel", describe(Alphabet.Y))
+  assertEquals("consonant", describe(Alphabet.B))
+  assert(Alphabet.E == widen(Alphabet.E))
+  assertEquals(Digit.Zero, pick(false))
+  symbols: List<Symbol> = [Alphabet.A, Digit.One]
+  letters = [Alphabet.E, Alphabet.B]
+  assertEquals("[A, One] [E, B]", "$symbols $letters")
+  assertEquals(3, size(Snoc(toWList(Cons(1, Cons(2, Nil))), 3)))
+  assertEquals(Some(1), firstOf(Cons(1, Nil)))
+  assertEquals(6.0, area(Rect(2.0, 3.0)))
+}

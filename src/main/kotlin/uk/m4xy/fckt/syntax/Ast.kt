@@ -43,12 +43,18 @@ sealed interface Decl {
         val fields: List<FieldDef>,
     ) : Decl
 
-    /** `interface Name<T> { Variant(fields) ... }`: a sealed sum type. */
+    /**
+     * `interface Name<T> { Variant(fields) ... }`: a sealed sum type. Besides declaring its own
+     * [variants], it can take in other interfaces' cases: one at a time with `Other.Case`
+     * ([caseRefs]), or all of them with `*Other<T>` ([includes]).
+     */
     data class Sealed(
         override val pos: Pos,
         override val name: String,
         val typeParams: List<String>,
         val variants: List<VariantDef>,
+        val caseRefs: List<CaseRefDef> = emptyList(),
+        val includes: List<TypeRef.Named> = emptyList(),
     ) : Decl
 
     /** `name<T>(params): R = body`; [params] is null for a value (`name = body`). */
@@ -64,6 +70,9 @@ sealed interface Decl {
 
 data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>)
 
+/** `Owner.Case` in an interface body: a case declared by another interface. */
+data class CaseRefDef(val pos: Pos, val owner: String, val case: String)
+
 data class SourceFile(val decls: List<Decl>)
 
 // ---- Expressions ----
@@ -72,6 +81,9 @@ data class SourceFile(val decls: List<Decl>)
 sealed class Expr {
     abstract val pos: Pos
     var type: Type? = null
+
+    /** Set when the value is used as a larger interface than its own, e.g. a Vowel as an Alphabet. */
+    var coerceTo: Type? = null
 
     class IntLit(override val pos: Pos, val value: Long) : Expr()
     class FloatLit(override val pos: Pos, val value: Double) : Expr()
@@ -185,17 +197,28 @@ sealed interface Pattern {
     /** `[]`, `[a, b]`, or `[head, *tail]` when [rest] is set. */
     data class ListPattern(override val pos: Pos, val elements: List<Pattern>, val rest: Pattern?) : Pattern
 
-    /** `Success(a, b)`, `None`, or (with [isCheck]) `is Success`, which smart-casts the subject. */
+    /**
+     * `Success(a, b)`, `Alphabet.A`, `None`, or (with [isCheck]) `is Success`, which smart-casts the
+     * subject. `is Vowel`, naming an interface, narrows the subject to that interface's cases.
+     */
     data class Constructor(
         override val pos: Pos,
         val name: String,
         val args: List<Pattern>?,
         val isCheck: Boolean,
+        val qualifier: String? = null,
     ) : Pattern {
         var resolved: ConstructorRef? = null
 
         /** For `is Variant` on a variable: the OCaml name bound to the variant's inline record. */
         var castVar: String? = null
+
+        /** For `is Variant` on a variable, when the variant is a tag: the names bound to its fields. */
+        var castFieldVars: List<String>? = null
+
+        /** For `is Interface`: the interface narrowed to, and the variable to rebind, if any. */
+        var narrowTo: Decl.Sealed? = null
+        var narrowVar: String? = null
     }
 }
 
@@ -243,6 +266,12 @@ sealed interface MemberRef {
 
     /** A field of a variant the subject was smart-cast to; [recordVar] holds its inline record. */
     data class CastField(val recordVar: String, val ocamlName: String) : MemberRef
+
+    /** A field of a tag the subject was smart-cast to, bound directly to [variable]. */
+    data class CastTagField(val variable: String) : MemberRef
+
+    /** `Alphabet.A`: a case named through its interface. */
+    data class Case(val ref: ConstructorRef) : MemberRef
 
     data class Builtin(val method: uk.m4xy.fckt.types.Builtin) : MemberRef
 }

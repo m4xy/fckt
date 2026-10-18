@@ -25,12 +25,16 @@ interface Comment {
 @Children(TypeDef::class)
 interface TypeGroup
 
-/** One type definition. Children: [FieldDecl]s for a record, or [VariantDecl]s for a variant type. */
+/**
+ * One type definition. Children: [FieldDecl]s for a record, or [VariantDecl]s for a variant type,
+ * which with [polymorphic] is a closed polymorphic variant: `[ `A | `B of int ]`.
+ */
 @Element("type", function = "typeDef")
 @Children(FieldDecl::class, VariantDecl::class)
 interface TypeDef {
     @Required val name: String
     val params: List<String>
+    val polymorphic: Boolean
 }
 
 /** `name : type` in a record or inline record. */
@@ -40,7 +44,7 @@ interface FieldDecl {
     @Required val type: String
 }
 
-/** A constructor. With [FieldDecl] children it carries an inline record. */
+/** A constructor. With [FieldDecl] children it carries an inline record, or, in a polymorphic variant, a tuple of their types. */
 @Element("variant", function = "variant")
 @Children(FieldDecl::class)
 interface VariantDecl {
@@ -201,7 +205,7 @@ interface Construct {
     @Required val name: String
 }
 
-/** `(expr : type)`. One child: the expression. */
+/** `(expr : type)`, or with [coerce], `(expr :> type)`. One child: the expression. */
 @Element("annotated", function = "annotated")
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
@@ -210,6 +214,7 @@ interface Construct {
 )
 interface Annotated {
     @Required val type: String
+    val coerce: Boolean
 }
 
 /** `[a; b; c]`. */

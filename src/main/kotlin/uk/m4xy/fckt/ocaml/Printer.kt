@@ -58,6 +58,13 @@ object Printer {
     private fun typeDef(n: ResolvedNode): String {
         val head = typeParams(n.list("params")) + n.str("name") + " ="
         val first = n.children.firstOrNull() ?: error("type ${n.str("name")} is empty")
+        if (n.attributes["polymorphic"] == true) {
+            val tags = n.children.map { v ->
+                "`" + v.str("name") + if (v.children.isEmpty()) "" else " of " + v.children.joinToString(" * ") { tupleElement(it.str("type")) }
+            }
+            val oneLine = "$head [ ${tags.joinToString(" | ")} ]"
+            return if (oneLine.length <= WIDTH) oneLine else "$head [\n" + tags.joinToString("\n") { "  | $it" } + "\n]"
+        }
         return if (first.name == "field-decl") {
             head + " " + fields(n.children)
         } else {
@@ -66,6 +73,9 @@ object Printer {
             }
         }
     }
+
+    /** A type inside `a * b`, parenthesized if it's a function or tuple itself. */
+    private fun tupleElement(type: String) = if ("->" in type || " * " in type) "($type)" else type
 
     private fun fields(children: List<ResolvedNode>): String {
         val parts = children.map { "${it.str("name")} : ${it.str("type")}" }
@@ -115,7 +125,7 @@ object Printer {
         }
         "construct" -> n.children.singleOrNull()?.let { n.str("name") + " " + sub(it, FIELD) } ?: n.str("name")
         "field" -> sub(n.children.single(), FIELD) + "." + n.str("name")
-        "annotated" -> "(" + expr(n.children.single(), FULL) + " : " + n.str("type") + ")"
+        "annotated" -> "(" + expr(n.children.single(), FULL) + (if (n.attributes["coerce"] == true) " :> " else " : ") + n.str("type") + ")"
         "infix" -> infix(n)
         "lambda" -> {
             val head = "fun ${n.list("params").joinToString(" ")} ->"

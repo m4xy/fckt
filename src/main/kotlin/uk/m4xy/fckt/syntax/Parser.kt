@@ -67,16 +67,28 @@ class Parser(private val tokens: List<Token>) {
                 expect(T.LBRACE, "'{'")
                 skipNewlines()
                 val variants = mutableListOf<VariantDef>()
+                val caseRefs = mutableListOf<CaseRefDef>()
+                val includes = mutableListOf<TypeRef.Named>()
                 while (!at(T.RBRACE)) {
                     val variantPos = peek.pos
-                    val variantName = upperIdent("a variant name")
-                    val fields = if (accept(T.LPAREN) != null) fieldList(variantPos).also { expect(T.RPAREN, "')'") } else emptyList()
-                    variants += VariantDef(variantPos, variantName, fields)
+                    if (accept(T.STAR) != null) {
+                        // *Other<T>: every case of Other
+                        includes += type() as? TypeRef.Named ?: throw error("'*' takes an interface", variantPos)
+                    } else {
+                        val variantName = upperIdent("a variant name")
+                        if (accept(T.DOT) != null) {
+                            // Other.Case: one case of another interface
+                            caseRefs += CaseRefDef(variantPos, variantName, upperIdent("a case name"))
+                        } else {
+                            val fields = if (accept(T.LPAREN) != null) fieldList(variantPos).also { expect(T.RPAREN, "')'") } else emptyList()
+                            variants += VariantDef(variantPos, variantName, fields)
+                        }
+                    }
                     accept(T.COMMA)
                     skipNewlines()
                 }
                 expect(T.RBRACE, "'}'")
-                Decl.Sealed(pos, name, typeParams, variants)
+                Decl.Sealed(pos, name, typeParams, variants, caseRefs, includes)
             }
             at(T.IDENT) -> {
                 val name = next().text
@@ -408,9 +420,18 @@ class Parser(private val tokens: List<Token>) {
                 expect(T.RBRACKET, "']'")
                 Pattern.ListPattern(pos, items, rest)
             }
-            accept(T.IS) != null -> Pattern.Constructor(pos, upperIdent("a type after 'is'"), null, isCheck = true)
+            accept(T.IS) != null -> {
+                val first = upperIdent("a type after 'is'")
+                if (accept(T.DOT) != null) Pattern.Constructor(pos, upperIdent("a case name"), null, isCheck = true, qualifier = first)
+                else Pattern.Constructor(pos, first, null, isCheck = true)
+            }
             at(T.IDENT) && peek.text[0].isUpperCase() -> {
-                val name = next().text
+                var qualifier: String? = null
+                var name = next().text
+                if (accept(T.DOT) != null) {
+                    qualifier = name
+                    name = upperIdent("a case name")
+                }
                 val args = if (accept(T.LPAREN) != null) {
                     val args = mutableListOf<Pattern>()
                     while (!at(T.RPAREN)) {
@@ -422,7 +443,7 @@ class Parser(private val tokens: List<Token>) {
                 } else {
                     null
                 }
-                Pattern.Constructor(pos, name, args, isCheck = false)
+                Pattern.Constructor(pos, name, args, isCheck = false, qualifier = qualifier)
             }
             at(T.IDENT) -> Pattern.Bind(pos, next().text)
             at(T.INT) || at(T.FLOAT) || at(T.STRING) || at(T.CHAR) || at(T.TRUE) || at(T.FALSE) -> Pattern.Literal(pos, primary())

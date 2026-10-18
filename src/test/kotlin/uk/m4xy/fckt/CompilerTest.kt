@@ -246,6 +246,23 @@ class CompilerTest {
     }
 
     @Test
+    fun `interfaces can share cases`() {
+        assertEquals("", run(File("examples/shared-cases.fk").readText()))
+    }
+
+    @Test
+    fun `shared case errors`() {
+        val letters = "interface Alphabet { A, B, E }\ninterface Digit { Zero }\ninterface Vowel { Alphabet.A, Alphabet.E }\n"
+        assertContains(error(letters + "f(flag: Boolean) = if (flag) Alphabet.A else Digit.Zero"), "no interface has all of Alphabet.A, Digit.Zero")
+        assertContains(error(letters + "f(v: Vowel) = when (v) {\n  is Alphabet -> 1\n}"), "Alphabet isn't part of Vowel: Vowel has no Alphabet.B")
+        assertContains(error(letters + "f(v: Vowel) = when (v) {\n  Alphabet.B -> 1\n  else -> 2\n}"), "Vowel has no case 'Alphabet.B'")
+        assertContains(error(letters + "f(a: Alphabet): Vowel = a"), "expected Vowel but found Alphabet")
+        assertContains(error("interface A { X }\ninterface B { *A, Y }\ninterface C { *B, A.Z }"), "A has no case 'Z'")
+        assertContains(error("interface L<T> { Nil }\ninterface M { L.Nil }"), "can't take single cases from the generic interface L")
+        assertContains(error("interface A { *B }\ninterface B { *A }"), "includes itself")
+    }
+
+    @Test
     fun `type errors`() {
         assertContains(error("f(x: Int) = x + \"a\""), "expected String but found Int")
         assertContains(error("id<T>(x: T): Int = x"), "type parameter T of 'id' is always Int")
@@ -256,7 +273,7 @@ class CompilerTest {
         assertContains(error("x = x + 1"), "value 'x' is defined in terms of itself")
         assertContains(
             error("interface A { E(x: Int) }\ninterface B { E(y: Int) }\nf() = E(1)"),
-            "'E' is a variant of A and B",
+            "'E' is a case of A and B; write A.E",
         )
     }
 

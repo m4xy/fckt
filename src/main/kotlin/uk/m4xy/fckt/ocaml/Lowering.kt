@@ -12,6 +12,7 @@ import uk.m4xy.fckt.syntax.Pattern
 import uk.m4xy.fckt.syntax.Statement
 import uk.m4xy.fckt.syntax.StringPart
 import uk.m4xy.fckt.syntax.TypeRef
+import uk.m4xy.fckt.syntax.VariantDef
 import uk.m4xy.fckt.types.ASSERT
 import uk.m4xy.fckt.types.ASSERT_EQUALS
 import uk.m4xy.fckt.types.Builtin
@@ -98,7 +99,17 @@ class Lowering(private val program: Program) {
                     params = decl.typeParams.map(::typeVar)
                     for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams))
                 }
-                is Decl.Sealed -> typeDef(snake(decl.name)) {
+                is Decl.Sealed -> if (decl.name in program.polymorphic) {
+                    typeDef(snake(decl.name)) {
+                        params = decl.typeParams.map(::typeVar)
+                        polymorphic = true
+                        for (case in program.cases.getValue(decl.name)) {
+                            variant(tagName(case.origin, case.variant)) {
+                                for (field in case.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams))
+                            }
+                        }
+                    }
+                } else typeDef(snake(decl.name)) {
                     params = decl.typeParams.map(::typeVar)
                     for (variant in decl.variants) {
                         variant(variant.name) {
@@ -123,10 +134,12 @@ class Lowering(private val program: Program) {
         return stronglyConnected(decls) { decl ->
             val fields = when (decl) {
                 is Decl.Record -> decl.fields
-                is Decl.Sealed -> decl.variants.flatMap { it.fields }
+                is Decl.Sealed -> program.cases.getValue(decl.name).flatMap { it.fields }
                 is Decl.Function -> emptyList()
             }
-            fields.flatMap { refs(it.type) }.mapNotNull { byName[it] }.distinct()
+            val included = (decl as? Decl.Sealed)?.let { s -> program.cases.getValue(s.name).map { it.origin.name } + s.includes.map { it.name } }.orEmpty()
+            (fields.flatMap { refs(it.type) } + included).filter { it != decl.name }.mapNotNull { byName[it] }.distinct() +
+                listOfNotNull(decl.takeIf { d -> fields.any { decl.name in refs(it.type) } })
         }
     }
 
@@ -196,6 +209,19 @@ class Lowering(private val program: Program) {
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
+        // A narrower interface used as a wider one: (v :> alphabet).
+        val widened = e.coerceTo ?: return exprUnwidened(e)
+        annotated(typeText(widened)) {
+            coerce = true
+            exprUnwidened(e)
+        }
+    }
+
+    private fun <S> S.exprUnwidened(e: Expr) where
+        S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
+        S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
+        S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         when (e) {
             is Expr.IntLit -> literal(if (e.type?.prune() == Type.FLOAT) "${e.value}." else e.value.toString())
             is Expr.FloatLit -> literal(e.value.toString())
@@ -238,6 +264,16 @@ class Lowering(private val program: Program) {
             is Expr.Member -> when (val r = e.resolved!!) {
                 is MemberRef.Field -> fieldGet(r.ocamlName) { gen(qualified(Gen.Src(e.target), r)) }
                 is MemberRef.CastField -> fieldGet(r.ocamlName) { ident(r.recordVar) }
+                is MemberRef.CastTagField -> ident(r.variable)
+                is MemberRef.Case -> {
+                    val fn = e.type!!.prune()
+                    if (fn is Type.Fn) {
+                        val names = fn.params.indices.map { "x$it" }
+                        gen(Gen.Fun(names, construct(r.ref, fn.result, names.map { Gen.Id(it) })))
+                    } else {
+                        gen(construct(r.ref, fn, emptyList()))
+                    }
+                }
                 is MemberRef.Builtin -> gen(builtin(r.method, e.target, emptyList()))
             }
             is Expr.Binary -> {
@@ -390,6 +426,18 @@ class Lowering(private val program: Program) {
         }
         is ConstructorRef.Variant -> {
             val variant = ref.variant
+            val origin = ref.sealed
+            // A shared case is a tag, carrying its fields as one value or a tuple.
+            if (origin != null && variant != null && origin.name in program.polymorphic) {
+                return Gen.Ctor(
+                    "`" + tagName(origin, variant),
+                    when (args.size) {
+                        0 -> null
+                        1 -> args.single()
+                        else -> Gen.Tuple(args)
+                    },
+                )
+            }
             val value = when {
                 variant == null -> Gen.Ctor(ref.name, args.singleOrNull())
                 variant.fields.isEmpty() -> Gen.Ctor(ref.name, null)
@@ -398,6 +446,9 @@ class Lowering(private val program: Program) {
             if (ref.name in program.ambiguousConstructors) Gen.Ann(value, typeText(type)) else value
         }
     }
+
+    /** A shared case's tag, named after the interface that declares it: `Alphabet_A`. */
+    private fun tagName(origin: Decl.Sealed, variant: VariantDef) = "${origin.name}_${variant.name}"
 
     /** The record of a field access, annotated with its type when the label belongs to several records. */
     private fun qualified(record: Gen, field: MemberRef.Field): Gen {
@@ -460,15 +511,36 @@ class Lowering(private val program: Program) {
         }
         is Pattern.Constructor -> {
             val args = p.args?.map { pattern(it) }
-            when (val ref = p.resolved!!) {
-                is ConstructorRef.Record -> args?.let { recordPattern(ref.decl.fields.map { it.name }, it) } ?: "_"
-                is ConstructorRef.Variant -> when {
-                    ref.variant == null -> if (ref.name == "None") "None" else "Some ${args?.single()?.let(::atomPattern) ?: "_"}"
-                    ref.variant.fields.isEmpty() -> ref.name
-                    args != null -> "${ref.name} ${recordPattern(ref.variant.fields.map { it.name }, args)}"
-                    else -> "${ref.name} ${p.castVar ?: "_"}"
+            val ref = p.resolved
+            val narrowTo = p.narrowTo
+            val origin = (ref as? ConstructorRef.Variant)?.sealed
+            val variant = (ref as? ConstructorRef.Variant)?.variant
+            when {
+                // `is Vowel`: any of Vowel's tags, rebinding the subject at the narrower type.
+                narrowTo != null ->
+                    if (narrowTo.name !in program.polymorphic) "_"
+                    else "#${snake(narrowTo.name)}" + (p.narrowVar?.let { " as $it" } ?: "")
+                origin != null && variant != null && origin.name in program.polymorphic -> {
+                    val tag = "`" + tagName(origin, variant)
+                    val payload = args ?: p.castFieldVars ?: variant.fields.map { "_" }
+                    when (payload.size) {
+                        0 -> tag
+                        1 -> "$tag ${atomPattern(payload.single())}"
+                        else -> "$tag (${payload.joinToString(", ")})"
+                    }
                 }
+                else -> ordinaryPattern(p, args, ref!!)
             }
+        }
+    }
+
+    private fun ordinaryPattern(p: Pattern.Constructor, args: List<String>?, ref: ConstructorRef): String = when (ref) {
+        is ConstructorRef.Record -> args?.let { recordPattern(ref.decl.fields.map { it.name }, it) } ?: "_"
+        is ConstructorRef.Variant -> when {
+            ref.variant == null -> if (ref.name == "None") "None" else "Some ${args?.single()?.let(::atomPattern) ?: "_"}"
+            ref.variant.fields.isEmpty() -> ref.name
+            args != null -> "${ref.name} ${recordPattern(ref.variant.fields.map { it.name }, args)}"
+            else -> "${ref.name} ${p.castVar ?: "_"}"
         }
     }
 
@@ -680,6 +752,30 @@ class Lowering(private val program: Program) {
         }
         val s = sealeds.getValue(name)
         val params = s.typeParams.map { "show_${it.lowercase()}" } + "(v : ${applied(s.name, s.typeParams.map { typeVar(it) to false })})"
+        if (s.name in program.polymorphic) {
+            // Tags carry their fields as a tuple; bind each to show it.
+            return params to Gen.Match(
+                v,
+                program.cases.getValue(s.name).map { case ->
+                    val tag = "`" + tagName(case.origin, case.variant)
+                    val names = case.fields.indices.map { "x$it" }
+                    val pattern = when (names.size) {
+                        0 -> tag
+                        1 -> "$tag x0"
+                        else -> "$tag (${names.joinToString(", ")})"
+                    }
+                    pattern to if (case.fields.isEmpty()) Gen.Str(case.name)
+                    else concat(
+                        listOf<Gen>(Gen.Str("${case.name}(")) + case.fields.flatMapIndexed { i, f ->
+                            listOf(
+                                Gen.Str((if (i > 0) ", " else "") + f.name + "="),
+                                Gen.App(showRef(f.type, s.typeParams), listOf(Gen.Id(names[i]))),
+                            )
+                        } + Gen.Str(")"),
+                    )
+                },
+            )
+        }
         return params to Gen.Match(
             v,
             s.variants.map { variant ->
