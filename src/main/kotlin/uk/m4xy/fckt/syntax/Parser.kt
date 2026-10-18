@@ -179,7 +179,7 @@ class Parser(private val tokens: List<Token>) {
     /** Parses a lambda if one starts here: `x ->`, `(a, b) ->`, `() ->` or `~`. */
     private fun lambdaStart(): Expr? {
         val pos = peek.pos
-        if (accept(T.TILDE) != null) return Expr.Lambda(pos, emptyList(), expr())
+        if (accept(T.TILDE) != null) return Expr.Lambda(pos, emptyList(), expr(), ignoresArguments = true)
         if (at(T.IDENT) && peekAt(1).kind == T.ARROW) {
             val name = next().text
             next()

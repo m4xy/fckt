@@ -34,7 +34,7 @@ withLogging(gateway: PaymentGateway) = PaymentGateway(
 
 fakeGateway = PaymentGateway(
   charge = amount -> if (amount.value > 0) Success("order-1", amount) else InvalidOrder("nothing to charge"),
-  refund = (orderId, amount) -> true
+  refund = ~true
 )
 
 describe(result: OrderResult) = when (result) {

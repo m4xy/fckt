@@ -95,8 +95,16 @@ sealed class Expr {
 
     class Unary(override val pos: Pos, val op: String, val operand: Expr) : Expr()
 
-    /** `x -> e`, `(a, b) -> e`, or `~e` (no params). */
-    class Lambda(override val pos: Pos, val params: List<Param>, val body: Expr) : Expr() {
+    /**
+     * `x -> e`, `(a, b) -> e`, or `~e`, which [ignoresArguments]: it takes as many as the expected
+     * function type has (`~true` as a `(String, Money) -> Boolean`), or none, making a thunk.
+     */
+    class Lambda(
+        override val pos: Pos,
+        val params: List<Param>,
+        val body: Expr,
+        val ignoresArguments: Boolean = false,
+    ) : Expr() {
         var paramNames: List<String> = emptyList()
     }
 

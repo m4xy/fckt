@@ -36,7 +36,7 @@ See `examples/orders.fk` for a complete program.
 | `name = e` | `let name = e` | A top-level value or a binding in a block. |
 | `{ a = 1; f(a) }` | `let a = 1 in f a` | A block is an expression; it ends with its value. Unit expressions before that run in order (`e1; e2`). |
 | `x -> e`, `(a, b) -> e` | `fun x -> e`, `fun a b -> e` | Lambdas never use braces, so `{` always starts a block. |
-| `~e` | `fun () -> e` | A thunk, of type `() -> T`. |
+| `~e` | `fun () -> e`, `fun _ _ -> e` | A function that ignores its arguments. It takes as many as the expected type has, so `~true` can be a `(String, Money) -> Boolean`. With no expected function type it's a thunk, `() -> T`. |
 | `x \|> f` | `x \|> f` | |
 | `x \|> f(a)` | `x \|> f a` | When `f` takes one more argument than it's given, `x` is passed last. |
 | `when (x) { P -> e ... }` | `match x with P -> e ...` | Patterns: literals, `_`, names, `V(p, q)`, `is V`, and `A, B` for either. |
@@ -77,3 +77,7 @@ OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the res
 when it's installed.
 
 Kastor comes from `../kastor` through a Gradle included build.
+
+## Editor support
+
+`editors/vscode` has syntax highlighting for VS Code and IntelliJ. See its README for how to install it.

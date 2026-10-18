@@ -113,6 +113,22 @@ class CompilerTest {
     }
 
     @Test
+    fun `tilde ignores as many arguments as the expected type has`() {
+        val source = """
+            type Gateway(refund: (String, Int) -> Boolean, ping: () -> Int)
+            main() = {
+              g = Gateway(refund = ~true, ping = ~7)
+              always: (Int) -> String = ~"same"
+              println("${'$'}{g.refund("a", 1)} ${'$'}{g.ping()} ${'$'}{always(3)}")
+            }
+        """.trimIndent()
+        val ml = compile(source)
+        assertContains(ml, "refund = (fun _ _ -> true)")
+        assertContains(ml, "ping = (fun () -> 7)")
+        assertEquals("true 7 same\n", run(source))
+    }
+
+    @Test
     fun `numbers promote to float like Kotlin`() {
         val output = run(
             """

@@ -607,7 +607,15 @@ class Checker(private val file: SourceFile) {
     }
 
     private fun inferLambda(e: Expr.Lambda, expected: Type?, scope: Scope): Type {
-        val hint = (expected?.prune() as? Type.Fn)?.takeIf { it.params.size == e.params.size }
+        val expectedFn = expected?.prune() as? Type.Fn
+        if (e.ignoresArguments) {
+            val params = expectedFn?.params ?: emptyList()
+            e.paramNames = params.map { "_" }
+            val result = expectedFn?.result ?: u.fresh()
+            check(e.body, result, scope)
+            return Type.Fn(params, result)
+        }
+        val hint = expectedFn?.takeIf { it.params.size == e.params.size }
         checkDistinct(e.params.map { it.name to it.pos })
         val inner = Scope(scope)
         val params = e.params.mapIndexed { i, p ->
