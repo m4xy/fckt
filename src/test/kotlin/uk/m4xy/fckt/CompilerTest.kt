@@ -55,7 +55,10 @@ class CompilerTest {
         )
     }
 
-    /** The OCaml manual's tour (examples/manual): each section's output matches its `.out` file. */
+    /**
+     * The OCaml manual's tour (examples/manual). Each section asserts its results, so it must run
+     * silently, unless a `.out` file gives the output it should print.
+     */
     @TestFactory
     fun `the OCaml manual examples`(): List<DynamicTest> =
         File("examples/manual").listFiles { f -> f.extension == "fk" }!!.sorted().map { file ->
@@ -63,7 +66,8 @@ class CompilerTest {
                 val source = file.readText()
                 val args = source.lines().firstOrNull { it.startsWith("// args:") }
                     ?.removePrefix("// args:")?.trim()?.split(" ") ?: emptyList()
-                assertEquals(File(file.path.removeSuffix(".fk") + ".out").readText(), run(source, args))
+                val expected = File(file.path.removeSuffix(".fk") + ".out").takeIf { it.exists() }?.readText() ?: ""
+                assertEquals(expected, run(source, args))
             }
         }
 
@@ -223,6 +227,22 @@ class CompilerTest {
             """.trimIndent(),
         )
         assertEquals("Box(value=12)\n", output)
+    }
+
+    @Test
+    fun `a failed assertion stops the program with both values`() {
+        val ml = compile("main() = {\n  assert(1 < 2)\n  assertEquals([1, 2], [2, 1].reversed())\n  assertEquals(55, 54)\n}")
+        assumeTrue(ocaml != null, "ocaml isn't installed")
+        val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
+        try {
+            val process = ProcessBuilder(ocaml, file.path).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor(30, TimeUnit.SECONDS)
+            assertEquals(2, process.exitValue(), output)
+            assertContains(output, "line 4: expected:<55> but was:<54>")
+        } finally {
+            file.delete()
+        }
     }
 
     @Test

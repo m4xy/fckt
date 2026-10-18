@@ -79,11 +79,17 @@ insert<T>(x: T, btree: BTree<T>): BTree<T> = when (btree) {
 
 main() = {
   third = Ratio(1, 3)
-  println("${addRatio(third, Ratio(num = 2, denom = 5))}")
-  println("${integerPart(Ratio(7, 2))} ${integerPartDestructured(Ratio(7, 2))}")
-  println("${getNum(third)}/${getDenom(third)} ${ratio(3, 4)} ${integerProduct(5, third)}")
-  println("${addNum(Int(123), Float(3.14159))}")
-  println("${safeSquareRoot(2.0)} ${safeSquareRoot(-1.0)}")
+  assertEquals(Ratio(num = 11, denom = 15), addRatio(third, Ratio(num = 2, denom = 5)))
+  assertEquals(3, integerPart(Ratio(7, 2)))
+  assertEquals(3, integerPartDestructured(Ratio(7, 2)))
+  assertEquals(1, getNum(third))
+  assertEquals(3, getDenom(third))
+  assertEquals(Ratio(3, 4), ratio(3, 4))
+  assertEquals(Ratio(5, 3), integerProduct(5, third))
+  assertEquals(Float(126.14159), addNum(Int(123), Float(3.14159)))
+  assertEquals(Some(1.4142135623730951), safeSquareRoot(2.0))
+  assertEquals(None, safeSquareRoot(-1.0))
   tree = [5, 3, 8, 1].fold(Empty, (t, x) -> insert(x, t))
-  println("${member(3, tree)} ${member(4, tree)}")
+  assert(member(3, tree))
+  assert(!member(4, tree))
 }

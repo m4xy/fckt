@@ -152,6 +152,10 @@ private fun template(head: String, vararg slots: Any): Builtin = Builtin.Templat
 /** A built-in method or property: its parameter and result types, given the receiver's. */
 class BuiltinMember(val params: List<Type>, val result: Type, val translation: Builtin, val isProperty: Boolean = false)
 
+/** Names of the assertion built-ins, which lowering translates specially. */
+const val ASSERT = "assert"
+const val ASSERT_EQUALS = "assertEquals"
+
 object Builtins {
     /** Looks up `receiver.name`, where [receiver] is already pruned. */
     fun member(receiver: Type, name: String, u: Unifier): BuiltinMember? {
@@ -247,6 +251,9 @@ object Builtins {
         "identity" -> u.fresh().let { a -> Type.Fn(listOf(a), a) to "Fun.id" }
         "error" -> u.fresh().let { a -> Type.Fn(listOf(Type.STRING), a) to "failwith" }
         "atan2" -> Type.Fn(listOf(Type.FLOAT, Type.FLOAT), Type.FLOAT) to "atan2"
+        // Lowering writes these out itself, to report the failing line.
+        "assert" -> Type.Fn(listOf(Type.BOOLEAN), Type.UNIT) to ASSERT
+        "assertEquals" -> u.fresh().let { a -> Type.Fn(listOf(a, a), Type.UNIT) to ASSERT_EQUALS }
         // lazy(~e): computes e the first time `.value` is read, then remembers it.
         "lazy" -> u.fresh().let { a -> Type.Fn(listOf(Type.Fn(emptyList(), a)), Type.lazy(a)) to "Lazy.from_fun" }
         in MATH -> Type.Fn(listOf(Type.FLOAT), Type.FLOAT) to name

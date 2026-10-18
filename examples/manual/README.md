@@ -1,16 +1,21 @@
 # The OCaml manual's tour, in fckt
 
 These files translate [chapter 1 of the OCaml manual](https://ocaml.org/manual/5.5/coreexamples.html),
-"The core language", into fckt. Each file is one section and prints what the OCaml toplevel shows
-for its phrases. The `.out` file next to each is its expected output, which `./gradlew test`
-checks.
+"The core language", into fckt. Each file is one section, and its `main` asserts what the OCaml
+toplevel shows for each phrase, with `assert` and `assertEquals`. A section runs silently when every
+assertion holds, which `./gradlew test` checks. Section 11 is a standalone program, so it prints
+its result; `11-gcd.out` holds the expected output.
 
 ```sh
 fckt 04-records-and-variants.fk && ocaml 04-records-and-variants.ml
 ```
 
-Values print the way Kotlin's `toString()` does. For example, the record `{num = 11; denom = 15}`
-prints as `Ratio(num=11, denom=15)`, and the float `1.` prints as `1.0`.
+A failed assertion stops the program and shows both values, printed the way Kotlin's `toString()`
+would. For example, the record `{num = 11; denom = 15}` shows as `Ratio(num=11, denom=15)`:
+
+```
+line 82: expected:<Ratio(num=11, denom=16)> but was:<Ratio(num=11, denom=15)>
+```
 
 ## Section by section
 

@@ -51,9 +51,12 @@ exprToString(exp: Expression): String = {
 }
 
 main() = {
-  println("${eval([("x", 1.0), ("y", 3.14)], Prod(Sum(Var("x"), Const(2.0)), Var("y")))}")
-  println("${deriv(Quot(Const(1.0), Var("x")), "x")}")
+  assertEquals(9.42, eval([("x", 1.0), ("y", 3.14)], Prod(Sum(Var("x"), Const(2.0)), Var("y"))))
+  assertEquals(
+    Quot(Diff(Prod(Const(0.0), Var("x")), Prod(Const(1.0), Const(1.0))), Prod(Var("x"), Var("x"))),
+    deriv(Quot(Const(1.0), Var("x")), "x")
+  )
   e = Sum(Prod(Const(2.0), Var("x")), Const(1.0))
-  println(exprToString(e))
-  println(exprToString(deriv(e, "x")))
+  assertEquals("2.0 * x + 1.0", exprToString(e))
+  assertEquals("2.0 * 1.0 + 0.0 * x + 0.0", exprToString(deriv(e, "x")))
 }

@@ -15,23 +15,24 @@ insert<T>(elt: T, lst: List<T>): List<T> = when (lst) {
 
 main() = {
   // Booleans
-  println("${(1 < 2) == false}")
+  assertEquals(false, (1 < 2) == false)
   one = if (true) 1 else 2
-  println("$one")
+  assertEquals(1, one)
 
   // Characters
-  println("${'a'}")
-  println("${'\n'.code}")
+  assertEquals("a", 'a'.toString())
+  assertEquals(10, '\n'.code)
 
   // Strings. Kotlin's raw strings stand in for OCaml's quoted strings.
-  println("Hello" + " " + "world")
-  println("""This is a quoted string, here, neither \ nor " are special characters""")
-  println("${"""\\""" == "\\\\"}")
-  println("${"""the end of this|}quoted string is here""" == "the end of this|}quoted string is here"}")
+  assertEquals("Hello world", "Hello" + " " + "world")
+  assertEquals("This is a quoted string, here, neither \\ nor \" are special characters",
+    """This is a quoted string, here, neither \ nor " are special characters""")
+  assert("""\\""" == "\\\\")
+  assert("""the end of this|}quoted string is here""" == "the end of this|}quoted string is here")
 
   // Lists. [x, *l] is OCaml's x :: l.
-  println("${["Life", *l]}")
-  println("${sort(l)}")
-  println("${sort([6, 2, 5, 3])}")
-  println("${sort([3.14, 2.718])}")
+  assertEquals(["Life", "is", "a", "tale", "told", "etc."], ["Life", *l])
+  assertEquals(["a", "etc.", "is", "tale", "told"], sort(l))
+  assertEquals([2, 3, 5, 6], sort([6, 2, 5, 3]))
+  assertEquals([2.718, 3.14], sort([3.14, 2.718]))
 }

@@ -1,5 +1,5 @@
 // 1 Basics
-// The OCaml toplevel prints each phrase's value; a fckt program prints them from main.
+// The OCaml toplevel prints each phrase's value. Here, main asserts what it would print.
 
 pi = 4.0 * atan(1.0)
 
@@ -9,10 +9,10 @@ square(x: Float) = x * x
 fib(n: Int): Int = if (n < 2) n else fib(n - 1) + fib(n - 2)
 
 main() = {
-  println("${1 + 2 * 3}")
-  println("$pi")
-  println("${square(sin(pi)) + square(cos(pi))}")
+  assertEquals(7, 1 + 2 * 3)
+  assertEquals(3.141592653589793, pi)
+  assertEquals(1.0, square(sin(pi)) + square(cos(pi)))
   // OCaml rejects 1.0 * 2. fckt promotes the Int, as Kotlin does.
-  println("${1.0 * 2}")
-  println("${fib(10)}")
+  assertEquals(2.0, 1.0 * 2)
+  assertEquals(55, fib(10))
 }

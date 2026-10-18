@@ -12,6 +12,8 @@ import uk.m4xy.fckt.syntax.Pattern
 import uk.m4xy.fckt.syntax.Statement
 import uk.m4xy.fckt.syntax.StringPart
 import uk.m4xy.fckt.syntax.TypeRef
+import uk.m4xy.fckt.types.ASSERT
+import uk.m4xy.fckt.types.ASSERT_EQUALS
 import uk.m4xy.fckt.types.Builtin
 import uk.m4xy.fckt.types.Program
 import uk.m4xy.fckt.types.Type
@@ -36,6 +38,7 @@ private sealed interface Gen {
     data class Ann(val expr: Gen, val type: String) : Gen
     data class Match(val subject: Gen, val cases: List<Pair<String, Gen>>) : Gen
     data class Tuple(val elements: List<Gen>) : Gen
+    data class If(val condition: Gen, val then: Gen, val otherwise: Gen) : Gen
     data class ListOf(val items: List<Gen>) : Gen
     data class Src(val expr: Expr) : Gen
 }
@@ -216,7 +219,10 @@ class Lowering(private val program: Program) {
             is Expr.Name -> when (val r = e.resolved!!) {
                 is NameRef.Local -> ident(r.ocamlName)
                 is NameRef.Global -> ident(snake(r.decl.name))
-                is NameRef.Builtin -> ident(r.ocaml)
+                is NameRef.Builtin -> {
+                    if (r.ocaml == ASSERT || r.ocaml == ASSERT_EQUALS) throw CompileError(e.pos, "${r.ocaml} must be called")
+                    ident(r.ocaml)
+                }
                 is NameRef.Constructor -> {
                     val fn = e.type!!.prune()
                     if (fn is Type.Fn) {
@@ -283,6 +289,8 @@ class Lowering(private val program: Program) {
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
+        val builtin = ((e.callee as? Expr.Name)?.resolved as? NameRef.Builtin)?.ocaml
+        if (builtin == ASSERT || builtin == ASSERT_EQUALS) return gen(assertion(e, builtin))
         when (val r = e.resolved!!) {
             is CallRef.Function -> apply {
                 expr(e.callee)
@@ -311,6 +319,22 @@ class Lowering(private val program: Program) {
                 if (ambiguous) annotated(typeText(e.type!!)) { recordUpdate(update) } else recordUpdate(update)
             }
         }
+    }
+
+    /**
+     * `assert(c)` is `if c then () else failwith "line N: assertion failed"`, and
+     * `assertEquals(e, a)` calls a helper that shows both values, in Kotlin's words, when they differ.
+     */
+    private fun assertion(e: Expr.Call, name: String): Gen {
+        val where = "line ${e.pos.line}"
+        val args = e.args.map { it.value }
+        if (name == ASSERT) {
+            return Gen.If(Gen.Src(args[0]), Gen.Lit("()"), Gen.App(Gen.Id("failwith"), listOf(Gen.Str("$where: assertion failed"))))
+        }
+        return Gen.App(
+            Gen.Id(helper("fk_assert_equals")),
+            listOf(show(args[1].type!!, args[1]), Gen.Str(where), Gen.Src(args[0]), Gen.Src(args[1])),
+        )
     }
 
     /** `[a, b]`, `a :: rest` or `xs @ rest`: elements are consed on, and a spread list is appended. */
@@ -534,6 +558,11 @@ class Lowering(private val program: Program) {
             }
             is Gen.Src -> expr(g.expr)
             is Gen.Tuple -> tuple { g.elements.forEach { gen(it) } }
+            is Gen.If -> ifThenElse {
+                gen(g.condition)
+                gen(g.then)
+                gen(g.otherwise)
+            }
             is Gen.ListOf -> listLit { g.items.forEach { gen(it) } }
         }
     }
@@ -594,7 +623,7 @@ class Lowering(private val program: Program) {
             val name = showTypes.firstOrNull { it !in bodies } ?: break
             bodies[name] = showBody(name)
         }
-        if ("fk_show_list" in helpers || "fk_show_option" in helpers || "fk_show_float" in helpers) helperFunctions()
+        if (helpers.isNotEmpty()) helperFunctions()
         if (bodies.isEmpty()) return
         // Only show functions that call each other share a `let rec`.
         val types = bodies.keys.toList()
@@ -627,6 +656,7 @@ class Lowering(private val program: Program) {
         is Gen.Ann -> mentions(g.expr, names)
         is Gen.Match -> mentions(g.subject, names) || g.cases.any { mentions(it.second, names) }
         is Gen.Tuple -> g.elements.any { mentions(it, names) }
+        is Gen.If -> mentions(g.condition, names) || mentions(g.then, names) || mentions(g.otherwise, names)
         is Gen.ListOf -> g.items.any { mentions(it, names) }
     }
 
@@ -693,6 +723,28 @@ class Lowering(private val program: Program) {
                             }
                         }
                     }
+                }
+            }
+            if ("fk_assert_equals" in helpers) {
+                binding("fk_assert_equals") {
+                    params = listOf("show", "where", "expected", "actual")
+                    gen(
+                        Gen.If(
+                            Gen.Op("=", Gen.Id("expected"), Gen.Id("actual")),
+                            Gen.Lit("()"),
+                            Gen.App(
+                                Gen.Id("failwith"),
+                                listOf(
+                                    concat(
+                                        listOf(
+                                            Gen.Id("where"), Gen.Str(": expected:<"), Gen.App(Gen.Id("show"), listOf(Gen.Id("expected"))),
+                                            Gen.Str("> but was:<"), Gen.App(Gen.Id("show"), listOf(Gen.Id("actual"))), Gen.Str(">"),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    )
                 }
             }
             if ("fk_show_list" in helpers) {

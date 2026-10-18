@@ -44,8 +44,13 @@ isAOrB(x: FirstVariant) = when (x) {
 
 main() = {
   r = FirstRecord(1, 2, 3)
-  println("${lookAtXThenZ(r)} ${permute(A)} ${f(First(r))}")
-  println("${projectAndRotate(r)} ${lookAtXz(MiddleRecord(4, 5))} ${lookAtXThenY(r)} ${isAOrB(B)}")
+  assertEquals(4, lookAtXThenZ(r))
+  assertEquals(B, permute(A))
+  assertEquals((r, 1), f(First(r)))
+  assertEquals(FirstRecord(-2, 1, 0), projectAndRotate(r))
+  assertEquals(4, lookAtXz(MiddleRecord(4, 5)))
+  assertEquals(3, lookAtXThenY(r))
+  assert(isAOrB(B))
   last: LastVariant = A
-  println("${LastRecord(6)} $last")
+  assertEquals(A, last)
 }

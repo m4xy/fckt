@@ -1,10 +1,7 @@
 // 7 Lazy expressions
 // lazy(~e) computes e the first time .value is read, and remembers it, like Kotlin's lazy.
 
-lazyTwo = lazy(~{
-  println("lazy_two evaluation")
-  1 + 1
-})
+lazyTwo = lazy(~(1 + 1))
 
 lazyL = lazy(~([1, 2] + [3, 4]))
 
@@ -17,16 +14,17 @@ maybeEval<T>(lazyGuard: Lazy<Boolean>, lazyExpr: Lazy<T>) =
   }
 
 main() = {
-  println("${lazyTwo.value}")
-  println("${lazyTwo.value}")
-  l = lazyL.value
-  println("$l")
-  println(maybeEval(lazy(~false), lazy(~{
-    println("forcing lazy_expr")
-    1
-  })))
-  println(maybeEval(lazy(~true), lazy(~{
-    println("forcing lazy_expr")
-    1
-  })))
+  // Nothing is computed until .value is read, and then only once.
+  assert(!lazyTwo.isInitialized())
+  assertEquals(2, lazyTwo.value)
+  assert(lazyTwo.isInitialized())
+  assertEquals([1, 2, 3, 4], lazyL.value)
+
+  notForced = lazy(~1)
+  assertEquals("matches if (Lazy.force lazy_guard = false); lazy_expr not forced", maybeEval(lazy(~false), notForced))
+  assert(!notForced.isInitialized())
+
+  forced = lazy(~1)
+  assertEquals("matches if (Lazy.force lazy_guard = true); lazy_expr forced", maybeEval(lazy(~true), forced))
+  assert(forced.isInitialized())
 }

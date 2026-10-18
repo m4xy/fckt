@@ -510,7 +510,13 @@ class Checker(private val file: SourceFile) {
             else -> throw CompileError(callee.pos, "a $t is not a function")
         }
         if (fn.params.size != e.args.size) throw CompileError(e.pos, "this function takes ${fn.params.size} arguments, not ${e.args.size}")
-        checkArgs(e.args, e.args.indices.toList(), fn.params, scope)
+        if ((callee as? Expr.Name)?.resolved == NameRef.Builtin(ASSERT_EQUALS)) {
+            // The actual value's type tells apart a variant name in the expected value: assertEquals(A, permute(B)).
+            check(e.args[1].value, fn.params[1], scope)
+            check(e.args[0].value, fn.params[0], scope)
+        } else {
+            checkArgs(e.args, e.args.indices.toList(), fn.params, scope)
+        }
         e.resolved = CallRef.Function(e.args.indices.toList())
         return fn.result
     }

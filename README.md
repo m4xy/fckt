@@ -56,7 +56,8 @@ tour of the core language, translated section by section.
 | `"$x and ${f(y)}"` | `"" ^ show x ^ ...` | Values print like Kotlin's `toString()`, e.g. `Money(value=3)`. |
 
 `Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `List<T>`, `Option<T>` and
-`Lazy<T>` are built in. `[a, b]` is a list literal, and `Some(x)` and `None` build options. Arithmetic on an
+`Lazy<T>` are built in. `assert(condition)` and `assertEquals(expected, actual)` stop the program
+when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` is a list literal, and `Some(x)` and `None` build options. Arithmetic on an
 `Int` and a `Float` gives a `Float`, as in Kotlin. Built-in methods are defined in
 `types/Types.kt`: `map`, `filter`, `fold`, `sum`, `size`, `joinToString`, `getOrElse`, `toInt`,
 and others.

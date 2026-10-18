@@ -1,5 +1,0 @@
-3 + 2 is an integer value, 4.5 * 1.0 is a float, "this is a string"
-Outputting an integer using a custom printer: 42
-The current setting is Some(3).
-There is only None
-3 is an integer value, 4.5 is a float, "string value"

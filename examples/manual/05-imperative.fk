@@ -32,9 +32,10 @@ id<T>(x: T) = x
 g() = (id(1), id(true))
 
 main() = {
-  println("${addVect([1.0, 2.0], [3.0, 4.0])}")
+  assertEquals([4.0, 6.0], addVect([1.0, 2.0], [3.0, 4.0]))
   mypoint = Point(0.0, 0.0)
-  println("${translate(mypoint, 1.0, 2.0)} $mypoint")
-  println("${randoms(0, 3)}")
-  println("${g()}")
+  assertEquals(Point(1.0, 2.0), translate(mypoint, 1.0, 2.0))
+  assertEquals(Point(0.0, 0.0), mypoint)
+  assertEquals([1345, 34585330, 889292591635], randoms(0, 3))
+  assertEquals((1, true), g())
 }

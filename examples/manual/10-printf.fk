@@ -14,8 +14,14 @@ ppOption<T>(printer: (T) -> String, o: Option<T>) = when (o) {
 str(i: Int, x: Float, s: String) = "$i is an integer value, $x is a float, \"$s\""
 
 main() = {
-  println("${3} + ${2} is an integer value, ${4.5} * ${1.0} is a float, \"${"this is a string"}\"")
-  println("Outputting an integer using a custom printer: ${ppInt(42)}")
-  println("The current setting is ${Some(3) |> ppOption(ppInt)}.\nThere is only ${None |> ppOption(ppInt)}")
-  println(str(3, 4.5, "string value"))
+  assertEquals(
+    "3 + 2 is an integer value, 4.5 * 1.0 is a float, \"this is a string\"",
+    "${3} + ${2} is an integer value, ${4.5} * ${1.0} is a float, \"${"this is a string"}\""
+  )
+  assertEquals("Outputting an integer using a custom printer: 42", "Outputting an integer using a custom printer: ${ppInt(42)}")
+  assertEquals(
+    "The current setting is Some(3). There is only None",
+    "The current setting is ${Some(3) |> ppOption(ppInt)}. There is only ${None |> ppOption(ppInt)}"
+  )
+  assertEquals("3 is an integer value, 4.5 is a float, \"string value\"", str(3, 4.5, "string value"))
 }
