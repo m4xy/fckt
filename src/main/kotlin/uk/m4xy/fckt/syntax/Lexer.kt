@@ -1,9 +1,9 @@
 package uk.m4xy.fckt.syntax
 
 enum class T {
-    IDENT, INT, FLOAT, STRING, NEWLINE, EOF,
+    IDENT, INT, FLOAT, STRING, CHAR, NEWLINE, EOF,
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
-    COMMA, DOT, COLON, SEMI, ASSIGN, ARROW, PIPE, TILDE, BANG, UNDERSCORE,
+    COMMA, DOT, ELLIPSIS, COLON, SEMI, ASSIGN, ARROW, PIPE, TILDE, BANG, UNDERSCORE,
     PLUS, MINUS, STAR, SLASH, PERCENT, EQ, NEQ, LT, GT, LE, GE, AND, OR,
     TYPE, INTERFACE, WHEN, IF, ELSE, IS, TRUE, FALSE,
 }
@@ -23,7 +23,7 @@ private val KEYWORDS = mapOf(
 
 /** Tokens after which a line break never ends a statement. */
 private val CONTINUES_LINE = setOf(
-    T.COMMA, T.DOT, T.COLON, T.ASSIGN, T.ARROW, T.PIPE, T.TILDE, T.BANG, T.PLUS, T.MINUS, T.STAR, T.SLASH,
+    T.COMMA, T.DOT, T.ELLIPSIS, T.COLON, T.ASSIGN, T.ARROW, T.PIPE, T.TILDE, T.BANG, T.PLUS, T.MINUS, T.STAR, T.SLASH,
     T.PERCENT, T.EQ, T.NEQ, T.LT, T.GT, T.LE, T.GE, T.AND, T.OR, T.LPAREN, T.LBRACKET, T.LBRACE,
     T.SEMI, T.NEWLINE,
 )
@@ -52,7 +52,9 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
                 }
                 c.isLetter() || c == '_' -> identifier(pos)
                 c.isDigit() -> number(pos)
+                src.startsWith("\"\"\"", i) -> rawString(pos)
                 c == '"' -> string(pos)
+                c == '\'' -> char(pos)
                 else -> symbol(pos)
             }
         }
@@ -123,68 +125,131 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
         add(Token(if (float) T.FLOAT else T.INT, src.substring(start, i).replace("_", ""), pos))
     }
 
+    private fun escape(pos: Pos): Char {
+        val e = src.getOrNull(i) ?: throw CompileError(pos, "unterminated literal")
+        advance()
+        return when (e) {
+            'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; '\\' -> '\\'; '"' -> '"'; '\'' -> '\''; '$' -> '$'
+            else -> throw CompileError(Pos(line, col - 1), "unknown escape \\$e")
+        }
+    }
+
+    private fun char(pos: Pos) {
+        advance()
+        val c = when (src.getOrNull(i)) {
+            null, '\n', '\'' -> throw CompileError(pos, "empty or unterminated character literal")
+            '\\' -> {
+                advance()
+                escape(pos)
+            }
+            else -> src[i].also { advance() }
+        }
+        if (src.getOrNull(i) != '\'') throw CompileError(pos, "a character literal holds one character")
+        advance()
+        add(Token(T.CHAR, c.toString(), pos))
+    }
+
+    /** `\"\"\"text\"\"\"`: no escapes and may span lines, but `$name` and `${expr}` still interpolate, as in Kotlin. */
+    private fun rawString(pos: Pos) {
+        advance(3)
+        val parts = mutableListOf<RawPart>()
+        val text = StringBuilder()
+        while (true) {
+            if (i >= src.length) throw CompileError(pos, "unterminated raw string")
+            if (src.startsWith("\"\"\"", i) && !src.startsWith("\"\"\"\"", i)) {
+                advance(3)
+                break
+            }
+            if (!template(parts, text, pos)) {
+                text.append(src[i])
+                advance()
+            }
+        }
+        if (text.isNotEmpty()) parts += RawPart.Text(text.toString())
+        add(Token(T.STRING, "", pos, parts))
+    }
+
+    /** Reads a `$name` or `${expr}` at the cursor into [parts], first flushing [text]; false if there's none. */
+    private fun template(parts: MutableList<RawPart>, text: StringBuilder, pos: Pos): Boolean {
+        val c = src[i]
+        val next = src.getOrNull(i + 1)
+        if (c != '$' || next == null || !(next == '{' || next.isLetter() || next == '_')) return false
+        if (text.isNotEmpty()) parts += RawPart.Text(text.toString())
+        text.clear()
+        if (next == '{') {
+            advance(2)
+            val codePos = Pos(line, col)
+            val start = i
+            var depth = 1
+            while (i < src.length) {
+                if (src[i] == '"') {
+                    skipString(pos)
+                    continue
+                }
+                if (src[i] == '{') depth++
+                if (src[i] == '}' && --depth == 0) break
+                advance()
+            }
+            if (i >= src.length) throw CompileError(pos, "unterminated string template")
+            parts += RawPart.Code(src.substring(start, i), codePos)
+            advance()
+        } else {
+            advance()
+            val codePos = Pos(line, col)
+            val start = i
+            while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) advance()
+            parts += RawPart.Code(src.substring(start, i), codePos)
+        }
+        return true
+    }
+
+    /** Moves past a string literal inside a template, so its braces and quotes aren't the template's. */
+    private fun skipString(pos: Pos) {
+        if (src.startsWith("\"\"\"", i)) {
+            advance(3)
+            while (i < src.length && !(src.startsWith("\"\"\"", i) && !src.startsWith("\"\"\"\"", i))) advance()
+            if (i >= src.length) throw CompileError(pos, "unterminated raw string")
+            advance(3)
+            return
+        }
+        advance()
+        while (i < src.length && src[i] != '"' && src[i] != '\n') advance(if (src[i] == '\\') 2 else 1)
+        if (i >= src.length || src[i] == '\n') throw CompileError(pos, "unterminated string")
+        advance()
+    }
+
     private fun string(pos: Pos) {
         advance()
         val parts = mutableListOf<RawPart>()
         val text = StringBuilder()
-        fun flush() {
-            if (text.isNotEmpty()) parts += RawPart.Text(text.toString())
-            text.clear()
-        }
         while (true) {
             if (i >= src.length || src[i] == '\n') throw CompileError(pos, "unterminated string")
-            val c = src[i]
             when {
-                c == '"' -> {
+                src[i] == '"' -> {
                     advance()
                     break
                 }
-                c == '\\' -> {
+                src[i] == '\\' -> {
                     advance()
-                    val e = src.getOrNull(i) ?: throw CompileError(pos, "unterminated string")
-                    text.append(
-                        when (e) {
-                            'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; '\\' -> '\\'; '"' -> '"'; '$' -> '$'
-                            else -> throw CompileError(Pos(line, col), "unknown escape \\$e")
-                        },
-                    )
-                    advance()
+                    text.append(escape(pos))
                 }
-                c == '$' && src.getOrNull(i + 1) == '{' -> {
-                    flush()
-                    advance(2)
-                    val codePos = Pos(line, col)
-                    val start = i
-                    var depth = 1
-                    while (i < src.length) {
-                        if (src[i] == '{') depth++
-                        if (src[i] == '}' && --depth == 0) break
-                        if (src[i] == '\n') throw CompileError(pos, "unterminated string template")
-                        advance()
-                    }
-                    if (i >= src.length) throw CompileError(pos, "unterminated string template")
-                    parts += RawPart.Code(src.substring(start, i), codePos)
-                    advance()
-                }
-                c == '$' && (src.getOrNull(i + 1)?.let { it.isLetter() || it == '_' } == true) -> {
-                    flush()
-                    advance()
-                    val codePos = Pos(line, col)
-                    val start = i
-                    while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) advance()
-                    parts += RawPart.Code(src.substring(start, i), codePos)
-                }
+                template(parts, text, pos) -> {}
                 else -> {
-                    text.append(c)
+                    text.append(src[i])
                     advance()
                 }
             }
         }
-        flush()
+        if (text.isNotEmpty()) parts += RawPart.Text(text.toString())
         add(Token(T.STRING, "", pos, parts))
     }
 
     private fun symbol(pos: Pos) {
+        if (src.startsWith("...", i)) {
+            advance(3)
+            add(Token(T.ELLIPSIS, "...", pos))
+            return
+        }
         val two = if (i + 1 < src.length) src.substring(i, i + 2) else ""
         val twoKind = when (two) {
             "->" -> T.ARROW; "|>" -> T.PIPE; "==" -> T.EQ; "!=" -> T.NEQ; "<=" -> T.LE; ">=" -> T.GE

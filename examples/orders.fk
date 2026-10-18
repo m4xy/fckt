@@ -2,7 +2,8 @@ type Money(Int)
 type UserId(value: String)
 type Order(id: String, user: UserId, items: List<Money>)
 
-interface OrderResult { // sealed: these are its only variants
+// sealed: these are its only variants
+interface OrderResult {
   Success(orderId: String, total: Money)
   InvalidOrder(reason: String)
   PaymentFailed(errorCode: Int, message: String)

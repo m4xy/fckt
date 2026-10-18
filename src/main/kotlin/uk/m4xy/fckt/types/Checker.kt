@@ -64,8 +64,12 @@ class Checker(private val file: SourceFile) {
 
         val labelCounts = records.values.flatMap { r -> r.fields.map { snake(it.name) } }.groupingBy { it }.eachCount()
         val main = globals["main"]?.also {
-            if (it.params?.isEmpty() != true) throw CompileError(it.pos, "main must be declared as main() = ...")
-            val result = (schemes.getValue(it).type as Type.Fn).result
+            val fn = schemes.getValue(it).type as? Type.Fn
+            val params = fn?.params
+            if (params == null || params.size > 1 || (params.size == 1 && !u.unify(params[0], Type.list(Type.STRING)))) {
+                throw CompileError(it.pos, "main must be declared as main() = ... or main(args: List<String>) = ...")
+            }
+            val result = fn.result
             if (!u.unify(result, Type.UNIT)) throw CompileError(it.pos, "main must return Unit, not $result")
         }
         return Program(
@@ -147,6 +151,7 @@ class Checker(private val file: SourceFile) {
     /** Converts written type syntax to a [Type], with type parameters taken from [typeParams]. */
     private fun resolve(ref: TypeRef): Type = when (ref) {
         is TypeRef.Function -> Type.Fn(ref.params.map { resolve(it) }, resolve(ref.result))
+        is TypeRef.Tuple -> Type.tuple(ref.elements.map { resolve(it) })
         is TypeRef.Named -> {
             val args = ref.args.map { resolve(it) }
             fun arity(n: Int) {
@@ -204,7 +209,9 @@ class Checker(private val file: SourceFile) {
         fun go(x: Expr, b: Set<String> = bound) = collectRefs(x, b, into)
         when (e) {
             is Expr.Name -> if (e.name !in bound) into += e.name
-            is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit -> {}
+            is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
+            is Expr.Tuple -> e.elements.forEach { go(it) }
+            is Expr.Spread -> go(e.list)
             is Expr.StringLit -> e.parts.forEach { if (it is StringPart.Interpolated) go(it.expr) }
             is Expr.ListLit -> e.items.forEach { go(it) }
             is Expr.Call -> {
@@ -247,6 +254,10 @@ class Checker(private val file: SourceFile) {
                             b = b + s.name
                         }
                         is Statement.Effect -> go(s.expr, b)
+                        is Statement.Destructure -> {
+                            go(s.value, b)
+                            b = b + patternNames(s.pattern)
+                        }
                     }
                 }
                 go(e.result, b)
@@ -257,7 +268,9 @@ class Checker(private val file: SourceFile) {
     private fun patternNames(p: Pattern): List<String> = when (p) {
         is Pattern.Bind -> listOf(p.name)
         is Pattern.Constructor -> p.args?.flatMap { patternNames(it) } ?: emptyList()
-        else -> emptyList()
+        is Pattern.Tuple -> p.elements.flatMap { patternNames(it) }
+        is Pattern.ListPattern -> p.elements.flatMap { patternNames(it) } + (p.rest?.let { patternNames(it) } ?: emptyList())
+        is Pattern.Wildcard, is Pattern.Literal -> emptyList()
     }
 
     // ---- Functions ----
@@ -336,6 +349,12 @@ class Checker(private val file: SourceFile) {
         is Expr.IntLit -> if (expected?.prune() == Type.FLOAT) Type.FLOAT else Type.INT
         is Expr.FloatLit -> Type.FLOAT
         is Expr.BoolLit -> Type.BOOLEAN
+        is Expr.CharLit -> Type.CHAR
+        is Expr.Tuple -> {
+            val hint = (expected?.prune() as? Type.Con)?.takeIf { it.name == Type.TUPLE && it.args.size == e.elements.size }
+            Type.tuple(e.elements.mapIndexed { i, x -> infer(x, hint?.args?.get(i), scope).also { t -> hint?.let { expect(t, it.args[i], x.pos) } } })
+        }
+        is Expr.Spread -> throw CompileError(e.pos, "'...' can only be used inside a list literal")
         is Expr.StringLit -> {
             e.parts.forEach { if (it is StringPart.Interpolated) infer(it.expr, null, scope) }
             Type.STRING
@@ -343,7 +362,14 @@ class Checker(private val file: SourceFile) {
         is Expr.Name -> inferName(e, expected, scope)
         is Expr.ListLit -> {
             val element = (expected?.prune() as? Type.Con)?.takeIf { it.name == "List" }?.args?.get(0) ?: u.fresh()
-            e.items.forEach { check(it, element, scope) }
+            for (item in e.items) {
+                if (item is Expr.Spread) {
+                    check(item.list, Type.list(element), scope)
+                    item.type = Type.list(element)
+                } else {
+                    check(item, element, scope)
+                }
+            }
             Type.list(element)
         }
         is Expr.Call -> inferCall(e, expected, scope)
@@ -497,6 +523,20 @@ class Checker(private val file: SourceFile) {
             member.type = type
             return null // Called like any other function value.
         }
+        if (member.name == "copy" && receiver is Type.Con && receiver.name in records) {
+            val record = records.getValue(receiver.name)
+            if (e.args.any { it.name == null }) throw CompileError(e.pos, "copy takes named arguments: copy(field = value)")
+            val types = fieldTypes(record.typeParams, record.fields, receiver.args)
+            val seen = mutableSetOf<String>()
+            for (arg in e.args) {
+                val index = record.fields.indexOfFirst { it.name == arg.name }
+                if (index < 0) throw CompileError(arg.value.pos, "${record.name} has no field '${arg.name}'")
+                if (!seen.add(arg.name!!)) throw CompileError(arg.value.pos, "'${arg.name}' is passed twice")
+                check(arg.value, types[index], scope)
+            }
+            e.resolved = CallRef.Copy(record)
+            return receiver
+        }
         if (e.args.any { it.name != null }) throw CompileError(e.pos, "named arguments aren't supported in method calls")
         Builtins.member(receiver, member.name, u)?.let { builtin ->
             if (builtin.isProperty) throw CompileError(member.pos, "'${member.name}' is a property; write it without ()")
@@ -572,6 +612,12 @@ class Checker(private val file: SourceFile) {
         var r = infer(e.right, l.takeIf { it !is Type.Var }, scope).prune()
         val arithmetic = e.op in setOf("+", "-", "*", "/", "%")
 
+        val isList = { t: Type -> t is Type.Con && t.name == "List" }
+        if (e.op == "+" && (isList(l) || isList(r))) {
+            expect(r, l, e.right.pos)
+            e.resolved = BinaryRef("@", false, false)
+            return l
+        }
         if (e.op == "+" && (l == Type.STRING || r == Type.STRING)) {
             expect(l, Type.STRING, e.left.pos)
             expect(r, Type.STRING, e.right.pos)
@@ -683,7 +729,7 @@ class Checker(private val file: SourceFile) {
         return result
     }
 
-    private fun checkPattern(p: Pattern, type: Type, scope: Scope, subject: Expr?, owner: Expr.When) {
+    private fun checkPattern(p: Pattern, type: Type, scope: Scope, subject: Expr?, owner: Expr.When?) {
         when (p) {
             is Pattern.Wildcard -> {}
             is Pattern.Bind -> {
@@ -692,11 +738,33 @@ class Checker(private val file: SourceFile) {
                 scope.vars[p.name] = Local(type, p.ocamlName)
             }
             is Pattern.Literal -> check(p.expr, type, scope)
+            is Pattern.Tuple -> {
+                val t = type.prune()
+                val record = (t as? Type.Con)?.let { records[it.name] }
+                if (record != null) {
+                    // A record's fields, in declaration order, like a Kotlin data class.
+                    if (p.elements.size != record.fields.size) {
+                        throw CompileError(p.pos, "${record.name} has ${record.fields.size} fields, not ${p.elements.size}")
+                    }
+                    p.record = record
+                    p.elements.zip(fieldTypes(record.typeParams, record.fields, t.args)).forEach { (el, ft) -> checkPattern(el, ft, scope, null, owner) }
+                } else {
+                    val elements = p.elements.map { u.fresh() }
+                    expect(Type.tuple(elements), type, p.pos)
+                    p.elements.zip(elements).forEach { (el, et) -> checkPattern(el, et, scope, null, owner) }
+                }
+            }
+            is Pattern.ListPattern -> {
+                val element = u.fresh()
+                expect(Type.list(element), type, p.pos)
+                p.elements.forEach { checkPattern(it, element, scope, null, owner) }
+                p.rest?.let { checkPattern(it, Type.list(element), scope, null, owner) }
+            }
             is Pattern.Constructor -> {
                 val shape = constructor(p.name, type, p.pos) ?: throw CompileError(p.pos, "unknown type or variant '${p.name}'")
                 expect(shape.result, type, p.pos)
                 p.resolved = shape.ref
-                if (p.name in variantsByName && variantsByName.getValue(p.name).size > 1) owner.annotateSubject = true
+                if (p.name in variantsByName && variantsByName.getValue(p.name).size > 1) owner?.annotateSubject = true
                 val args = p.args
                 if (args != null) {
                     if (args.size != shape.fieldTypes.size) {
@@ -719,6 +787,12 @@ class Checker(private val file: SourceFile) {
         }
     }
 
+    private fun irrefutable(p: Pattern): Boolean = when (p) {
+        is Pattern.Bind, is Pattern.Wildcard -> true
+        is Pattern.Tuple -> p.elements.all { irrefutable(it) }
+        else -> false
+    }
+
     // ---- Blocks ----
 
     private fun inferBlock(e: Expr.Block, expected: Type?, scope: Scope): Type {
@@ -726,6 +800,21 @@ class Checker(private val file: SourceFile) {
         for (statement in e.statements) {
             when (statement) {
                 is Statement.Effect -> infer(statement.expr, null, inner)
+                is Statement.Destructure -> {
+                    val type = infer(statement.value, null, inner)
+                    val names = patternNames(statement.pattern)
+                    checkDistinct(names.map { it to statement.pos })
+                    names.firstOrNull { inner.vars.containsKey(it) }?.let {
+                        throw CompileError(statement.pos, "'$it' is already defined in this block")
+                    }
+                    // Bind into a scratch scope first, so the value can't see its own names.
+                    if (!irrefutable(statement.pattern)) {
+                        throw CompileError(statement.pos, "a destructuring binding takes only names and '_'; use 'when' to match other patterns")
+                    }
+                    val bound = Scope(inner)
+                    checkPattern(statement.pattern, type, bound, null, null)
+                    inner.vars.putAll(bound.vars)
+                }
                 is Statement.Binding -> {
                     if (inner.vars.containsKey(statement.name)) {
                         throw CompileError(statement.pos, "'${statement.name}' is already defined in this block")

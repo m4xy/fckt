@@ -1,0 +1,7 @@
+lazy_two evaluation
+2
+2
+[1, 2, 3, 4]
+matches if (Lazy.force lazy_guard = false); lazy_expr not forced
+forcing lazy_expr
+matches if (Lazy.force lazy_guard = true); lazy_expr forced

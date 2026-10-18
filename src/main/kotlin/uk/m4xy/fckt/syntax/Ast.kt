@@ -20,6 +20,9 @@ sealed interface TypeRef {
 
     /** `(A, B) -> R`; `() -> R` has no params. */
     data class Function(override val pos: Pos, val params: List<TypeRef>, val result: TypeRef) : TypeRef
+
+    /** `(A, B)`: a tuple. */
+    data class Tuple(override val pos: Pos, val elements: List<TypeRef>) : TypeRef
 }
 
 // ---- Declarations ----
@@ -74,6 +77,11 @@ sealed class Expr {
     class FloatLit(override val pos: Pos, val value: Double) : Expr()
     class BoolLit(override val pos: Pos, val value: Boolean) : Expr()
     class StringLit(override val pos: Pos, val parts: List<StringPart>) : Expr()
+    class CharLit(override val pos: Pos, val value: Char) : Expr()
+    class Tuple(override val pos: Pos, val elements: List<Expr>) : Expr()
+
+    /** `...xs` inside a list literal: all of the list `xs`. */
+    class Spread(override val pos: Pos, val list: Expr) : Expr()
     class Name(override val pos: Pos, val name: String) : Expr() {
         var resolved: NameRef? = null
     }
@@ -149,6 +157,9 @@ sealed interface Statement {
     }
 
     data class Effect(override val pos: Pos, val expr: Expr) : Statement
+
+    /** `(a, b) = value`: takes a tuple, or a record's fields in order, apart. */
+    data class Destructure(override val pos: Pos, val pattern: Pattern, val value: Expr) : Statement
 }
 
 /**
@@ -165,6 +176,14 @@ sealed interface Pattern {
         var ocamlName: String = ""
     }
     data class Literal(override val pos: Pos, val expr: Expr) : Pattern
+
+    /** `(p, q)`: a tuple, or (by position) a record's fields. */
+    data class Tuple(override val pos: Pos, val elements: List<Pattern>) : Pattern {
+        var record: Decl.Record? = null
+    }
+
+    /** `[]`, `[a, b]`, or `[head, ...tail]` when [rest] is set. */
+    data class ListPattern(override val pos: Pos, val elements: List<Pattern>, val rest: Pattern?) : Pattern
 
     /** `Success(a, b)`, `None`, or (with [isCheck]) `is Success`, which smart-casts the subject. */
     data class Constructor(
@@ -213,6 +232,9 @@ sealed interface CallRef {
 
     /** A built-in method or function, with its translation. */
     data class Builtin(val method: uk.m4xy.fckt.types.Builtin) : CallRef
+
+    /** `record.copy(field = value, ...)`: a copy with some fields replaced. */
+    data class Copy(val record: Decl.Record) : CallRef
 }
 
 sealed interface MemberRef {

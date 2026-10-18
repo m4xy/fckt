@@ -1,0 +1,51 @@
+// 4.1 Record and variant disambiguation
+// fckt knows the type of every record and variant, so it never guesses from the "last defined
+// type". The two examples that are errors in OCaml work here.
+
+type FirstRecord(x: Int, y: Int, z: Int)
+type MiddleRecord(x: Int, z: Int)
+type LastRecord(x: Int)
+
+interface FirstVariant { A, B, C }
+interface LastVariant { A }
+
+lookAtXThenZ(r: FirstRecord) = {
+  x = r.x
+  x + r.z
+}
+
+permute(x: FirstVariant): FirstVariant = when (x) {
+  A -> B
+  B -> A
+  C -> C
+}
+
+interface Wrapped { First(FirstRecord) }
+
+f(w: Wrapped) = when (w) {
+  First(r) -> (r, r.x)
+}
+
+projectAndRotate(r: FirstRecord) = FirstRecord(x = -r.y, y = r.x, z = 0)
+
+lookAtXz(r: MiddleRecord) = r.x
+
+// An error in OCaml, which decides r is a LastRecord when it sees r.x.
+lookAtXThenY(r: FirstRecord) = {
+  x = r.x
+  x + r.y
+}
+
+// Also an error in OCaml, which decides x is a LastVariant when it sees A.
+isAOrB(x: FirstVariant) = when (x) {
+  A, B -> true
+  C -> false
+}
+
+main() = {
+  r = FirstRecord(1, 2, 3)
+  println("${lookAtXThenZ(r)} ${permute(A)} ${f(First(r))}")
+  println("${projectAndRotate(r)} ${lookAtXz(MiddleRecord(4, 5))} ${lookAtXThenY(r)} ${isAOrB(B)}")
+  last: LastVariant = A
+  println("${LastRecord(6)} $last")
+}

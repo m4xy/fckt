@@ -17,7 +17,13 @@
           "include": "#comments"
         },
         {
+          "include": "#raw-strings"
+        },
+        {
           "include": "#strings"
+        },
+        {
+          "include": "#chars"
         },
         {
           "include": "#interface-declaration"
@@ -27,6 +33,9 @@
         },
         {
           "include": "#function-declaration"
+        },
+        {
+          "include": "#destructuring"
         },
         {
           "include": "#binding"
@@ -106,6 +115,30 @@
         }
       ]
     },
+    "raw-strings": {
+      "name": "string.quoted.triple.fckt",
+      "begin": "\"\"\"",
+      "end": "\"\"\"(?!\")",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.fckt"
+        }
+      },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.fckt"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#templates"
+        }
+      ]
+    },
+    "chars": {
+      "name": "string.quoted.single.fckt",
+      "match": "'(?:[^'\\\\]|\\\\[ntr\\\\\\\"'$])'"
+    },
     "strings": {
       "name": "string.quoted.double.fckt",
       "begin": "\"",
@@ -129,6 +162,13 @@
           "name": "invalid.illegal.escape.fckt",
           "match": "\\\\."
         },
+        {
+          "include": "#templates"
+        }
+      ]
+    },
+    "templates": {
+      "patterns": [
         {
           "name": "meta.template.expression.fckt",
           "contentName": "meta.embedded.line.fckt",
@@ -230,6 +270,22 @@
           "name": "entity.name.function.fckt"
         }
       }
+    },
+    "destructuring": {
+      "begin": "^\\s*\\((?=[^()]*\\)\\s*=(?![=>]))",
+      "end": "\\)",
+      "patterns": [
+        {
+          "include": "#wildcard"
+        },
+        {
+          "name": "variable.other.definition.fckt",
+          "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+        },
+        {
+          "include": "#punctuation"
+        }
+      ]
     },
     "binding": {
       "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?::[^=]*)?=(?![=>]))",
@@ -421,6 +477,10 @@
         {
           "name": "keyword.operator.arrow.fckt",
           "match": "->"
+        },
+        {
+          "name": "keyword.operator.spread.fckt",
+          "match": "\\.\\.\\."
         },
         {
           "name": "keyword.operator.pipe.fckt",

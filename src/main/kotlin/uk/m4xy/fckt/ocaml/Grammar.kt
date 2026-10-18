@@ -59,7 +59,7 @@ interface LetGroup {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Binding {
     @Required val name: String
@@ -86,7 +86,7 @@ interface Literal {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Apply
 
@@ -95,7 +95,7 @@ interface Apply
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Infix {
     @Required val op: String
@@ -106,7 +106,7 @@ interface Infix {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Lambda {
     @Required val params: List<String>
@@ -117,7 +117,7 @@ interface Lambda {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface LetIn {
     @Required val name: String
@@ -130,7 +130,7 @@ interface LetIn {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Sequence
 
@@ -139,7 +139,7 @@ interface Sequence
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface IfThenElse
 
@@ -148,7 +148,7 @@ interface IfThenElse
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class, Case::class,
+    ListLit::class, Tuple::class, RecordUpdate::class, Case::class,
 )
 interface Match
 
@@ -157,7 +157,7 @@ interface Match
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Case {
     @Required val pattern: String
@@ -168,7 +168,7 @@ interface Case {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface FieldGet {
     @Required val name: String
@@ -184,7 +184,7 @@ interface RecordLit
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface RecordEntry {
     @Required val name: String
@@ -195,7 +195,7 @@ interface RecordEntry {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Construct {
     @Required val name: String
@@ -206,7 +206,7 @@ interface Construct {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface Annotated {
     @Required val type: String
@@ -217,6 +217,24 @@ interface Annotated {
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
     IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
-    ListLit::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
 )
 interface ListLit
+
+/** `(a, b)`. */
+@Element("tuple", function = "tuple")
+@Children(
+    Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
+    IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
+    ListLit::class, Tuple::class, RecordUpdate::class,
+)
+interface Tuple
+
+/** `{ base with a = x }`. Children: the base record, then one [RecordEntry] per replaced field. */
+@Element("record-update", function = "recordUpdate")
+@Children(
+    Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
+    IfThenElse::class, Match::class, FieldGet::class, RecordLit::class, Construct::class, Annotated::class,
+    ListLit::class, Tuple::class, RecordUpdate::class, RecordEntry::class,
+)
+interface RecordUpdate

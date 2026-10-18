@@ -49,10 +49,16 @@ sealed class Type {
         val CHAR = Con("Char")
         fun list(element: Type) = Con("List", listOf(element))
         fun option(element: Type) = Con("Option", listOf(element))
+        fun tuple(elements: List<Type>) = Con(TUPLE, elements)
+        fun lazy(element: Type) = Con("Lazy", listOf(element))
+
+        /** Tuples are a [Con] of this name with one argument per element. */
+        const val TUPLE = "Tuple"
 
         fun render(type: Type, names: MutableMap<Var, String>): String = when (val t = type.prune()) {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }
-            is Con -> if (t.args.isEmpty()) t.name else "${t.name}<${t.args.joinToString(", ") { render(it, names) }}>"
+            is Con -> if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
+            else if (t.args.isEmpty()) t.name else "${t.name}<${t.args.joinToString(", ") { render(it, names) }}>"
             is Fn -> "(${t.params.joinToString(", ") { render(it, names) }}) -> ${render(t.result, names)}"
         }
     }
@@ -61,7 +67,7 @@ sealed class Type {
 /** `Double` is accepted as another name for `Float`, which is what OCaml calls it. */
 val BUILTIN_TYPES = mapOf(
     "Int" to 0, "Float" to 0, "Double" to 0, "String" to 0, "Boolean" to 0, "Unit" to 0, "Char" to 0,
-    "List" to 1, "Option" to 1,
+    "List" to 1, "Option" to 1, "Lazy" to 1,
 )
 
 class Scheme(val vars: List<Type.Var>, val type: Type) {
@@ -171,6 +177,10 @@ object Builtins {
                     "firstOrNone" -> BuiltinMember(emptyList(), t.option(e), template("List.nth_opt", "recv", "0"))
                     "size" -> BuiltinMember(emptyList(), t.INT, template("List.length", "recv"), isProperty = true)
                     "joinToString" -> BuiltinMember(listOf(t.STRING), t.STRING, Builtin.JoinToString)
+                    // [(key, value), ...].lookup(key): the value of the first pair with that key.
+                    "lookup" -> (e.prune() as? Type.Con)?.takeIf { it.name == Type.TUPLE && it.args.size == 2 }?.let { pair ->
+                        BuiltinMember(listOf(pair.args[0]), t.option(pair.args[1]), template("List.assoc_opt", 0, "recv"))
+                    }
                     "sum" -> when (e.prune()) {
                         Type.INT -> BuiltinMember(emptyList(), t.INT, template("List.fold_left", "( + )", "0", "recv"))
                         Type.FLOAT -> BuiltinMember(emptyList(), t.FLOAT, template("List.fold_left", "( +. )", "0.", "recv"))
@@ -208,11 +218,24 @@ object Builtins {
                 "isEmpty" -> BuiltinMember(emptyList(), t.BOOLEAN, template("String.equal", "\"\"", "recv"))
                 "startsWith" -> BuiltinMember(listOf(t.STRING), t.BOOLEAN, template("String.starts_with", "~prefix:", 0, "recv"))
                 "toIntOrNone" -> BuiltinMember(emptyList(), t.option(t.INT), template("int_of_string_opt", "recv"))
+                "toInt" -> BuiltinMember(emptyList(), t.INT, template("int_of_string", "recv"))
+                "toFloat", "toDouble" -> BuiltinMember(emptyList(), t.FLOAT, template("float_of_string", "recv"))
+                else -> null
+            }
+            "Char" -> when (name) {
+                "code" -> BuiltinMember(emptyList(), t.INT, template("Char.code", "recv"), isProperty = true)
+                else -> null
+            }
+            "Lazy" -> when (name) {
+                "value" -> BuiltinMember(emptyList(), receiver.args[0], template("Lazy.force", "recv"), isProperty = true)
+                "isInitialized" -> BuiltinMember(emptyList(), t.BOOLEAN, template("Lazy.is_val", "recv"))
                 else -> null
             }
             else -> null
         }
     }
+
+    private val MATH = setOf("sin", "cos", "tan", "asin", "acos", "atan", "sqrt", "exp", "log", "floor", "ceil")
 
     /** Top-level built-in functions: their type and OCaml name. */
     fun function(name: String, u: Unifier): Pair<Type, String>? = when (name) {
@@ -223,6 +246,10 @@ object Builtins {
         "abs" -> Type.Fn(listOf(Type.INT), Type.INT) to "abs"
         "identity" -> u.fresh().let { a -> Type.Fn(listOf(a), a) to "Fun.id" }
         "error" -> u.fresh().let { a -> Type.Fn(listOf(Type.STRING), a) to "failwith" }
+        "atan2" -> Type.Fn(listOf(Type.FLOAT, Type.FLOAT), Type.FLOAT) to "atan2"
+        // lazy(~e): computes e the first time `.value` is read, then remembers it.
+        "lazy" -> u.fresh().let { a -> Type.Fn(listOf(Type.Fn(emptyList(), a)), Type.lazy(a)) to "Lazy.from_fun" }
+        in MATH -> Type.Fn(listOf(Type.FLOAT), Type.FLOAT) to name
         else -> null
     }
 }

@@ -35,6 +35,8 @@ private sealed interface Gen {
     data class Ctor(val name: String, val arg: Gen?) : Gen
     data class Ann(val expr: Gen, val type: String) : Gen
     data class Match(val subject: Gen, val cases: List<Pair<String, Gen>>) : Gen
+    data class Tuple(val elements: List<Gen>) : Gen
+    data class ListOf(val items: List<Gen>) : Gen
     data class Src(val expr: Expr) : Gen
 }
 
@@ -68,7 +70,14 @@ class Lowering(private val program: Program) {
             }
             program.main?.let {
                 let(false) {
-                    binding("()") { apply { ident("main"); literal("()") } }
+                    binding("()") {
+                        apply {
+                            ident("main")
+                            // The command-line arguments, without the program name.
+                            if (it.params!!.isEmpty()) literal("()")
+                            else apply { ident("List.tl"); apply { ident("Array.to_list"); ident("Sys.argv") } }
+                        }
+                    }
                 }
             }
         }
@@ -106,6 +115,7 @@ class Lowering(private val program: Program) {
         fun refs(ref: TypeRef): List<String> = when (ref) {
             is TypeRef.Named -> listOf(ref.name) + ref.args.flatMap(::refs)
             is TypeRef.Function -> ref.params.flatMap(::refs) + refs(ref.result)
+            is TypeRef.Tuple -> ref.elements.flatMap(::refs)
         }
         return stronglyConnected(decls) { decl ->
             val fields = when (decl) {
@@ -119,33 +129,43 @@ class Lowering(private val program: Program) {
 
     /** OCaml syntax for a written type, with [typeParams] as type variables. */
     private fun typeText(ref: TypeRef, typeParams: List<String>): String = when (ref) {
-        is TypeRef.Function -> functionText(ref.params.map { typeText(it, typeParams) to (it is TypeRef.Function) }, typeText(ref.result, typeParams))
+        is TypeRef.Function -> functionText(ref.params.map { typeText(it, typeParams) to compound(it) }, typeText(ref.result, typeParams))
+        is TypeRef.Tuple -> tupleText(ref.elements.map { typeText(it, typeParams) to compound(it) })
         is TypeRef.Named ->
             if (ref.name in typeParams) typeVar(ref.name)
-            else applied(ref.name, ref.args.map { typeText(it, typeParams) to (it is TypeRef.Function) })
+            else applied(ref.name, ref.args.map { typeText(it, typeParams) to compound(it) })
     }
+
+    /** Whether a type needs parentheses as an argument or a tuple element. */
+    private fun compound(ref: TypeRef) = ref is TypeRef.Function || ref is TypeRef.Tuple
+    private fun compound(type: Type) = type.prune().let { it is Type.Fn || (it is Type.Con && it.name == Type.TUPLE) }
+
+    private fun tupleText(elements: List<Pair<String, Boolean>>) =
+        elements.joinToString(" * ") { (text, paren) -> if (paren) "($text)" else text }
 
     /** OCaml syntax for an inferred type; unknown parts become `_`. */
     private fun typeText(type: Type): String = when (val t = type.prune()) {
         is Type.Var -> "_"
-        is Type.Fn -> functionText(t.params.map { typeText(it) to (it.prune() is Type.Fn) }, typeText(t.result))
-        is Type.Con -> applied(t.name, t.args.map { typeText(it) to (it.prune() is Type.Fn) })
+        is Type.Fn -> functionText(t.params.map { typeText(it) to compound(it) }, typeText(t.result))
+        is Type.Con ->
+            if (t.name == Type.TUPLE) tupleText(t.args.map { typeText(it) to compound(it) })
+            else applied(t.name, t.args.map { typeText(it) to compound(it) })
     }
 
     private fun functionText(params: List<Pair<String, Boolean>>, result: String): String {
-        val ps = if (params.isEmpty()) listOf("unit") else params.map { (text, isFn) -> if (isFn) "($text)" else text }
+        val ps = if (params.isEmpty()) listOf("unit") else params.map { (text, paren) -> if (paren) "($text)" else text }
         return (ps + result).joinToString(" -> ")
     }
 
     private fun applied(name: String, args: List<Pair<String, Boolean>>): String {
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"
-            "Char" -> "char"; "List" -> "list"; "Option" -> "option"
+            "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"
             else -> snake(name)
         }
         return when (args.size) {
             0 -> base
-            1 -> args[0].let { (text, isFn) -> if (isFn) "($text) $base" else "$text $base" }
+            1 -> args[0].let { (text, paren) -> if (paren) "($text) $base" else "$text $base" }
             else -> "(${args.joinToString(", ") { it.first }}) $base"
         }
     }
@@ -172,11 +192,14 @@ class Lowering(private val program: Program) {
         S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
-        S : AnnotatedParent<Unit>, S : ListLitParent<Unit> {
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         when (e) {
             is Expr.IntLit -> literal(if (e.type?.prune() == Type.FLOAT) "${e.value}." else e.value.toString())
             is Expr.FloatLit -> literal(e.value.toString())
             is Expr.BoolLit -> literal(e.value.toString())
+            is Expr.CharLit -> literal(charText(e.value))
+            is Expr.Tuple -> tuple { e.elements.forEach { expr(it) } }
+            is Expr.Spread -> throw CompileError(e.pos, "'...' can only be used inside a list literal")
             is Expr.StringLit -> gen(
                 concat(
                     e.parts.map { part ->
@@ -204,7 +227,7 @@ class Lowering(private val program: Program) {
                     }
                 }
             }
-            is Expr.ListLit -> listLit { e.items.forEach { expr(it) } }
+            is Expr.ListLit -> gen(listExpr(e.items))
             is Expr.Call -> call(e)
             is Expr.Member -> when (val r = e.resolved!!) {
                 is MemberRef.Field -> fieldGet(r.ocamlName) { gen(qualified(Gen.Src(e.target), r)) }
@@ -259,7 +282,7 @@ class Lowering(private val program: Program) {
         S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
-        S : AnnotatedParent<Unit>, S : ListLitParent<Unit> {
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         when (val r = e.resolved!!) {
             is CallRef.Function -> apply {
                 expr(e.callee)
@@ -273,7 +296,43 @@ class Lowering(private val program: Program) {
                 e.args.forEach { expr(it.value) }
             }
             is CallRef.Builtin -> gen(builtin(r.method, (e.callee as Expr.Member).target, e.args.map { it.value }))
+            is CallRef.Copy -> {
+                val target = (e.callee as Expr.Member).target
+                // Replacing every field makes a new record; OCaml warns about a `with` that keeps nothing.
+                if (e.args.size == r.record.fields.size) {
+                    val byName = e.args.associate { it.name!! to it.value }
+                    return gen(construct(ConstructorRef.Record(r.record), e.type!!, r.record.fields.map { Gen.Src(byName.getValue(it.name)) }))
+                }
+                val ambiguous = e.args.any { snake(it.name!!) in program.ambiguousLabels }
+                val update: RecordUpdateScope<Unit>.() -> Unit = {
+                    expr(target)
+                    for (arg in e.args) entry(snake(arg.name!!)) { expr(arg.value) }
+                }
+                if (ambiguous) annotated(typeText(e.type!!)) { recordUpdate(update) } else recordUpdate(update)
+            }
         }
+    }
+
+    /** `[a, b]`, `a :: rest` or `xs @ rest`: elements are consed on, and a spread list is appended. */
+    private fun listExpr(items: List<Expr>): Gen {
+        if (items.none { it is Expr.Spread }) return Gen.ListOf(items.map { Gen.Src(it) })
+        var result: Gen? = null
+        for (item in items.asReversed()) {
+            result = when {
+                item is Expr.Spread -> if (result == null) Gen.Src(item.list) else Gen.Op("@", Gen.Src(item.list), result)
+                else -> Gen.Op("::", Gen.Src(item), result ?: Gen.ListOf(emptyList()))
+            }
+        }
+        return result!!
+    }
+
+    private fun charText(c: Char) = when (c) {
+        '\'' -> "'\\''"
+        '\\' -> "'\\\\'"
+        '\n' -> "'\\n'"
+        '\t' -> "'\\t'"
+        '\r' -> "'\\r'"
+        else -> if (c.code < 0x20) "'\\%03d'".format(c.code) else "'$c'"
     }
 
     private fun builtin(method: Builtin, receiver: Expr, args: List<Expr>): Gen = when (method) {
@@ -329,7 +388,7 @@ class Lowering(private val program: Program) {
         S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
-        S : AnnotatedParent<Unit>, S : ListLitParent<Unit> {
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         val subject = e.subject
         if (subject == null) {
             conditions(e, 0)
@@ -354,7 +413,7 @@ class Lowering(private val program: Program) {
         S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
-        S : AnnotatedParent<Unit>, S : ListLitParent<Unit> {
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         val branch = e.branches[from]
         val condition = branch.condition ?: return expr(branch.body)
         ifThenElse {
@@ -368,6 +427,13 @@ class Lowering(private val program: Program) {
         is Pattern.Wildcard -> "_"
         is Pattern.Bind -> p.ocamlName
         is Pattern.Literal -> literalText(p.expr)
+        is Pattern.Tuple -> p.record?.let { r -> recordPattern(r.fields.map { it.name }, p.elements.map { pattern(it) }) }
+            ?: p.elements.joinToString(", ", "(", ")") { pattern(it) }
+        is Pattern.ListPattern -> {
+            val rest = p.rest
+            if (rest == null) p.elements.joinToString("; ", "[", "]") { pattern(it) }
+            else (p.elements.map { atomPattern(pattern(it)) } + pattern(rest)).joinToString(" :: ")
+        }
         is Pattern.Constructor -> {
             val args = p.args?.map { pattern(it) }
             when (val ref = p.resolved!!) {
@@ -385,12 +451,14 @@ class Lowering(private val program: Program) {
     private fun recordPattern(fields: List<String>, args: List<String>) =
         "{ " + fields.zip(args).joinToString("; ") { (f, a) -> "${snake(f)} = $a" } + " }"
 
-    private fun atomPattern(p: String) = if (' ' in p && !p.startsWith("{") || p.startsWith("-")) "($p)" else p
+    private fun atomPattern(p: String) =
+        if (' ' in p && !p.startsWith("{") && !p.startsWith("(") && !p.startsWith("[") || p.startsWith("-")) "($p)" else p
 
     private fun literalText(e: Expr): String = when (e) {
         is Expr.IntLit -> e.value.toString()
         is Expr.FloatLit -> e.value.toString()
         is Expr.BoolLit -> e.value.toString()
+        is Expr.CharLit -> charText(e.value)
         is Expr.StringLit -> quote(
             e.parts.joinToString("") {
                 (it as? StringPart.Text)?.text ?: throw CompileError(e.pos, "a pattern can't contain a string template")
@@ -406,7 +474,7 @@ class Lowering(private val program: Program) {
         S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
-        S : AnnotatedParent<Unit>, S : ListLitParent<Unit> {
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         if (from == e.statements.size) return expr(e.result)
         when (val s = e.statements[from]) {
             is Statement.Binding -> letIn(s.ocamlName) {
@@ -414,6 +482,10 @@ class Lowering(private val program: Program) {
                     params = s.paramNames.ifEmpty { listOf("()") }
                     rec = s.recursive
                 }
+                expr(s.value)
+                block(e, from + 1)
+            }
+            is Statement.Destructure -> letIn(pattern(s.pattern)) {
                 expr(s.value)
                 block(e, from + 1)
             }
@@ -436,7 +508,7 @@ class Lowering(private val program: Program) {
         S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
-        S : AnnotatedParent<Unit>, S : ListLitParent<Unit> {
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         when (g) {
             is Gen.Id -> ident(g.name)
             is Gen.Lit -> literal(g.text)
@@ -461,6 +533,8 @@ class Lowering(private val program: Program) {
                 for ((pattern, body) in g.cases) case(pattern) { gen(body) }
             }
             is Gen.Src -> expr(g.expr)
+            is Gen.Tuple -> tuple { g.elements.forEach { gen(it) } }
+            is Gen.ListOf -> listLit { g.items.forEach { gen(it) } }
         }
     }
 
@@ -474,6 +548,18 @@ class Lowering(private val program: Program) {
     }
 
     private fun showCon(name: String, args: List<Gen>): Gen = when (name) {
+        Type.TUPLE -> {
+            val names = args.indices.map { "x$it" }
+            Gen.Fun(
+                listOf(names.joinToString(", ", "(", ")")),
+                concat(
+                    listOf<Gen>(Gen.Str("(")) + args.flatMapIndexed { i, show ->
+                        listOfNotNull(if (i > 0) Gen.Str(", ") else null, Gen.App(show, listOf(Gen.Id(names[i]))))
+                    } + Gen.Str(")"),
+                ),
+            )
+        }
+        "Lazy" -> Gen.Fun(listOf("_"), Gen.Str("Lazy(...)"))
         "String" -> Gen.Id("Fun.id")
         "Int" -> Gen.Id("string_of_int")
         "Boolean" -> Gen.Id("string_of_bool")
@@ -495,6 +581,7 @@ class Lowering(private val program: Program) {
     /** [showCon] for a field's written type, inside the show function of a type with [typeParams]. */
     private fun showRef(ref: TypeRef, typeParams: List<String>): Gen = when (ref) {
         is TypeRef.Function -> Gen.Fun(listOf("_"), Gen.Str("<fun>"))
+        is TypeRef.Tuple -> showCon(Type.TUPLE, ref.elements.map { showRef(it, typeParams) })
         is TypeRef.Named ->
             if (ref.name in typeParams) Gen.Id("show_${ref.name.lowercase()}")
             else showCon(if (ref.name == "Double") "Float" else ref.name, ref.args.map { showRef(it, typeParams) })
@@ -509,12 +596,20 @@ class Lowering(private val program: Program) {
         }
         if ("fk_show_list" in helpers || "fk_show_option" in helpers || "fk_show_float" in helpers) helperFunctions()
         if (bodies.isEmpty()) return
-        val names = bodies.keys.map(::showName).toSet()
-        let(bodies.size > 1 || bodies.values.any { (_, body) -> mentions(body, names) }) {
-            for ((name, body) in bodies) {
-                binding(showName(name)) {
-                    params = body.first
-                    gen(body.second)
+        // Only show functions that call each other share a `let rec`.
+        val types = bodies.keys.toList()
+        val groups = stronglyConnected(types) { type ->
+            types.filter { mentions(bodies.getValue(type).second, setOf(showName(it))) }
+        }
+        for (group in groups) {
+            val recursive = group.size > 1 || mentions(bodies.getValue(group[0]).second, setOf(showName(group[0])))
+            let(recursive) {
+                for (name in group) {
+                    val (params, body) = bodies.getValue(name)
+                    binding(showName(name)) {
+                        this.params = params
+                        gen(body)
+                    }
                 }
             }
         }
@@ -531,6 +626,8 @@ class Lowering(private val program: Program) {
         is Gen.Ctor -> g.arg?.let { mentions(it, names) } ?: false
         is Gen.Ann -> mentions(g.expr, names)
         is Gen.Match -> mentions(g.subject, names) || g.cases.any { mentions(it.second, names) }
+        is Gen.Tuple -> g.elements.any { mentions(it, names) }
+        is Gen.ListOf -> g.items.any { mentions(it, names) }
     }
 
     private fun showBody(name: String): Pair<List<String>, Gen> {
@@ -565,15 +662,35 @@ class Lowering(private val program: Program) {
     private fun StructureScope<Unit>.helperFunctions() {
         let(false) {
             if ("fk_show_float" in helpers) {
-                // Kotlin prints 1.0 where OCaml's string_of_float prints "1.".
+                // Like Kotlin: the shortest form that reads back as the same number, always with a
+                // decimal point (1.0 where OCaml's string_of_float prints "1.").
                 binding("fk_show_float") {
                     params = listOf("f")
-                    letIn("s") {
-                        apply { ident("string_of_float"); ident("f") }
-                        ifThenElse {
-                            apply { ident("String.ends_with"); literal("~suffix:\".\""); ident("s") }
-                            infix("^") { ident("s"); literal("\"0\"") }
-                            ident("s")
+                    letIn("shortest") {
+                        params = listOf("digits")
+                        rec = true
+                        letIn("s") {
+                            apply { ident("Printf.sprintf"); literal("\"%.*g\""); ident("digits"); ident("f") }
+                            ifThenElse {
+                                infix("||") {
+                                    infix(">=") { ident("digits"); literal("17") }
+                                    infix("=") { apply { ident("float_of_string"); ident("s") }; ident("f") }
+                                }
+                                ident("s")
+                                apply { ident("shortest"); infix("+") { ident("digits"); literal("1") } }
+                            }
+                        }
+                        letIn("s") {
+                            apply { ident("shortest"); literal("15") }
+                            ifThenElse {
+                                apply {
+                                    ident("String.exists")
+                                    lambda(listOf("c")) { apply { ident("String.contains"); literal("\".eni\""); ident("c") } }
+                                    ident("s")
+                                }
+                                ident("s")
+                                infix("^") { ident("s"); literal("\".0\"") }
+                            }
                         }
                     }
                 }

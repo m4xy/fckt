@@ -1,0 +1,13 @@
+// 11 Standalone programs
+// args: 6 9
+//
+//   fckt 11-gcd.fk && ocaml 11-gcd.ml 6 9
+//
+// main can take the command-line arguments; list patterns pick them apart.
+
+gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
+
+main(args: List<String>) = when (args) {
+  [a, b] -> println("${gcd(a.toInt(), b.toInt())}")
+  else -> println("usage: gcd <a> <b>")
+}

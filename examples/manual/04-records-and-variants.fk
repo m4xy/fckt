@@ -1,0 +1,89 @@
+// 4 Records and variants
+
+type Ratio(num: Int, denom: Int)
+
+addRatio(r1: Ratio, r2: Ratio) = Ratio(
+  num = r1.num * r2.denom + r2.num * r1.denom,
+  denom = r1.denom * r2.denom
+)
+
+// Record fields can also be read by matching...
+integerPart(r: Ratio) = when (r) {
+  Ratio(num, denom) -> num / denom
+}
+
+// ...or, as there's only one case, by destructuring the fields in order, as in Kotlin.
+integerPartDestructured(r: Ratio) = {
+  (num, denom) = r
+  num / denom
+}
+
+getDenom(r: Ratio) = r.denom
+
+getNum(r: Ratio) = {
+  (num, _) = r
+  num
+}
+
+ratio(num: Int, denom: Int) = Ratio(num, denom)
+
+// OCaml's { ratio with num = ... } is Kotlin's copy.
+integerProduct(integer: Int, ratio: Ratio) = ratio.copy(num = integer * ratio.num)
+
+// A variant with one unnamed field: Int(Int) is Int(value: Int).
+interface Number {
+  Int(Int)
+  Float(Float)
+  Error
+}
+
+interface Sign { Positive, Negative }
+
+signInt(n: Int) = if (n >= 0) Positive else Negative
+
+addNum(n1: Number, n2: Number): Number = when (n1, n2) {
+  (Int(i1), Int(i2)) ->
+    // Check for overflow of integer addition
+    if (signInt(i1) == signInt(i2) && signInt(i1 + i2) != signInt(i1)) Float(i1.toFloat() + i2.toFloat())
+    else Int(i1 + i2)
+  // An Int plus a Float is a Float, so OCaml's float i1 +. f2 needs no conversion.
+  (Int(i1), Float(f2)) -> Float(i1 + f2)
+  (Float(f1), Int(i2)) -> Float(f1 + i2)
+  (Float(f1), Float(f2)) -> Float(f1 + f2)
+  (Error, _) -> Error
+  (_, Error) -> Error
+}
+
+// Option is built in: Some(x) or None.
+safeSquareRoot(x: Float) = if (x >= 0) Some(sqrt(x)) else None
+
+interface BTree<T> {
+  Empty
+  Node(value: T, left: BTree<T>, right: BTree<T>)
+}
+
+member<T>(x: T, btree: BTree<T>): Boolean = when (btree) {
+  Empty -> false
+  Node(y, left, right) ->
+    if (x == y) true
+    else if (x < y) member(x, left)
+    else member(x, right)
+}
+
+insert<T>(x: T, btree: BTree<T>): BTree<T> = when (btree) {
+  Empty -> Node(x, Empty, Empty)
+  Node(y, left, right) ->
+    if (x <= y) Node(y, insert(x, left), right)
+    else Node(y, left, insert(x, right))
+}
+
+main() = {
+  third = Ratio(1, 3)
+  println("${addRatio(third, Ratio(num = 2, denom = 5))}")
+  println("${integerPart(Ratio(7, 2))} ${integerPartDestructured(Ratio(7, 2))}")
+  println("${getNum(third)}/${getDenom(third)} ${ratio(3, 4)} ${integerProduct(5, third)}")
+  println("${addNum(Int(123), Float(3.14159))}")
+  println("${safeSquareRoot(2.0)} ${safeSquareRoot(-1.0)}")
+  tree = [5, 3, 8, 1].fold(Empty, (t, x) -> insert(x, t))
+  println("${member(3, tree)} ${member(4, tree)}")
+}

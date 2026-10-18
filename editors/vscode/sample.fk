@@ -26,3 +26,15 @@ main() = {
   println("${xs.size |> twice(x -> x + 1)} ${ignore("a", 1)} $ratio $label")
   println(Box(3).toString())
 }
+
+// Tuples, list patterns and spread, characters and raw strings
+swap<A, B>(pair: (A, B)) = {
+  (a, b) = pair
+  (b, a)
+}
+
+describe(xs: List<Char>) = when (xs) {
+  [] -> """empty "list""""
+  ['a', ...rest] -> "starts with a, then ${rest.size} more"
+  [c, ..._] -> "starts with $c, code ${c.code}"
+}

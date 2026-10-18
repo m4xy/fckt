@@ -1,0 +1,32 @@
+// 7 Lazy expressions
+// lazy(~e) computes e the first time .value is read, and remembers it, like Kotlin's lazy.
+
+lazyTwo = lazy(~{
+  println("lazy_two evaluation")
+  1 + 1
+})
+
+lazyL = lazy(~([1, 2] + [3, 4]))
+
+// fckt has no lazy patterns, so the guard is read with .value.
+maybeEval<T>(lazyGuard: Lazy<Boolean>, lazyExpr: Lazy<T>) =
+  if (!lazyGuard.value) "matches if (Lazy.force lazy_guard = false); lazy_expr not forced"
+  else {
+    lazyExpr.value
+    "matches if (Lazy.force lazy_guard = true); lazy_expr forced"
+  }
+
+main() = {
+  println("${lazyTwo.value}")
+  println("${lazyTwo.value}")
+  l = lazyL.value
+  println("$l")
+  println(maybeEval(lazy(~false), lazy(~{
+    println("forcing lazy_expr")
+    1
+  })))
+  println(maybeEval(lazy(~true), lazy(~{
+    println("forcing lazy_expr")
+    1
+  })))
+}

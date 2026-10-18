@@ -22,7 +22,8 @@ calculateTotal(items: List<Money>, code: Option<String>) = {
 }
 ```
 
-See `examples/orders.fk` for a complete program.
+See `examples/orders.fk` for a complete program, and `examples/manual` for the OCaml manual's
+tour of the core language, translated section by section.
 
 ## The language
 
@@ -39,15 +40,23 @@ See `examples/orders.fk` for a complete program.
 | `~e` | `fun () -> e`, `fun _ _ -> e` | A function that ignores its arguments. It takes as many as the expected type has, so `~true` can be a `(String, Money) -> Boolean`. With no expected function type it's a thunk, `() -> T`. |
 | `x \|> f` | `x \|> f` | |
 | `x \|> f(a)` | `x \|> f a` | When `f` takes one more argument than it's given, `x` is passed last. |
-| `when (x) { P -> e ... }` | `match x with P -> e ...` | Patterns: literals, `_`, names, `V(p, q)`, `is V`, and `A, B` for either. |
+| `when (x) { P -> e ... }` | `match x with P -> e ...` | Patterns: literals, `_`, names, `V(p, q)`, `is V`, `(p, q)`, `[]`, `[h, ...t]`, and `A, B` for either. |
+| `when (a, b) { ... }` | `match (a, b) with ...` | Matches on several values at once. |
+| `(a, b)`, `(A, B)` | `(a, b)`, `a * b` | A tuple, and its type. |
+| `(x, y) = e` | `let (x, y) = e in` | Destructures a tuple, or a record's fields in declaration order. |
+| `[x, ...xs]`, `xs + ys` | `x :: xs`, `xs @ ys` | `...` spreads a list into a list literal. |
+| `r.copy(a = x)` | `{ r with a = x }` | |
+| `'a'`, `"""raw"""` | `'a'`, a string | Raw strings have no escapes, but still interpolate. |
+| `lazy(~e)`, `l.value` | `Lazy.from_fun`, `Lazy.force` | |
 | `is V -> x.field` | `V x__v -> x__v.field` | `is` narrows a variable, so the branch can read the variant's fields. |
 | `when { c -> e; else -> e }` | `if c then e else ...` | |
 | `if (c) a else b` | `if c then a else b` | `else` is required. |
 | `x.f(a)` | `f x a` | Calls a top-level `f` on `x` when `x` has no member `f`. |
+| `main(args: List<String>)` | `let () = main ...` | `main` may take the command-line arguments. |
 | `"$x and ${f(y)}"` | `"" ^ show x ^ ...` | Values print like Kotlin's `toString()`, e.g. `Money(value=3)`. |
 
-`Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `List<T>` and `Option<T>` are
-built in. `[a, b]` is a list literal, and `Some(x)` and `None` build options. Arithmetic on an
+`Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `List<T>`, `Option<T>` and
+`Lazy<T>` are built in. `[a, b]` is a list literal, and `Some(x)` and `None` build options. Arithmetic on an
 `Int` and a `Float` gives a `Float`, as in Kotlin. Built-in methods are defined in
 `types/Types.kt`: `map`, `filter`, `fold`, `sum`, `size`, `joinToString`, `getOrElse`, `toInt`,
 and others.

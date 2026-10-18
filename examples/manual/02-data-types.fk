@@ -1,0 +1,37 @@
+// 2 Data types
+
+l = ["is", "a", "tale", "told", "etc."]
+
+// List patterns: [] is the empty list, [head, ...tail] is a first element and the rest.
+sort<T>(lst: List<T>): List<T> = when (lst) {
+  [] -> []
+  [head, ...tail] -> insert(head, sort(tail))
+}
+
+insert<T>(elt: T, lst: List<T>): List<T> = when (lst) {
+  [] -> [elt]
+  [head, ...tail] -> if (elt <= head) [elt, ...lst] else [head, ...insert(elt, tail)]
+}
+
+main() = {
+  // Booleans
+  println("${(1 < 2) == false}")
+  one = if (true) 1 else 2
+  println("$one")
+
+  // Characters
+  println("${'a'}")
+  println("${'\n'.code}")
+
+  // Strings. Kotlin's raw strings stand in for OCaml's quoted strings.
+  println("Hello" + " " + "world")
+  println("""This is a quoted string, here, neither \ nor " are special characters""")
+  println("${"""\\""" == "\\\\"}")
+  println("${"""the end of this|}quoted string is here""" == "the end of this|}quoted string is here"}")
+
+  // Lists. [x, ...l] is OCaml's x :: l.
+  println("${["Life", ...l]}")
+  println("${sort(l)}")
+  println("${sort([6, 2, 5, 3])}")
+  println("${sort([3.14, 2.718])}")
+}

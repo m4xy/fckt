@@ -1,6 +1,8 @@
 package uk.m4xy.fckt
 
 import org.junit.jupiter.api.Assumptions.assumeTrue
+import org.junit.jupiter.api.DynamicTest
+import org.junit.jupiter.api.TestFactory
 import uk.m4xy.fckt.syntax.CompileError
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -15,12 +17,12 @@ class CompilerTest {
         ?: File("/opt/homebrew/bin/ocaml").takeIf { it.canExecute() }?.path
 
     /** Compiles [source], runs the OCaml with the toplevel, and returns its standard output. */
-    private fun run(source: String): String {
+    private fun run(source: String, args: List<String> = emptyList()): String {
         val ml = compile(source)
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
         try {
-            val process = ProcessBuilder(ocaml, "-w", "+a-4-9-27-40-41-42-44-45-70", "-warn-error", "+8", file.path)
+            val process = ProcessBuilder(listOf(ocaml, "-w", "+a-4-9-27-40-41-42-44-45-70", "-warn-error", "+8", file.path) + args)
                 .redirectErrorStream(true).start()
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)
@@ -52,6 +54,18 @@ class CompilerTest {
             run(source),
         )
     }
+
+    /** The OCaml manual's tour (examples/manual): each section's output matches its `.out` file. */
+    @TestFactory
+    fun `the OCaml manual examples`(): List<DynamicTest> =
+        File("examples/manual").listFiles { f -> f.extension == "fk" }!!.sorted().map { file ->
+            DynamicTest.dynamicTest(file.name) {
+                val source = file.readText()
+                val args = source.lines().firstOrNull { it.startsWith("// args:") }
+                    ?.removePrefix("// args:")?.trim()?.split(" ") ?: emptyList()
+                assertEquals(File(file.path.removeSuffix(".fk") + ".out").readText(), run(source, args))
+            }
+        }
 
     @Test
     fun `records, sealed interfaces and when`() {

@@ -1,0 +1,59 @@
+// 8 Symbolic processing of expressions, and 9 Pretty-printing
+
+interface Expression {
+  Const(Float)
+  Var(String)
+  Sum(left: Expression, right: Expression)   // e1 + e2
+  Diff(left: Expression, right: Expression)  // e1 - e2
+  Prod(left: Expression, right: Expression)  // e1 * e2
+  Quot(left: Expression, right: Expression)  // e1 / e2
+}
+
+// OCaml raises Unbound_variable. fckt has no exceptions, so an unbound variable stops the
+// program with error(...).
+eval(env: List<(String, Float)>, exp: Expression): Float = when (exp) {
+  Const(c) -> c
+  Var(v) -> when (env.lookup(v)) {
+    Some(value) -> value
+    None -> error("unbound variable: $v")
+  }
+  Sum(f, g) -> eval(env, f) + eval(env, g)
+  Diff(f, g) -> eval(env, f) - eval(env, g)
+  Prod(f, g) -> eval(env, f) * eval(env, g)
+  Quot(f, g) -> eval(env, f) / eval(env, g)
+}
+
+deriv(exp: Expression, dv: String): Expression = when (exp) {
+  Const(_) -> Const(0.0)
+  Var(v) -> if (v == dv) Const(1.0) else Const(0.0)
+  Sum(f, g) -> Sum(deriv(f, dv), deriv(g, dv))
+  Diff(f, g) -> Diff(deriv(f, dv), deriv(g, dv))
+  Prod(f, g) -> Sum(Prod(f, deriv(g, dv)), Prod(deriv(f, dv), g))
+  Quot(f, g) -> Quot(Diff(Prod(deriv(f, dv), g), Prod(f, deriv(g, dv))), Prod(g, g))
+}
+
+// 9 Pretty-printing. print_expr prints as it goes; this builds the string, which also
+// covers section 10's pp_expr.
+exprToString(exp: Expression): String = {
+  // prec is the current precedence
+  print(prec: Int, exp: Expression): String = {
+    parens(opPrec: Int, s: String) = if (prec > opPrec) "($s)" else s
+    when (exp) {
+      Const(c) -> "$c"
+      Var(v) -> v
+      Sum(f, g) -> parens(0, "${print(0, f)} + ${print(0, g)}")
+      Diff(f, g) -> parens(0, "${print(0, f)} - ${print(1, g)}")
+      Prod(f, g) -> parens(2, "${print(2, f)} * ${print(2, g)}")
+      Quot(f, g) -> parens(2, "${print(2, f)} / ${print(3, g)}")
+    }
+  }
+  print(0, exp)
+}
+
+main() = {
+  println("${eval([("x", 1.0), ("y", 3.14)], Prod(Sum(Var("x"), Const(2.0)), Var("y")))}")
+  println("${deriv(Quot(Const(1.0), Var("x")), "x")}")
+  e = Sum(Prod(Const(2.0), Var("x")), Const(1.0))
+  println(exprToString(e))
+  println(exprToString(deriv(e, "x")))
+}

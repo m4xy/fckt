@@ -1,0 +1,4 @@
+9.42
+Quot(left=Diff(left=Prod(left=Const(value=0.0), right=Var(value=x)), right=Prod(left=Const(value=1.0), right=Const(value=1.0))), right=Prod(left=Var(value=x), right=Var(value=x)))
+2.0 * x + 1.0
+2.0 * 1.0 + 0.0 * x + 0.0

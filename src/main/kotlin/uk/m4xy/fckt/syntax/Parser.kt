@@ -155,8 +155,11 @@ class Parser(private val tokens: List<Token>) {
             }
             expect(T.RPAREN, "')'")
             if (accept(T.ARROW) == null) {
-                if (params.size == 1) return params.single()
-                throw error("expected '->' after a function type's parameters")
+                return when (params.size) {
+                    0 -> throw error("expected '->' after '()' in a function type")
+                    1 -> params.single()
+                    else -> TypeRef.Tuple(pos, params)
+                }
             }
             return TypeRef.Function(pos, params, type())
         }
@@ -279,18 +282,21 @@ class Parser(private val tokens: List<Token>) {
             T.TRUE -> Expr.BoolLit(pos, true).also { next() }
             T.FALSE -> Expr.BoolLit(pos, false).also { next() }
             T.STRING -> stringLiteral(next())
+            T.CHAR -> Expr.CharLit(pos, next().text.single())
             T.IDENT -> Expr.Name(pos, next().text)
             T.LPAREN -> {
                 next()
-                val e = expr()
+                val items = mutableListOf(expr())
+                while (accept(T.COMMA) != null) items += expr()
                 expect(T.RPAREN, "')'")
-                e
+                items.singleOrNull() ?: Expr.Tuple(pos, items)
             }
             T.LBRACKET -> {
                 next()
                 val items = mutableListOf<Expr>()
                 while (!at(T.RBRACKET)) {
-                    items += expr()
+                    val spread = accept(T.ELLIPSIS)
+                    items += if (spread != null) Expr.Spread(spread.pos, expr()) else expr()
                     if (accept(T.COMMA) == null) break
                 }
                 expect(T.RBRACKET, "']'")
@@ -337,7 +343,16 @@ class Parser(private val tokens: List<Token>) {
 
     private fun whenExpr(): Expr {
         val pos = expect(T.WHEN, "'when'").pos
-        val subject = if (accept(T.LPAREN) != null) expr().also { expect(T.RPAREN, "')'") } else null
+        // `when (a, b)` matches on the tuple of both.
+        val subject = if (at(T.LPAREN)) {
+            val subjectPos = next().pos
+            val items = mutableListOf(expr())
+            while (accept(T.COMMA) != null) items += expr()
+            expect(T.RPAREN, "')'")
+            items.singleOrNull() ?: Expr.Tuple(subjectPos, items)
+        } else {
+            null
+        }
         expect(T.LBRACE, "'{'")
         skipNewlines()
         val branches = mutableListOf<Branch>()
@@ -370,6 +385,28 @@ class Parser(private val tokens: List<Token>) {
         val pos = peek.pos
         return when {
             accept(T.UNDERSCORE) != null -> Pattern.Wildcard(pos)
+            accept(T.LPAREN) != null -> {
+                val items = mutableListOf(pattern())
+                while (accept(T.COMMA) != null) items += pattern()
+                expect(T.RPAREN, "')'")
+                items.singleOrNull() ?: Pattern.Tuple(pos, items)
+            }
+            accept(T.LBRACKET) != null -> {
+                val items = mutableListOf<Pattern>()
+                var rest: Pattern? = null
+                while (!at(T.RBRACKET)) {
+                    if (accept(T.ELLIPSIS) != null) {
+                        rest = pattern()
+                        if (rest !is Pattern.Bind && rest !is Pattern.Wildcard) throw error("'...' takes a name or '_'", rest.pos)
+                        if (!at(T.RBRACKET)) throw error("'...rest' must come last in a list pattern")
+                        break
+                    }
+                    items += pattern()
+                    if (accept(T.COMMA) == null) break
+                }
+                expect(T.RBRACKET, "']'")
+                Pattern.ListPattern(pos, items, rest)
+            }
             accept(T.IS) != null -> Pattern.Constructor(pos, upperIdent("a type after 'is'"), null, isCheck = true)
             at(T.IDENT) && peek.text[0].isUpperCase() -> {
                 val name = next().text
@@ -387,7 +424,7 @@ class Parser(private val tokens: List<Token>) {
                 Pattern.Constructor(pos, name, args, isCheck = false)
             }
             at(T.IDENT) -> Pattern.Bind(pos, next().text)
-            at(T.INT) || at(T.FLOAT) || at(T.STRING) || at(T.TRUE) || at(T.FALSE) -> Pattern.Literal(pos, primary())
+            at(T.INT) || at(T.FLOAT) || at(T.STRING) || at(T.CHAR) || at(T.TRUE) || at(T.FALSE) -> Pattern.Literal(pos, primary())
             at(T.MINUS) && (peekAt(1).kind == T.INT || peekAt(1).kind == T.FLOAT) -> Pattern.Literal(pos, unary())
             else -> throw error("expected a pattern but found ${describe(peek)}")
         }
@@ -412,6 +449,10 @@ class Parser(private val tokens: List<Token>) {
 
     private fun statement(): Statement {
         val pos = peek.pos
+        if (at(T.LPAREN)) destructuring()?.let { pattern ->
+            skipNewlines()
+            return Statement.Destructure(pos, pattern, expr())
+        }
         if (at(T.IDENT) && peekAt(1).kind == T.ASSIGN) {
             val name = next().text
             next()
@@ -435,6 +476,18 @@ class Parser(private val tokens: List<Token>) {
             return Statement.Binding(pos, name, params, returnType, expr())
         }
         return Statement.Effect(pos, expr())
+    }
+
+    /** `(a, b) =` at the start of a statement: parses the pattern and the `=`, or returns null having consumed nothing. */
+    private fun destructuring(): Pattern? {
+        val save = p
+        try {
+            val pattern = pattern()
+            if (pattern is Pattern.Tuple && accept(T.ASSIGN) != null) return pattern
+        } catch (_: CompileError) {
+        }
+        p = save
+        return null
     }
 
     /** `name(...)` followed by `=` or `:` declares a local function rather than calling one. */

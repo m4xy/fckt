@@ -1,0 +1,40 @@
+// 5 Imperative features
+// fckt has no mutation: no arrays, no for or while loops, no mutable fields and no references.
+// Each example here is the functional version of what the original computes.
+
+// add_vect: lists for arrays. The result is as long as the shorter input, as in the original.
+addVect(v1: List<Float>, v2: List<Float>): List<Float> = when (v1, v2) {
+  ([x, ...xs], [y, ...ys]) -> [x + y, ...addVect(xs, ys)]
+  else -> []
+}
+
+// mutable_point: translate returns a moved copy rather than moving the point.
+type Point(x: Float, y: Float)
+
+translate(p: Point, dx: Float, dy: Float) = p.copy(x = p.x + dx, y = p.y + dy)
+
+// insertion_sort sorts an array in place. The list version is sort, in section 2.
+
+// random keeps its state in a reference. Here the state is passed in, and the next one returned.
+nextRandom(current: Int) = current * 25713 + 1345
+
+randoms(seed: Int, count: Int): List<Int> = if (count == 0) [] else {
+  next = nextRandom(seed)
+  [next, ...randoms(next, count - 1)]
+}
+
+// ref, ! and := can't be written without mutable fields.
+
+// idref keeps a polymorphic function in a mutable record field. fckt has neither, but a
+// polymorphic top-level function can be used at several types, which is what g needs.
+id<T>(x: T) = x
+
+g() = (id(1), id(true))
+
+main() = {
+  println("${addVect([1.0, 2.0], [3.0, 4.0])}")
+  mypoint = Point(0.0, 0.0)
+  println("${translate(mypoint, 1.0, 2.0)} $mypoint")
+  println("${randoms(0, 3)}")
+  println("${g()}")
+}

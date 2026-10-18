@@ -1,0 +1,42 @@
+// 6 Exceptions
+// fckt has no exceptions. A result that may be missing is an Option, so callers have to handle
+// it. (error("message") still stops the program, like OCaml's failwith.)
+
+head<T>(l: List<T>): Option<T> = when (l) {
+  [] -> None
+  [hd, ..._] -> Some(hd)
+}
+
+// List.assoc raises Not_found. lookup returns None instead.
+nameOfBinaryDigit(digit: Int) = [(0, "zero"), (1, "one")].lookup(digit).getOrElse("not a binary digit")
+
+firstNamedValue<T>(values: List<T>, names: List<(T, String)>): String = when (values) {
+  [] -> "no named value"
+  [value, ...rest] -> when (names.lookup(value)) {
+    Some(name) -> name
+    None -> firstNamedValue(rest, names)
+  }
+}
+
+// temporarily_set_reference restores a reference; fckt has no references.
+
+assocMayMap<A, B, K>(f: (A) -> Option<B>, x: K, l: List<(K, A)>): Option<B> = l.lookup(x).flatMap(f)
+
+flatAssocOpt<K, V>(x: K, l: List<(K, Option<V>)>): Option<V> = l.lookup(x).flatMap(v -> v)
+
+// fixpoint: the loop and its local exception become recursion.
+fixpoint<T>(f: (T) -> T, x: T): T = {
+  y = f(x)
+  if (x == y) x else fixpoint(f, y)
+}
+
+main() = {
+  noInts: List<Int> = []
+  println("${head([1, 2])} ${head(noInts)}")
+  println("${nameOfBinaryDigit(0)}, ${nameOfBinaryDigit(-1)}")
+  println(firstNamedValue([0, 10], [(1, "one"), (10, "ten")]))
+  println("${assocMayMap(x -> if (x > 0) Some(x * 2) else None, "b", [("a", 1), ("b", 2)])}")
+  println("${flatAssocOpt(1, [(1, Some("one")), (2, None)])}")
+  // Newton's method for the integer square root of 10
+  println("${fixpoint(x -> (x + 10 / x) / 2, 1)}")
+}

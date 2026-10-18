@@ -1,0 +1,21 @@
+// 10 Printf formats
+// String templates do what format strings do, and the compiler checks them the same way:
+// "$x" works for any type it can print.
+
+// %a printers become functions that return strings.
+ppInt(n: Int) = "$n"
+
+ppOption<T>(printer: (T) -> String, o: Option<T>) = when (o) {
+  None -> "None"
+  Some(v) -> "Some(${printer(v)})"
+}
+
+// A stored format string is a function of its arguments.
+str(i: Int, x: Float, s: String) = "$i is an integer value, $x is a float, \"$s\""
+
+main() = {
+  println("${3} + ${2} is an integer value, ${4.5} * ${1.0} is a float, \"${"this is a string"}\"")
+  println("Outputting an integer using a custom printer: ${ppInt(42)}")
+  println("The current setting is ${Some(3) |> ppOption(ppInt)}.\nThere is only ${None |> ppOption(ppInt)}")
+  println(str(3, 4.5, "string value"))
+}

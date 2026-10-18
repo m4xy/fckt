@@ -25,6 +25,7 @@ object Printer {
     private fun infixLevel(op: String): Pair<Int, Boolean> = when (op) {
         "*", "/", "*.", "/.", "mod" -> 70 to false
         "+", "-", "+.", "-." -> 65 to false
+        "::" -> 62 to true
         "^", "@" -> 60 to true
         "=", "<>", "<", ">", "<=", ">=", "|>", "==", "!=" -> 55 to false
         "&&" -> 50 to true
@@ -82,7 +83,7 @@ object Printer {
     // ---- Expressions ----
 
     private fun precedence(n: ResolvedNode): Int = when (n.name) {
-        "ident", "record", "list", "annotated" -> ATOM
+        "ident", "record", "list", "annotated", "tuple", "record-update" -> ATOM
         "literal" -> if (n.str("text").startsWith("-")) APPLY - 5 else ATOM
         "field" -> FIELD
         "apply" -> APPLY
@@ -156,6 +157,12 @@ object Printer {
         }
         "record" -> collection("{ ", " }", n.children.map { entry -> entry.str("name") + " = " + sub(entry.children.single(), 0) })
         "list" -> collection("[", "]", n.children.map { sub(it, 0) })
+        "tuple" -> collection("(", ")", n.children.map { sub(it, 0) }, ", ")
+        "record-update" -> collection(
+            "{ " + sub(n.children[0], FIELD) + " with ",
+            " }",
+            n.children.drop(1).map { entry -> entry.str("name") + " = " + sub(entry.children.single(), 0) },
+        )
         else -> error("unexpected ${n.name} in an expression")
     }
 
@@ -170,11 +177,11 @@ object Printer {
         return if (breakable && ('\n' in oneLine || oneLine.length > WIDTH)) "$l\n$op $r" else oneLine
     }
 
-    private fun collection(open: String, close: String, items: List<String>): String {
+    private fun collection(open: String, close: String, items: List<String>, separator: String = "; "): String {
         if (items.isEmpty()) return open.trim() + close.trim()
-        val oneLine = open + items.joinToString("; ") + close
+        val oneLine = open + items.joinToString(separator) + close
         if ('\n' !in oneLine && oneLine.length <= WIDTH) return oneLine
-        return open.trim() + "\n" + items.joinToString(";\n") { indent(it) } + "\n" + close.trim()
+        return open.trim() + "\n" + items.joinToString(separator.trim() + "\n") { indent(it) } + "\n" + close.trim()
     }
 
     /** Indents every line after the first, for a multi-line expression that continues a line. */

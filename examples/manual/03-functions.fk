@@ -1,0 +1,25 @@
+// 3 Functions as values
+
+pi = 4.0 * atan(1.0)
+
+square(x: Float) = x * x
+
+deriv(f: (Float) -> Float, dx: Float) = (x: Float) -> (f(x + dx) - f(x)) / dx
+
+sinPrime = deriv(sin, 1e-6)
+
+compose<A, B, C>(f: (A) -> B, g: (C) -> A) = (x: C) -> f(g(x))
+
+cos2 = compose(square, cos)
+
+map<A, B>(f: (A) -> B, l: List<A>): List<B> = when (l) {
+  [] -> []
+  [hd, ...tl] -> [f(hd), ...map(f, tl)]
+}
+
+main() = {
+  println("${sinPrime(pi)}")
+  println("${cos2(0.0)}")
+  println("${[0, 1, 2, 3, 4].map(n -> n * 2 + 1)}")
+  println("${map(n -> n * 2 + 1, [0, 1, 2, 3, 4])}")
+}
