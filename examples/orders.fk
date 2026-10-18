@@ -1,0 +1,55 @@
+type Money(Int)
+type UserId(value: String)
+type Order(id: String, user: UserId, items: List<Money>)
+
+interface OrderResult { // sealed: these are its only variants
+  Success(orderId: String, total: Money)
+  InvalidOrder(reason: String)
+  PaymentFailed(errorCode: Int, message: String)
+}
+
+type PaymentGateway(
+  charge: (Money) -> OrderResult,
+  refund: (String, Money) -> Boolean
+)
+
+calculateTotal(items: List<Money>, code: Option<String>) = {
+  subtotal = items.map(m -> m.value).sum()
+  discount = when (code) {
+    Some("X") -> (subtotal * 0.1).toInt()
+    None -> 0
+    else -> 0
+  }
+
+  Money(max(0, subtotal - discount))
+}
+
+withLogging(gateway: PaymentGateway) = PaymentGateway(
+  charge = amount -> {
+    println("Initiating charge for $amount")
+    gateway.charge(amount)
+  },
+  refund = gateway.refund
+)
+
+fakeGateway = PaymentGateway(
+  charge = amount -> if (amount.value > 0) Success("order-1", amount) else InvalidOrder("nothing to charge"),
+  refund = (orderId, amount) -> true
+)
+
+describe(result: OrderResult) = when (result) {
+  is Success -> "paid ${result.total.value} for ${result.orderId}"
+  InvalidOrder(reason) -> "invalid: $reason"
+  PaymentFailed(code, message) -> "failed ($code): $message"
+}
+
+checkout(order: Order, code: Option<String>, gateway: PaymentGateway) =
+  calculateTotal(order.items, code) |> gateway.charge
+
+main() = {
+  order = Order("order-1", UserId("ada"), [Money(1000), Money(250)])
+  gateway = fakeGateway |> withLogging
+  later = ~checkout(order, Some("X"), gateway)
+  println(describe(later()))
+  println(describe(checkout(order, None, gateway)))
+}
