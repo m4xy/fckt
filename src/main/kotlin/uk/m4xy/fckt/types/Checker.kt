@@ -354,7 +354,7 @@ class Checker(private val file: SourceFile) {
             val hint = (expected?.prune() as? Type.Con)?.takeIf { it.name == Type.TUPLE && it.args.size == e.elements.size }
             Type.tuple(e.elements.mapIndexed { i, x -> infer(x, hint?.args?.get(i), scope).also { t -> hint?.let { expect(t, it.args[i], x.pos) } } })
         }
-        is Expr.Spread -> throw CompileError(e.pos, "'...' can only be used inside a list literal")
+        is Expr.Spread -> throw CompileError(e.pos, "'*' can only spread a list inside a list literal")
         is Expr.StringLit -> {
             e.parts.forEach { if (it is StringPart.Interpolated) infer(it.expr, null, scope) }
             Type.STRING

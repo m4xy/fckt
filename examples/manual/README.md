@@ -17,7 +17,7 @@ prints as `Ratio(num=11, denom=15)`, and the float `1.` prints as `1.0`.
 | Section | Translation |
 | --- | --- |
 | [1 Basics](01-basics.fk) | Direct. `square` needs `x: Float`, because fckt's `*` works on both numeric types. OCaml rejects `1.0 * 2`, but fckt promotes the `Int`, as Kotlin does. |
-| [2 Data types](02-data-types.fk) | `x :: l` is `[x, ...l]`, and the patterns `[]` and `head :: tail` are `[]` and `[head, ...tail]`. `'\n'.code` is `int_of_char`. Kotlin's `"""raw strings"""` stand in for `{|quoted strings|}`; fckt has no custom delimiters. |
+| [2 Data types](02-data-types.fk) | `x :: l` is `[x, *l]`, and the patterns `[]` and `head :: tail` are `[]` and `[head, *tail]`. `'\n'.code` is `int_of_char`. Kotlin's `"""raw strings"""` stand in for `{|quoted strings|}`; fckt has no custom delimiters. |
 | [3 Functions as values](03-functions.fk) | Direct. `sin'` is `sinPrime`. `fun x -> ...` returned from a function is `(x: Float) -> ...`. |
 | [4 Records and variants](04-records-and-variants.fk) | `{num; denom}` patterns become `Ratio(num, denom)` in a `when`, or destructuring: `(num, denom) = r`. `{ ratio with num = ... }` is `ratio.copy(num = ...)`. `Int of int` is `Int(Int)`. Matching on `(n1, n2)` is `when (n1, n2)`. An `Int` plus a `Float` gives a `Float`, so `float i1 +. f2` is `i1 + f2`. |
 | [4.1 Disambiguation](04.1-disambiguation.fk) | fckt knows the type of every record and variant, so it never needs a type annotation or guesses from the last defined type. `look_at_x_then_y` and `is_a_or_b`, both errors in OCaml, work. |
@@ -32,7 +32,7 @@ prints as `Ratio(num=11, denom=15)`, and the float `1.` prints as `1.0`.
 ## What the translation added to fckt
 
 - Tuples: `(a, b)`, the type `(A, B)`, the pattern `(p, q)`, and `when (a, b)` to match on several values.
-- List patterns `[]`, `[a, b]` and `[head, ...tail]`, and spread in list literals: `[x, ...xs]` and `[...xs, ...ys]`.
+- List patterns `[]`, `[a, b]` and `[head, *tail]`, and spread in list literals: `[x, *xs]` and `[*xs, *ys]`. `*` is Kotlin's spread operator.
 - `+` on lists.
 - Destructuring with `(a, b) = value`, for tuples and records (by field order, like Kotlin's data classes).
 - `record.copy(field = value)`.

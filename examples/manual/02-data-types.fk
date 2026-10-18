@@ -2,15 +2,15 @@
 
 l = ["is", "a", "tale", "told", "etc."]
 
-// List patterns: [] is the empty list, [head, ...tail] is a first element and the rest.
+// List patterns: [] is the empty list, [head, *tail] is a first element and the rest.
 sort<T>(lst: List<T>): List<T> = when (lst) {
   [] -> []
-  [head, ...tail] -> insert(head, sort(tail))
+  [head, *tail] -> insert(head, sort(tail))
 }
 
 insert<T>(elt: T, lst: List<T>): List<T> = when (lst) {
   [] -> [elt]
-  [head, ...tail] -> if (elt <= head) [elt, ...lst] else [head, ...insert(elt, tail)]
+  [head, *tail] -> if (elt <= head) [elt, *lst] else [head, *insert(elt, tail)]
 }
 
 main() = {
@@ -29,8 +29,8 @@ main() = {
   println("${"""\\""" == "\\\\"}")
   println("${"""the end of this|}quoted string is here""" == "the end of this|}quoted string is here"}")
 
-  // Lists. [x, ...l] is OCaml's x :: l.
-  println("${["Life", ...l]}")
+  // Lists. [x, *l] is OCaml's x :: l.
+  println("${["Life", *l]}")
   println("${sort(l)}")
   println("${sort([6, 2, 5, 3])}")
   println("${sort([3.14, 2.718])}")

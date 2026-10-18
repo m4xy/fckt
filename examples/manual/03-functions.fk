@@ -14,7 +14,7 @@ cos2 = compose(square, cos)
 
 map<A, B>(f: (A) -> B, l: List<A>): List<B> = when (l) {
   [] -> []
-  [hd, ...tl] -> [f(hd), ...map(f, tl)]
+  [hd, *tl] -> [f(hd), *map(f, tl)]
 }
 
 main() = {

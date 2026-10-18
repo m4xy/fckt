@@ -199,7 +199,7 @@ class Lowering(private val program: Program) {
             is Expr.BoolLit -> literal(e.value.toString())
             is Expr.CharLit -> literal(charText(e.value))
             is Expr.Tuple -> tuple { e.elements.forEach { expr(it) } }
-            is Expr.Spread -> throw CompileError(e.pos, "'...' can only be used inside a list literal")
+            is Expr.Spread -> throw CompileError(e.pos, "'*' can only spread a list inside a list literal")
             is Expr.StringLit -> gen(
                 concat(
                     e.parts.map { part ->

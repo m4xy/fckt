@@ -80,7 +80,7 @@ sealed class Expr {
     class CharLit(override val pos: Pos, val value: Char) : Expr()
     class Tuple(override val pos: Pos, val elements: List<Expr>) : Expr()
 
-    /** `...xs` inside a list literal: all of the list `xs`. */
+    /** `*xs` inside a list literal: all of the list `xs`. */
     class Spread(override val pos: Pos, val list: Expr) : Expr()
     class Name(override val pos: Pos, val name: String) : Expr() {
         var resolved: NameRef? = null
@@ -182,7 +182,7 @@ sealed interface Pattern {
         var record: Decl.Record? = null
     }
 
-    /** `[]`, `[a, b]`, or `[head, ...tail]` when [rest] is set. */
+    /** `[]`, `[a, b]`, or `[head, *tail]` when [rest] is set. */
     data class ListPattern(override val pos: Pos, val elements: List<Pattern>, val rest: Pattern?) : Pattern
 
     /** `Success(a, b)`, `None`, or (with [isCheck]) `is Success`, which smart-casts the subject. */

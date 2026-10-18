@@ -295,7 +295,8 @@ class Parser(private val tokens: List<Token>) {
                 next()
                 val items = mutableListOf<Expr>()
                 while (!at(T.RBRACKET)) {
-                    val spread = accept(T.ELLIPSIS)
+                    // `*xs` spreads a list, as Kotlin's `*` spreads an array into varargs.
+                    val spread = accept(T.STAR)
                     items += if (spread != null) Expr.Spread(spread.pos, expr()) else expr()
                     if (accept(T.COMMA) == null) break
                 }
@@ -395,10 +396,10 @@ class Parser(private val tokens: List<Token>) {
                 val items = mutableListOf<Pattern>()
                 var rest: Pattern? = null
                 while (!at(T.RBRACKET)) {
-                    if (accept(T.ELLIPSIS) != null) {
+                    if (accept(T.STAR) != null) {
                         rest = pattern()
-                        if (rest !is Pattern.Bind && rest !is Pattern.Wildcard) throw error("'...' takes a name or '_'", rest.pos)
-                        if (!at(T.RBRACKET)) throw error("'...rest' must come last in a list pattern")
+                        if (rest !is Pattern.Bind && rest !is Pattern.Wildcard) throw error("'*' takes a name or '_'", rest.pos)
+                        if (!at(T.RBRACKET)) throw error("'*rest' must come last in a list pattern")
                         break
                     }
                     items += pattern()

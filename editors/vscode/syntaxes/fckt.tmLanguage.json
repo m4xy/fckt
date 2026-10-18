@@ -479,8 +479,12 @@
           "match": "->"
         },
         {
-          "name": "keyword.operator.spread.fckt",
-          "match": "\\.\\.\\."
+          "match": "(?<=[\\[,])\\s*(\\*)",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.spread.fckt"
+            }
+          }
         },
         {
           "name": "keyword.operator.pipe.fckt",

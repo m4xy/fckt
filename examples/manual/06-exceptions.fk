@@ -4,7 +4,7 @@
 
 head<T>(l: List<T>): Option<T> = when (l) {
   [] -> None
-  [hd, ..._] -> Some(hd)
+  [hd, *_] -> Some(hd)
 }
 
 // List.assoc raises Not_found. lookup returns None instead.
@@ -12,7 +12,7 @@ nameOfBinaryDigit(digit: Int) = [(0, "zero"), (1, "one")].lookup(digit).getOrEls
 
 firstNamedValue<T>(values: List<T>, names: List<(T, String)>): String = when (values) {
   [] -> "no named value"
-  [value, ...rest] -> when (names.lookup(value)) {
+  [value, *rest] -> when (names.lookup(value)) {
     Some(name) -> name
     None -> firstNamedValue(rest, names)
   }

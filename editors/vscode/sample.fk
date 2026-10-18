@@ -35,6 +35,6 @@ swap<A, B>(pair: (A, B)) = {
 
 describe(xs: List<Char>) = when (xs) {
   [] -> """empty "list""""
-  ['a', ...rest] -> "starts with a, then ${rest.size} more"
-  [c, ..._] -> "starts with $c, code ${c.code}"
+  ['a', *rest] -> "starts with a, then ${rest.size} more"
+  [c, *_] -> "starts with $c, code ${c.code}"
 }
