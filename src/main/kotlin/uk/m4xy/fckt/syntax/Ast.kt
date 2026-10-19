@@ -97,7 +97,8 @@ sealed interface Decl {
     /**
      * `module Name { declarations }`: a namespace whose `private` members stay inside it. With a
      * [spec] (`module Name : Spec { ... }`), only what the spec lists is seen outside, and the
-     * spec's types are abstract there. With [params] (`module Name<M : Spec> { ... }`) it's a
+     * spec's types are abstract there, unless the spec's type arguments say what they are
+     * (`module IntOrder : Ordered<Int>`). With [params] (`module Name<M : Spec> { ... }`) it's a
      * functor, which makes a module out of others. With an [application]
      * (`module Name = Functor<Arg>`), it's the module a functor makes from [Arg].
      */

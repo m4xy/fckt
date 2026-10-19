@@ -147,11 +147,8 @@ class Parser(private val tokens: List<Token>) {
         }
     }
 
-    private fun specName(): TypeRef.Named {
-        val spec = type() as? TypeRef.Named ?: throw error("expected a spec's name")
-        if (spec.args.isNotEmpty()) throw error("a spec takes no type arguments", spec.pos)
-        return spec
-    }
+    /** `Spec`, or `Spec<A, B>`, which says what the spec's types are, in order. */
+    private fun specName(): TypeRef.Named = type() as? TypeRef.Named ?: throw error("expected a spec's name")
 
     /** Items one per line up to a `}`, after the `{`. */
     private fun <R> members(item: () -> R): List<R> {

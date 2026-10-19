@@ -27,13 +27,14 @@ module SortedSet<M : Ordered> {
   }
 }
 
-// Without a spec of their own, these show what T is, so an IntSet takes Ints.
-module IntOrder {
+// Ordered<Int> says T is Int, so everyone can see it is, and an IntSet takes Ints. Plain
+// `: Ordered` would keep T abstract: an IntSet would then take only IntOrder.Ts.
+module IntOrder : Ordered<Int> {
   type T = Int
   compare(a: Int, b: Int) = a - b
 }
 
-module ByLength {
+module ByLength : Ordered<String> {
   type T = String
   compare(a: String, b: String) = a.length - b.length
 }

@@ -202,7 +202,7 @@ class Lowering(private val program: Program) {
             return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(m.simpleName), applies = uk.m4xy.kastor.Attribute.Value(applies))
         }
         currentPath = path.dropLast(1)
-        val params = program.functorParams[m.name]?.joinToString(" ") { (name, spec) -> "($name : ${ref(spec.name) { it }})" }
+        val params = program.functorParams[m.name]?.joinToString(" ") { (name, spec) -> "($name : ${specText("${m.name}.$name", spec)})" }
         val items = moduleItems(path, m.decls, functionItems).map { child ->
             when (child) {
                 is StructureChild.TypeGroup -> ModuleDefChild.TypeGroup(child.element)
@@ -215,7 +215,7 @@ class Lowering(private val program: Program) {
         // A module with a spec shows what the spec lists. One with private members states what it
         // shows; otherwise OCaml infers it.
         currentPath = path.dropLast(1)
-        val spec = program.moduleSpecs[m.name]?.let { ref(it.name) { name -> name } }
+        val spec = program.moduleSpecs[m.name]?.let { specText(m.name, it) }
         currentPath = path
         val signature = if (spec == null && hasPrivate(m)) {
             listOf(ModuleDefChild.Signature(SignatureElement.build<Unit> { signatureItems(m) }))
@@ -228,6 +228,25 @@ class Lowering(private val program: Program) {
             params = params?.let { uk.m4xy.kastor.Attribute.Value(it) },
             children = signature + items,
         )
+    }
+
+    /**
+     * The spec [module] follows, as written from here: `Ordered`, or for `Ordered<Int>`,
+     * `Ordered with type t = int`.
+     */
+    private fun specText(module: String, spec: Decl.Spec): String {
+        val fixed = spec.types.mapNotNull { t ->
+            program.fixedTypes["$module.${t.name}"]?.let { alias ->
+                val params = when (t.typeParams.size) {
+                    0 -> ""
+                    1 -> typeVar(t.typeParams[0]) + " "
+                    else -> t.typeParams.joinToString(", ", "(", ") ") { typeVar(it) }
+                }
+                "type $params${snake(t.name)} = ${typeText(alias.target, alias.typeParams)}"
+            }
+        }
+        val name = ref(spec.name) { it }
+        return if (fixed.isEmpty()) name else "$name with ${fixed.joinToString(" and ")}"
     }
 
     /** `module type Spec = sig ... end`: the spec's types, abstract, with their show functions, then its values. */
@@ -286,7 +305,7 @@ class Lowering(private val program: Program) {
         for (spec in m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }) moduleType(spec.simpleName) { specItems(spec) }
         for (inner in m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate }) {
             val spec = program.moduleSpecs[inner.name]
-            if (spec != null) sigModule(inner.simpleName) { this.spec = ref(spec.name) { it } }
+            if (spec != null) sigModule(inner.simpleName) { this.spec = specText(inner.name, spec) }
             else sigModule(inner.simpleName) { signatureItems(inner) }
             currentPath = path
         }

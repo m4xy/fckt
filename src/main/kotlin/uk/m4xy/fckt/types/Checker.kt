@@ -52,6 +52,8 @@ class Program(
     val applications: Map<String, Pair<String, List<String>>>,
     /** The type in a functor that each type in a module made from it copies. */
     val copyOrigins: Map<String, String>,
+    /** What a spec's type arguments make each of a module's types, by the type's full name. */
+    val fixedTypes: Map<String, Decl.Alias>,
 )
 
 /** A case of a sealed type: [variant], declared by [origin], with [fields] typed in the sealed type's own terms. */
@@ -117,6 +119,7 @@ class Checker(file: SourceFile) {
     /** A functor's parameter's members, which stand for whatever module it's given: they have no body. */
     private val parameterMembers = mutableSetOf<Decl.Function>()
     private val functorParams = linkedMapOf<String, List<Pair<String, Decl.Spec>>>()
+    private val parameterModules = mutableSetOf<String>()
 
     /** For each module made by a functor: the functor, and the module given for each parameter. */
     private val applications = linkedMapOf<String, Pair<Decl.Module, List<Decl.Module>>>()
@@ -125,6 +128,12 @@ class Checker(file: SourceFile) {
     private val moduleAliases = mutableMapOf<String, String>()
     private val copyOrigins = mutableMapOf<String, String>()
     private val argumentsChecked = mutableSetOf<Pair<String, String>>()
+
+    /**
+     * `module IntOrder : Ordered<Int>`: Ordered's T, in IntOrder, is Int, even outside it. Each is
+     * an alias, by the type's full name, written where the module is.
+     */
+    private val fixedTypes = mutableMapOf<String, Decl.Alias>()
 
     init {
         for (d in decls) if (d is Decl.Spec) {
@@ -150,8 +159,10 @@ class Checker(file: SourceFile) {
             val name = "${f.name}.${p.name}"
             if (name in modules) throw CompileError(p.pos, "${f.simpleName} has a module named ${p.name} already")
             val types = spec.types.map { Decl.Record(p.pos, "$name.${it.name}", it.typeParams, emptyList()) }
+            fixTypes(name, f.path, spec, p.spec)
             val values = spec.values.map { Decl.Function(p.pos, "$name.${it.name}", it.typeParams, it.params, null, Expr.BoolLit(p.pos, true)) }
             modules[name] = Decl.Module(p.pos, name, types + values, spec = p.spec)
+            parameterModules += name
             decls += types + values
             parameterMembers += values
             p.name to spec
@@ -184,6 +195,39 @@ class Checker(file: SourceFile) {
         applications[app.name] = functor to args
     }
 
+    /**
+     * `Spec<A, B>` for [module], written in [scope]: an alias for each of the spec's types, in order,
+     * saying what it is. A type that takes parameters takes a type that takes as many more:
+     * `Monad<Option>` makes `M<A>` an `Option<A>`, and `Monad<Result<String>>` a `Result<String, A>`.
+     */
+    private fun fixTypes(module: String, scope: List<String>, spec: Decl.Spec, ref: TypeRef.Named) {
+        if (ref.args.size > spec.types.size) {
+            throw CompileError(ref.pos, "${spec.simpleName} has ${spec.types.size} type${if (spec.types.size == 1) "" else "s"}, so it takes at most that many type arguments, not ${ref.args.size}")
+        }
+        for ((t, arg) in spec.types.zip(ref.args)) {
+            val params = t.typeParams.map { TypeRef.Named(arg.pos, it, emptyList()) }
+            val target = when {
+                params.isEmpty() -> arg
+                arg is TypeRef.Named -> arg.copy(args = arg.args + params)
+                else -> throw CompileError(arg.pos, "${spec.simpleName}'s ${t.name} takes type parameters, so it needs a named type, like Option")
+            }
+            val alias = Decl.Alias(arg.pos, (scope + "${module.substringAfterLast('.')}#${t.name}").joinToString("."), t.typeParams, target)
+            aliases[alias.name] = alias
+            fixedTypes["$module.${t.name}"] = alias
+        }
+    }
+
+    /** What [module]'s [name] type applied to [args] is outside the module: what its spec's type arguments say, or abstract. */
+    private fun outsideType(module: String, name: String, args: List<Type>): Type =
+        fixedTypes["$module.$name"]?.let { fixed ->
+            try {
+                expand(fixed, args)
+            } catch (e: CompileError) {
+                val n = fixed.typeParams.size
+                throw if (n == 0) e else CompileError(e.pos, "${name} takes $n type parameter${if (n == 1) "" else "s"}, so its type argument must take $n more: ${e.message}")
+            }
+        } ?: Type.Con(Type.ABSTRACT + "$module.$name", args)
+
     private fun enclosingFunctor(path: List<String>): Decl.Module? =
         (1..path.size).map { modules[path.take(it).joinToString(".")] }.firstOrNull { it != null && it.params.isNotEmpty() }
 
@@ -209,8 +253,17 @@ class Checker(file: SourceFile) {
             for ((param, arg) in functorParams.getValue(functor.name).zip(args)) {
                 val (name, spec) = param
                 val argSpec = moduleSpecs[arg.name]
-                if (argSpec === spec) continue
                 fun fail(why: String): Nothing = throw CompileError(modules.getValue(app).pos, "${arg.simpleName} can't be ${functor.simpleName}'s $name: $why")
+                // M : Ordered<Int> needs a module whose T is Int, as seen from here.
+                for (t in spec.types) {
+                    if ("${functor.name}.$name.${t.name}" !in fixedTypes) continue
+                    val d = typeDecl("${arg.name}.${t.name}") ?: continue
+                    val rigid = t.typeParams.map { Type.Con("#$it") }
+                    val needed = outsideType("${functor.name}.$name", t.name, rigid)
+                    val given = typeOf(d, rigid)
+                    if (!u.unify(needed, given)) fail("${functor.simpleName} needs its ${t.name} to be $needed, but here it's $given")
+                }
+                if (argSpec === spec) continue
                 if (argSpec != null) fail("it follows ${argSpec.simpleName}, not ${spec.simpleName}")
                 for (t in spec.types) {
                     val d = typeDecl("${arg.name}.${t.name}") ?: fail("it doesn't define type ${t.name}, which ${spec.simpleName} needs")
@@ -301,6 +354,7 @@ class Checker(file: SourceFile) {
             functorParams = functorParams,
             applications = applications.mapValues { (_, made) -> made.first.name to made.second.map { it.name } },
             copyOrigins = copyOrigins,
+            fixedTypes = fixedTypes,
         )
     }
 
@@ -485,7 +539,9 @@ class Checker(file: SourceFile) {
         for (m in modules.values) {
             val ref = m.spec ?: continue
             currentPath = m.path
-            moduleSpecs[m.name] = find(ref.name, specs, ref.pos) ?: throw CompileError(ref.pos, "unknown spec '${ref.name}'")
+            val spec = find(ref.name, specs, ref.pos) ?: throw CompileError(ref.pos, "unknown spec '${ref.name}'")
+            moduleSpecs[m.name] = spec
+            fixTypes(m.name, m.path, spec, ref)
         }
         currentPath = emptyList()
         for ((name, variants) in variantsByName) {
@@ -497,7 +553,7 @@ class Checker(file: SourceFile) {
             }
         }
         // Resolve every field type now, so bad references are reported at the declaration.
-        for (a in aliases.values) {
+        for (a in aliases.values.filter { it !in fixedTypes.values }) {
             currentPath = a.path
             expand(a, a.typeParams.map { Type.Con("#$it") })
         }
@@ -644,7 +700,7 @@ class Checker(file: SourceFile) {
 
     /** The type declaration [d] applied to [args], as seen from the current module. */
     private fun typeOf(d: Decl, args: List<Type>): Type = when {
-        abstractHere(d) -> Type.Con(Type.ABSTRACT + d.name, args)
+        abstractHere(d) -> outsideType(d.path.joinToString("."), d.simpleName, args)
         d is Decl.Alias -> expand(d, args)
         else -> Type.Con(d.name, args)
     }
@@ -694,7 +750,7 @@ class Checker(file: SourceFile) {
         for (f in parameterMembers) {
             val module = f.path.joinToString(".")
             val wanted = specSchemes.getValue(moduleSpecs.getValue(module)).getValue(f.simpleName)
-            outsideSchemes[f] = Scheme(wanted.vars, specView(wanted.type, emptyMap()) { name, args -> Type.Con(Type.ABSTRACT + "$module.$name", args) })
+            outsideSchemes[f] = Scheme(wanted.vars, specView(wanted.type, emptyMap()) { name, args -> outsideType(module, name, args) })
         }
     }
 
@@ -710,6 +766,17 @@ class Checker(file: SourceFile) {
                 if (n != t.typeParams.size) {
                     throw CompileError(d.pos, "${spec.simpleName} says ${t.name} takes ${t.typeParams.size} type parameter${if (t.typeParams.size == 1) "" else "s"}, not $n")
                 }
+                // Ordered<Int> says T is Int: inside the module, it must be.
+                if ("$name.${t.name}" in fixedTypes && name !in parameterModules) {
+                    val rigid = t.typeParams.map { Type.Con("#$it") }
+                    currentPath = m.name.split('.')
+                    val inside = typeOf(d, rigid)
+                    currentPath = m.path
+                    val said = outsideType(name, t.name, rigid)
+                    if (!u.unify(inside, said)) {
+                        throw CompileError(d.pos, "${m.simpleName} follows ${spec.simpleName} with ${t.name} as $said, but its ${t.name} is $inside")
+                    }
+                }
             }
             for (v in spec.values) {
                 val f = globals["$name.${v.name}"]
@@ -717,6 +784,7 @@ class Checker(file: SourceFile) {
                 if (f.isPrivate) throw CompileError(f.pos, "'${v.name}' is in ${m.simpleName}'s spec ${spec.simpleName}, so it can't be private")
             }
         }
+        currentPath = emptyList()
     }
 
     /**
@@ -736,7 +804,7 @@ class Checker(file: SourceFile) {
         if (!u.unify(actual, inside)) {
             throw CompileError(decl.pos, "'${decl.simpleName}' has type $shown, but ${spec.simpleName} needs ${Type.render(wanted.type, names.toMap().toMutableMap())}, which here is ${inside.zonk()}")
         }
-        outsideSchemes[decl] = Scheme(wanted.vars, specView(wanted.type, emptyMap()) { name, args -> Type.Con(Type.ABSTRACT + "$module.$name", args) })
+        outsideSchemes[decl] = Scheme(wanted.vars, specView(wanted.type, emptyMap()) { name, args -> outsideType(module, name, args) })
     }
 
     /** A spec's [type] with its type variables replaced from [vars], and each of its own types by [own]. */

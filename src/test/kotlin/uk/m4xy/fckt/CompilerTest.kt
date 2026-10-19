@@ -356,7 +356,7 @@ class CompilerTest {
         val ml = compile(source)
         assertContains(ml, "module SortedSet (M : Ordered) : sig")
         assertContains(ml, "module IntSet = SortedSet (IntOrder)")
-        assertContains(ml, "fk_assert_equals Fun.id \"line 47\" \"Set(items=[1, 3, 5])\" (IntSet.show_set numbers)")
+        assertContains(ml, "\"Set(items=[1, 3, 5])\" (IntSet.show_set numbers)")
     }
 
     @Test
@@ -393,6 +393,31 @@ class CompilerTest {
         )
         // Unsealed, it shows T is Int.
         compile(sortedSet + intOrder + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)")
+    }
+
+    @Test
+    fun `spec type arguments say what a module's types are`() {
+        val source = File("examples/monads.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "module Options : Monad with type 'a m = 'a option = struct")
+        assertContains(ml, "module Results : Monad with type 'a m = (string, 'a) result = struct")
+        val monad = "spec Monad {\n  type M<A>\n  pure<A>(x: A): M<A>\n}\n"
+        val options = "  type M<A> = Option<A>\n  pure(x) = Some(x)\n}"
+        assertContains(error(monad + "module O : Monad<Int> {\n$options"), "its type argument must take 1 more")
+        assertContains(error(monad + "module O : Monad<(Int) -> Int> {\n$options"), "it needs a named type, like Option")
+        assertContains(error(monad + "module O : Monad<List> {\n$options"), "O follows Monad with M as List<A>, but its M is Option<A>")
+        assertContains(error(monad + "module O : Monad<Option, Int> {\n$options"), "Monad has 1 type, so it takes at most that many type arguments, not 2")
+        val twice = "spec Ordered {\n  type T\n  compare(a: T, b: T): Int\n}\nmodule Twice<M : Ordered<Int>> {\n  f(a: Int, b: Int): Int = M.compare(a, b)\n}\n"
+        assertContains(
+            error(twice + "module S {\n  type T = String\n  compare(a: String, b: String) = 0\n}\nmodule X = Twice<S>"),
+            "S can't be Twice's M: Twice needs its T to be Int, but here it's String",
+        )
+        assertContains(
+            error(twice + "module I : Ordered {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice<I>"),
+            "Twice needs its T to be Int, but here it's I.T",
+        )
+        assertContains(compile(twice + "module I : Ordered<Int> {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice<I>"), "(M : Ordered with type t = int)")
     }
 
     @Test

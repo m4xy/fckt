@@ -1,0 +1,55 @@
+// A monad as a spec: a type that takes a type, a way to wrap a value, and a way to chain a step
+// that might stop. Monad<Option> says the module's M is Option, so its M<Int> is an Option<Int>.
+
+spec Monad {
+  type M<A>
+  pure<A>(x: A): M<A>
+  bind<A, B>(m: M<A>, f: (A) -> M<B>): M<B>
+}
+
+module Options : Monad<Option> {
+  type M<A> = Option<A>
+  pure(x) = Some(x)
+  bind(m, f) = when (m) {
+    Some(x) -> f(x)
+    None -> None
+  }
+}
+
+type Result<E, A> { Ok(value: A), Err(error: E) }
+
+// A type that takes two can fill M<A> with its first given: M<A> is Result<String, A>.
+module Results : Monad<Result<String>> {
+  type M<A> = Result<String, A>
+  pure(x) = Ok(x)
+  bind(m, f) = when (m) {
+    Ok(x) -> f(x)
+    Err(e) -> Err(e)
+  }
+}
+
+// Written once, for every monad.
+module MonadOps<M : Monad> {
+  map<A, B>(m: M.M<A>, f: (A) -> B): M.M<B> = M.bind(m, x -> M.pure(f(x)))
+
+  sequence<A>(ms: List<M.M<A>>): M.M<List<A>> = when (ms) {
+    [] -> M.pure([])
+    [m, *rest] -> M.bind(m, x -> map(sequence(rest), xs -> [x, *xs]))
+  }
+}
+
+module OptionOps = MonadOps<Options>
+module ResultOps = MonadOps<Results>
+
+half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None
+
+positive(n: Int): Result<String, Int> = if (n > 0) Ok(n) else Err("$n isn't positive")
+
+main() = {
+  assertEquals(Some(3), Options.bind(Some(12), n -> Options.bind(half(n), half)))
+  assertEquals(None, Options.bind(Some(6), n -> Options.bind(half(n), half)))
+  assertEquals(Some([1, 2]), OptionOps.sequence([half(2), half(4)]))
+  assertEquals(None, OptionOps.sequence([half(2), half(3)]))
+  assertEquals(Ok([1, 2]), ResultOps.sequence([positive(1), positive(2)]))
+  assertEquals(Err("-1 isn't positive"), ResultOps.sequence([positive(1), positive(-1)]))
+}
