@@ -421,6 +421,26 @@ class CompilerTest {
     }
 
     @Test
+    fun `a module's block binds with by`() {
+        val ml = compile(File("examples/monads.fk").readText())
+        assertContains(ml, "let ( let* ) = Options.bind in\n  let* h = half n in\n  let* q = half h in\n  Options.pure q")
+        assertContains(ml, "let ( let* ) = M.bind in")
+        assertContains(ml, "let* (a, b) = p in")
+        val options = "module Options {\n  pure(x) = Some(x)\n  bind(m, f) = when (m) {\n    Some(x) -> f(x)\n    None -> None\n  }\n}\n" +
+            "half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None\n"
+        // No `by` line, so no let*: OCaml would warn that it's unused.
+        assertEquals("let f (n : int) : int option = Options.pure n", compile(options + "f(n: Int): Option<Int> = Options { n }").trim().lines().last())
+        assertEquals("", run(options + "by(n: Int) = { by = n; by + 1 }\nmain() = assertEquals(Some(2), Options { x by half(4); by(x) - 1 })"))
+        assertContains(error(options + "f(n: Int) = Options { x by Ok(n); x }\ntype R<A> { Ok(a: A) }"), "Options binds Option<A>, but this is R<Int>")
+        assertContains(error(options + "f(n: Int) = Some { x by half(n); x }"), "Some isn't a module, so Some { ... } has nothing to bind with")
+        assertContains(error(options + "module P { g() = 1 }\nf(n: Int) = P { x by half(n); x }"), "P has no bind, so it can't run a block")
+        assertContains(error(options + "f(n: Int) = { x by half(n); x }"), "'by' needs a block to bind in")
+        assertContains(error(options + "f(n: Int) = Options { y = [1].map(x -> { z by half(x); z }); y }"), "'by' needs a block to bind in")
+        assertContains(error(options + "f(n: Int) = Options { Some(x) by Some(half(n)); x }"), "'by' takes only names and '_'")
+        assertContains(error(options + "f(n: Int) = Options { x by half(n) }"), "a block must end with an expression")
+    }
+
+    @Test
     fun `type aliases`() {
         val source = """
             type Pair<A> = (A, A)

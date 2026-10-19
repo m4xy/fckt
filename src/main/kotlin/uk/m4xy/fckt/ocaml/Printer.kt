@@ -158,7 +158,7 @@ object Printer {
         }
         "let-in" -> {
             val rec = if (n.attributes["rec"] == true) "rec " else ""
-            val head = "let $rec" + (listOf(n.str("name")) + n.list("params")).joinToString(" ") + " ="
+            val head = ((n.attributes["binder"] as String?) ?: "let") + " $rec" + (listOf(n.str("name")) + n.list("params")).joinToString(" ") + " ="
             val value = expr(n.children[0], FULL)
             val body = expr(n.children[1], ctx)
             if ('\n' !in value && head.length + value.length < WIDTH) "$head $value in\n$body"

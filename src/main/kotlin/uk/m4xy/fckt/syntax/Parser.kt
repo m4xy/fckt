@@ -362,9 +362,17 @@ class Parser(private val tokens: List<Token>) {
                     Expr.Member(name.pos, e, name.text)
                 }
                 at(T.LPAREN) -> Expr.Call(peek.pos, e, args())
+                // `Options { ... }`: a module's name right before a block runs the block in it.
+                at(T.LBRACE) && isModulePath(e) -> Expr.Monadic(e.pos, e, block() as Expr.Block)
                 else -> return e
             }
         }
+    }
+
+    private fun isModulePath(e: Expr): Boolean = when (e) {
+        is Expr.Name -> e.name[0].isUpperCase()
+        is Expr.Member -> e.name[0].isUpperCase() && isModulePath(e.target)
+        else -> false
     }
 
     private fun args(): List<Arg> {
@@ -567,6 +575,10 @@ class Parser(private val tokens: List<Token>) {
 
     private fun statement(): Statement {
         val pos = peek.pos
+        binding()?.let { pattern ->
+            skipNewlines()
+            return Statement.Bind(pos, pattern, expr())
+        }
         if (at(T.LPAREN)) destructuring()?.let { pattern ->
             skipNewlines()
             return Statement.Destructure(pos, pattern, expr())
@@ -594,6 +606,22 @@ class Parser(private val tokens: List<Token>) {
             return Statement.Binding(pos, name, params, returnType, expr())
         }
         return Statement.Effect(pos, expr())
+    }
+
+    /** `x by` at the start of a statement: parses the pattern and the `by`, or returns null having consumed nothing. */
+    private fun binding(): Pattern? {
+        if (!at(T.IDENT) && !at(T.UNDERSCORE) && !at(T.LPAREN)) return null
+        val save = p
+        try {
+            val pattern = pattern()
+            if (at(T.IDENT) && peek.text == "by") {
+                next()
+                return pattern
+            }
+        } catch (_: CompileError) {
+        }
+        p = save
+        return null
     }
 
     /** `(a, b) =` at the start of a statement: parses the pattern and the `=`, or returns null having consumed nothing. */

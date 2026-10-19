@@ -63,13 +63,17 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
             e.subject?.let(::expr),
             e.branches.map { Branch(it.pos, it.patterns.map(::pattern), it.condition?.let(::expr), expr(it.body)) },
         )
-        is Expr.Block -> Expr.Block(e.pos, e.statements.map(::statement), expr(e.result))
+        is Expr.Block -> block(e)
+        is Expr.Monadic -> Expr.Monadic(e.pos, expr(e.module), block(e.block))
     }
+
+    private fun block(e: Expr.Block) = Expr.Block(e.pos, e.statements.map(::statement), expr(e.result))
 
     private fun statement(s: Statement): Statement = when (s) {
         is Statement.Binding -> s.copy(params = s.params?.map(::param), returnType = s.returnType?.let(::type), value = expr(s.value))
         is Statement.Effect -> Statement.Effect(s.pos, expr(s.expr))
         is Statement.Destructure -> Statement.Destructure(s.pos, pattern(s.pattern), expr(s.value))
+        is Statement.Bind -> Statement.Bind(s.pos, pattern(s.pattern), expr(s.value))
     }
 
     private fun pattern(p: Pattern): Pattern = when (p) {

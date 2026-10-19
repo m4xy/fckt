@@ -255,6 +255,8 @@ object Builtins {
 
     /** Top-level built-in functions: their type and OCaml name. */
     fun function(name: String, u: Unifier): Pair<Type, String>? = when (name) {
+        // Kotlin's Unit is both the type and its one value.
+        "Unit" -> Type.UNIT to "()"
         "print" -> Type.Fn(listOf(Type.STRING), Type.UNIT) to "print_string"
         "println" -> Type.Fn(listOf(Type.STRING), Type.UNIT) to "print_endline"
         "max" -> u.fresh().let { a -> Type.Fn(listOf(a, a), a) to "max" }

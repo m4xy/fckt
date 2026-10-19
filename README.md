@@ -41,6 +41,7 @@ tour of the core language, translated section by section.
 | `module Options : Monad<Option> { ... }` | `module Options : Monad with type 'a m = 'a option = struct ... end` | A spec's type arguments say what its types are, in order, so they aren't abstract outside. A type that takes parameters takes a type that takes as many more: `Monad<Option>` makes `M<A>` an `Option<A>`, and `Monad<Result<String>>` a `Result<String, A>`. They work on a functor's parameters too: `module F<M : Ordered<Int>>`. See `examples/monads.fk`. |
 | `module SortedSet<M : Ordered> { ... }` | `module SortedSet (M : Ordered) = struct ... end` | A functor: a module that takes modules. Inside, `M` has only what `Ordered` lists, with its types abstract, so the body works for any module that follows it. Members are used through a module made from it. See `examples/functors.fk`. |
 | `module IntSet = SortedSet<IntOrder>` | `module IntSet = SortedSet (IntOrder)` | The module a functor makes. The argument needs everything the spec lists, with the right types. If it follows the spec as `module IntOrder : Ordered`, its types stay abstract, as in OCaml, so `IntSet` takes only `IntOrder.T`s; as `Ordered<Int>`, or without a spec, `IntSet` takes `Int`s. |
+| `Options { x by half(n); x + 1 }` | `let ( let* ) = Options.bind in let* x = half n in Options.pure (x + 1)` | A module's name before a block runs the block in it, through the module's `bind` and `pure` (as `Monad` has). `x by m` takes the value out of `m`, or stops the block where `bind` would. The last line goes back in with `pure`. `by` takes a name, `_` or a tuple pattern, and goes only directly in the block, not in a lambda inside it. It works with a functor's parameter too: `M { ... }`. See `examples/monads.fk`. |
 | `type Names = List<String>` | `type names = string list` | Another name for a type, with type parameters if needed: `type Pair<A> = (A, A)`. |
 | `type Box<T>(value: T)` | `type 't box = { value : 't }` | Type parameters work on types and functions. |
 | `f(x: Int, y: Int): Int = e` | `let f (x : int) (y : int) : int = e` | Top-level order doesn't matter; mutual recursion becomes `let rec ... and`. |
@@ -67,7 +68,7 @@ tour of the core language, translated section by section.
 
 `Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `List<T>`, `Option<T>` and
 `Lazy<T>` are built in. `assert(condition)` and `assertEquals(expected, actual)` stop the program
-when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` is a list literal, and `Some(x)` and `None` build options. Arithmetic on an
+when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` is a list literal, `Some(x)` and `None` build options, and `Unit`, as in Kotlin, is also the one value of its type. Arithmetic on an
 `Int` and a `Float` gives a `Float`, as in Kotlin. Built-in methods are defined in
 `types/Types.kt`: `map`, `filter`, `fold`, `sum`, `size`, `joinToString`, `getOrElse`, `toInt`,
 and others.

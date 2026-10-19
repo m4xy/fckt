@@ -28,13 +28,28 @@ module Results : Monad<Result<String>> {
   }
 }
 
-// Written once, for every monad.
+// Written once, for every monad. A module's name before a block runs the block in it: each
+// `x by m` takes the value out of m, or stops the block the way M's bind stops, and the block's
+// last line goes back in with M's pure.
 module MonadOps<M : Monad> {
-  map<A, B>(m: M.M<A>, f: (A) -> B): M.M<B> = M.bind(m, x -> M.pure(f(x)))
+  map<A, B>(m: M.M<A>, f: (A) -> B): M.M<B> = M {
+    x by m
+    f(x)
+  }
+
+  pair<A, B>(ma: M.M<A>, mb: M.M<B>): M.M<(A, B)> = M {
+    a by ma
+    b by mb
+    (a, b)
+  }
 
   sequence<A>(ms: List<M.M<A>>): M.M<List<A>> = when (ms) {
     [] -> M.pure([])
-    [m, *rest] -> M.bind(m, x -> map(sequence(rest), xs -> [x, *xs]))
+    [m, *rest] -> M {
+      x by m
+      xs by sequence(rest)
+      [x, *xs]
+    }
   }
 }
 
@@ -45,9 +60,40 @@ half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None
 
 positive(n: Int): Result<String, Int> = if (n > 0) Ok(n) else Err("$n isn't positive")
 
+check(ok: Boolean, why: String): Result<String, Unit> = if (ok) Ok(Unit) else Err(why)
+
+// Stops at the first None; otherwise the last line comes back as Some.
+quarter(n: Int): Option<Int> = Options {
+  h by half(n)
+  q by half(h)
+  q
+}
+
+// Plain lines mix with `by` lines, and `_ by` checks without naming anything.
+divide(a: Int, b: Int): Result<String, Int> = Results {
+  x by positive(a)
+  y by positive(b)
+  _ by check(x % y == 0, "$y doesn't divide $x")
+  total = x / y
+  total * 10
+}
+
+// A pattern can take apart what comes out.
+sumPair(p: Option<(Int, Int)>): Option<Int> = Options {
+  (a, b) by p
+  a + b
+}
+
 main() = {
+  assertEquals(Some(3), quarter(12))
+  assertEquals(None, quarter(6))
   assertEquals(Some(3), Options.bind(Some(12), n -> Options.bind(half(n), half)))
-  assertEquals(None, Options.bind(Some(6), n -> Options.bind(half(n), half)))
+  assertEquals(Ok(20), divide(8, 4))
+  assertEquals(Err("3 doesn't divide 8"), divide(8, 3))
+  assertEquals(Err("-1 isn't positive"), divide(-1, 4))
+  assertEquals(Some(3), sumPair(Some((1, 2))))
+  assertEquals(Some((1, 2)), OptionOps.pair(half(2), half(4)))
+  assertEquals(None, OptionOps.map(half(3), n -> n + 1))
   assertEquals(Some([1, 2]), OptionOps.sequence([half(2), half(4)]))
   assertEquals(None, OptionOps.sequence([half(2), half(3)]))
   assertEquals(Ok([1, 2]), ResultOps.sequence([positive(1), positive(2)]))

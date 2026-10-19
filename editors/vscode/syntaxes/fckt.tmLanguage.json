@@ -41,6 +41,9 @@
           "include": "#destructuring"
         },
         {
+          "include": "#monadic-binding"
+        },
+        {
           "include": "#binding"
         },
         {
@@ -357,6 +360,29 @@
         },
         {
           "include": "#punctuation"
+        }
+      ]
+    },
+    "monadic-binding": {
+      "patterns": [
+        {
+          "match": "^\\s*([a-z_][A-Za-z0-9_]*)\\s+(by)\b",
+          "captures": {
+            "1": {
+              "name": "variable.other.definition.fckt"
+            },
+            "2": {
+              "name": "keyword.other.by.fckt"
+            }
+          }
+        },
+        {
+          "match": "(?<=\\))\\s+(by)\b",
+          "captures": {
+            "1": {
+              "name": "keyword.other.by.fckt"
+            }
+          }
         }
       ]
     },

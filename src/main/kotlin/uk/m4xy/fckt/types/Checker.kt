@@ -915,9 +915,17 @@ class Checker(file: SourceFile) {
                             go(s.value, b)
                             b = b + patternNames(s.pattern)
                         }
+                        is Statement.Bind -> {
+                            go(s.value, b)
+                            b = b + patternNames(s.pattern)
+                        }
                     }
                 }
                 go(e.result, b)
+            }
+            is Expr.Monadic -> {
+                dotted(e.module, null)?.takeIf { it.substringBefore('.') !in bound }?.let { into += "$it.bind"; into += "$it.pure" }
+                go(e.block)
             }
         }
     }
@@ -1184,7 +1192,8 @@ class Checker(file: SourceFile) {
             }
         }
         is Expr.When -> inferWhen(e, expected, scope)
-        is Expr.Block -> inferBlock(e, expected, scope)
+        is Expr.Block -> inferBlock(e, expected, scope, null)
+        is Expr.Monadic -> inferMonadic(e, scope)
     }
 
     private fun inferName(e: Expr.Name, expected: Type?, scope: Scope): Type {
@@ -1738,25 +1747,88 @@ class Checker(file: SourceFile) {
 
     // ---- Blocks ----
 
-    private fun inferBlock(e: Expr.Block, expected: Type?, scope: Scope): Type {
+    /** `Options { ... }`: checks the block with `by` going through the module's bind, and the result through its pure. */
+    private fun inferMonadic(e: Expr.Monadic, scope: Scope): Type {
+        val name = dotted(e.module, scope)
+        val module = name?.let { lookupModule(it, null) }
+            ?: throw CompileError(e.module.pos, "${name ?: "this"} isn't a module, so $name { ... } has nothing to bind with")
+        fun member(what: String): Decl.Function {
+            val d = globals[module.name + "." + what]
+                ?: throw CompileError(e.module.pos, "$name has no $what, so it can't run a block; give it pure and bind, as Monad has")
+            whyHidden(d)?.let { throw CompileError(e.module.pos, it) }
+            return d
+        }
+        e.bind = member("bind")
+        e.pure = member("pure")
+        return inferBlock(e.block, null, scope, e)
+    }
+
+    /** A fresh instance of [monad]'s bind, as (value, continuation, result), if it has bind's shape. */
+    private fun bindType(monad: Expr.Monadic): Triple<Type, Type.Fn, Type> {
+        val bind = monad.bind!!
+        val fn = globalType(bind).prune() as? Type.Fn
+        val next = fn?.params?.getOrNull(1)?.prune() as? Type.Fn
+        if (fn == null || fn.params.size != 2 || next == null || next.params.size != 1) {
+            throw CompileError(monad.module.pos, "${bind.name} should take a value and a function to go on with, as Monad's bind does")
+        }
+        return Triple(fn.params[0], next, fn.result)
+    }
+
+    /** [type] with its unknowns written A, B, ...: `Option<A>`, as a spec would write it. */
+    private fun generic(type: Type): String {
+        val names = mutableMapOf<Type.Var, String>()
+        fun walk(t: Type) {
+            when (val p = t.prune()) {
+                is Type.Var -> names.getOrPut(p) { ('A' + names.size).toString() }
+                is Type.Con -> p.args.forEach(::walk)
+                is Type.Fn -> {
+                    p.params.forEach(::walk)
+                    walk(p.result)
+                }
+            }
+        }
+        walk(type)
+        return Type.render(type, names)
+    }
+
+    /** Binds an irrefutable [pattern] of [type] into [inner], as `(a, b) = ...` and `(a, b) by ...` do. */
+    private fun bindPattern(statement: Statement, pattern: Pattern, type: Type, inner: Scope) {
+        val names = patternNames(pattern)
+        checkDistinct(names.map { it to statement.pos })
+        names.firstOrNull { inner.vars.containsKey(it) }?.let {
+            throw CompileError(statement.pos, "'$it' is already defined in this block")
+        }
+        // Bind into a scratch scope first, so the value can't see its own names.
+        if (!irrefutable(pattern)) {
+            val what = if (statement is Statement.Bind) "'by'" else "a destructuring binding"
+            throw CompileError(statement.pos, "$what takes only names and '_'; use 'when' to match other patterns")
+        }
+        val bound = Scope(inner)
+        checkPattern(pattern, type, bound, null, null)
+        inner.vars.putAll(bound.vars)
+    }
+
+    /** A block; in [monad]'s, `by` lines bind through it and the result is wrapped by its pure. */
+    private fun inferBlock(e: Expr.Block, expected: Type?, scope: Scope, monad: Expr.Monadic?): Type {
         val inner = Scope(scope)
+        // In a monad's block, the type of what's left of it, from here on.
+        val whole: Type = u.fresh()
+        var rest = whole
         for (statement in e.statements) {
             when (statement) {
                 is Statement.Effect -> infer(statement.expr, null, inner)
-                is Statement.Destructure -> {
-                    val type = infer(statement.value, null, inner)
-                    val names = patternNames(statement.pattern)
-                    checkDistinct(names.map { it to statement.pos })
-                    names.firstOrNull { inner.vars.containsKey(it) }?.let {
-                        throw CompileError(statement.pos, "'$it' is already defined in this block")
+                is Statement.Destructure -> bindPattern(statement, statement.pattern, infer(statement.value, null, inner), inner)
+                is Statement.Bind -> {
+                    if (monad == null) throw CompileError(statement.pos, "'by' needs a block to bind in, such as Options { ... }, directly around it")
+                    val (value, next, result) = bindType(monad)
+                    expect(result, rest, statement.pos)
+                    val wanted = generic(value)
+                    val actual = infer(statement.value, value, inner)
+                    if (!subtype(actual, value)) {
+                        throw CompileError(statement.value.pos, "${dotted(monad.module, null)} binds $wanted, but this is ${actual.zonk()}")
                     }
-                    // Bind into a scratch scope first, so the value can't see its own names.
-                    if (!irrefutable(statement.pattern)) {
-                        throw CompileError(statement.pos, "a destructuring binding takes only names and '_'; use 'when' to match other patterns")
-                    }
-                    val bound = Scope(inner)
-                    checkPattern(statement.pattern, type, bound, null, null)
-                    inner.vars.putAll(bound.vars)
+                    bindPattern(statement, statement.pattern, next.params[0], inner)
+                    rest = next.result
                 }
                 is Statement.Binding -> {
                     if (inner.vars.containsKey(statement.name)) {
@@ -1784,6 +1856,13 @@ class Checker(file: SourceFile) {
                 }
             }
         }
-        return infer(e.result, expected, inner)
+        if (monad == null) return infer(e.result, expected, inner)
+        val pure = globalType(monad.pure!!).prune() as? Type.Fn
+        if (pure == null || pure.params.size != 1) {
+            throw CompileError(monad.module.pos, "${monad.pure!!.name} should take one value, as Monad's pure does")
+        }
+        expect(pure.result, rest, e.result.pos)
+        check(e.result, pure.params[0], inner)
+        return whole
     }
 }

@@ -208,6 +208,16 @@ sealed class Expr {
     }
 
     class Block(override val pos: Pos, val statements: List<Statement>, val result: Expr) : Expr()
+
+    /**
+     * `Options { x by half(n); x + 1 }`: a block whose `by` lines go through [module]'s `bind`, and
+     * whose result goes through its `pure`. [module] is a name or a path, like `Shapes.Options`.
+     */
+    class Monadic(override val pos: Pos, val module: Expr, val block: Block) : Expr() {
+        /** The module's `bind` and `pure`, set by the checker. */
+        var bind: Decl.Function? = null
+        var pure: Decl.Function? = null
+    }
 }
 
 sealed interface StringPart {
@@ -238,6 +248,9 @@ sealed interface Statement {
 
     /** `(a, b) = value`: takes a tuple, or a record's fields in order, apart. */
     data class Destructure(override val pos: Pos, val pattern: Pattern, val value: Expr) : Statement
+
+    /** `x by value`, in a [Expr.Monadic] block: the rest of the block runs with what [value] holds. */
+    data class Bind(override val pos: Pos, val pattern: Pattern, val value: Expr) : Statement
 }
 
 /**

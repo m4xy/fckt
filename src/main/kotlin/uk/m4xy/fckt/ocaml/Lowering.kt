@@ -563,7 +563,18 @@ class Lowering(private val program: Program) {
                 expr(e.otherwise)
             }
             is Expr.When -> whenExpr(e)
-            is Expr.Block -> block(e, 0)
+            is Expr.Block -> block(e, 0, null)
+            is Expr.Monadic -> {
+                // OCaml's binding operators: let* x = v in rest is bind v (fun x -> rest).
+                if (e.block.statements.any { it is Statement.Bind }) {
+                    letIn("( let* )") {
+                        ident(ref(e.bind!!.name, ::snake))
+                        block(e.block, 0, e)
+                    }
+                } else {
+                    block(e.block, 0, e)
+                }
+            }
         }
     }
 
@@ -822,12 +833,19 @@ class Lowering(private val program: Program) {
 
     // ---- Blocks ----
 
-    private fun <S> S.block(e: Expr.Block, from: Int) where
+    /** The statements of [e] from [from] on; in [monad]'s block, the result goes through its pure. */
+    private fun <S> S.block(e: Expr.Block, from: Int, monad: Expr.Monadic?) where
         S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
-        if (from == e.statements.size) return expr(e.result)
+        if (from == e.statements.size) {
+            if (monad == null) return expr(e.result)
+            return apply {
+                ident(ref(monad.pure!!.name, ::snake))
+                expr(e.result)
+            }
+        }
         when (val s = e.statements[from]) {
             is Statement.Binding -> letIn(s.ocamlName) {
                 if (s.params != null) {
@@ -835,11 +853,16 @@ class Lowering(private val program: Program) {
                     rec = s.recursive
                 }
                 expr(s.value)
-                block(e, from + 1)
+                block(e, from + 1, monad)
             }
             is Statement.Destructure -> letIn(pattern(s.pattern)) {
                 expr(s.value)
-                block(e, from + 1)
+                block(e, from + 1, monad)
+            }
+            is Statement.Bind -> letIn(pattern(s.pattern)) {
+                binder = "let*"
+                expr(s.value)
+                block(e, from + 1, monad)
             }
             is Statement.Effect -> {
                 // Run consecutive effects as one sequence.
@@ -850,7 +873,7 @@ class Lowering(private val program: Program) {
                         val effect = (e.statements[i] as Statement.Effect).expr
                         if (effect.type?.prune() == Type.UNIT) expr(effect) else apply { ident("ignore"); expr(effect) }
                     }
-                    block(e, end)
+                    block(e, end, monad)
                 }
             }
         }
