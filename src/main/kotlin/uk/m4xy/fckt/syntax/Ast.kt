@@ -74,6 +74,15 @@ sealed interface Decl {
         override val isPrivate: Boolean = false,
     ) : Decl
 
+    /** `type Name<T> = Other<T>`: another name for a type. */
+    data class Alias(
+        override val pos: Pos,
+        override val name: String,
+        val typeParams: List<String>,
+        val target: TypeRef,
+        override val isPrivate: Boolean = false,
+    ) : Decl
+
     /** `name<T>(params): R = body`; [params] is null for a value (`name = body`). */
     data class Function(
         override val pos: Pos,
@@ -85,14 +94,37 @@ sealed interface Decl {
         override val isPrivate: Boolean = false,
     ) : Decl
 
-    /** `module Name { declarations }`: a namespace whose `private` members stay inside it. */
+    /**
+     * `module Name { declarations }`: a namespace whose `private` members stay inside it. With a
+     * [spec] (`module Name : Spec { ... }`), only what the spec lists is seen outside, and the
+     * spec's types are abstract there.
+     */
     data class Module(
         override val pos: Pos,
         override val name: String,
         val decls: List<Decl>,
         override val isPrivate: Boolean = false,
+        val spec: TypeRef.Named? = null,
+    ) : Decl
+
+    /**
+     * `spec Name { type T; f(x: T): Int; v: T }`: what a module must define. Its [types] are
+     * abstract: modules choose what each is, and outside them it's hidden.
+     */
+    data class Spec(
+        override val pos: Pos,
+        override val name: String,
+        val types: List<SpecType>,
+        val values: List<SpecValue>,
+        override val isPrivate: Boolean = false,
     ) : Decl
 }
+
+/** `type Name<A>` in a spec. */
+data class SpecType(val pos: Pos, val name: String, val typeParams: List<String>)
+
+/** `name<A>(params): R` or `name: T` in a spec; [params] is null for a value. */
+data class SpecValue(val pos: Pos, val name: String, val typeParams: List<String>, val params: List<Param>?, val type: TypeRef)
 
 data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>)
 

@@ -26,6 +26,9 @@
           "include": "#chars"
         },
         {
+          "include": "#spec-declaration"
+        },
+        {
           "include": "#cased-type-declaration"
         },
         {
@@ -201,6 +204,45 @@
               "name": "variable.other.fckt"
             }
           }
+        }
+      ]
+    },
+    "spec-declaration": {
+      "begin": "\\b(spec)\\s+([A-Z][A-Za-z0-9_]*)\\s*(\\{)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.declaration.spec.fckt"
+        },
+        "2": {
+          "name": "entity.name.type.fckt"
+        },
+        "3": {
+          "name": "punctuation.section.braces.fckt"
+        }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.braces.fckt"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#type-declaration"
+        },
+        {
+          "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*[(:])",
+          "captures": {
+            "1": {
+              "name": "entity.name.function.fckt"
+            }
+          }
+        },
+        {
+          "include": "#code"
         }
       ]
     },

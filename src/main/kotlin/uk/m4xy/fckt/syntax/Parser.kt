@@ -58,23 +58,47 @@ class Parser(private val tokens: List<Token>) {
                 is Decl.Sealed -> d.copy(isPrivate = true)
                 is Decl.Function -> d.copy(isPrivate = true)
                 is Decl.Module -> d.copy(isPrivate = true)
+                is Decl.Alias -> d.copy(isPrivate = true)
+                is Decl.Spec -> d.copy(isPrivate = true)
             }
         }
         return when {
             accept(T.MODULE) != null -> {
                 val name = upperIdent("a module name")
+                // module Name : Spec { ... }
+                val spec = if (accept(T.COLON) != null) type() as? TypeRef.Named ?: throw error("expected a spec's name after ':'") else null
+                if (spec != null && spec.args.isNotEmpty()) throw error("a spec takes no type arguments", spec.pos)
                 expect(T.LBRACE, "'{' after the module name")
-                skipNewlines()
-                val decls = mutableListOf<Decl>()
-                while (!at(T.RBRACE)) {
-                    decls += decl()
-                    if (!at(T.RBRACE)) {
-                        if (!at(T.NEWLINE) && !at(T.SEMI)) throw error("expected end of line after declaration but found ${describe(peek)}")
-                        skipNewlines()
+                val decls = members { decl() }
+                Decl.Module(pos, name, decls, spec = spec)
+            }
+            // `spec` is a keyword only here, so it can still name a value.
+            at(T.IDENT) && peek.text == "spec" && peekAt(1).kind == T.IDENT && peekAt(2).kind == T.LBRACE -> {
+                next()
+                val name = upperIdent("a spec name")
+                expect(T.LBRACE, "'{'")
+                val types = mutableListOf<SpecType>()
+                val values = mutableListOf<SpecValue>()
+                members {
+                    val memberPos = peek.pos
+                    if (accept(T.TYPE) != null) {
+                        val typeName = upperIdent("a type name")
+                        val typeParams = typeParams()
+                        if (at(T.ASSIGN) || at(T.LPAREN) || at(T.LBRACE)) {
+                            throw error("a spec's types are abstract: write just 'type $typeName', and define it in each module")
+                        }
+                        types += SpecType(memberPos, typeName, typeParams)
+                    } else {
+                        val valueName = ident("a type or a value in the spec")
+                        if (valueName[0].isUpperCase()) throw error("functions and values start with a lower-case letter", memberPos)
+                        val typeParams = typeParams()
+                        val params = if (at(T.LPAREN)) params() else null
+                        params?.firstOrNull { it.type == null }?.let { throw error("a spec's parameters need types: ${it.name}: Type", it.pos) }
+                        expect(T.COLON, if (params == null) "':' and the value's type" else "':' and the result type")
+                        values += SpecValue(memberPos, valueName, typeParams, params, type())
                     }
                 }
-                expect(T.RBRACE, "'}'")
-                Decl.Module(pos, name, decls)
+                Decl.Spec(pos, name, types, values)
             }
             at(T.IDENT) && peek.text == "interface" && peekAt(1).kind == T.IDENT ->
                 throw error("write a type with cases as 'type ${peekAt(1).text} { ... }'")
@@ -83,6 +107,8 @@ class Parser(private val tokens: List<Token>) {
                 val typeParams = typeParams()
                 // type Name { Cases }: a type with cases
                 if (accept(T.LBRACE) != null) return typeWithCases(pos, name, typeParams)
+                // type Name = Other: another name for a type
+                if (accept(T.ASSIGN) != null) return Decl.Alias(pos, name, typeParams, type())
                 // type Name(fields), or type Name private(...): like Kotlin's private constructor
                 val privateConstructor = accept(T.PRIVATE) != null
                 expect(T.LPAREN, "'(' or '{' after the type name")
@@ -102,6 +128,21 @@ class Parser(private val tokens: List<Token>) {
             }
             else -> throw error("expected a declaration but found ${describe(peek)}")
         }
+    }
+
+    /** Items one per line up to a `}`, after the `{`. */
+    private fun <R> members(item: () -> R): List<R> {
+        skipNewlines()
+        val items = mutableListOf<R>()
+        while (!at(T.RBRACE)) {
+            items += item()
+            if (!at(T.RBRACE)) {
+                if (!at(T.NEWLINE) && !at(T.SEMI)) throw error("expected end of line after declaration but found ${describe(peek)}")
+                skipNewlines()
+            }
+        }
+        expect(T.RBRACE, "'}'")
+        return items
     }
 
     /** The `{ ... }` of `type Name { Cases }`, after the `{`. */
@@ -271,6 +312,7 @@ class Parser(private val tokens: List<Token>) {
         var left = operand()
         while (peek.kind in ops) {
             val op = next()
+            skipNewlines()
             left = Expr.Binary(op.pos, op.text, left, operand())
         }
         return left

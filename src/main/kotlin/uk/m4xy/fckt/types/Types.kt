@@ -55,10 +55,22 @@ sealed class Type {
         /** Tuples are a [Con] of this name with one argument per element. */
         const val TUPLE = "Tuple"
 
+        /**
+         * Before a type's full name, a [Con] for it as seen outside a module whose spec makes it
+         * abstract: there, nothing can look inside it.
+         */
+        const val ABSTRACT = "abstract "
+
+        /** Before a spec's own type, while the spec says what a module must define. */
+        const val SPEC_TYPE = "@"
+
+        /** A type's name in messages and output, without the markers above or a type parameter's `#`. */
+        fun displayName(name: String) = name.removePrefix(ABSTRACT).removePrefix(SPEC_TYPE).removePrefix("#")
+
         fun render(type: Type, names: MutableMap<Var, String>): String = when (val t = type.prune()) {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }
             is Con -> if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
-            else if (t.args.isEmpty()) t.name else "${t.name}<${t.args.joinToString(", ") { render(it, names) }}>"
+            else if (t.args.isEmpty()) displayName(t.name) else "${displayName(t.name)}<${t.args.joinToString(", ") { render(it, names) }}>"
             is Fn -> "(${t.params.joinToString(", ") { render(it, names) }}) -> ${render(t.result, names)}"
         }
     }

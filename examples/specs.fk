@@ -1,0 +1,58 @@
+// A spec says what a module must define. Outside a module that follows one, only what the spec
+// lists can be seen, and the spec's types are abstract: callers can hold a Tally.T and pass it
+// back, but not look inside it or make one any other way.
+
+spec Counter {
+  type T
+  zero: T
+  inc(c: T): T
+  count(c: T): Int
+}
+
+// Two modules, two representations, one spec.
+module Tally : Counter {
+  type T = Int
+  zero = 0
+  inc(c: Int) = c + 1
+  count(c: Int) = c
+}
+
+module Clicks : Counter {
+  type T(clicks: List<String>)
+  zero = T([])
+  inc(c: T) = T(["click", *c.clicks])
+  count(c: T) = c.clicks.size
+}
+
+// A spec's functions can be generic, and its types can take parameters.
+spec Stack {
+  type S<A>
+  empty<A>(): S<A>
+  push<A>(s: S<A>, x: A): S<A>
+  pop<A>(s: S<A>): Option<(A, S<A>)>
+}
+
+module ListStack : Stack {
+  type S<A> = List<A>
+  empty() = []
+  push(s, x) = [x, *s]
+  pop(s) = when (s) {
+    [] -> None
+    [x, *rest] -> Some((x, rest))
+  }
+}
+
+// Outside, a Tally.T is just a Tally.T, even though it's an Int inside.
+three: Tally.T = Tally.zero |> Tally.inc |> Tally.inc |> Tally.inc
+
+main() = {
+  assertEquals(3, Tally.count(three))
+  assertEquals("3", "$three")
+  assertEquals(2, Clicks.count(Clicks.inc(Clicks.inc(Clicks.zero))))
+  s = ListStack.push(ListStack.push(ListStack.empty(), 1), 2)
+  assertEquals("[2, 1]", "$s")
+  when (ListStack.pop(s)) {
+    Some((top, _)) -> assertEquals(2, top)
+    None -> assert(false)
+  }
+}

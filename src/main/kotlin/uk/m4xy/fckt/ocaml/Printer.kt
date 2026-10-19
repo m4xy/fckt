@@ -46,10 +46,12 @@ object Printer {
         "module" -> {
             val sig = n.children.firstOrNull { it.name == "sig" }
             val items = n.children.filter { it.name != "sig" }
-            "module ${n.str("name")}" + (sig?.let { " : " + signature(it.children) } ?: "") +
+            val spec = (n.attributes["spec"] as String?)?.let { " : $it" } ?: ""
+            "module ${n.str("name")}$spec" + (sig?.let { " : " + signature(it.children) } ?: "") +
                 " = struct\n" + items.joinToString("\n\n") { indent(item(it)) } + "\nend"
         }
         "comment" -> "(* ${n.str("text")} *)"
+        "module-type" -> "module type ${n.str("name")} = " + signature(n.children)
         "types" -> "type " + n.children.joinToString("\n\nand ") { typeDef(it) }
         "let" -> (if (n.attributes["rec"] == true) "let rec " else "let ") + n.children.joinToString("\n\nand ") { binding(it) }
         else -> error("unexpected ${n.name} at the top level")
@@ -61,7 +63,8 @@ object Printer {
     private fun sigItem(n: ResolvedNode): String = when (n.name) {
         "types" -> "type " + n.children.joinToString("\n\nand ") { typeDef(it) }
         "sig-value" -> "val ${n.str("name")} : ${n.str("type")}"
-        "sig-module" -> "module ${n.str("name")} : " + signature(n.children)
+        "sig-module" -> "module ${n.str("name")} : " + ((n.attributes["spec"] as String?) ?: signature(n.children))
+        "module-type" -> "module type ${n.str("name")} = " + signature(n.children)
         else -> error("unexpected ${n.name} in a signature")
     }
 
@@ -72,8 +75,10 @@ object Printer {
     }
 
     private fun typeDef(n: ResolvedNode): String {
-        val head = typeParams(n.list("params")) + n.str("name") + " ="
-        val first = n.children.firstOrNull() ?: error("type ${n.str("name")} is empty")
+        val name = typeParams(n.list("params")) + n.str("name")
+        val head = "$name ="
+        val first = n.children.firstOrNull()
+            ?: return (n.attributes["alias"] as String?)?.let { "$head $it" } ?: name
         if (n.attributes["polymorphic"] == true) {
             val tags = n.children.map { v ->
                 "`" + v.str("name") + if (v.children.isEmpty()) "" else " of " + v.children.joinToString(" * ") { tupleElement(it.str("type")) }

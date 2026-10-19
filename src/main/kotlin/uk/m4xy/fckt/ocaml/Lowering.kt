@@ -57,6 +57,7 @@ private fun concat(parts: List<Gen>): Gen {
 class Lowering(private val program: Program) {
     private val records = program.records.associateBy { it.name }
     private val sealeds = program.sealeds.associateBy { it.name }
+    private val aliases = program.aliases.associateBy { it.name }
 
     /** User types whose show function is needed, and the `fk_` helpers that are. */
     private val showTypes = linkedSetOf<String>()
@@ -69,6 +70,8 @@ class Lowering(private val program: Program) {
     private val showBodies = linkedMapOf<String, Pair<List<String>, Gen>>()
 
     fun lower(): StructureElement<Unit> {
+        // A spec gives each of its types a show function, so every module that follows it has one.
+        for ((module, spec) in program.moduleSpecs) spec.types.forEach { showTypes += "$module.${it.name}" }
         // Lower every function first; that finds which show functions are needed.
         val functionItems = program.groups.associateWith { group ->
             currentPath = group.decls.first().path
@@ -115,20 +118,30 @@ class Lowering(private val program: Program) {
         functionItems: Map<uk.m4xy.fckt.types.FunctionGroup, StructureChild<Unit>>,
     ): List<StructureChild<Unit>> {
         currentPath = path
-        val types = decls.filter { it is Decl.Record || it is Decl.Sealed }
+        val types = decls.filter { isType(it) }
+        val specs = decls.filterIsInstance<Decl.Spec>()
         val modules = decls.filterIsInstance<Decl.Module>()
         val groups = program.groups.filter { it.decls.first().path == path }
 
-        // Graph nodes, in the order they'd be emitted given no constraints: types, modules, functions.
+        // Graph nodes, in the order they'd be emitted given no constraints: types, specs, modules, functions.
         val typeGroups = typeGroups(types)
-        val nodes: List<Any> = typeGroups + modules + groups
+        val nodes: List<Any> = typeGroups + specs + modules + groups
         fun insideOf(m: Decl.Module, name: String) = name.startsWith(m.name + ".")
         val edges = nodes.associateWith { node ->
             when (node) {
                 is Decl.Module -> {
-                    // A module comes after the functions here that its own functions use.
+                    // A module comes after the functions and modules here that its own functions
+                    // use, and the specs it and the modules in it follow.
                     val used = functionsIn(node).flatMap { program.uses[it].orEmpty() }
-                    groups.filter { g -> g.decls.any { it in used } }
+                    val followed = modulesIn(node).mapNotNull { program.moduleSpecs[it.name] }
+                    groups.filter { g -> g.decls.any { it in used } } +
+                        modules.filter { m -> m !== node && used.any { insideOf(m, it.name) } } +
+                        specs.filter { it in followed }
+                }
+                is Decl.Spec -> {
+                    // A spec comes after the modules whose types it uses.
+                    val names = specTypeRefs(node)
+                    modules.filter { m -> names.any { insideOf(m, it) } }
                 }
                 is uk.m4xy.fckt.types.FunctionGroup -> {
                     val used = node.decls.flatMap { program.uses[it].orEmpty() }
@@ -153,6 +166,7 @@ class Lowering(private val program: Program) {
             currentPath = path
             when (node) {
                 is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems)))
+                is Decl.Spec -> StructureElement.build<Unit> { moduleType(node.simpleName) { specItems(node) } }.children
                 is uk.m4xy.fckt.types.FunctionGroup -> listOf(functionItems.getValue(node))
                 else -> {
                     @Suppress("UNCHECKED_CAST")
@@ -174,17 +188,44 @@ class Lowering(private val program: Program) {
                 is StructureChild.LetGroup -> ModuleDefChild.LetGroup(child.element)
                 is StructureChild.Comment -> ModuleDefChild.Comment(child.element)
                 is StructureChild.ModuleDef -> ModuleDefChild.ModuleDef(child.element)
+                is StructureChild.ModuleType -> ModuleDefChild.ModuleType(child.element)
             }
         }
-        // A module with private members states what it shows; otherwise OCaml infers it.
+        // A module with a spec shows what the spec lists. One with private members states what it
+        // shows; otherwise OCaml infers it.
+        currentPath = path.dropLast(1)
+        val spec = program.moduleSpecs[m.name]?.let { ref(it.name) { name -> name } }
         currentPath = path
-        val signature = if (hasPrivate(m)) {
+        val signature = if (spec == null && hasPrivate(m)) {
             listOf(ModuleDefChild.Signature(SignatureElement.build<Unit> { signatureItems(m) }))
         } else {
             emptyList()
         }
-        return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(m.simpleName), children = signature + items)
+        return ModuleDefElement(
+            name = uk.m4xy.kastor.Attribute.Value(m.simpleName),
+            spec = spec?.let { uk.m4xy.kastor.Attribute.Value(it) },
+            children = signature + items,
+        )
     }
+
+    /** `module type Spec = sig ... end`: the spec's types, abstract, with their show functions, then its values. */
+    private fun <S> S.specItems(spec: Decl.Spec) where S : TypeGroupParent<Unit>, S : SigValueParent<Unit> {
+        for (t in spec.types) types { typeDef(snake(t.name)) { params = t.typeParams.map(::typeVar) } }
+        for (t in spec.types) {
+            val shown = applied(Type.SPEC_TYPE + t.name, t.typeParams.map { typeVar(it) to false })
+            sigValue(showName(t.name), (t.typeParams.map { "(${typeVar(it)} -> string)" } + shown + "string").joinToString(" -> "))
+        }
+        val types = program.specTypes.getValue(spec)
+        for (v in spec.values) sigValue(snake(v.name), typeText(types.getValue(v.name), mutableMapOf()))
+    }
+
+    /** The full names of the user types a spec's values use. */
+    private fun specTypeRefs(spec: Decl.Spec): List<String> =
+        spec.values.flatMap { v -> typeRefNames(v.type) + v.params.orEmpty().flatMap { p -> p.type?.let(::typeRefNames).orEmpty() } }
+
+    private fun isType(d: Decl) = d is Decl.Record || d is Decl.Sealed || d is Decl.Alias
+
+    private fun modulesIn(m: Decl.Module): List<Decl.Module> = listOf(m) + m.decls.filterIsInstance<Decl.Module>().flatMap { modulesIn(it) }
 
     private fun hasPrivate(m: Decl.Module): Boolean = m.decls.any {
         it.isPrivate || (it is Decl.Record && it.privateConstructor) || (it is Decl.Module && hasPrivate(it))
@@ -198,35 +239,42 @@ class Lowering(private val program: Program) {
         }
     }
 
+    /** The full names of the user types written in [ref]. */
+    private fun typeRefNames(ref: TypeRef): List<String> = when (ref) {
+        is TypeRef.Named -> listOfNotNull(program.typeNames[ref]) + ref.args.flatMap(::typeRefNames)
+        is TypeRef.Function -> ref.params.flatMap(::typeRefNames) + typeRefNames(ref.result)
+        is TypeRef.Tuple -> ref.elements.flatMap(::typeRefNames)
+    }
+
     /** The full names of the user types a type declaration's fields use. */
     private fun typeRefsOf(d: Decl): List<String> {
-        fun refs(ref: TypeRef): List<String> = when (ref) {
-            is TypeRef.Named -> listOfNotNull(program.typeNames[ref]) + ref.args.flatMap(::refs)
-            is TypeRef.Function -> ref.params.flatMap(::refs) + refs(ref.result)
-            is TypeRef.Tuple -> ref.elements.flatMap(::refs)
-        }
+        if (d is Decl.Alias) return typeRefNames(d.target)
         val fields = when (d) {
             is Decl.Record -> d.fields
             is Decl.Sealed -> program.cases.getValue(d.name).flatMap { it.fields }
             else -> emptyList()
         }
         val origins = (d as? Decl.Sealed)?.let { s -> program.cases.getValue(s.name).map { it.origin.name } }.orEmpty()
-        return fields.flatMap { refs(it.type) } + origins
+        return fields.flatMap { typeRefNames(it.type) } + origins
     }
 
     /** What module [m] shows outside: its public types, nested modules, show functions and values. */
-    private fun <S> S.signatureItems(m: Decl.Module) where S : TypeGroupParent<Unit>, S : SigValueParent<Unit>, S : SigModuleParent<Unit> {
+    private fun <S> S.signatureItems(m: Decl.Module) where
+        S : TypeGroupParent<Unit>, S : SigValueParent<Unit>, S : SigModuleParent<Unit>, S : ModuleTypeParent<Unit> {
         val path = m.name.split('.')
         currentPath = path
-        val types = m.decls.filter { (it is Decl.Record || it is Decl.Sealed) && !it.isPrivate }
+        val types = m.decls.filter { isType(it) && !it.isPrivate }
         for (group in typeGroups(types)) types { typeDefinitions(group, forSignature = true) }
+        for (spec in m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }) moduleType(spec.simpleName) { specItems(spec) }
         for (inner in m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate }) {
-            sigModule(inner.simpleName) { signatureItems(inner) }
+            val spec = program.moduleSpecs[inner.name]
+            if (spec != null) sigModule(inner.simpleName) { this.spec = ref(spec.name) { it } }
+            else sigModule(inner.simpleName) { signatureItems(inner) }
             currentPath = path
         }
         for (type in types) {
             if (type.name !in showBodies) continue
-            val params = if (type is Decl.Record) type.typeParams else (type as Decl.Sealed).typeParams
+            val params = typeParamsOf(type)
             val shown = applied(type.name, params.map { typeVar(it) to false })
             sigValue(showName(type.name), (params.map { "(${typeVar(it)} -> string)" } + shown + "string").joinToString(" -> "))
         }
@@ -248,6 +296,13 @@ class Lowering(private val program: Program) {
     private fun labelPrefix(record: Decl.Record): String = ref((record.path + "x").joinToString("."), { "" })
 
     // ---- Types ----
+
+    private fun typeParamsOf(d: Decl): List<String> = when (d) {
+        is Decl.Record -> d.typeParams
+        is Decl.Sealed -> d.typeParams
+        is Decl.Alias -> d.typeParams
+        else -> emptyList()
+    }
 
     /** A group of type definitions; [forSignature] makes a record with a private constructor `private`. */
     private fun TypeGroupScope<Unit>.typeDefinitions(group: List<Decl>, forSignature: Boolean) {
@@ -276,7 +331,11 @@ class Lowering(private val program: Program) {
                         }
                     }
                 }
-                is Decl.Function, is Decl.Module -> {}
+                is Decl.Alias -> typeDef(snake(decl.simpleName)) {
+                    params = decl.typeParams.map(::typeVar)
+                    alias = typeText(decl.target, decl.typeParams)
+                }
+                is Decl.Function, is Decl.Module, is Decl.Spec -> {}
             }
         }
     }
@@ -326,7 +385,8 @@ class Lowering(private val program: Program) {
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"
             "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"
-            else -> ref(name, ::snake)
+            // A spec's own type, inside its module type.
+            else -> if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
         }
         return when (args.size) {
             0 -> base
@@ -803,7 +863,7 @@ class Lowering(private val program: Program) {
     private fun show(type: Type, at: Expr): Gen = when (val t = type.prune()) {
         is Type.Var -> throw CompileError(at.pos, "can't turn a value of unknown type into a string; annotate its type")
         is Type.Fn -> Gen.Fun(listOf("_"), Gen.Str("<fun>"))
-        is Type.Con -> showCon(t.name, t.args.map { show(it, at) })
+        is Type.Con -> showCon(t.name.removePrefix(Type.ABSTRACT), t.args.map { show(it, at) })
     }
 
     private fun showCon(name: String, args: List<Gen>): Gen = when (name) {
@@ -901,6 +961,12 @@ class Lowering(private val program: Program) {
             val params = r.typeParams.map { "show_${it.lowercase()}" } +
                 "(v : ${applied(r.name, r.typeParams.map { typeVar(it) to false })})"
             return params to fieldsText(r.simpleName, r.fields, r.typeParams, v)
+        }
+        // An alias shows as what it stands for.
+        aliases[name]?.let { a ->
+            val params = a.typeParams.map { "show_${it.lowercase()}" } +
+                "(v : ${applied(a.name, a.typeParams.map { typeVar(it) to false })})"
+            return params to Gen.App(showRef(a.target, a.typeParams), listOf(v))
         }
         val s = sealeds.getValue(name)
         val params = s.typeParams.map { "show_${it.lowercase()}" } + "(v : ${applied(s.name, s.typeParams.map { typeVar(it) to false })})"

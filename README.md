@@ -36,6 +36,9 @@ tour of the core language, translated section by section.
 | `module Ratios { ... }` | `module Ratios = struct ... end` | Groups declarations. Inside, members use each other directly; outside, they're named through the module: `Ratios.make(1, 2)`, `Shapes.Circle(1.0)`, `Shapes.Shape`. Modules can nest. See `examples/modules.fk`. |
 | `private gcd(...)` | left out of the module's `sig` | Visible only inside its module. A public member can't expose a private type. |
 | `type Ratio private(n: Int, d: Int)` | `type ratio = private { ... }` in the `sig` | Like Kotlin's `private constructor`: readable and matchable anywhere, but only its module can build or `copy` one. |
+| `spec Counter { type T; inc(c: T): T }` | `module type Counter = sig type t val inc : t -> t ... end` | What a module must define. Each of its types gets a show function, so values of it work in string templates. Members are one per line. |
+| `module Tally : Counter { type T = Int ... }` | `module Tally : Counter = struct ... end` | Outside, only what the spec lists is visible, and its types are abstract: a `Tally.T` can be passed around but not used as an `Int`, built or looked into. Members must have the spec's types; generic ones must work for any type. See `examples/specs.fk`. |
+| `type Names = List<String>` | `type names = string list` | Another name for a type, with type parameters if needed: `type Pair<A> = (A, A)`. |
 | `type Box<T>(value: T)` | `type 't box = { value : 't }` | Type parameters work on types and functions. |
 | `f(x: Int, y: Int): Int = e` | `let f (x : int) (y : int) : int = e` | Top-level order doesn't matter; mutual recursion becomes `let rec ... and`. |
 | `name = e` | `let name = e` | A top-level value or a binding in a block. |

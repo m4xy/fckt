@@ -11,22 +11,30 @@ import uk.m4xy.kastor.Required
 
 /** A compilation unit (`.ml` file): type groups, let definitions and modules, in order. */
 @Element("structure", function = "structure")
-@Children(TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class)
+@Children(TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class, ModuleType::class)
 interface Structure
 
 /**
- * `module Name [: sig ... end] = struct ... end`. Children: an optional [Signature], then the
- * module's items.
+ * `module Name [: sig ... end] = struct ... end`, or with [spec], `module Name : Spec = struct ... end`.
+ * Children: an optional [Signature], then the module's items.
  */
 @Element("module", function = "moduleDef")
-@Children(Signature::class, TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class)
+@Children(Signature::class, TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class, ModuleType::class)
 interface ModuleDef {
+    @Required val name: String
+    val spec: String
+}
+
+/** `module type Name = sig ... end`: a named signature. Children: its items. */
+@Element("module-type", function = "moduleType")
+@Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class)
+interface ModuleType {
     @Required val name: String
 }
 
 /** `sig ... end`: what a module shows outside it. */
 @Element("sig", function = "signature")
-@Children(TypeGroup::class, SigValue::class, SigModule::class)
+@Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class)
 interface Signature
 
 /** `val name : type` in a signature. */
@@ -36,11 +44,12 @@ interface SigValue {
     @Required val type: String
 }
 
-/** `module Name : sig ... end` inside a signature. */
+/** `module Name : sig ... end` inside a signature, or with [spec], `module Name : Spec`. */
 @Element("sig-module", function = "sigModule")
-@Children(TypeGroup::class, SigValue::class, SigModule::class)
+@Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class)
 interface SigModule {
     @Required val name: String
+    val spec: String
 }
 
 /** `(* text *)` */
@@ -56,7 +65,8 @@ interface TypeGroup
 
 /**
  * One type definition. Children: [FieldDecl]s for a record, or [VariantDecl]s for a variant type,
- * which with [polymorphic] is a closed polymorphic variant: `[ `A | `B of int ]`.
+ * which with [polymorphic] is a closed polymorphic variant: `[ `A | `B of int ]`. With [alias] and
+ * no children, it's `type t = alias`; with neither, an abstract `type t`.
  */
 @Element("type", function = "typeDef")
 @Children(FieldDecl::class, VariantDecl::class)
@@ -67,6 +77,7 @@ interface TypeDef {
 
     /** `= private { ... }`: readable outside its module, but only built inside it. */
     val isPrivate: Boolean
+    val alias: String
 }
 
 /** `name : type` in a record or inline record. */

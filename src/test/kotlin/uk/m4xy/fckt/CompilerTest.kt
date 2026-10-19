@@ -296,6 +296,80 @@ class CompilerTest {
     }
 
     @Test
+    fun `specs make a module's types abstract`() {
+        val source = File("examples/specs.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "module type Counter = sig\n  type t\n  val show_t : t -> string\n  val zero : t")
+        assertContains(ml, "val pop : 'a s -> ('a * 'a s) option")
+        assertContains(ml, "module Tally : Counter = struct\n  type t = int")
+    }
+
+    @Test
+    fun `spec errors`() {
+        val counter = """
+            spec Counter {
+              type T
+              zero: T
+              count(c: T): Int
+            }
+            module Tally : Counter {
+              type T = Int
+              zero = 0
+              count(c: Int) = c
+              helper(c: Int) = c
+            }
+            module Clicks : Counter {
+              type T(clicks: List<String>)
+              zero = T([])
+              count(c: T) = c.clicks.size
+            }
+
+        """.trimIndent()
+        assertContains(error(counter + "x = Tally.zero + 1"), "'+' can't be applied to Tally.T and Int")
+        assertContains(error(counter + "x: Tally.T = 3"), "expected Tally.T but found Int")
+        assertContains(error(counter + "x = Tally.count(Clicks.zero)"), "expected Tally.T but found Clicks.T")
+        assertContains(error(counter + "x = Clicks.T([])"), "T is abstract outside Clicks: its spec Counter hides what it is")
+        assertContains(error(counter + "x = Clicks.zero.clicks"), "Clicks.T has no field 'clicks'")
+        assertContains(error(counter + "x = Tally.helper(1)"), "'helper' isn't in Counter, the spec of Tally")
+        assertContains(error("spec S {\n  type T\n  f(x: T): Int\n}\nmodule M : S { type T = Int }"), "M doesn't define 'f', which its spec S needs")
+        assertContains(error("spec S {\n  type T\n}\nmodule M : S { x = 1 }"), "M doesn't define type T")
+        assertContains(
+            error("spec S {\n  type T\n  f(x: T): Int\n}\nmodule M : S {\n  type T = Int\n  f(x: Int) = \"s\"\n}"),
+            "'f' has type (Int) -> String, but S needs (T) -> Int, which here is (Int) -> Int",
+        )
+        assertContains(
+            error("spec S {\n  type T<A>\n  f<A>(x: A): T<A>\n}\nmodule M : S {\n  type T<A> = List<A>\n  f(x: Int) = [x]\n}"),
+            "but S needs (A) -> T<A>",
+        )
+        assertContains(error("spec S {\n  type T<A>\n}\nmodule M : S { type T = Int }"), "S says T takes 1 type parameter, not 0")
+        assertContains(error("spec S {\n  type T\n}\nmodule M : S { private type T = Int }"), "so it can't be private")
+        assertContains(error("module M : Nope { x = 1 }"), "unknown spec 'Nope'")
+        assertContains(error("spec S { type T = Int }"), "a spec's types are abstract")
+        assertContains(error("spec S { f(x): Int }"), "a spec's parameters need types")
+    }
+
+    @Test
+    fun `type aliases`() {
+        val source = """
+            type Pair<A> = (A, A)
+            type Names = List<String>
+            swap(p: Pair<Int>): Pair<Int> = {
+              (a, b) = p
+              (b, a)
+            }
+            main() = {
+              assertEquals((2, 1), swap((1, 2)))
+              names: Names = ["a", "b"]
+              assertEquals(2, names.size)
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        assertContains(compile(source), "type 'a pair = 'a * 'a")
+        assertContains(error("type A = List<B>\ntype B = A"), "type 'A' is defined in terms of itself")
+    }
+
+    @Test
     fun `type errors`() {
         assertContains(error("f(x: Int) = x + \"a\""), "expected String but found Int")
         assertContains(error("id<T>(x: T): Int = x"), "type parameter T of 'id' is always Int")
@@ -317,5 +391,7 @@ class CompilerTest {
         assertContains(error("interface Shape { Circle }"), "write a type with cases as 'type Shape { ... }'")
         assertContains(error("f() = {\n  y = 1\n  y = 2\n  y\n}"), "'y' is already defined in this block")
         assertContains(error("f() = {\n  y = 1\n}"), "must end with an expression")
+        // A line break after '>' still continues a comparison.
+        compile("f(x: Int) = {\n  big = x >\n    10\n  big\n}")
     }
 }

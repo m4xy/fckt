@@ -21,10 +21,13 @@ private val KEYWORDS = mapOf(
     "is" to T.IS, "true" to T.TRUE, "false" to T.FALSE, "module" to T.MODULE, "private" to T.PRIVATE,
 )
 
-/** Tokens after which a line break never ends a statement. */
+/**
+ * Tokens after which a line break never ends a statement. Not `>`, which can close a type's
+ * arguments at the end of a line (`type S<A>`); after a comparison, the parser skips the break.
+ */
 private val CONTINUES_LINE = setOf(
     T.COMMA, T.DOT, T.COLON, T.ASSIGN, T.ARROW, T.PIPE, T.TILDE, T.BANG, T.PLUS, T.MINUS, T.STAR, T.SLASH,
-    T.PERCENT, T.EQ, T.NEQ, T.LT, T.GT, T.LE, T.GE, T.AND, T.OR, T.LPAREN, T.LBRACKET, T.LBRACE,
+    T.PERCENT, T.EQ, T.NEQ, T.LT, T.LE, T.GE, T.AND, T.OR, T.LPAREN, T.LBRACKET, T.LBRACE,
     T.SEMI, T.NEWLINE,
 )
 
