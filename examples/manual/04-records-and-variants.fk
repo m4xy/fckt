@@ -31,13 +31,13 @@ ratio(num: Int, denom: Int) = Ratio(num, denom)
 integerProduct(integer: Int, ratio: Ratio) = ratio.copy(num = integer * ratio.num)
 
 // A variant with one unnamed field: Int(Int) is Int(value: Int).
-interface Number {
+type Number {
   Int(Int)
   Float(Float)
   Error
 }
 
-interface Sign { Positive, Negative }
+type Sign { Positive, Negative }
 
 signInt(n: Int) = if (n >= 0) Positive else Negative
 
@@ -57,7 +57,7 @@ addNum(n1: Number, n2: Number): Number = when (n1, n2) {
 // Option is built in: Some(x) or None.
 safeSquareRoot(x: Float) = if (x >= 0) Some(sqrt(x)) else None
 
-interface BTree<T> {
+type BTree<T> {
   Empty
   Node(value: T, left: BTree<T>, right: BTree<T>)
 }

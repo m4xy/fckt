@@ -6,8 +6,8 @@ type FirstRecord(x: Int, y: Int, z: Int)
 type MiddleRecord(x: Int, z: Int)
 type LastRecord(x: Int)
 
-interface FirstVariant { A, B, C }
-interface LastVariant { A }
+type FirstVariant { A, B, C }
+type LastVariant { A }
 
 lookAtXThenZ(r: FirstRecord) = {
   x = r.x
@@ -20,7 +20,7 @@ permute(x: FirstVariant): FirstVariant = when (x) {
   C -> C
 }
 
-interface Wrapped { First(FirstRecord) }
+type Wrapped { First(FirstRecord) }
 
 f(w: Wrapped) = when (w) {
   First(r) -> (r, r.x)

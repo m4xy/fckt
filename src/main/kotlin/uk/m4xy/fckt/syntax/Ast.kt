@@ -60,8 +60,8 @@ sealed interface Decl {
     ) : Decl
 
     /**
-     * `interface Name<T> { Variant(fields) ... }`: a sealed sum type. Besides declaring its own
-     * [variants], it can take in other interfaces' cases: one at a time with `Other.Case`
+     * `type Name<T> { Variant(fields) ... }`: a type with cases, a sealed sum type. Besides
+     * declaring its own [variants], it can take in other types' cases: one at a time with `Other.Case`
      * ([caseRefs]), or all of them with `*Other<T>` ([includes]).
      */
     data class Sealed(
@@ -96,7 +96,7 @@ sealed interface Decl {
 
 data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>)
 
-/** `Owner.Case` in an interface body: a case declared by another interface. [owner] may be qualified: `Letters.Alphabet`. */
+/** `Owner.Case` in a type's cases: a case declared by another type. [owner] may be qualified: `Letters.Alphabet`. */
 data class CaseRefDef(val pos: Pos, val owner: String, val case: String)
 
 data class SourceFile(val decls: List<Decl>)
@@ -108,7 +108,7 @@ sealed class Expr {
     abstract val pos: Pos
     var type: Type? = null
 
-    /** Set when the value is used as a larger interface than its own, e.g. a Vowel as an Alphabet. */
+    /** Set when the value is used as a larger sealed type than its own, e.g. a Vowel as an Alphabet. */
     var coerceTo: Type? = null
 
     class IntLit(override val pos: Pos, val value: Long) : Expr()
@@ -225,7 +225,7 @@ sealed interface Pattern {
 
     /**
      * `Success(a, b)`, `Alphabet.A`, `None`, or (with [isCheck]) `is Success`, which smart-casts the
-     * subject. `is Vowel`, naming an interface, narrows the subject to that interface's cases.
+     * subject. `is Vowel`, naming a sealed type, narrows the subject to that sealed type's cases.
      */
     data class Constructor(
         override val pos: Pos,
@@ -242,7 +242,7 @@ sealed interface Pattern {
         /** For `is Variant` on a variable, when the variant is a tag: the names bound to its fields. */
         var castFieldVars: List<String>? = null
 
-        /** For `is Interface`: the interface narrowed to, and the variable to rebind, if any. */
+        /** For `is Sealed type`: the sealed type narrowed to, and the variable to rebind, if any. */
         var narrowTo: Decl.Sealed? = null
         var narrowVar: String? = null
     }
@@ -299,7 +299,7 @@ sealed interface MemberRef {
     /** `Ratios.make`: a function or value named through its module. */
     data class Global(val decl: Decl.Function) : MemberRef
 
-    /** `Alphabet.A`: a case named through its interface. */
+    /** `Alphabet.A`: a case named through its sealed type. */
     data class Case(val ref: ConstructorRef) : MemberRef
 
     data class Builtin(val method: uk.m4xy.fckt.types.Builtin) : MemberRef

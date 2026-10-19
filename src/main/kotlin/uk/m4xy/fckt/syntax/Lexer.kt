@@ -5,7 +5,7 @@ enum class T {
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
     COMMA, DOT, COLON, SEMI, ASSIGN, ARROW, PIPE, TILDE, BANG, UNDERSCORE,
     PLUS, MINUS, STAR, SLASH, PERCENT, EQ, NEQ, LT, GT, LE, GE, AND, OR,
-    TYPE, INTERFACE, MODULE, PRIVATE, WHEN, IF, ELSE, IS, TRUE, FALSE,
+    TYPE, MODULE, PRIVATE, WHEN, IF, ELSE, IS, TRUE, FALSE,
 }
 
 /** A string literal's pieces: literal text, or the source of a `$name` / `${expr}` interpolation. */
@@ -17,7 +17,7 @@ sealed interface RawPart {
 data class Token(val kind: T, val text: String, val pos: Pos, val parts: List<RawPart> = emptyList())
 
 private val KEYWORDS = mapOf(
-    "type" to T.TYPE, "interface" to T.INTERFACE, "when" to T.WHEN, "if" to T.IF, "else" to T.ELSE,
+    "type" to T.TYPE, "when" to T.WHEN, "if" to T.IF, "else" to T.ELSE,
     "is" to T.IS, "true" to T.TRUE, "false" to T.FALSE, "module" to T.MODULE, "private" to T.PRIVATE,
 )
 

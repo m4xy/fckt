@@ -26,7 +26,7 @@
           "include": "#chars"
         },
         {
-          "include": "#interface-declaration"
+          "include": "#cased-type-declaration"
         },
         {
           "include": "#type-declaration"
@@ -204,14 +204,14 @@
         }
       ]
     },
-    "interface-declaration": {
-      "begin": "\\b(interface)\\s+([A-Z][A-Za-z0-9_]*)",
+    "cased-type-declaration": {
+      "begin": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)(?=\\s*(?:<[^{}()]*>)?\\s*\\{)",
       "beginCaptures": {
         "1": {
-          "name": "keyword.declaration.interface.fckt"
+          "name": "keyword.declaration.type.fckt"
         },
         "2": {
-          "name": "entity.name.type.interface.fckt"
+          "name": "entity.name.type.fckt"
         }
       },
       "end": "(?<=\\})",
@@ -337,7 +337,7 @@
         },
         {
           "name": "keyword.declaration.fckt",
-          "match": "\\b(type|interface|module)\\b"
+          "match": "\\b(type|module)\\b"
         },
         {
           "name": "storage.modifier.fckt",

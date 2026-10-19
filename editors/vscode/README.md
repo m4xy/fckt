@@ -32,7 +32,7 @@ npm run tokens -- sample.fk
 This prints each token with the scope it got, using the same tokenizer VS Code uses.
 
 The scopes follow the usual TextMate names, so themes color them. Declared types are
-`entity.name.type`, built-in types are `support.type.builtin`, the variants of an `interface` are
+`entity.name.type`, built-in types are `support.type.builtin`, the cases of a `type Name { ... }` are
 `entity.name.type.variant`, lambda and function parameters are `variable.parameter`, and `|>` and
 `~` are `keyword.operator.pipe` and `keyword.operator.thunk`.
 

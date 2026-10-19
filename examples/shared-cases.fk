@@ -1,20 +1,20 @@
-// Interfaces that share cases. A case belongs to the interface that declares it (Alphabet.A), and
-// other interfaces can take it in, one at a time or all at once with *Other. A Vowel is then also
+// Types that share cases. A case belongs to the type that declares it (Alphabet.A), and other
+// types can take it in, one at a time or all at once with *Other. A Vowel is then also
 // an Alphabet, so it can be passed wherever an Alphabet is expected, and `is Vowel` narrows an
 // Alphabet back down.
 
-interface Alphabet { A, B, C, D, E, I, O, U, W, Y }
-interface Digit { Zero, One }
+type Alphabet { A, B, C, D, E, I, O, U, W, Y }
+type Digit { Zero, One }
 
-interface Vowel { Alphabet.A, Alphabet.E, Alphabet.I, Alphabet.O, Alphabet.U }
-interface SemiVowel { Alphabet.W, Alphabet.Y }
-interface VowelLike { *Vowel, *SemiVowel }
-interface Symbol { *Vowel, Digit.Zero, Digit.One }
+type Vowel { Alphabet.A, Alphabet.E, Alphabet.I, Alphabet.O, Alphabet.U }
+type SemiVowel { Alphabet.W, Alphabet.Y }
+type VowelLike { *Vowel, *SemiVowel }
+type Symbol { *Vowel, Digit.Zero, Digit.One }
 
-interface Shape { Circle(radius: Float), Rect(w: Float, h: Float) }
+type Shape { Circle(radius: Float), Rect(w: Float, h: Float) }
 
-interface VList<T> { Nil, Cons(head: T, tail: VList<T>) }
-interface WList<T> { *VList<T>, Snoc(init: WList<T>, last: T) }
+type VList<T> { Nil, Cons(head: T, tail: VList<T>) }
+type WList<T> { *VList<T>, Snoc(init: WList<T>, last: T) }
 
 vowelOrder(v: Vowel) = when (v) {
   Alphabet.A -> 1

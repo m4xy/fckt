@@ -4,7 +4,7 @@
 type Box<T>(value: T)
 type Pair<A, B>(first: A, second: List<Option<B>>)
 
-interface Tree<T> {
+type Tree<T> {
   Leaf
   Node(left: Tree<T>, value: T, right: Tree<T>)
 }

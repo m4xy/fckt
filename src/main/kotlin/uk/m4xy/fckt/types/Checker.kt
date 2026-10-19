@@ -28,9 +28,9 @@ class Program(
     val ambiguousLabels: Set<String>,
     val ambiguousConstructors: Set<String>,
     val main: Decl.Function?,
-    /** Every interface's cases, including those it takes from other interfaces. */
+    /** Every sealed type's cases, including those it takes from other sealed types. */
     val cases: Map<String, List<CaseDecl>>,
-    /** Interfaces that share cases with another, which become OCaml polymorphic variants. */
+    /** Sealed types that share cases with another, which become OCaml polymorphic variants. */
     val polymorphic: Set<String>,
     /** The declarations as written, nesting included, renamed to their full names. */
     val root: List<Decl>,
@@ -42,7 +42,7 @@ class Program(
     val typeNames: Map<TypeRef.Named, String>,
 )
 
-/** A case of an interface: [variant], declared by [origin], with [fields] typed in the interface's own terms. */
+/** A case of a sealed type: [variant], declared by [origin], with [fields] typed in the sealed type's own terms. */
 class CaseDecl(val origin: Decl.Sealed, val variant: VariantDef, val fields: List<FieldDef>) {
     val name get() = variant.name
     fun sameCase(other: CaseDecl) = origin === other.origin && variant === other.variant
@@ -239,7 +239,7 @@ class Checker(file: SourceFile) {
                 is Decl.Record -> records[decl.name] = decl
                 is Decl.Sealed -> {
                     if (decl.variants.isEmpty() && decl.caseRefs.isEmpty() && decl.includes.isEmpty()) {
-                        throw CompileError(decl.pos, "interface '${decl.name}' has no variants")
+                        throw CompileError(decl.pos, "type '${decl.simpleName}' has no cases")
                     }
                     sealeds[decl.name] = decl
                     for (variant in decl.variants) {
@@ -278,7 +278,7 @@ class Checker(file: SourceFile) {
         }
         for (s in sealeds.values) computeCases(s, emptySet())
         currentPath = emptyList()
-        // An interface that takes in another's cases, and the interfaces it takes them from, share
+        // A sealed type that takes in another's cases, and the sealed types it takes them from, share
         // values, so they become polymorphic variants.
         for ((name, cases) in caseDecls) {
             for (case in cases) {
@@ -293,7 +293,7 @@ class Checker(file: SourceFile) {
     /** [s]'s own variants, then the cases it names one by one, then the ones it includes. */
     private fun computeCases(s: Decl.Sealed, visiting: Set<String>): List<CaseDecl> {
         caseDecls[s.name]?.let { return it }
-        if (s.name in visiting) throw CompileError(s.pos, "interface '${s.simpleName}' includes itself")
+        if (s.name in visiting) throw CompileError(s.pos, "type '${s.simpleName}' includes itself")
         val outerPath = currentPath
         currentPath = s.path
         val result = mutableListOf<CaseDecl>()
@@ -307,9 +307,9 @@ class Checker(file: SourceFile) {
         }
         s.variants.forEach { add(CaseDecl(s, it, it.fields), it.pos) }
         for (ref in s.caseRefs) {
-            val owner = lookupSealed(ref.owner, ref.pos) ?: throw CompileError(ref.pos, "unknown interface '${ref.owner}'")
+            val owner = lookupSealed(ref.owner, ref.pos) ?: throw CompileError(ref.pos, "unknown type '${ref.owner}'")
             if (owner.typeParams.isNotEmpty()) {
-                throw CompileError(ref.pos, "can't take single cases from the generic interface ${owner.simpleName}; include it whole with *${owner.simpleName}<...>")
+                throw CompileError(ref.pos, "can't take single cases from the generic type ${owner.simpleName}; include it whole with *${owner.simpleName}<...>")
             }
             val matches = computeCases(owner, visiting + s.name).filter { it.name == ref.case }
             val case = matches.singleOrNull()
@@ -317,7 +317,7 @@ class Checker(file: SourceFile) {
             add(case, ref.pos)
         }
         for (include in s.includes) {
-            val other = lookupSealed(include.name, include.pos) ?: throw CompileError(include.pos, "'*' takes an interface, and '${include.name}' isn't one")
+            val other = lookupSealed(include.name, include.pos) ?: throw CompileError(include.pos, "'*' takes a type with cases, and '${include.name}' isn't one")
             val substitution = other.typeParams.zip(include.args).toMap()
             for (case in computeCases(other, visiting + s.name)) {
                 add(CaseDecl(case.origin, case.variant, case.fields.map { it.copy(type = substitute(it.type, substitution)) }), include.pos)
@@ -343,7 +343,7 @@ class Checker(file: SourceFile) {
         is TypeRef.Tuple -> "(${ref.elements.joinToString(", ") { text(it) }})"
     }
 
-    /** The cases of interface [name] applied to [args], each with its field types. */
+    /** The cases of sealed type [name] applied to [args], each with its field types. */
     private fun cases(name: String, args: List<Type>): List<Pair<CaseDecl, List<Type>>> {
         val s = sealeds.getValue(name)
         return caseDecls.getValue(name).map { it to fieldTypes(s.typeParams, it.fields, args) }
@@ -578,7 +578,7 @@ class Checker(file: SourceFile) {
 
     /**
      * Uses [e], of type [actual], where [expected] is wanted. Besides being equal, the two may
-     * differ by an interface that's a subset of another (a Vowel used as an Alphabet), which
+     * differ by a sealed type that's a subset of another (a Vowel used as an Alphabet), which
      * marks [e] to be widened.
      */
     private fun assign(e: Expr, actual: Type, expected: Type) {
@@ -600,7 +600,7 @@ class Checker(file: SourceFile) {
         return (ref as? ConstructorRef.Variant)?.takeIf { it.variant != null }
     }
 
-    /** A case written out takes on any interface that has it: `Alphabet.E` is a Vowel where a Vowel is wanted. */
+    /** A case written out takes on any sealed type that has it: `Alphabet.E` is a Vowel where a Vowel is wanted. */
     private fun retypeCase(e: Expr, expected: Type): Boolean {
         val case = caseOf(e) ?: return false
         val target = expected.prune() as? Type.Con ?: return false
@@ -630,7 +630,7 @@ class Checker(file: SourceFile) {
         }
     }
 
-    /** Every case of interface [x] is a case of [y], with the same field types. */
+    /** Every case of sealed type [x] is a case of [y], with the same field types. */
     private fun caseSubset(x: Type.Con, y: Type.Con): Boolean {
         val ys = cases(y.name, y.args)
         return cases(x.name, x.args).all { (case, types) ->
@@ -640,9 +640,9 @@ class Checker(file: SourceFile) {
     }
 
     /**
-     * The type of several branches' results together. Where they're different interfaces, it's the
-     * smallest declared interface that has all their cases: `if (c) Alphabet.A else Digit.Zero` is a
-     * Symbol if `interface Symbol { Alphabet.A, Digit.Zero }` is declared.
+     * The type of several branches' results together. Where they're different sealed types, it's the
+     * smallest declared sealed type that has all their cases: `if (c) Alphabet.A else Digit.Zero` is a
+     * Symbol if `type Symbol { Alphabet.A, Digit.Zero }` is declared.
      */
     private fun join(exprs: List<Expr>, pos: Pos): Type {
         val types = exprs.map { it.type!! }
@@ -666,7 +666,7 @@ class Checker(file: SourceFile) {
                     ?.let { Type.Con(it.name) }
                 ?: throw CompileError(
                     pos,
-                    "no interface has all of ${needed.distinctBy { it.origin.name + "." + it.name }.joinToString { "${it.origin.name}.${it.name}" }}; " +
+                    "no type has all of ${needed.distinctBy { it.origin.name + "." + it.name }.joinToString { "${it.origin.name}.${it.name}" }}; " +
                         "declare one that does, or annotate the type",
                 )
         }
@@ -775,9 +775,9 @@ class Checker(file: SourceFile) {
 
     /**
      * Finds the constructor [name] (a record type, a variant, `Some` or `None`). A [qualifier] names
-     * where to look: an interface (`Alphabet.A`) or a module (`Ratios.Ratio`, `Shapes.Circle`).
-     * Where [hint], the type the constructor should build, is an interface with that case, the
-     * result has that type; so a variant name used by several interfaces is told apart by what's
+     * where to look: a sealed type (`Alphabet.A`) or a module (`Ratios.Ratio`, `Shapes.Circle`).
+     * Where [hint], the type the constructor should build, is a sealed type with that case, the
+     * result has that type; so a variant name used by several sealed types is told apart by what's
      * expected. [building] is false in patterns, which may take apart a record they couldn't build.
      */
     private fun constructor(
@@ -836,7 +836,7 @@ class Checker(file: SourceFile) {
                 caseDecls.getValue(origin.name).first { it.variant === variant }
             }
         }
-        // The type it builds: the expected interface if that has the case, else the one named.
+        // The type it builds: the expected sealed type if that has the case, else the one named.
         val home = hinted?.takeIf { h -> caseDecls.getValue(h).any { it.sameCase(case) } } ?: qualifierSealed?.name ?: case.origin.name
         val args = sealeds.getValue(home).typeParams.map { u.fresh() }
         val fieldTypes = cases(home, args).first { it.first.sameCase(case) }.second
@@ -1040,7 +1040,7 @@ class Checker(file: SourceFile) {
             "==", "!=" -> {
                 val l = infer(e.left, null, scope)
                 val r = infer(e.right, l, scope)
-                // Different interfaces compare as the smallest one that has both: Alphabet.E == vowel.
+                // Different sealed types compare as the smallest one that has both: Alphabet.E == vowel.
                 if (sealedName(l) != null && sealedName(r) != null && sealedName(l) != sealedName(r)) join(listOf(e.left, e.right), e.pos)
                 else assign(e.right, r, l)
                 e.resolved = BinaryRef(if (e.op == "==") "=" else "<>", false, false)
@@ -1216,7 +1216,7 @@ class Checker(file: SourceFile) {
     private fun checkConstructorPattern(p: Pattern.Constructor, type: Type, scope: Scope, subject: Expr?, owner: Expr.When?) {
         val t = type.prune()
         val subjectSealed = (t as? Type.Con)?.takeIf { it.name in sealeds }
-        // `is Vowel`, naming an interface rather than one of the subject's cases, narrows the subject.
+        // `is Vowel`, naming a sealed type rather than one of the subject's cases, narrows the subject.
         if (p.isCheck) {
             val target = lookupSealed(listOfNotNull(p.qualifier, p.name).joinToString("."), null)
             val isCase = p.qualifier == null && caseDecls[subjectSealed?.name]?.any { it.name == p.name } == true
@@ -1227,11 +1227,11 @@ class Checker(file: SourceFile) {
         }
         val shape = if (subjectSealed != null) {
             // Match against the subject's own cases, so Alphabet.A matches a Vowel.
-            // Through an interface, its cases; through a module, those of the interfaces in it.
+            // Through a sealed type, its cases; through a module, those of the sealed types in it.
             val qualifierCases = p.qualifier?.let { q ->
                 lookupSealed(q, p.pos)?.let { caseDecls.getValue(it.name) }
                     ?: lookupModule(q, p.pos)?.let { m -> caseDecls.filterKeys { it.substringBeforeLast('.') == m.name }.values.flatten() }
-                    ?: throw CompileError(p.pos, "unknown interface or module '$q'")
+                    ?: throw CompileError(p.pos, "unknown type or module '$q'")
             }
             val matches = cases(subjectSealed.name, subjectSealed.args).filter { (case, _) ->
                 case.name == p.name && (qualifierCases == null || qualifierCases.any { it.sameCase(case) })
@@ -1281,7 +1281,7 @@ class Checker(file: SourceFile) {
     /** `is Vowel`: the subject is one of Vowel's cases, which must all be cases of the subject's type. */
     private fun narrow(p: Pattern.Constructor, target: Decl.Sealed, subjectType: Type, scope: Scope, subject: Expr?) {
         val subjectSealed = (subjectType as? Type.Con)?.takeIf { it.name in sealeds }
-            ?: throw CompileError(p.pos, "'is ${p.name}' needs the subject to be an interface, not $subjectType")
+            ?: throw CompileError(p.pos, "'is ${p.name}' needs the subject to be a type with cases, not $subjectType")
         val narrowed = Type.Con(target.name, target.typeParams.map { u.fresh() })
         if (!caseSubset(narrowed, subjectSealed)) {
             val missing = caseDecls.getValue(target.name).filter { c -> caseDecls.getValue(subjectSealed.name).none { it.sameCase(c) } }

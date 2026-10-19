@@ -76,46 +76,19 @@ class Parser(private val tokens: List<Token>) {
                 expect(T.RBRACE, "'}'")
                 Decl.Module(pos, name, decls)
             }
+            at(T.IDENT) && peek.text == "interface" && peekAt(1).kind == T.IDENT ->
+                throw error("write a type with cases as 'type ${peekAt(1).text} { ... }'")
             accept(T.TYPE) != null -> {
                 val name = upperIdent("a type name")
                 val typeParams = typeParams()
-                // type Name private(...): like Kotlin's private constructor
+                // type Name { Cases }: a type with cases
+                if (accept(T.LBRACE) != null) return typeWithCases(pos, name, typeParams)
+                // type Name(fields), or type Name private(...): like Kotlin's private constructor
                 val privateConstructor = accept(T.PRIVATE) != null
-                expect(T.LPAREN, "'(' after the type name")
+                expect(T.LPAREN, "'(' or '{' after the type name")
                 val fields = fieldList(pos)
                 expect(T.RPAREN, "')'")
                 Decl.Record(pos, name, typeParams, fields, privateConstructor = privateConstructor)
-            }
-            accept(T.INTERFACE) != null -> {
-                val name = upperIdent("an interface name")
-                val typeParams = typeParams()
-                expect(T.LBRACE, "'{'")
-                skipNewlines()
-                val variants = mutableListOf<VariantDef>()
-                val caseRefs = mutableListOf<CaseRefDef>()
-                val includes = mutableListOf<TypeRef.Named>()
-                while (!at(T.RBRACE)) {
-                    val variantPos = peek.pos
-                    if (accept(T.STAR) != null) {
-                        // *Other<T>: every case of Other
-                        includes += type() as? TypeRef.Named ?: throw error("'*' takes an interface", variantPos)
-                    } else {
-                        val variantName = upperIdent("a variant name")
-                        if (at(T.DOT)) {
-                            // Other.Case: one case of another interface, which may itself be qualified
-                            val path = mutableListOf(variantName)
-                            while (accept(T.DOT) != null) path += upperIdent("a case name")
-                            caseRefs += CaseRefDef(variantPos, path.dropLast(1).joinToString("."), path.last())
-                        } else {
-                            val fields = if (accept(T.LPAREN) != null) fieldList(variantPos).also { expect(T.RPAREN, "')'") } else emptyList()
-                            variants += VariantDef(variantPos, variantName, fields)
-                        }
-                    }
-                    accept(T.COMMA)
-                    skipNewlines()
-                }
-                expect(T.RBRACE, "'}'")
-                Decl.Sealed(pos, name, typeParams, variants, caseRefs, includes)
             }
             at(T.IDENT) -> {
                 val name = next().text
@@ -129,6 +102,36 @@ class Parser(private val tokens: List<Token>) {
             }
             else -> throw error("expected a declaration but found ${describe(peek)}")
         }
+    }
+
+    /** The `{ ... }` of `type Name { Cases }`, after the `{`. */
+    private fun typeWithCases(pos: Pos, name: String, typeParams: List<String>): Decl.Sealed {
+        skipNewlines()
+        val variants = mutableListOf<VariantDef>()
+        val caseRefs = mutableListOf<CaseRefDef>()
+        val includes = mutableListOf<TypeRef.Named>()
+        while (!at(T.RBRACE)) {
+            val variantPos = peek.pos
+            if (accept(T.STAR) != null) {
+                // *Other<T>: every case of Other
+                includes += type() as? TypeRef.Named ?: throw error("'*' takes a type with cases", variantPos)
+            } else {
+                val variantName = upperIdent("a variant name")
+                if (at(T.DOT)) {
+                    // Other.Case: one case of another type, which may itself be qualified
+                    val path = mutableListOf(variantName)
+                    while (accept(T.DOT) != null) path += upperIdent("a case name")
+                    caseRefs += CaseRefDef(variantPos, path.dropLast(1).joinToString("."), path.last())
+                } else {
+                    val fields = if (accept(T.LPAREN) != null) fieldList(variantPos).also { expect(T.RPAREN, "')'") } else emptyList()
+                    variants += VariantDef(variantPos, variantName, fields)
+                }
+            }
+            accept(T.COMMA)
+            skipNewlines()
+        }
+        expect(T.RBRACE, "'}'")
+        return Decl.Sealed(pos, name, typeParams, variants, caseRefs, includes)
     }
 
     private fun upperIdent(what: String): String {

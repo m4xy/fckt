@@ -1,6 +1,6 @@
 // 8 Symbolic processing of expressions, and 9 Pretty-printing
 
-interface Expression {
+type Expression {
   Const(Float)
   Var(String)
   Sum(left: Expression, right: Expression)   // e1 + e2

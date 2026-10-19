@@ -350,7 +350,7 @@ class Lowering(private val program: Program) {
         else params.map { p -> p.type?.let { "(${snake(p.name)} : ${typeText(it, typeParams)})" } ?: snake(p.name) }
 
     // ---- Expressions ----
-    // Every expression scope implements the same parent interfaces, so these generic extensions
+    // Every expression scope implements the same parent sealed types, so these generic extensions
     // can add an expression to any of them.
 
     private fun <S> S.expr(e: Expr) where
@@ -358,7 +358,7 @@ class Lowering(private val program: Program) {
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
-        // A narrower interface used as a wider one: (v :> alphabet).
+        // A narrower sealed type used as a wider one: (v :> alphabet).
         val widened = e.coerceTo ?: return exprUnwidened(e)
         annotated(typeText(widened)) {
             coerce = true
@@ -601,7 +601,7 @@ class Lowering(private val program: Program) {
         }
     }
 
-    /** A shared case's tag, named after the interface that declares it: `Alphabet_A`. */
+    /** A shared case's tag, named after the sealed type that declares it: `Alphabet_A`. */
     private fun tagName(origin: Decl.Sealed, variant: VariantDef) = "${origin.name.replace('.', '_')}_${variant.name}"
 
     /** An ordinary constructor as written from here: `Circle` inside Shapes, `Shapes.Circle` outside. */

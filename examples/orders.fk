@@ -3,7 +3,7 @@ type UserId(value: String)
 type Order(id: String, user: UserId, items: List<Money>)
 
 // sealed: these are its only variants
-interface OrderResult {
+type OrderResult {
   Success(orderId: String, total: Money)
   InvalidOrder(reason: String)
   PaymentFailed(errorCode: Int, message: String)

@@ -72,7 +72,7 @@ class CompilerTest {
         }
 
     @Test
-    fun `records, sealed interfaces and when`() {
+    fun `records, types with cases and when`() {
         val ml = compile(File("examples/orders.fk").readText())
         assertContains(ml, "type user_id = { value : string }")
         assertContains(ml, "| Success of { order_id : string; total : money }")
@@ -84,7 +84,7 @@ class CompilerTest {
     fun `generics, recursion and local functions`() {
         val output = run(
             """
-            interface Tree<T> {
+            type Tree<T> {
               Leaf
               Node(left: Tree<T>, value: T, right: Tree<T>)
             }
@@ -181,7 +181,7 @@ class CompilerTest {
     fun `smart cast after is reads the variant's fields`() {
         val output = run(
             """
-            interface Shape {
+            type Shape {
               Circle(radius: Float)
               Square(side: Float)
             }
@@ -201,8 +201,8 @@ class CompilerTest {
             """
             type Meters(Int)
             type Name(String)
-            interface A { Done(x: Int) }
-            interface B { Done(y: String) }
+            type A { Done(x: Int) }
+            type B { Done(y: String) }
             pick(a: A): B = when (a) {
               Done(x) -> Done("got ${'$'}x")
             }
@@ -246,20 +246,20 @@ class CompilerTest {
     }
 
     @Test
-    fun `interfaces can share cases`() {
+    fun `types can share cases`() {
         assertEquals("", run(File("examples/shared-cases.fk").readText()))
     }
 
     @Test
     fun `shared case errors`() {
-        val letters = "interface Alphabet { A, B, E }\ninterface Digit { Zero }\ninterface Vowel { Alphabet.A, Alphabet.E }\n"
-        assertContains(error(letters + "f(flag: Boolean) = if (flag) Alphabet.A else Digit.Zero"), "no interface has all of Alphabet.A, Digit.Zero")
+        val letters = "type Alphabet { A, B, E }\ntype Digit { Zero }\ntype Vowel { Alphabet.A, Alphabet.E }\n"
+        assertContains(error(letters + "f(flag: Boolean) = if (flag) Alphabet.A else Digit.Zero"), "no type has all of Alphabet.A, Digit.Zero")
         assertContains(error(letters + "f(v: Vowel) = when (v) {\n  is Alphabet -> 1\n}"), "Alphabet isn't part of Vowel: Vowel has no Alphabet.B")
         assertContains(error(letters + "f(v: Vowel) = when (v) {\n  Alphabet.B -> 1\n  else -> 2\n}"), "Vowel has no case 'Alphabet.B'")
         assertContains(error(letters + "f(a: Alphabet): Vowel = a"), "expected Vowel but found Alphabet")
-        assertContains(error("interface A { X }\ninterface B { *A, Y }\ninterface C { *B, A.Z }"), "A has no case 'Z'")
-        assertContains(error("interface L<T> { Nil }\ninterface M { L.Nil }"), "can't take single cases from the generic interface L")
-        assertContains(error("interface A { *B }\ninterface B { *A }"), "includes itself")
+        assertContains(error("type A { X }\ntype B { *A, Y }\ntype C { *B, A.Z }"), "A has no case 'Z'")
+        assertContains(error("type L<T> { Nil }\ntype M { L.Nil }"), "can't take single cases from the generic type L")
+        assertContains(error("type A { *B }\ntype B { *A }"), "includes itself")
     }
 
     @Test
@@ -305,7 +305,7 @@ class CompilerTest {
         assertContains(error("type P(a: Int)\nf() = P(b = 1)"), "'P' has no parameter 'b'")
         assertContains(error("x = x + 1"), "value 'x' is defined in terms of itself")
         assertContains(
-            error("interface A { E(x: Int) }\ninterface B { E(y: Int) }\nf() = E(1)"),
+            error("type A { E(x: Int) }\ntype B { E(y: Int) }\nf() = E(1)"),
             "'E' is a case of A and B; write A.E",
         )
     }
@@ -314,6 +314,7 @@ class CompilerTest {
     fun `syntax errors`() {
         assertContains(error("f(x: Int) = if (x > 0) 1"), "'if' needs an 'else'")
         assertContains(error("f(x: Int) = when { x > 0 -> 1 }"), "needs an 'else' branch")
+        assertContains(error("interface Shape { Circle }"), "write a type with cases as 'type Shape { ... }'")
         assertContains(error("f() = {\n  y = 1\n  y = 2\n  y\n}"), "'y' is already defined in this block")
         assertContains(error("f() = {\n  y = 1\n}"), "must end with an expression")
     }

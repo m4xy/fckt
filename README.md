@@ -7,7 +7,7 @@ files are `.fk`, and the compiler transpiles them to readable OCaml.
 type Money(Int)                        // one unnamed field is called `value`
 type Order(id: String, items: List<Money>)
 
-interface OrderResult {                // always sealed: these are its only variants
+type OrderResult {                     // a type with cases: these are its only ones
   Success(orderId: String, total: Money)
   InvalidOrder(reason: String)
 }
@@ -31,8 +31,8 @@ tour of the core language, translated section by section.
 | --- | --- | --- |
 | `type R(a: A, b: B)` | `type r = { a : a; b : b }` | `R(x, y)` or `R(a = x, b = y)` constructs it, and `r.a` reads a field. |
 | `type R(A)` | `type r = { value : a }` | The same as `type R(value: A)`. |
-| `interface S { V(x: X) W }` | `type s = V of { x : x } \| W` | A sealed sum type. |
-| `interface Vowel { Alphabet.A, Alphabet.E }` | `type vowel = [ `Alphabet_A \| `Alphabet_E ]` | An interface can take in other interfaces' cases, one at a time (`Alphabet.A`) or all of them (`*Vowel`). A `Vowel` can then be used wherever an `Alphabet` is expected, and `is Vowel` narrows an `Alphabet` to a `Vowel`. When branches give different interfaces, the result is the smallest declared interface with all their cases. Interfaces that share cases become polymorphic variants; the rest stay ordinary ones. See `examples/shared-cases.fk`. |
+| `type S { V(x: X), W }` | `type s = V of { x : x } \| W` | A type with cases, which a value is exactly one of (a sealed sum type). Parentheses make a record, braces make cases. |
+| `type Vowel { Alphabet.A, Alphabet.E }` | `type vowel = [ `Alphabet_A \| `Alphabet_E ]` | A type can take in other types' cases, one at a time (`Alphabet.A`) or all of them (`*Vowel`). A `Vowel` can then be used wherever an `Alphabet` is expected, and `is Vowel` narrows an `Alphabet` to a `Vowel`. When branches give different types, the result is the smallest declared type with all their cases. Types that share cases become polymorphic variants; the rest stay ordinary ones. See `examples/shared-cases.fk`. |
 | `module Ratios { ... }` | `module Ratios = struct ... end` | Groups declarations. Inside, members use each other directly; outside, they're named through the module: `Ratios.make(1, 2)`, `Shapes.Circle(1.0)`, `Shapes.Shape`. Modules can nest. See `examples/modules.fk`. |
 | `private gcd(...)` | left out of the module's `sig` | Visible only inside its module. A public member can't expose a private type. |
 | `type Ratio private(n: Int, d: Int)` | `type ratio = private { ... }` in the `sig` | Like Kotlin's `private constructor`: readable and matchable anywhere, but only its module can build or `copy` one. |
