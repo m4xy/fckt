@@ -62,7 +62,7 @@ class CaseDecl(val origin: Decl.Sealed, val variant: VariantDef, val fields: Lis
     fun sameCase(other: CaseDecl) = origin === other.origin && variant === other.variant
 }
 
-class FunctionGroup(val decls: List<Decl.Function>, val recursive: Boolean)
+class FunctionGroup(val decls: List<Decl.Function>, var recursive: Boolean)
 
 /** A constructor's shape once instantiated: field names and types, and the type it builds. */
 class ConstructorShape(val ref: ConstructorRef, val fieldNames: List<String>, val fieldTypes: List<Type>, val result: Type)
@@ -831,19 +831,7 @@ class Checker(file: SourceFile) {
 
     private fun dependencyGroups(): List<FunctionGroup> {
         val decls = globals.values.filter { it !in parameterMembers }
-        val deps = decls.associateWith { decl ->
-            val refs = linkedSetOf<String>()
-            val bound = (decl.params?.map { it.name } ?: emptyList()).toSet()
-            collectRefs(decl.body, bound, refs)
-            // A name may be plain (`gcd`) or go through modules (`Ratios.make`), seen from the decl's module.
-            currentPath = decl.path
-            refs.mapNotNull { ref ->
-                lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
-                    lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
-                }
-            }.distinct().also { uses[decl] = it }.filter { it !in parameterMembers }
-        }
-        currentPath = emptyList()
+        val deps = decls.associateWith { decl -> refsOf(decl).also { uses[decl] = it }.filter { it !in parameterMembers } }
         return stronglyConnected(decls) { deps.getValue(it) }.map { component ->
             val recursive = component.size > 1 || component[0] in deps.getValue(component[0])
             component.firstOrNull { it.params == null && recursive }?.let {
@@ -860,7 +848,29 @@ class Checker(file: SourceFile) {
         }
     }
 
-    /** Names an expression may refer to that aren't bound inside it. Over-approximates, which is harmless. */
+    /** The functions and values [decl]'s body may use; once it's checked, only those it does. */
+    private fun refsOf(decl: Decl.Function): List<Decl.Function> {
+        val refs = linkedSetOf<String>()
+        val bound = (decl.params?.map { it.name } ?: emptyList()).toSet()
+        collectRefs(decl.body, bound, refs)
+        // A name may be plain (`gcd`) or go through modules (`Ratios.make`), seen from the decl's module.
+        val saved = currentPath
+        currentPath = decl.path
+        try {
+            return refs.mapNotNull { ref ->
+                lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
+                    lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
+                }
+            }.distinct()
+        } finally {
+            currentPath = saved
+        }
+    }
+
+    /**
+     * Names an expression may refer to that aren't bound inside it. Over-approximates, which is
+     * harmless; once checked, a built-in method or a field isn't taken for a function of its name.
+     */
     private fun collectRefs(e: Expr, bound: Set<String>, into: MutableSet<String>) {
         fun go(x: Expr, b: Set<String> = bound) = collectRefs(x, b, into)
         when (e) {
@@ -871,12 +881,14 @@ class Checker(file: SourceFile) {
             is Expr.StringLit -> e.parts.forEach { if (it is StringPart.Interpolated) go(it.expr) }
             is Expr.ListLit -> e.items.forEach { go(it) }
             is Expr.Call -> {
-                go(e.callee)
+                val callee = e.callee
+                if (callee is Expr.Member && e.resolved is CallRef.Builtin) go(callee.target) else go(callee)
                 e.args.forEach { go(it.value) }
             }
             is Expr.Member -> {
                 go(e.target)
-                if (e.name !in bound) into += e.name // possibly an extension call
+                val known = e.resolved is MemberRef.Builtin || e.resolved is MemberRef.Field
+                if (e.name !in bound && !known) into += e.name // possibly an extension call
                 dotted(e, null)?.takeIf { it.substringBefore('.') !in bound }?.let { into += it } // possibly Module.member
             }
             is Expr.Binary -> {
@@ -943,6 +955,13 @@ class Checker(file: SourceFile) {
     // ---- Functions ----
 
     private fun checkGroup(group: FunctionGroup) {
+        checkGroupIn(group)
+        // `xs.map(f)` in a function called map looked like it might call itself; now it's known.
+        val only = group.decls.singleOrNull()
+        if (group.recursive && only != null && only !in refsOf(only)) group.recursive = false
+    }
+
+    private fun checkGroupIn(group: FunctionGroup) {
         val app = enclosingApplication(group.decls.first().path) ?: return checkGroupBody(group)
         // A module made by a functor: its modules first, then the functor's body for them.
         checkArgumentTypes(app)
@@ -1120,7 +1139,7 @@ class Checker(file: SourceFile) {
 
     private companion object {
         /** Built-in types whose values can be widened inside them: a List<Vowel> is a List<Alphabet>. */
-        val COVARIANT = setOf("List", "Option", "Lazy", Type.TUPLE)
+        val COVARIANT = setOf("List", "Option", "Lazy", "Result", Type.TUPLE)
     }
 
     /** [type], unless it's still an unknown variable, which branches shouldn't be checked against: they're joined. */
@@ -1250,6 +1269,13 @@ class Checker(file: SourceFile) {
             val args = record.typeParams.map { u.fresh() }
             return ConstructorShape(ConstructorRef.Record(record), record.fields.map { it.name }, fieldTypes(record.typeParams, record.fields, args), Type.Con(record.name, args))
         }
+        // Ok and Error are Result's, unless the program has cases of its own by those names.
+        val wantsResult = when (val h = hint?.prune()) {
+            is Type.Con -> h.name == "Result"
+            is Type.Fn -> (h.result.prune() as? Type.Con)?.name == "Result"
+            else -> false
+        }
+        if (qualifier == null && wantsResult) resultCase(name)?.let { return it }
         if (qualifier == null && (name == "Some" || name == "None")) {
             val a = u.fresh()
             val ref = ConstructorRef.Variant(null, null, name)
@@ -1272,7 +1298,7 @@ class Checker(file: SourceFile) {
                 val candidates = variantsByName[name].orEmpty().filter { (s, _) ->
                     visible(s) && !abstractHere(s) && if (qualifierModule != null) s.path == qualifierModule.name.split('.') else inside(s.path)
                 }
-                if (candidates.isEmpty()) return null
+                if (candidates.isEmpty()) return if (qualifier == null) resultCase(name) else null
                 val (origin, variant) = candidates.singleOrNull()
                     ?: throw CompileError(
                         pos,
@@ -1292,6 +1318,16 @@ class Checker(file: SourceFile) {
             fieldTypes,
             Type.Con(home, args),
         )
+    }
+
+    /** `Ok(value)` or `Error(error)`, building a Result. */
+    private fun resultCase(name: String): ConstructorShape? {
+        if (name != "Ok" && name != "Error") return null
+        val error = u.fresh()
+        val value = u.fresh()
+        val ref = ConstructorRef.Variant(null, null, name)
+        return if (name == "Ok") ConstructorShape(ref, listOf("value"), listOf(value), Type.result(error, value))
+        else ConstructorShape(ref, listOf("error"), listOf(error), Type.result(error, value))
     }
 
     /** `Alphabet.A`, `Ratios.Ratio` or `Shapes.Circle`: what qualifies a constructor, if [member] names one. */
@@ -1943,8 +1979,10 @@ class Checker(file: SourceFile) {
                         statement.paramNames = params.map { snake(it.name) }
                         val refs = mutableSetOf<String>()
                         collectRefs(statement.value, params.map { it.name }.toSet(), refs)
-                        statement.recursive = statement.name in refs
                         check(statement.value, fn.result, body)
+                        // Checked, a built-in method of the same name no longer counts as a call to it.
+                        collectRefs(statement.value, params.map { it.name }.toSet(), refs.apply { clear() })
+                        statement.recursive = statement.name in refs
                     }
                 }
             }

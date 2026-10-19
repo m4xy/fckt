@@ -43,7 +43,7 @@ tour of the core language, translated section by section.
 | `module SortedSet<M : Ordered> { ... }` | `module SortedSet (M : Ordered) = struct ... end` | A functor: a module that takes modules. Inside, `M` has only what `Ordered` lists, with its types abstract, so the body works for any module that follows it. Members are used through a module made from it. See `examples/functors.fk`. |
 | `module IntSet = SortedSet<IntOrder>` | `module IntSet = SortedSet (IntOrder)` | The module a functor makes. The argument needs everything the spec lists, with the right types. If it follows the spec as `module IntOrder : Ordered`, its types stay abstract, as in OCaml, so `IntSet` takes only `IntOrder.T`s; as `Ordered<Int>`, or without a spec, `IntSet` takes `Int`s. |
 | `Options { x by half(n); x + 1 }` | `let ( let* ) = Options.bind in let* x = half n in Options.pure (x + 1)` | A module's name before a block runs the block in it, through the module's `bind` and `pure` (as `Monad` has). `x by m` takes the value out of `m`, or stops the block where `bind` would. The last line goes back in with `pure`. `by` takes a name, `_` or a tuple pattern, and goes only directly in the block, not in a lambda inside it. It works with a functor's parameter too: `M { ... }`. See `examples/monads.fk`. |
-| `Validated { n by checkName(s); a by checkAge(i); User(n, a) }` | `let+ n = check_name s and+ a = check_age i in User (n, a)` | A module with `map` and `product` but no `bind` (as `Applicative` has) runs its `by` lines independently. Every line runs, and `product` decides what to keep, so a validation can report every error rather than the first. The lines can't use each other's values and go together: other lines go before them or after them, and lines after can use them. See `examples/validation.fk`. |
+| `Validated { n by checkName(s); a by checkAge(i); User(n, a) }` | `let+ n = check_name s and+ a = check_age i in User (n, a)` | A module with `map` and `product` but no `bind` (as `Applicative` has) runs its `by` lines independently. Every line runs, and `product` decides what to keep, so a validation can report every error rather than the first. The lines can't use each other's values and go together: other lines go before them or after them, and lines after can use them. See `examples/independent-steps.fk`. |
 | `type Names = List<String>` | `type names = string list` | Another name for a type, with type parameters if needed: `type Pair<A> = (A, A)`. |
 | `type Box<T>(value: T)` | `type 't box = { value : 't }` | Type parameters work on types and functions. |
 | `f(x: Int, y: Int): Int = e` | `let f (x : int) (y : int) : int = e` | Top-level order doesn't matter; mutual recursion becomes `let rec ... and`. |
@@ -68,12 +68,29 @@ tour of the core language, translated section by section.
 | `main(args: List<String>)` | `let () = main ...` | `main` may take the command-line arguments. |
 | `"$x and ${f(y)}"` | `"" ^ show x ^ ...` | Values print like Kotlin's `toString()`, e.g. `Money(value=3)`. |
 
-`Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `List<T>`, `Option<T>` and
-`Lazy<T>` are built in. `assert(condition)` and `assertEquals(expected, actual)` stop the program
+`Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `List<T>`, `Option<T>`,
+`Result<E, A>` and `Lazy<T>` are built in. `Result` is OCaml's `('a, 'e) result`, built with `Ok(x)` and
+`Error(e)`; its error comes first, so `Monad<Result<String>>` fixes it. `assert(condition)` and `assertEquals(expected, actual)` stop the program
 when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` is a list literal, `Some(x)` and `None` build options, and `Unit`, as in Kotlin, is also the one value of its type. Arithmetic on an
 `Int` and a `Float` gives a `Float`, as in Kotlin. Built-in methods are defined in
 `types/Types.kt`: `map`, `filter`, `fold`, `sum`, `size`, `joinToString`, `getOrElse`, `toInt`,
 and others.
+
+## Standard library
+
+`src/main/resources/std` is written in fckt, and comes into a program as it's used, like any
+other file. Only what a program mentions goes into its OCaml, and a program's own declaration or
+file of the same name takes its place.
+
+| | |
+| --- | --- |
+| `prelude.fk` | Needs no module's name: `spec Monad`, `spec Applicative`, and `type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }`. |
+| `Options` | Option as a monad: `Options { x by half(n); x + 1 }`. |
+| `Results` | Result as a monad, for any error type, with `mapError` and `toOption`. |
+| `Validated` | Validation without bind, so `Validated { ... }` keeps every error; `fromResult` and `toResult`. |
+| `Lists` | List as a monad, for every combination: `Lists { x by xs; y by ys; (x, y) }`, with `guard`. |
+
+See `examples/stdlib.fk`.
 
 ## How it works
 

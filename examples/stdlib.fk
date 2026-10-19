@@ -1,0 +1,37 @@
+// The standard library: Monad, Applicative and Validation need no module's name, and Options,
+// Results, Validated and Lists come in when a program uses them. Result is OCaml's result.
+
+type User(name: String, age: Int)
+
+half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None
+
+parse(s: String): Result<String, Int> = when (s.toIntOrNone()) {
+  Some(n) -> Ok(n)
+  None -> Error("$s isn't a number")
+}
+
+checkName(name: String): Validation<String, String> = if (name == "") Invalid(["name is empty"]) else Valid(name)
+
+checkAge(age: Int): Validation<String, Int> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
+
+// Monad is the prelude's, and Options the standard library's.
+module MonadOps<M : Monad> {
+  twice<A>(m: M.M<A>): M.M<(A, A)> = M {
+    a by m
+    b by m
+    (a, b)
+  }
+}
+
+module OptionOps = MonadOps<Options>
+
+main() = {
+  assertEquals(Some(3), Options { h by half(12); q by half(h); q })
+  assertEquals(Ok(7), Results { a by parse("3"); b by parse("4"); a + b })
+  assertEquals(Error("x isn't a number"), Results { a by parse("x"); b by parse("4"); a + b })
+  assertEquals(Invalid(["name is empty", "age -1 is negative"]), Validated { n by checkName(""); a by checkAge(-1); User(n, a) })
+  assertEquals([(2, "a"), (2, "b"), (3, "a"), (3, "b")], Lists { x by [1, 2, 3]; _ by Lists.guard(x > 1); y by ["a", "b"]; (x, y) })
+  assertEquals(Some((4, 4)), OptionOps.twice(Some(4)))
+  bad: Result<String, Int> = Error("bad")
+  assertEquals(Error(["bad"]), Validated.toResult(Validated.fromResult(bad)))
+}

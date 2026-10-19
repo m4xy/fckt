@@ -49,6 +49,9 @@ sealed class Type {
         val CHAR = Con("Char")
         fun list(element: Type) = Con("List", listOf(element))
         fun option(element: Type) = Con("Option", listOf(element))
+
+        /** `Result<E, A>`: OCaml's `('a, 'e) result`, with the error first so `Result<E>` can be a monad's `M`. */
+        fun result(error: Type, value: Type) = Con("Result", listOf(error, value))
         fun tuple(elements: List<Type>) = Con(TUPLE, elements)
         fun lazy(element: Type) = Con("Lazy", listOf(element))
 
@@ -79,7 +82,7 @@ sealed class Type {
 /** `Double` is accepted as another name for `Float`, which is what OCaml calls it. */
 val BUILTIN_TYPES = mapOf(
     "Int" to 0, "Float" to 0, "Double" to 0, "String" to 0, "Boolean" to 0, "Unit" to 0, "Char" to 0,
-    "List" to 1, "Option" to 1, "Lazy" to 1,
+    "List" to 1, "Option" to 1, "Lazy" to 1, "Result" to 2,
 )
 
 class Scheme(val vars: List<Type.Var>, val type: Type) {

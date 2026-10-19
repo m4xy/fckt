@@ -1,0 +1,21 @@
+// Declared in every program: these need no module's name. A program's own declaration of one of
+// these names takes its place, and only what a program uses goes into its OCaml.
+
+// A type that takes a type, a way to wrap a value, and a way to chain a step that might stop. A
+// module with pure and bind runs blocks: Options { x by half(n); x + 1 }.
+spec Monad {
+  type M<A>
+  pure<A>(x: A): M<A>
+  bind<A, B>(m: M<A>, f: (A) -> M<B>): M<B>
+}
+
+// Steps that don't depend on each other. A module with map and product but no bind runs a
+// block's `by` lines together, so they all run: Validated collects every error.
+spec Applicative {
+  type M<A>
+  map<A, B>(m: M<A>, f: (A) -> B): M<B>
+  product<A, B>(ma: M<A>, mb: M<B>): M<(A, B)>
+}
+
+// A value, or every reason there isn't one.
+type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }

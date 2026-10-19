@@ -14,38 +14,88 @@ import uk.m4xy.fckt.types.Checker
 import uk.m4xy.kastor.resolve
 import java.io.File
 
-/** fckt source to OCaml source. Throws [uk.m4xy.fckt.syntax.CompileError]. */
-fun compile(source: String): String = compile(Parser.parse(source))
+/** fckt source to OCaml source, with the standard library. Throws [uk.m4xy.fckt.syntax.CompileError]. */
+fun compile(source: String): String = link(source, emptyMap())
 
 /**
  * [entry] and the files it uses, to one OCaml source. Each file is a module named after it:
  * `ratios.fk` is Ratios, and `shared-cases.fk` is SharedCases. A name a file uses but doesn't
- * declare brings in the file of that name from [dirs], whose own names bring in more, as OCaml
- * finds a module's file from its name.
+ * declare brings in the file of that name from [dirs], or from the standard library, whose own
+ * names bring in more, as OCaml finds a module's file from its name.
  */
 fun compile(entry: File, dirs: List<File>): String {
-    val available = linkedMapOf<String, File>()
+    val available = linkedMapOf<String, Source>()
     for (dir in dirs) {
         val files = dir.listFiles { f -> f.isFile && f.extension == "fk" }?.sortedBy { it.name } ?: continue
-        for (file in files) if (file.canonicalFile != entry.canonicalFile) available.putIfAbsent(moduleName(file), file)
-    }
-    val text = entry.readText()
-    val main = Parser.parse(text)
-    val modules = mutableListOf<Decl>()
-    val loaded = mutableSetOf<String>()
-    val pending = ArrayDeque(listOf(Triple(text, null as String?, main)))
-    while (pending.isNotEmpty()) {
-        val (source, path, file) = pending.removeFirst()
-        val declared = declaredNames(file.decls)
-        for (name in mentioned(source, path)) {
-            if (name in declared || !loaded.add(name)) continue
-            val found = available[name] ?: continue
-            val parsed = Parser.parse(found.readText(), found.path)
-            modules += Decl.Module(Pos(1, 1, found.path), name, parsed.decls)
-            pending += Triple(found.readText(), found.path, parsed)
+        for (file in files) {
+            if (file.canonicalFile != entry.canonicalFile) available.putIfAbsent(moduleName(file), Source(file.path) { file.readText() })
         }
     }
-    return compile(SourceFile(modules + main.decls))
+    return link(entry.readText(), available)
+}
+
+/** A file to read if it's used: one of the program's, or the standard library's. */
+class Source(val path: String, val read: () -> String)
+
+/** The standard library's modules, in `std/` among the compiler's resources. */
+private val STD = listOf("options", "results", "validated", "lists").associate { name ->
+    moduleName(File("$name.fk")) to Source("std/$name.fk") { resource("std/$name.fk") }
+}
+
+private fun resource(path: String): String =
+    Source::class.java.getResourceAsStream("/$path")?.use { it.reader().readText() } ?: error("missing $path")
+
+private val PRELUDE_TEXT by lazy { resource("std/prelude.fk") }
+
+/**
+ * The prelude's declarations, each with the names it uses, which may bring in more. Parsed for
+ * each program, since checking one fills in its declarations.
+ */
+private fun prelude(): Map<String, Pair<Decl, Set<String>>> {
+    val path = "std/prelude.fk"
+    val text = PRELUDE_TEXT
+    val decls = Parser.parse(text, path).decls
+    val lines = text.lines()
+    return decls.mapIndexed { i, d ->
+        // A declaration runs to the next one; the names in between are what it uses.
+        val until = decls.getOrNull(i + 1)?.pos?.line?.minus(1) ?: lines.size
+        val own = lines.subList(d.pos.line - 1, until).joinToString("\n")
+        d.name to (d to mentioned(own, null))
+    }.toMap()
+}
+
+/**
+ * The program [text] with what it uses: files from [available] then the standard library, as
+ * modules, and the prelude's declarations, at the top level. The program's own come first.
+ */
+private fun link(text: String, available: Map<String, Source>): String {
+    val main = Parser.parse(text)
+    val preludeDecls = prelude()
+    val own = main.decls.map { it.name }.toSet()
+    val prelude = mutableListOf<Decl>()
+    val modules = mutableListOf<Decl>()
+    val seen = mutableSetOf<String>()
+    // Names to look up, each with the names declared where it's used.
+    val pending = ArrayDeque<Pair<Set<String>, Set<String>>>()
+    pending += mentioned(text, null) to declaredNames(main.decls)
+    while (pending.isNotEmpty()) {
+        val (names, declared) = pending.removeFirst()
+        for (name in names) {
+            if (name in declared || name in own || !seen.add(name)) continue
+            val source = available[name] ?: STD[name]
+            if (source != null) {
+                val code = source.read()
+                val parsed = Parser.parse(code, source.path)
+                modules += Decl.Module(Pos(1, 1, source.path), name, parsed.decls)
+                pending += mentioned(code, source.path) to declaredNames(parsed.decls)
+                continue
+            }
+            val (decl, uses) = preludeDecls[name] ?: continue
+            prelude += decl
+            pending += uses to declaredNames(listOf(decl))
+        }
+    }
+    return compile(SourceFile(prelude + modules + main.decls))
 }
 
 private fun compile(file: SourceFile): String {

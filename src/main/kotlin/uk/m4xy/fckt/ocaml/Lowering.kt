@@ -421,14 +421,16 @@ class Lowering(private val program: Program) {
     private fun applied(name: String, args: List<Pair<String, Boolean>>): String {
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"
-            "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"
+            "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"; "Result" -> "result"
             // A spec's own type, inside its module type.
             else -> if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
         }
-        return when (args.size) {
+        // Result<E, A> is OCaml's ('a, 'e) result.
+        val ordered = if (name == "Result") args.reversed() else args
+        return when (ordered.size) {
             0 -> base
-            1 -> args[0].let { (text, paren) -> if (paren) "($text) $base" else "$text $base" }
-            else -> "(${args.joinToString(", ") { it.first }}) $base"
+            1 -> ordered[0].let { (text, paren) -> if (paren) "($text) $base" else "$text $base" }
+            else -> "(${ordered.joinToString(", ") { it.first }}) $base"
         }
     }
 
@@ -817,7 +819,8 @@ class Lowering(private val program: Program) {
     private fun ordinaryPattern(p: Pattern.Constructor, args: List<String>?, ref: ConstructorRef): String = when (ref) {
         is ConstructorRef.Record -> args?.let { recordPattern(ref.decl.fields.map { it.name }, it, labelPrefix(ref.decl)) } ?: "_"
         is ConstructorRef.Variant -> when {
-            ref.variant == null -> if (ref.name == "None") "None" else "Some ${args?.single()?.let(::atomPattern) ?: "_"}"
+            // Option's and Result's: Some, None, Ok and Error.
+            ref.variant == null -> if (ref.name == "None") "None" else "${ref.name} ${args?.single()?.let(::atomPattern) ?: "_"}"
             ref.variant.fields.isEmpty() -> ctorName(ref)
             args != null -> "${ctorName(ref)} ${recordPattern(ref.variant.fields.map { it.name }, args)}"
             else -> "${ctorName(ref)} ${p.castVar ?: "_"}"
@@ -975,6 +978,7 @@ class Lowering(private val program: Program) {
         "Float" -> Gen.Id(helper("fk_show_float"))
         "List" -> Gen.App(Gen.Id(helper("fk_show_list")), args)
         "Option" -> Gen.App(Gen.Id(helper("fk_show_option")), args)
+        "Result" -> Gen.App(Gen.Id(helper("fk_show_result")), args)
         else -> {
             // A type's show function lives in the type's module. A module a functor made has the
             // functor's; a functor's parameter has what its spec lists.
@@ -1174,6 +1178,20 @@ class Lowering(private val program: Program) {
                             listOf(
                                 "Some x" to concat(listOf(Gen.Str("Some("), Gen.App(Gen.Id("show"), listOf(Gen.Id("x"))), Gen.Str(")"))),
                                 "None" to Gen.Str("None"),
+                            ),
+                        ),
+                    )
+                }
+            }
+            if ("fk_show_result" in helpers) {
+                binding("fk_show_result") {
+                    params = listOf("show_error", "show", "r")
+                    gen(
+                        Gen.Match(
+                            Gen.Id("r"),
+                            listOf(
+                                "Ok x" to concat(listOf(Gen.Str("Ok("), Gen.App(Gen.Id("show"), listOf(Gen.Id("x"))), Gen.Str(")"))),
+                                "Error e" to concat(listOf(Gen.Str("Error("), Gen.App(Gen.Id("show_error"), listOf(Gen.Id("e"))), Gen.Str(")"))),
                             ),
                         ),
                     )

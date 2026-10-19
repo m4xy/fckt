@@ -1,0 +1,28 @@
+// Validation without bind: Validated { n by checkName(s); a by checkAge(i); User(n, a) } runs
+// every check, and keeps every error.
+
+pure<E, A>(x: A): Validation<E, A> = Valid(x)
+
+map<E, A, B>(m: Validation<E, A>, f: (A) -> B): Validation<E, B> = when (m) {
+  Valid(x) -> Valid(f(x))
+  Invalid(errors) -> Invalid(errors)
+}
+
+// Both failed? Keep both lists of errors.
+product<E, A, B>(ma: Validation<E, A>, mb: Validation<E, B>): Validation<E, (A, B)> = when (ma, mb) {
+  (Valid(a), Valid(b)) -> Valid((a, b))
+  (Invalid(e1), Invalid(e2)) -> Invalid(e1 + e2)
+  (Invalid(e), _) -> Invalid(e)
+  (_, Invalid(e)) -> Invalid(e)
+}
+
+// A Result's error as a one-error Validation.
+fromResult<E, A>(r: Result<E, A>): Validation<E, A> = when (r) {
+  Ok(x) -> Valid(x)
+  Error(e) -> Invalid([e])
+}
+
+toResult<E, A>(v: Validation<E, A>): Result<List<E>, A> = when (v) {
+  Valid(x) -> Ok(x)
+  Invalid(errors) -> Error(errors)
+}

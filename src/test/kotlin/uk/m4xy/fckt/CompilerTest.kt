@@ -404,7 +404,7 @@ class CompilerTest {
         assertEquals("", run(source))
         val ml = compile(source)
         assertContains(ml, "module Options : Monad with type 'a m = 'a option = struct")
-        assertContains(ml, "module Results : Monad with type 'a m = (string, 'a) result = struct")
+        assertContains(ml, "module Results : Monad with type 'a m = ('a, string) result = struct")
         val monad = "spec Monad {\n  type M<A>\n  pure<A>(x: A): M<A>\n}\n"
         val options = "  type M<A> = Option<A>\n  pure(x) = Some(x)\n}"
         assertContains(error(monad + "module O : Monad<Int> {\n$options"), "its type argument must take 1 more")
@@ -445,7 +445,7 @@ class CompilerTest {
 
     @Test
     fun `a module without bind runs its by lines together`() {
-        val source = File("examples/validation.fk").readText()
+        val source = File("examples/independent-steps.fk").readText()
         assertEquals("", run(source))
         val ml = compile(source)
         assertContains(ml, "let ( let+ ) = Validated.map in\n  let ( and+ ) = Validated.product in")
@@ -457,6 +457,27 @@ class CompilerTest {
         assertContains(error(valid + "f(n: Option<Int>) = V { x by n; z = 1; y by n; y }"), "V has no bind, so its 'by' lines go together")
         assertContains(error(valid + "f(n: Int) = V { n }"), "V has no pure, so its block needs a 'by' line")
         assertContains(error(valid + "f(n: Int) = V { x by [n]; x }"), "V maps Option<A>, but this is List<Int>")
+    }
+
+    @Test
+    fun `the standard library comes in when it's used`() {
+        val source = File("examples/stdlib.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "module Options = struct")
+        assertContains(ml, "module type Monad = sig")
+        // Only what's used: no Applicative, and nothing at all for a program that uses none of it.
+        assertTrue("Applicative" !in ml)
+        assertTrue("module" !in compile("main() = assertEquals(1, 1)"))
+        assertTrue("module type" !in compile("v(): Validation<String, Int> = Valid(1)\nmain() = assert(v() == Valid(1))"))
+        // The program's own declarations take the place of the library's.
+        assertEquals("", run("module Options { one() = 1 }\nmain() = assertEquals(1, Options.one())"))
+        assertEquals("", run("type Validation { Valid }\nmain() = assert(Valid == Valid)"))
+        // Result is OCaml's, error last; Ok and Error are a program's own cases if it has them.
+        assertContains(compile("f(): Result<String, Int> = Ok(1)"), "let f () : (int, string) result = Ok 1")
+        assertEquals("", run("type Outcome { Fine, Error(why: String) }\nmain() = assertEquals(\"x\", when (Error(\"x\")) {\n  Error(why) -> why\n  Fine -> \"\"\n})"))
+        // `xs.map(f)` inside a function called map is the list's, so map isn't recursive.
+        assertContains(compile("module M {\n  map(xs: List<Int>): List<Int> = xs.map(x -> x + 1)\n}"), "  let map (xs")
     }
 
     @Test
