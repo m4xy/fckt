@@ -158,11 +158,17 @@ object Printer {
         }
         "let-in" -> {
             val rec = if (n.attributes["rec"] == true) "rec " else ""
-            val head = ((n.attributes["binder"] as String?) ?: "let") + " $rec" + (listOf(n.str("name")) + n.list("params")).joinToString(" ") + " ="
-            val value = expr(n.children[0], FULL)
-            val body = expr(n.children[1], ctx)
-            if ('\n' !in value && head.length + value.length < WIDTH) "$head $value in\n$body"
-            else "$head\n${indent(value)}\nin\n$body"
+            val binder = (n.attributes["binder"] as String?) ?: "let"
+            val heads = listOf(binder + " $rec" + (listOf(n.str("name")) + n.list("params")).joinToString(" ")) +
+                n.list("ands").map { binder.replace("let", "and") + " " + it }
+            val out = StringBuilder()
+            heads.forEachIndexed { i, head ->
+                val value = expr(n.children[i], FULL)
+                if (i > 0) out.append(if (out.endsWith("\n")) "" else "\n")
+                if ('\n' !in value && head.length + value.length + 2 < WIDTH) out.append("$head = $value")
+                else out.append("$head =\n${indent(value)}\n")
+            }
+            out.append(if (out.endsWith("\n")) "in\n" else " in\n").append(expr(n.children.last(), ctx)).toString()
         }
         "sequence" -> n.children.mapIndexed { i, child ->
             if (i == n.children.lastIndex) sub(child, 0, ctx) else sub(child, 0)

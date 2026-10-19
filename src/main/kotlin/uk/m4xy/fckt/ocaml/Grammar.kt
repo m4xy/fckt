@@ -162,7 +162,10 @@ interface Lambda {
     @Required val params: List<String>
 }
 
-/** `let [rec] name params = value in body`, or with a [binder] such as `let*`. Children: value, body. */
+/**
+ * `let [rec] name params = value in body`, or with a [binder] such as `let*`. A `let+` may have
+ * [ands]: `let+ a = x and+ b = y in body`. Children: value, a value for each of [ands], body.
+ */
 @Element("let-in", function = "letIn")
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
@@ -174,6 +177,7 @@ interface LetIn {
     val params: List<String>
     val rec: Boolean
     val binder: String
+    val ands: List<String>
 }
 
 /** `a; b; c`. */

@@ -1,0 +1,70 @@
+// A module without bind can still run a block, through map and product. Its `by` lines can't
+// use each other's values, so they all run, and product can keep every error, not just the first.
+
+spec Applicative {
+  type M<A>
+  map<A, B>(m: M<A>, f: (A) -> B): M<B>
+  product<A, B>(ma: M<A>, mb: M<B>): M<(A, B)>
+}
+
+type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }
+
+module Validated : Applicative<Validation<String>> {
+  type M<A> = Validation<String, A>
+
+  map(m, f) = when (m) {
+    Valid(x) -> Valid(f(x))
+    Invalid(errors) -> Invalid(errors)
+  }
+
+  // Both failed? Keep both lists of errors.
+  product(ma, mb) = when (ma, mb) {
+    (Valid(a), Valid(b)) -> Valid((a, b))
+    (Invalid(e1), Invalid(e2)) -> Invalid(e1 + e2)
+    (Invalid(e), _) -> Invalid(e)
+    (_, Invalid(e)) -> Invalid(e)
+  }
+}
+
+type User(name: String, age: Int, email: String)
+
+checkName(name: String): Validation<String, String> = if (name == "") Invalid(["name is empty"]) else Valid(name)
+
+checkAge(age: Int): Validation<String, Int> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
+
+checkEmail(email: String): Validation<String, String> = if (email.length < 3) Invalid(["$email is too short"]) else Valid(email)
+
+// Lines before the `by` lines run first; lines after them can use what they hold.
+user(name: String, age: Int, email: String): Validation<String, User> = Validated {
+  trimmed = name.trim()
+  n by checkName(trimmed)
+  a by checkAge(age)
+  e by checkEmail(email)
+  adult = a >= 18
+  User(n, if (adult) a else 18, e)
+}
+
+// One `by` line needs only map.
+shout(name: String): Validation<String, String> = Validated {
+  n by checkName(name)
+  n.uppercase()
+}
+
+// Written once, for any module that follows Applicative.
+module Pairs<M : Applicative> {
+  pair<A, B>(ma: M.M<A>, mb: M.M<B>): M.M<(A, B)> = M {
+    a by ma
+    b by mb
+    (a, b)
+  }
+}
+
+module ValidatedPairs = Pairs<Validated>
+
+main() = {
+  assertEquals(Valid(User("Ada", 36, "ada@example.com")), user(" Ada ", 36, "ada@example.com"))
+  assertEquals(Invalid(["name is empty", "age -3 is negative", "x is too short"]), user("", -3, "x"))
+  assertEquals(Invalid(["age -3 is negative"]), user("Ada", -3, "ada@example.com"))
+  assertEquals(Valid("ADA"), shout("Ada"))
+  assertEquals(Invalid(["name is empty", "age -1 is negative"]), ValidatedPairs.pair(checkName(""), checkAge(-1)))
+}

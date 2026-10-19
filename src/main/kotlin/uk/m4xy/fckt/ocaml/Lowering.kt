@@ -565,14 +565,26 @@ class Lowering(private val program: Program) {
             is Expr.When -> whenExpr(e)
             is Expr.Block -> block(e, 0, null)
             is Expr.Monadic -> {
-                // OCaml's binding operators: let* x = v in rest is bind v (fun x -> rest).
-                if (e.block.statements.any { it is Statement.Bind }) {
-                    letIn("( let* )") {
+                // OCaml's binding operators: let* x = v in rest is bind v (fun x -> rest), and
+                // let+ a = x and+ b = y in rest is map (product x y) (fun (a, b) -> rest).
+                val steps = e.block.statements.count { it is Statement.Bind }
+                when {
+                    steps == 0 -> block(e.block, 0, e)
+                    e.bind != null -> letIn("( let* )") {
                         ident(ref(e.bind!!.name, ::snake))
                         block(e.block, 0, e)
                     }
-                } else {
-                    block(e.block, 0, e)
+                    else -> letIn("( let+ )") {
+                        ident(ref(e.map!!.name, ::snake))
+                        if (steps == 1) {
+                            block(e.block, 0, e)
+                        } else {
+                            letIn("( and+ )") {
+                                ident(ref(e.product!!.name, ::snake))
+                                block(e.block, 0, e)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -840,7 +852,8 @@ class Lowering(private val program: Program) {
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         if (from == e.statements.size) {
-            if (monad == null) return expr(e.result)
+            // map applies the rest of the block, so only pure needs applying here.
+            if (monad == null || monad.bind == null && e.statements.any { it is Statement.Bind }) return expr(e.result)
             return apply {
                 ident(ref(monad.pure!!.name, ::snake))
                 expr(e.result)
@@ -859,10 +872,23 @@ class Lowering(private val program: Program) {
                 expr(s.value)
                 block(e, from + 1, monad)
             }
-            is Statement.Bind -> letIn(pattern(s.pattern)) {
-                binder = "let*"
-                expr(s.value)
-                block(e, from + 1, monad)
+            is Statement.Bind -> if (monad!!.bind != null) {
+                letIn(pattern(s.pattern)) {
+                    binder = "let*"
+                    expr(s.value)
+                    block(e, from + 1, monad)
+                }
+            } else {
+                // The checker made sure the `by` lines are together.
+                var end = from
+                while (end < e.statements.size && e.statements[end] is Statement.Bind) end++
+                val binds = e.statements.subList(from, end).map { it as Statement.Bind }
+                letIn(pattern(s.pattern)) {
+                    binder = "let+"
+                    ands = binds.drop(1).map { pattern(it.pattern) }
+                    binds.forEach { expr(it.value) }
+                    block(e, end, monad)
+                }
             }
             is Statement.Effect -> {
                 // Run consecutive effects as one sequence.

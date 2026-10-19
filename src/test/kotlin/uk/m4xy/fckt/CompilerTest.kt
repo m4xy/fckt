@@ -433,11 +433,27 @@ class CompilerTest {
         assertEquals("", run(options + "by(n: Int) = { by = n; by + 1 }\nmain() = assertEquals(Some(2), Options { x by half(4); by(x) - 1 })"))
         assertContains(error(options + "f(n: Int) = Options { x by Ok(n); x }\ntype R<A> { Ok(a: A) }"), "Options binds Option<A>, but this is R<Int>")
         assertContains(error(options + "f(n: Int) = Some { x by half(n); x }"), "Some isn't a module, so Some { ... } has nothing to bind with")
-        assertContains(error(options + "module P { g() = 1 }\nf(n: Int) = P { x by half(n); x }"), "P has no bind, so it can't run a block")
+        assertContains(error(options + "module P { g() = 1 }\nf(n: Int) = P { x by half(n); x }"), "P has neither bind and pure nor map and product, so it can't run a block")
         assertContains(error(options + "f(n: Int) = { x by half(n); x }"), "'by' needs a block to bind in")
         assertContains(error(options + "f(n: Int) = Options { y = [1].map(x -> { z by half(x); z }); y }"), "'by' needs a block to bind in")
         assertContains(error(options + "f(n: Int) = Options { Some(x) by Some(half(n)); x }"), "'by' takes only names and '_'")
         assertContains(error(options + "f(n: Int) = Options { x by half(n) }"), "a block must end with an expression")
+    }
+
+    @Test
+    fun `a module without bind runs its by lines together`() {
+        val source = File("examples/validation.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "let ( let+ ) = Validated.map in\n  let ( and+ ) = Validated.product in")
+        assertContains(ml, "let+ n = check_name trimmed\n  and+ a = check_age age\n  and+ e = check_email email in")
+        assertContains(ml, "let+ n = check_name name in\n  String.uppercase_ascii n")
+        val valid = "module V {\n  map(m, f) = when (m) {\n    Some(x) -> Some(f(x))\n    None -> None\n  }\n" +
+            "  product(a, b) = when (a, b) {\n    (Some(x), Some(y)) -> Some((x, y))\n    else -> None\n  }\n}\n"
+        assertContains(error(valid + "f(n: Option<Int>) = V { x by n; y by Some(x); y }"), "V has no bind, so a step can't use x from an earlier step")
+        assertContains(error(valid + "f(n: Option<Int>) = V { x by n; z = 1; y by n; y }"), "V has no bind, so its 'by' lines go together")
+        assertContains(error(valid + "f(n: Int) = V { n }"), "V has no pure, so its block needs a 'by' line")
+        assertContains(error(valid + "f(n: Int) = V { x by [n]; x }"), "V maps Option<A>, but this is List<Int>")
     }
 
     @Test

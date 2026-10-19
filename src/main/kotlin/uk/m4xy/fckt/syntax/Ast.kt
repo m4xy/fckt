@@ -212,11 +212,17 @@ sealed class Expr {
     /**
      * `Options { x by half(n); x + 1 }`: a block whose `by` lines go through [module]'s `bind`, and
      * whose result goes through its `pure`. [module] is a name or a path, like `Shapes.Options`.
+     * Without a bind, the `by` lines are paired with `product` and the result made with `map`.
      */
     class Monadic(override val pos: Pos, val module: Expr, val block: Block) : Expr() {
-        /** The module's `bind` and `pure`, set by the checker. */
+        /**
+         * The module's functions, set by the checker: [bind] and [pure], or, for a module without
+         * bind, [map] and [product], which run the `by` lines independently of each other.
+         */
         var bind: Decl.Function? = null
         var pure: Decl.Function? = null
+        var map: Decl.Function? = null
+        var product: Decl.Function? = null
     }
 }
 

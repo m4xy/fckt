@@ -924,7 +924,9 @@ class Checker(file: SourceFile) {
                 go(e.result, b)
             }
             is Expr.Monadic -> {
-                dotted(e.module, null)?.takeIf { it.substringBefore('.') !in bound }?.let { into += "$it.bind"; into += "$it.pure" }
+                dotted(e.module, null)?.takeIf { it.substringBefore('.') !in bound }?.let { module ->
+                    listOf("bind", "pure", "map", "product").forEach { into += "$module.$it" }
+                }
                 go(e.block)
             }
         }
@@ -1752,15 +1754,75 @@ class Checker(file: SourceFile) {
         val name = dotted(e.module, scope)
         val module = name?.let { lookupModule(it, null) }
             ?: throw CompileError(e.module.pos, "${name ?: "this"} isn't a module, so $name { ... } has nothing to bind with")
-        fun member(what: String): Decl.Function {
-            val d = globals[module.name + "." + what]
-                ?: throw CompileError(e.module.pos, "$name has no $what, so it can't run a block; give it pure and bind, as Monad has")
-            whyHidden(d)?.let { throw CompileError(e.module.pos, it) }
-            return d
+        fun member(what: String) = globals[module.name + "." + what]?.takeIf { visible(it) }
+        val bind = member("bind")
+        val pure = member("pure")
+        val map = member("map")
+        val product = member("product")
+        when {
+            bind != null && pure != null -> {
+                e.bind = bind
+                e.pure = pure
+            }
+            map != null && product != null -> {
+                e.map = map
+                e.product = product
+                e.pure = pure
+            }
+            else -> throw CompileError(
+                e.module.pos,
+                "$name has neither bind and pure nor map and product, so it can't run a block; give it pure and bind, as Monad has",
+            )
         }
-        e.bind = member("bind")
-        e.pure = member("pure")
         return inferBlock(e.block, null, scope, e)
+    }
+
+    /** A fresh instance of [monad]'s [what], if it takes [arity] values. */
+    private fun instance(monad: Expr.Monadic, decl: Decl.Function, arity: Int, what: String): Type.Fn {
+        val fn = globalType(decl).prune() as? Type.Fn
+        if (fn == null || fn.params.size != arity) throw CompileError(monad.module.pos, "${decl.name} should take $what")
+        return fn
+    }
+
+    /** A fresh instance of [monad]'s map, as (value, function), if it has map's shape. */
+    private fun mapType(monad: Expr.Monadic): Pair<Type.Fn, Type.Fn> {
+        val fn = instance(monad, monad.map!!, 2, "a value and a function to apply to what it holds")
+        val f = fn.params[1].prune() as? Type.Fn
+        if (f == null || f.params.size != 1) throw CompileError(monad.module.pos, "${monad.map!!.name} should take a value and a function to apply to what it holds")
+        return fn to f
+    }
+
+    /** Checks that `by` line [value] is a [monad] value, giving its type and the type of what it holds. */
+    private fun step(monad: Expr.Monadic, value: Expr, scope: Scope): Pair<Type, Type> {
+        val (map, f) = mapType(monad)
+        val wanted = generic(map.params[0])
+        val actual = infer(value, map.params[0], scope)
+        if (!subtype(actual, map.params[0])) {
+            throw CompileError(value.pos, "${dotted(monad.module, null)} maps $wanted, but this is ${actual.zonk()}")
+        }
+        return map.params[0] to f.params[0]
+    }
+
+    /**
+     * Without a bind, the `by` lines in [steps] are independent: they're paired up with product, as
+     * `((a, b), c)`, and the rest of the block is a function of the pairs, applied with map.
+     */
+    private fun combine(monad: Expr.Monadic, steps: List<Pair<Type, Type>>, pos: Pos): Pair<Type, Type> {
+        var values = steps[0].first
+        var held = steps[0].second
+        for ((value, element) in steps.drop(1)) {
+            val product = instance(monad, monad.product!!, 2, "two values, to pair what they hold")
+            expect(values, product.params[0], pos)
+            expect(value, product.params[1], pos)
+            values = product.result
+            held = Type.tuple(listOf(held, element))
+        }
+        val (map, f) = mapType(monad)
+        expect(values, map.params[0], pos)
+        if (!u.unify(f.params[0], held)) {
+            throw CompileError(monad.module.pos, "${monad.product!!.name} should pair what its two values hold, as (A, B)")
+        }
+        return f.result to map.result
     }
 
     /** A fresh instance of [monad]'s bind, as (value, continuation, result), if it has bind's shape. */
@@ -1814,12 +1876,43 @@ class Checker(file: SourceFile) {
         // In a monad's block, the type of what's left of it, from here on.
         val whole: Type = u.fresh()
         var rest = whole
+        // Without a bind: each `by` line's types, and its names once lines after them can see them.
+        val steps = mutableListOf<Pair<Type, Type>>()
+        val pending = mutableListOf<Pair<Statement.Bind, Type>>()
+        var after: Statement? = null
+        fun bindSteps() {
+            pending.forEach { (statement, type) -> bindPattern(statement, statement.pattern, type, inner) }
+            pending.clear()
+        }
+        val independent = monad != null && monad.bind == null
         for (statement in e.statements) {
+            if (independent && statement !is Statement.Bind && steps.isNotEmpty()) {
+                bindSteps()
+                after = after ?: statement
+            }
             when (statement) {
                 is Statement.Effect -> infer(statement.expr, null, inner)
                 is Statement.Destructure -> bindPattern(statement, statement.pattern, infer(statement.value, null, inner), inner)
                 is Statement.Bind -> {
                     if (monad == null) throw CompileError(statement.pos, "'by' needs a block to bind in, such as Options { ... }, directly around it")
+                    val name = dotted(monad.module, null)
+                    if (independent) {
+                        after?.let {
+                            throw CompileError(
+                                it.pos,
+                                "$name has no bind, so its 'by' lines go together: move this line above the first 'by' or below the last",
+                            )
+                        }
+                        val refs = mutableSetOf<String>()
+                        collectRefs(statement.value, emptySet(), refs)
+                        pending.flatMap { patternNames(it.first.pattern) }.firstOrNull { it in refs }?.let {
+                            throw CompileError(statement.value.pos, "$name has no bind, so a step can't use $it from an earlier step")
+                        }
+                        val step = step(monad, statement.value, inner)
+                        steps += step
+                        pending += statement to step.second
+                        continue
+                    }
                     val (value, next, result) = bindType(monad)
                     expect(result, rest, statement.pos)
                     val wanted = generic(value)
@@ -1857,6 +1950,13 @@ class Checker(file: SourceFile) {
             }
         }
         if (monad == null) return infer(e.result, expected, inner)
+        if (independent && steps.isNotEmpty()) {
+            bindSteps()
+            val (result, block) = combine(monad, steps, e.pos)
+            check(e.result, result, inner)
+            return block
+        }
+        if (monad.pure == null) throw CompileError(monad.module.pos, "${dotted(monad.module, null)} has no pure, so its block needs a 'by' line")
         val pure = globalType(monad.pure!!).prune() as? Type.Fn
         if (pure == null || pure.params.size != 1) {
             throw CompileError(monad.module.pos, "${monad.pure!!.name} should take one value, as Monad's pure does")
