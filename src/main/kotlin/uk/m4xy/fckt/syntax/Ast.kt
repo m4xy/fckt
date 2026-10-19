@@ -2,8 +2,9 @@ package uk.m4xy.fckt.syntax
 
 import uk.m4xy.fckt.types.Type
 
-data class Pos(val line: Int, val col: Int) {
-    override fun toString() = "$line:$col"
+/** A place in the source; [file] is set when the program has more than one. */
+data class Pos(val line: Int, val col: Int, val file: String? = null) {
+    override fun toString() = (file?.let { "$it:" } ?: "") + "$line:$col"
 }
 
 class CompileError(val pos: Pos?, message: String) : Exception(message) {

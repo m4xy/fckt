@@ -5,7 +5,7 @@ class Parser(private val tokens: List<Token>) {
     private var p = 0
 
     companion object {
-        fun parse(source: String): SourceFile = Parser(Lexer(source).tokenize()).file()
+        fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize()).file()
     }
 
     // ---- Token helpers ----

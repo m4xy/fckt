@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class CompilerTest {
     private val ocaml: String? = System.getenv("PATH").orEmpty().split(File.pathSeparator)
@@ -17,8 +18,10 @@ class CompilerTest {
         ?: File("/opt/homebrew/bin/ocaml").takeIf { it.canExecute() }?.path
 
     /** Compiles [source], runs the OCaml with the toplevel, and returns its standard output. */
-    private fun run(source: String, args: List<String> = emptyList()): String {
-        val ml = compile(source)
+    private fun run(source: String, args: List<String> = emptyList()): String = runOcaml(compile(source), args)
+
+    /** Runs [ml] with the OCaml toplevel, and returns its standard output. */
+    private fun runOcaml(ml: String, args: List<String> = emptyList()): String {
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
         try {
@@ -455,6 +458,46 @@ class CompilerTest {
         assertContains(error(valid + "f(n: Int) = V { n }"), "V has no pure, so its block needs a 'by' line")
         assertContains(error(valid + "f(n: Int) = V { x by [n]; x }"), "V maps Option<A>, but this is List<Int>")
     }
+
+    @Test
+    fun `files are modules`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
+        val lib = File(dir, "lib").apply { mkdir() }
+        try {
+            File(dir, "ratios.fk").writeText(
+                "type Ratio(n: Int, d: Int)\nprivate gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)\n" +
+                    "make(n: Int, d: Int): Ratio = {\n  g = gcd(n, d)\n  Ratio(n / g, d / g)\n}\n",
+            )
+            // Halves uses Ratios, so it comes in after it; list-extras.fk is ListExtras.
+            File(dir, "halves.fk").writeText("half(r: Ratios.Ratio): Ratios.Ratio = Ratios.make(r.n, r.d * 2)\n")
+            File(lib, "list-extras.fk").writeText("sumBy<A>(xs: List<A>, f: (A) -> Int): Int = xs.map(f).sum()\ncheck() = assert(1 == 2)\n")
+            // Not mentioned, so not loaded, though it doesn't compile.
+            File(dir, "unused.fk").writeText("bad(): Int = \"x\"\n")
+            val main = File(dir, "main.fk")
+            fun compileMain(source: String, dirs: List<File> = listOf(dir, lib)) = main.writeText(source).let { compile(main, dirs) }
+            val ml = compileMain(
+                "main() = {\n  assertEquals(Ratios.Ratio(1, 4), Halves.half(Ratios.make(2, 4)))\n" +
+                    "  assertEquals(6, ListExtras.sumBy([\"a\", \"bb\", \"ccc\"], s -> s.length))\n}",
+            )
+            assertEquals("", runOcaml(ml))
+            assertContains(ml, "module Ratios : sig")
+            assertTrue(ml.indexOf("module Ratios") < ml.indexOf("module Halves"))
+            assertContains(runCatching { runOcaml(compileMain("main() = ListExtras.check()")) }.exceptionOrNull()?.message.orEmpty(), "list-extras.fk line 2: assertion failed")
+            assertContains(assertFailsWith<CompileError> { compileMain("main() = Ratios.gcd(2, 4)") }.toString(), "'gcd' is private to Ratios")
+            assertContains(assertFailsWith<CompileError> { compileMain("main() = ListExtras.check()", listOf(dir)) }.toString(), "unknown name 'ListExtras'")
+            File(lib, "broken.fk").writeText("bad(): Int = \"x\"\n")
+            assertEquals("${File(lib, "broken.fk").path}:1:14: error: type mismatch: expected Int but found String", assertFailsWith<CompileError> { compileMain("main() = Broken.bad()") }.toString())
+            // A program's own declarations come first: this Ratios is the program's, not the file.
+            assertEquals("", runOcaml(compileMain("module Ratios { one() = 1 }\nmain() = assertEquals(1, Ratios.one())")))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @TestFactory
+    fun `examples don't pick up their neighbours`() = File("examples").walk().filter { it.extension == "fk" }.map { file ->
+        DynamicTest.dynamicTest(file.path) { assertEquals(compile(file.readText()), compile(file, listOf(file.parentFile))) }
+    }.toList()
 
     @Test
     fun `type aliases`() {

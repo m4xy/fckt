@@ -634,7 +634,8 @@ class Lowering(private val program: Program) {
      * `assertEquals(e, a)` calls a helper that shows both values, in Kotlin's words, when they differ.
      */
     private fun assertion(e: Expr.Call, name: String): Gen {
-        val where = "line ${e.pos.line}"
+        // Another file's assertions say which file; the program's own just the line.
+        val where = (e.pos.file?.let { java.io.File(it).name + " " } ?: "") + "line ${e.pos.line}"
         val args = e.args.map { it.value }
         if (name == ASSERT) {
             return Gen.If(Gen.Src(args[0]), Gen.Lit("()"), Gen.App(Gen.Id("failwith"), listOf(Gen.Str("$where: assertion failed"))))

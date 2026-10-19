@@ -47,7 +47,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
             skipSpaceAndComments()
             if (i >= src.length) break
             val c = src[i]
-            val pos = Pos(line, col)
+            val pos = Pos(line, col, origin.file)
             when {
                 c == '\n' -> {
                     advance()
@@ -61,7 +61,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
                 else -> symbol(pos)
             }
         }
-        add(Token(T.EOF, "", Pos(line, col)))
+        add(Token(T.EOF, "", Pos(line, col, origin.file)))
         return tokens
     }
 
@@ -91,7 +91,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
                 src[i] == ' ' || src[i] == '\t' || src[i] == '\r' -> advance()
                 src.startsWith("//", i) -> while (i < src.length && src[i] != '\n') advance()
                 src.startsWith("/*", i) -> {
-                    val start = Pos(line, col)
+                    val start = Pos(line, col, origin.file)
                     advance(2)
                     while (i < src.length && !src.startsWith("*/", i)) advance()
                     if (i >= src.length) throw CompileError(start, "unterminated comment")
@@ -133,7 +133,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
         advance()
         return when (e) {
             'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; '\\' -> '\\'; '"' -> '"'; '\'' -> '\''; '$' -> '$'
-            else -> throw CompileError(Pos(line, col - 1), "unknown escape \\$e")
+            else -> throw CompileError(Pos(line, col - 1, origin.file), "unknown escape \\$e")
         }
     }
 
@@ -181,7 +181,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
         text.clear()
         if (next == '{') {
             advance(2)
-            val codePos = Pos(line, col)
+            val codePos = Pos(line, col, origin.file)
             val start = i
             var depth = 1
             while (i < src.length) {
@@ -198,7 +198,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
             advance()
         } else {
             advance()
-            val codePos = Pos(line, col)
+            val codePos = Pos(line, col, origin.file)
             val start = i
             while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) advance()
             parts += RawPart.Code(src.substring(start, i), codePos)

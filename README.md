@@ -34,6 +34,7 @@ tour of the core language, translated section by section.
 | `type S { V(x: X), W }` | `type s = V of { x : x } \| W` | A type with cases, which a value is exactly one of (a sealed sum type). Parentheses make a record, braces make cases. |
 | `type Vowel { Alphabet.A, Alphabet.E }` | `type vowel = [ `Alphabet_A \| `Alphabet_E ]` | A type can take in other types' cases, one at a time (`Alphabet.A`) or all of them (`*Vowel`). A `Vowel` can then be used wherever an `Alphabet` is expected, and `is Vowel` narrows an `Alphabet` to a `Vowel`. When branches give different types, the result is the smallest declared type with all their cases. Types that share cases become polymorphic variants; the rest stay ordinary ones. See `examples/shared-cases.fk`. |
 | `module Ratios { ... }` | `module Ratios = struct ... end` | Groups declarations. Inside, members use each other directly; outside, they're named through the module: `Ratios.make(1, 2)`, `Shapes.Circle(1.0)`, `Shapes.Shape`. Modules can nest. See `examples/modules.fk`. |
+| `ratios.fk` | `module Ratios = struct ... end` | Each file is a module named after it (`shared-cases.fk` is `SharedCases`), with no imports: a name a file uses but doesn't declare brings in the file of that name, from the program's directory or a directory given with `fckt -I dir`. The program is compiled to one `.ml`. |
 | `private gcd(...)` | left out of the module's `sig` | Visible only inside its module. A public member can't expose a private type. |
 | `type Ratio private(n: Int, d: Int)` | `type ratio = private { ... }` in the `sig` | Like Kotlin's `private constructor`: readable and matchable anywhere, but only its module can build or `copy` one. |
 | `spec Counter { type T; inc(c: T): T }` | `module type Counter = sig type t val inc : t -> t ... end` | What a module must define. Each of its types gets a show function, so values of it work in string templates. Members are one per line. |
@@ -94,7 +95,7 @@ build/install/fckt/bin/fckt examples/orders.fk   # writes examples/orders.ml
 ocaml examples/orders.ml
 ```
 
-`-o out.ml` picks the output file, and `-o -` prints the OCaml instead. The generated code needs
+`-o out.ml` picks the output file, and `-o -` prints the OCaml instead. `-I dir` adds a directory to look in for the files a program uses. The generated code needs
 OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the result with `ocaml`
 when it's installed.
 
