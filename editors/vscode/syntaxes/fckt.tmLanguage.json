@@ -404,7 +404,7 @@
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
     },
     "type-arguments": {
-      "begin": "<(?=[A-Z][A-Za-z0-9_\\s,<>]*>)",
+      "begin": "<(?=[A-Z][A-Za-z0-9_\\s,.:<>]*>)",
       "end": ">",
       "beginCaptures": {
         "0": {

@@ -44,10 +44,12 @@ object Printer {
 
     private fun item(n: ResolvedNode): String = when (n.name) {
         "module" -> {
+            (n.attributes["applies"] as String?)?.let { return "module ${n.str("name")} = $it" }
+            val params = (n.attributes["params"] as String?)?.let { " $it" } ?: ""
             val sig = n.children.firstOrNull { it.name == "sig" }
             val items = n.children.filter { it.name != "sig" }
             val spec = (n.attributes["spec"] as String?)?.let { " : $it" } ?: ""
-            "module ${n.str("name")}$spec" + (sig?.let { " : " + signature(it.children) } ?: "") +
+            "module ${n.str("name")}$params$spec" + (sig?.let { " : " + signature(it.children) } ?: "") +
                 " = struct\n" + items.joinToString("\n\n") { indent(item(it)) } + "\nend"
         }
         "comment" -> "(* ${n.str("text")} *)"

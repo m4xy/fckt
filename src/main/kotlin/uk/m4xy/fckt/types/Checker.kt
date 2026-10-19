@@ -5,6 +5,7 @@ import uk.m4xy.fckt.syntax.Arg
 import uk.m4xy.fckt.syntax.BinaryRef
 import uk.m4xy.fckt.syntax.CallRef
 import uk.m4xy.fckt.syntax.CompileError
+import uk.m4xy.fckt.syntax.Copier
 import uk.m4xy.fckt.syntax.ConstructorRef
 import uk.m4xy.fckt.syntax.Decl
 import uk.m4xy.fckt.syntax.FieldDef
@@ -45,6 +46,12 @@ class Program(
     val specTypes: Map<Decl.Spec, Map<String, Type>>,
     /** The spec of each module that has one, by the module's full name. */
     val moduleSpecs: Map<String, Decl.Spec>,
+    /** Each functor's parameters, by the functor's full name: each module's name and spec. */
+    val functorParams: Map<String, List<Pair<String, Decl.Spec>>>,
+    /** Each module made by a functor: the functor's and arguments' full names. */
+    val applications: Map<String, Pair<String, List<String>>>,
+    /** The type in a functor that each type in a module made from it copies. */
+    val copyOrigins: Map<String, String>,
 )
 
 /** A case of a sealed type: [variant], declared by [origin], with [fields] typed in the sealed type's own terms. */
@@ -77,7 +84,7 @@ class Checker(file: SourceFile) {
     /** The declarations with their full names: `make` in `module Ratios` is `Ratios.make`. */
     private val root: List<Decl> = file.decls.map { qualify(it, "") }
     private val modules = linkedMapOf<String, Decl.Module>()
-    private val decls: List<Decl> = flatten(root)
+    private val decls: MutableList<Decl> = flatten(root).toMutableList()
 
     /** The module being checked, which decides what names mean and what's visible. */
     private var currentPath: List<String> = emptyList()
@@ -107,16 +114,164 @@ class Checker(file: SourceFile) {
     private val expanding = mutableSetOf<String>()
     private var castCounter = 0
 
+    /** A functor's parameter's members, which stand for whatever module it's given: they have no body. */
+    private val parameterMembers = mutableSetOf<Decl.Function>()
+    private val functorParams = linkedMapOf<String, List<Pair<String, Decl.Spec>>>()
+
+    /** For each module made by a functor: the functor, and the module given for each parameter. */
+    private val applications = linkedMapOf<String, Pair<Decl.Module, List<Decl.Module>>>()
+
+    /** `IntSet.M` names `IntOrder` inside `module IntSet = SortedSet<IntOrder>`. */
+    private val moduleAliases = mutableMapOf<String, String>()
+    private val copyOrigins = mutableMapOf<String, String>()
+    private val argumentsChecked = mutableSetOf<Pair<String, String>>()
+
+    init {
+        for (d in decls) if (d is Decl.Spec) {
+            if (d.name in specs) throw CompileError(d.pos, "spec '${d.simpleName}' is declared twice")
+            specs[d.name] = d
+        }
+        for (f in modules.values.filter { it.params.isNotEmpty() }) addParameters(f)
+        for (app in modules.values.filter { it.application != null }) apply(app)
+        currentPath = emptyList()
+    }
+
+    /**
+     * Inside functor [f], each parameter `M : Spec` is a module with just what the spec lists, its
+     * types abstract: the body must work for any module that follows the spec.
+     */
+    private fun addParameters(f: Decl.Module) {
+        if (f.spec != null) throw CompileError(f.spec.pos, "a functor can't have a spec yet")
+        enclosingFunctor(f.path)?.let { throw CompileError(f.pos, "a functor can't be inside another functor (${it.simpleName}) yet") }
+        currentPath = f.path
+        checkDistinct(f.params.map { it.name to it.pos })
+        functorParams[f.name] = f.params.map { p ->
+            val spec = find(p.spec.name, specs, p.spec.pos) ?: throw CompileError(p.spec.pos, "unknown spec '${p.spec.name}'")
+            val name = "${f.name}.${p.name}"
+            if (name in modules) throw CompileError(p.pos, "${f.simpleName} has a module named ${p.name} already")
+            val types = spec.types.map { Decl.Record(p.pos, "$name.${it.name}", it.typeParams, emptyList()) }
+            val values = spec.values.map { Decl.Function(p.pos, "$name.${it.name}", it.typeParams, it.params, null, Expr.BoolLit(p.pos, true)) }
+            modules[name] = Decl.Module(p.pos, name, types + values, spec = p.spec)
+            decls += types + values
+            parameterMembers += values
+            p.name to spec
+        }
+    }
+
+    /** `module IntSet = SortedSet<IntOrder>`: a copy of SortedSet's declarations, with its `M` naming IntOrder. */
+    private fun apply(app: Decl.Module) {
+        val ref = app.application!!
+        enclosingFunctor(app.path)?.let { throw CompileError(app.pos, "a functor can't be applied inside another functor (${it.simpleName}) yet") }
+        currentPath = app.path
+        val functor = find(ref.name, modules, ref.pos) ?: throw CompileError(ref.pos, "unknown module '${ref.name}'")
+        if (functor.params.isEmpty()) throw CompileError(ref.pos, "${functor.simpleName} isn't a functor: it takes no modules")
+        if (functor.params.size != ref.args.size) {
+            throw CompileError(ref.pos, "${functor.simpleName} takes ${functor.params.size} module${if (functor.params.size == 1) "" else "s"}, not ${ref.args.size}")
+        }
+        val args = ref.args.map { arg ->
+            val name = (arg as TypeRef.Named).name
+            val m = find(name, modules, arg.pos) ?: throw CompileError(arg.pos, "unknown module '$name'")
+            if (m.params.isNotEmpty()) throw CompileError(arg.pos, "${m.simpleName} is a functor; give it modules first")
+            m
+        }
+        val copier = Copier({ name -> app.name + name.removePrefix(functor.name) }) { original, copy ->
+            if (copy !is Decl.Function && copy !is Decl.Module && copy !is Decl.Spec) copyOrigins[copy.name] = original.name
+        }
+        val copies = functor.decls.map { copier.decl(it) }
+        modules[app.name] = app.copy(decls = copies)
+        decls += flatten(copies)
+        functor.params.zip(args).forEach { (p, arg) -> moduleAliases["${app.name}.${p.name}"] = arg.name }
+        applications[app.name] = functor to args
+    }
+
+    private fun enclosingFunctor(path: List<String>): Decl.Module? =
+        (1..path.size).map { modules[path.take(it).joinToString(".")] }.firstOrNull { it != null && it.params.isNotEmpty() }
+
+    /** The module made by a functor that [path] is in, if any. */
+    private fun enclosingApplication(path: List<String>): String? =
+        (1..path.size).map { path.take(it).joinToString(".") }.firstOrNull { it in applications }
+
+    /** [name] with any module alias at its start replaced by the module it names. */
+    private fun canonical(name: String): String {
+        if (moduleAliases.isEmpty()) return name
+        val parts = name.split('.')
+        for (n in parts.size downTo 1) {
+            moduleAliases[parts.take(n).joinToString(".")]?.let { return canonical((listOf(it) + parts.drop(n)).joinToString(".")) }
+        }
+        return name
+    }
+
+    /** Every module given to a functor has what its parameter's spec lists. */
+    private fun checkArgumentsDefine() {
+        for ((app, made) in applications) {
+            val (functor, args) = made
+            currentPath = modules.getValue(app).path
+            for ((param, arg) in functorParams.getValue(functor.name).zip(args)) {
+                val (name, spec) = param
+                val argSpec = moduleSpecs[arg.name]
+                if (argSpec === spec) continue
+                fun fail(why: String): Nothing = throw CompileError(modules.getValue(app).pos, "${arg.simpleName} can't be ${functor.simpleName}'s $name: $why")
+                if (argSpec != null) fail("it follows ${argSpec.simpleName}, not ${spec.simpleName}")
+                for (t in spec.types) {
+                    val d = typeDecl("${arg.name}.${t.name}") ?: fail("it doesn't define type ${t.name}, which ${spec.simpleName} needs")
+                    whyHidden(d)?.let { fail(it) }
+                    if (typeParamsOf(d).size != t.typeParams.size) fail("${spec.simpleName} says ${t.name} takes ${t.typeParams.size} type parameters, not ${typeParamsOf(d).size}")
+                }
+                for (v in spec.values) {
+                    val f = globals["${arg.name}.${v.name}"] ?: fail("it doesn't define '${v.name}', which ${spec.simpleName} needs")
+                    whyHidden(f)?.let { fail(it) }
+                }
+            }
+        }
+        currentPath = emptyList()
+    }
+
+    /**
+     * The values of modules given to functors have the types their parameters' specs give them, once
+     * they're checked. Modules that follow the spec were checked already.
+     */
+    private fun checkArgumentTypes(app: String) {
+        val (functor, args) = applications.getValue(app)
+        val saved = currentPath
+        currentPath = modules.getValue(app).path
+        for ((param, arg) in functorParams.getValue(functor.name).zip(args)) {
+            val (name, spec) = param
+            if (moduleSpecs[arg.name] === spec) continue
+            for (v in spec.values) {
+                val f = globals.getValue("${arg.name}.${v.name}")
+                if (f !in schemes || !argumentsChecked.add(app to f.name)) continue
+                val wanted = specSchemes.getValue(spec).getValue(v.name)
+                val names = wanted.vars.zip(v.typeParams)
+                val inside = specView(wanted.type, names.associate { (tv, n) -> tv to Type.Con("#$n") as Type }) { t, targs ->
+                    typeOf(typeDecl("${arg.name}.$t")!!, targs)
+                }
+                val actual = globalType(f)
+                val shown = actual.zonk()
+                if (!u.unify(actual, inside)) {
+                    throw CompileError(
+                        modules.getValue(app).pos,
+                        "${arg.simpleName} can't be ${functor.simpleName}'s $name: '${v.name}' has type $shown, " +
+                            "but ${spec.simpleName} needs ${Type.render(wanted.type, names.toMap().toMutableMap())}, which here is ${inside.zonk()}",
+                    )
+                }
+            }
+        }
+        currentPath = saved
+    }
+
     fun check(): Program {
         collectTypes()
         checkSpecs()
         collectGlobals()
         checkModuleSpecs()
+        checkArgumentsDefine()
         val groups = dependencyGroups()
         for (group in groups) checkGroup(group)
+        for (app in applications.keys) checkArgumentTypes(app)
         checkExposure()
 
-        val labelCounts = records.values.flatMap { r -> r.fields.map { snake(it.name) } }.groupingBy { it }.eachCount()
+        // Copies made by functors share the functor's OCaml labels and constructors.
+        val labelCounts = records.values.filter { it.name !in copyOrigins }.flatMap { r -> r.fields.map { snake(it.name) } }.groupingBy { it }.eachCount()
         val main = globals["main"]?.also {
             val fn = schemes.getValue(it).type as? Type.Fn
             val params = fn?.params
@@ -131,7 +286,8 @@ class Checker(file: SourceFile) {
             sealeds = sealeds.values.toList(),
             groups = groups,
             ambiguousLabels = labelCounts.filterValues { it > 1 }.keys,
-            ambiguousConstructors = variantsByName.filterValues { v -> v.size > 1 && v.any { it.first.name !in polymorphic } }.keys,
+            ambiguousConstructors = variantsByName.mapValues { (_, v) -> v.filter { it.first.name !in copyOrigins } }
+                .filterValues { v -> v.size > 1 && v.any { it.first.name !in polymorphic } }.keys,
             main = main,
             cases = caseDecls,
             polymorphic = polymorphic,
@@ -142,6 +298,9 @@ class Checker(file: SourceFile) {
             aliases = aliases.values.toList(),
             specTypes = specSchemes.mapValues { (_, values) -> values.mapValues { it.value.type.zonk() } },
             moduleSpecs = moduleSpecs,
+            functorParams = functorParams,
+            applications = applications.mapValues { (_, made) -> made.first.name to made.second.map { it.name } },
+            copyOrigins = copyOrigins,
         )
     }
 
@@ -212,6 +371,9 @@ class Checker(file: SourceFile) {
     private fun whyHidden(d: Decl): String? {
         hiddenBySpec(d)?.let { return "'${d.simpleName}' isn't in ${it.simpleName}, the spec of ${d.path.joinToString(".")}" }
         if (d.isPrivate && !inside(d.path)) return "'${d.simpleName}' is private to ${d.path.joinToString(".").ifEmpty { "this file" }}"
+        enclosingFunctor(d.path)?.takeIf { !inside(it.name.split('.')) }?.let {
+            return "'${d.simpleName}' is in the functor ${it.simpleName}, which makes modules: use it through one, made with module Name = ${it.simpleName}<...>"
+        }
         for (n in 1..d.path.size) modules[d.path.take(n).joinToString(".")]?.let { m -> whyHidden(m)?.let { return it } }
         return null
     }
@@ -245,7 +407,7 @@ class Checker(file: SourceFile) {
      */
     private fun <D : Decl> find(name: String, table: Map<String, D>, pos: Pos?): D? {
         for (n in currentPath.size downTo 0) {
-            val d = table[(currentPath.take(n) + name).joinToString(".")] ?: continue
+            val d = table[canonical((currentPath.take(n) + name).joinToString("."))] ?: continue
             val hidden = whyHidden(d)
             if (hidden != null) {
                 if (pos == null) continue
@@ -298,11 +460,7 @@ class Checker(file: SourceFile) {
     private fun collectTypes() {
         for (decl in decls) {
             if (decl is Decl.Function) continue
-            if (decl is Decl.Spec) {
-                if (decl.name in specs) throw CompileError(decl.pos, "spec '${decl.simpleName}' is declared twice")
-                specs[decl.name] = decl
-                continue
-            }
+            if (decl is Decl.Spec) continue
             if (decl.simpleName in BUILTIN_TYPES) throw CompileError(decl.pos, "'${decl.simpleName}' is a built-in type")
             if (typeDecl(decl.name) != null) throw CompileError(decl.pos, "type '${decl.simpleName}' is declared twice")
             when (decl) {
@@ -532,6 +690,12 @@ class Checker(file: SourceFile) {
         }
         specTypes = emptyMap()
         currentPath = emptyList()
+        // A functor's parameter's values have their spec's types, its types abstract.
+        for (f in parameterMembers) {
+            val module = f.path.joinToString(".")
+            val wanted = specSchemes.getValue(moduleSpecs.getValue(module)).getValue(f.simpleName)
+            outsideSchemes[f] = Scheme(wanted.vars, specView(wanted.type, emptyMap()) { name, args -> Type.Con(Type.ABSTRACT + "$module.$name", args) })
+        }
     }
 
     /** Each module with a spec defines everything the spec lists, publicly; types take the right number of parameters. */
@@ -598,7 +762,7 @@ class Checker(file: SourceFile) {
     // ---- Dependency order ----
 
     private fun dependencyGroups(): List<FunctionGroup> {
-        val decls = globals.values.toList()
+        val decls = globals.values.filter { it !in parameterMembers }
         val deps = decls.associateWith { decl ->
             val refs = linkedSetOf<String>()
             val bound = (decl.params?.map { it.name } ?: emptyList()).toSet()
@@ -609,7 +773,7 @@ class Checker(file: SourceFile) {
                 lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
                     lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
                 }
-            }.distinct().also { uses[decl] = it }
+            }.distinct().also { uses[decl] = it }.filter { it !in parameterMembers }
         }
         currentPath = emptyList()
         return stronglyConnected(decls) { deps.getValue(it) }.map { component ->
@@ -701,6 +865,18 @@ class Checker(file: SourceFile) {
     // ---- Functions ----
 
     private fun checkGroup(group: FunctionGroup) {
+        val app = enclosingApplication(group.decls.first().path) ?: return checkGroupBody(group)
+        // A module made by a functor: its modules first, then the functor's body for them.
+        checkArgumentTypes(app)
+        try {
+            checkGroupBody(group)
+        } catch (e: CompileError) {
+            val (functor, args) = applications.getValue(app)
+            throw CompileError(modules.getValue(app).pos, "in ${functor.simpleName}<${args.joinToString { it.simpleName }}>, at ${e.pos}: ${e.message}")
+        }
+    }
+
+    private fun checkGroupBody(group: FunctionGroup) {
         val declaredParams = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
         currentPath = group.decls.first().path
         for (decl in group.decls) {

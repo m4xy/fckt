@@ -350,6 +350,52 @@ class CompilerTest {
     }
 
     @Test
+    fun `functors make modules from modules`() {
+        val source = File("examples/functors.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "module SortedSet (M : Ordered) : sig")
+        assertContains(ml, "module IntSet = SortedSet (IntOrder)")
+        assertContains(ml, "fk_assert_equals Fun.id \"line 47\" \"Set(items=[1, 3, 5])\" (IntSet.show_set numbers)")
+    }
+
+    @Test
+    fun `functor errors`() {
+        val sortedSet = """
+            spec Ordered {
+              type T
+              compare(a: T, b: T): Int
+            }
+            module SortedSet<M : Ordered> {
+              type Set(items: List<M.T>)
+              empty = Set([])
+              insert(s: Set, x: M.T): Set = Set([x, *s.items])
+            }
+
+        """.trimIndent()
+        val intOrder = "module IntOrder {\n  type T = Int\n  compare(a: Int, b: Int) = a - b\n}\n"
+        assertContains(error(sortedSet + "x = SortedSet.empty"), "'empty' is in the functor SortedSet")
+        assertContains(error(sortedSet + "module A { type T = Int }\nmodule S = SortedSet<A>"), "A can't be SortedSet's M: it doesn't define 'compare'")
+        assertContains(
+            error(sortedSet + "module A {\n  type T = Int\n  compare(a: Int, b: Int) = \"x\"\n}\nmodule S = SortedSet<A>"),
+            "A can't be SortedSet's M: 'compare' has type (Int, Int) -> String, but Ordered needs (T, T) -> Int",
+        )
+        assertContains(error(sortedSet + "spec Other { type T }\nmodule A : Other { type T = Int }\nmodule S = SortedSet<A>"), "it follows Other, not Ordered")
+        assertContains(error(sortedSet + intOrder + "module S = IntOrder<IntOrder>"), "IntOrder isn't a functor")
+        assertContains(error(sortedSet + intOrder + "module S = SortedSet<IntOrder, IntOrder>"), "SortedSet takes 1 module, not 2")
+        assertContains(error(sortedSet + "module S = SortedSet<Missing>"), "unknown module 'Missing'")
+        // The body works for any M, so it can't assume what M.T is.
+        assertContains(error("spec S { type T }\nmodule F<M : S> {\n  f(x: M.T): Int = x\n}"), "expected Int but found F.M.T")
+        // A module that follows Ordered keeps T abstract, as in OCaml.
+        assertContains(
+            error(sortedSet + intOrder.replace("module IntOrder {", "module IntOrder : Ordered {") + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)"),
+            "expected IntOrder.T but found Int",
+        )
+        // Unsealed, it shows T is Int.
+        compile(sortedSet + intOrder + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)")
+    }
+
+    @Test
     fun `type aliases`() {
         val source = """
             type Pair<A> = (A, A)

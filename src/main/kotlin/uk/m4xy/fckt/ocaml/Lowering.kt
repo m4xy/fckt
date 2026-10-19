@@ -59,6 +59,11 @@ class Lowering(private val program: Program) {
     private val sealeds = program.sealeds.associateBy { it.name }
     private val aliases = program.aliases.associateBy { it.name }
 
+    /** Each functor parameter, as the module it stands for: `SortedSet.M`. */
+    private val parameterModules = program.functorParams.flatMap { (f, params) -> params.map { "$f.${it.first}" } }.toSet()
+
+    private fun inApplication(path: List<String>) = (1..path.size).any { path.take(it).joinToString(".") in program.applications }
+
     /** User types whose show function is needed, and the `fk_` helpers that are. */
     private val showTypes = linkedSetOf<String>()
     private val helpers = linkedSetOf<String>()
@@ -70,10 +75,17 @@ class Lowering(private val program: Program) {
     private val showBodies = linkedMapOf<String, Pair<List<String>, Gen>>()
 
     fun lower(): StructureElement<Unit> {
-        // A spec gives each of its types a show function, so every module that follows it has one.
-        for ((module, spec) in program.moduleSpecs) spec.types.forEach { showTypes += "$module.${it.name}" }
-        // Lower every function first; that finds which show functions are needed.
-        val functionItems = program.groups.associateWith { group ->
+        // A spec gives each of its types a show function, so every module that follows it has one,
+        // as does every module given to a functor.
+        for ((module, spec) in program.moduleSpecs) {
+            if (module !in parameterModules) spec.types.forEach { showTypes += "$module.${it.name}" }
+        }
+        for ((functor, args) in program.applications.values) {
+            program.functorParams.getValue(functor).zip(args).forEach { (param, arg) -> param.second.types.forEach { showTypes += "$arg.${it.name}" } }
+        }
+        // Lower every function first; that finds which show functions are needed. A module made by a
+        // functor is the functor's OCaml, so its own copies aren't.
+        val functionItems = program.groups.filter { g -> !inApplication(g.decls.first().path) }.associateWith { group ->
             currentPath = group.decls.first().path
             StructureElement.build<Unit> {
                 let(group.recursive) {
@@ -134,8 +146,10 @@ class Lowering(private val program: Program) {
                     // use, and the specs it and the modules in it follow.
                     val used = functionsIn(node).flatMap { program.uses[it].orEmpty() }
                     val followed = modulesIn(node).mapNotNull { program.moduleSpecs[it.name] }
+                    // A module made by a functor comes after the functor and the modules it's given.
+                    val made = program.applications[node.name]?.let { (functor, args) -> listOf(functor) + args }.orEmpty()
                     groups.filter { g -> g.decls.any { it in used } } +
-                        modules.filter { m -> m !== node && used.any { insideOf(m, it.name) } } +
+                        modules.filter { m -> m !== node && (used.any { insideOf(m, it.name) } || made.any { it == m.name || insideOf(m, it) }) } +
                         specs.filter { it in followed }
                 }
                 is Decl.Spec -> {
@@ -182,6 +196,13 @@ class Lowering(private val program: Program) {
 
     private fun moduleDef(m: Decl.Module, functionItems: Map<uk.m4xy.fckt.types.FunctionGroup, StructureChild<Unit>>): ModuleDefElement<Unit> {
         val path = m.name.split('.')
+        program.applications[m.name]?.let { (functor, args) ->
+            currentPath = path.dropLast(1)
+            val applies = (listOf(ref(functor) { it }) + args.map { "(${ref(it) { name -> name }})" }).joinToString(" ")
+            return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(m.simpleName), applies = uk.m4xy.kastor.Attribute.Value(applies))
+        }
+        currentPath = path.dropLast(1)
+        val params = program.functorParams[m.name]?.joinToString(" ") { (name, spec) -> "($name : ${ref(spec.name) { it }})" }
         val items = moduleItems(path, m.decls, functionItems).map { child ->
             when (child) {
                 is StructureChild.TypeGroup -> ModuleDefChild.TypeGroup(child.element)
@@ -204,6 +225,7 @@ class Lowering(private val program: Program) {
         return ModuleDefElement(
             name = uk.m4xy.kastor.Attribute.Value(m.simpleName),
             spec = spec?.let { uk.m4xy.kastor.Attribute.Value(it) },
+            params = params?.let { uk.m4xy.kastor.Attribute.Value(it) },
             children = signature + items,
         )
     }
@@ -231,13 +253,9 @@ class Lowering(private val program: Program) {
         it.isPrivate || (it is Decl.Record && it.privateConstructor) || (it is Decl.Module && hasPrivate(it))
     }
 
-    private fun functionsIn(m: Decl.Module): List<Decl.Function> = m.decls.flatMap {
-        when (it) {
-            is Decl.Function -> listOf(it)
-            is Decl.Module -> functionsIn(it)
-            else -> emptyList()
-        }
-    }
+    /** The functions in [m], and in the modules inside it, including those a functor made for it. */
+    private fun functionsIn(m: Decl.Module): List<Decl.Function> =
+        program.groups.flatMap { it.decls }.filter { it.name.startsWith(m.name + ".") }
 
     /** The full names of the user types written in [ref]. */
     private fun typeRefNames(ref: TypeRef): List<String> = when (ref) {
@@ -661,8 +679,9 @@ class Lowering(private val program: Program) {
         }
     }
 
-    /** A shared case's tag, named after the sealed type that declares it: `Alphabet_A`. */
-    private fun tagName(origin: Decl.Sealed, variant: VariantDef) = "${origin.name.replace('.', '_')}_${variant.name}"
+    /** A shared case's tag, named after the sealed type that declares it, in the functor if it's a copy: `Alphabet_A`. */
+    private fun tagName(origin: Decl.Sealed, variant: VariantDef) =
+        "${(program.copyOrigins[origin.name] ?: origin.name).replace('.', '_')}_${variant.name}"
 
     /** An ordinary constructor as written from here: `Circle` inside Shapes, `Shapes.Circle` outside. */
     private fun ctorName(ref: ConstructorRef.Variant): String =
@@ -888,8 +907,10 @@ class Lowering(private val program: Program) {
         "List" -> Gen.App(Gen.Id(helper("fk_show_list")), args)
         "Option" -> Gen.App(Gen.Id(helper("fk_show_option")), args)
         else -> {
-            showTypes += name
-            // A type's show function lives in the type's module.
+            // A type's show function lives in the type's module. A module a functor made has the
+            // functor's; a functor's parameter has what its spec lists.
+            val module = name.substringBeforeLast('.', "")
+            if (module !in parameterModules) showTypes += program.copyOrigins[name] ?: name
             val show = ref((name.split('.').dropLast(1) + showName(name)).joinToString("."), { it })
             if (args.isEmpty()) Gen.Id(show) else Gen.App(Gen.Id(show), args)
         }

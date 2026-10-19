@@ -16,13 +16,16 @@ interface Structure
 
 /**
  * `module Name [: sig ... end] = struct ... end`, or with [spec], `module Name : Spec = struct ... end`.
- * Children: an optional [Signature], then the module's items.
+ * Children: an optional [Signature], then the module's items. A functor has [params], like
+ * `(M : Ordered)`; a functor's application has no children, and [applies] is like `SortedSet (IntOrder)`.
  */
 @Element("module", function = "moduleDef")
 @Children(Signature::class, TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class, ModuleType::class)
 interface ModuleDef {
     @Required val name: String
     val spec: String
+    val params: String
+    val applies: String
 }
 
 /** `module type Name = sig ... end`: a named signature. Children: its items. */

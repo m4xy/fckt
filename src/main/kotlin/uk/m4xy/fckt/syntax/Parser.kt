@@ -65,12 +65,29 @@ class Parser(private val tokens: List<Token>) {
         return when {
             accept(T.MODULE) != null -> {
                 val name = upperIdent("a module name")
+                // module Name = Functor<Arg, ...>
+                if (accept(T.ASSIGN) != null) {
+                    val application = type() as? TypeRef.Named ?: throw error("expected a functor applied to modules: Functor<Module>")
+                    if (application.args.isEmpty()) throw error("expected modules for ${application.name}: ${application.name}<Module>")
+                    application.args.firstOrNull { it !is TypeRef.Named || it.args.isNotEmpty() }?.let { throw error("a functor takes modules, by name", it.pos) }
+                    return Decl.Module(pos, name, emptyList(), application = application)
+                }
+                // module Name<M : Spec, ...>: a functor
+                val params = mutableListOf<ModuleParam>()
+                if (accept(T.LT) != null) {
+                    do {
+                        val paramPos = peek.pos
+                        val paramName = upperIdent("a module parameter")
+                        expect(T.COLON, "':' and the spec the module must follow")
+                        params += ModuleParam(paramPos, paramName, specName())
+                    } while (accept(T.COMMA) != null)
+                    expect(T.GT, "'>'")
+                }
                 // module Name : Spec { ... }
-                val spec = if (accept(T.COLON) != null) type() as? TypeRef.Named ?: throw error("expected a spec's name after ':'") else null
-                if (spec != null && spec.args.isNotEmpty()) throw error("a spec takes no type arguments", spec.pos)
+                val spec = if (accept(T.COLON) != null) specName() else null
                 expect(T.LBRACE, "'{' after the module name")
                 val decls = members { decl() }
-                Decl.Module(pos, name, decls, spec = spec)
+                Decl.Module(pos, name, decls, spec = spec, params = params)
             }
             // `spec` is a keyword only here, so it can still name a value.
             at(T.IDENT) && peek.text == "spec" && peekAt(1).kind == T.IDENT && peekAt(2).kind == T.LBRACE -> {
@@ -128,6 +145,12 @@ class Parser(private val tokens: List<Token>) {
             }
             else -> throw error("expected a declaration but found ${describe(peek)}")
         }
+    }
+
+    private fun specName(): TypeRef.Named {
+        val spec = type() as? TypeRef.Named ?: throw error("expected a spec's name")
+        if (spec.args.isNotEmpty()) throw error("a spec takes no type arguments", spec.pos)
+        return spec
     }
 
     /** Items one per line up to a `}`, after the `{`. */

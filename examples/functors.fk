@@ -1,0 +1,53 @@
+// A functor is a module that takes modules. SortedSet is written once, for any module that
+// follows Ordered; giving it one makes a module of sets in that order.
+
+spec Ordered {
+  type T
+  // Negative, zero or positive, like Kotlin's compareTo.
+  compare(a: T, b: T): Int
+}
+
+module SortedSet<M : Ordered> {
+  type Set(items: List<M.T>)
+
+  empty = Set([])
+
+  insert(s: Set, x: M.T): Set = Set(insertInto(s.items, x))
+
+  contains(s: Set, x: M.T): Boolean = s.items.any(y -> M.compare(y, x) == 0)
+
+  toList(s: Set) = s.items
+
+  private insertInto(xs: List<M.T>, x: M.T): List<M.T> = when (xs) {
+    [] -> [x]
+    [y, *rest] -> {
+      c = M.compare(x, y)
+      if (c < 0) [x, *xs] else if (c == 0) xs else [y, *insertInto(rest, x)]
+    }
+  }
+}
+
+// Without a spec of their own, these show what T is, so an IntSet takes Ints.
+module IntOrder {
+  type T = Int
+  compare(a: Int, b: Int) = a - b
+}
+
+module ByLength {
+  type T = String
+  compare(a: String, b: String) = a.length - b.length
+}
+
+module IntSet = SortedSet<IntOrder>
+module WordSet = SortedSet<ByLength>
+
+main() = {
+  numbers = [5, 1, 3, 1].fold(IntSet.empty, IntSet.insert)
+  assertEquals([1, 3, 5], IntSet.toList(numbers))
+  assertEquals("Set(items=[1, 3, 5])", "$numbers")
+  assert(IntSet.contains(numbers, 3))
+  assert(!IntSet.contains(numbers, 4))
+  // ByLength counts words of the same length as the same, so WordSet keeps the first of each.
+  words = ["fig", "apple", "kiwi", "pear"].fold(WordSet.empty, WordSet.insert)
+  assertEquals(["fig", "kiwi", "apple"], WordSet.toList(words))
+}
