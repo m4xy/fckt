@@ -29,6 +29,9 @@
           "include": "#spec-declaration"
         },
         {
+          "include": "#module-declaration"
+        },
+        {
           "include": "#cased-type-declaration"
         },
         {
@@ -214,10 +217,10 @@
       "begin": "\\b(spec)\\s+([A-Z][A-Za-z0-9_]*)\\s*(\\{)",
       "beginCaptures": {
         "1": {
-          "name": "keyword.declaration.spec.fckt"
+          "name": "keyword.declaration.fckt"
         },
         "2": {
-          "name": "entity.name.type.fckt"
+          "name": "entity.name.type.interface.fckt string.other.interface.fckt"
         },
         "3": {
           "name": "punctuation.section.braces.fckt"
@@ -249,11 +252,56 @@
         }
       ]
     },
+    "module-declaration": {
+      "begin": "\\b(module)\\s+([A-Z][A-Za-z0-9_]*)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.declaration.fckt"
+        },
+        "2": {
+          "name": "entity.name.type.fckt"
+        }
+      },
+      "end": "(?=\\{)|$",
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "match": "\\b([A-Z][A-Za-z0-9_]*)\\s*(:)\\s*([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "entity.name.type.fckt"
+            },
+            "2": {
+              "name": "punctuation.separator.colon.fckt"
+            },
+            "3": {
+              "name": "entity.name.type.interface.fckt string.other.interface.fckt"
+            }
+          }
+        },
+        {
+          "match": "(:)\\s*([A-Z][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "punctuation.separator.colon.fckt"
+            },
+            "2": {
+              "name": "entity.name.type.interface.fckt string.other.interface.fckt"
+            }
+          }
+        },
+        {
+          "include": "#code"
+        }
+      ]
+    },
     "cased-type-declaration": {
       "begin": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)(?=\\s*(?:<[^{}()]*>)?\\s*\\{)",
       "beginCaptures": {
         "1": {
-          "name": "keyword.declaration.type.fckt"
+          "name": "keyword.declaration.fckt"
         },
         "2": {
           "name": "entity.name.type.fckt"
@@ -329,7 +377,7 @@
       "match": "\\b(type)\\s+([A-Z][A-Za-z0-9_]*)",
       "captures": {
         "1": {
-          "name": "keyword.declaration.type.fckt"
+          "name": "keyword.declaration.fckt"
         },
         "2": {
           "name": "entity.name.type.fckt"
