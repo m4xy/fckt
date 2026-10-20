@@ -21,12 +21,14 @@ val KEYWORDS = setOf("type", "module", "private", "when", "if", "else", "is", "t
  * an unterminated string or comment runs to the end, and an unknown character is [TokKind.BAD].
  * Strings hold `$name` and `${code}` templates, whose code is tokenized as code.
  */
-fun scan(text: CharSequence, from: Int = 0, to: Int = text.length): List<Tok> {
+fun scan(text: CharSequence, from: Int = 0, until: Int = text.length): List<Tok> {
+    // Never past the text, whatever range is asked for.
+    val to = until.coerceIn(0, text.length)
     val toks = mutableListOf<Tok>()
     // What's open: a string, a raw string, or a template's code, with how many of its own braces are open.
     class Frame(val kind: Char, var braces: Int = 0)
     val frames = ArrayDeque<Frame>()
-    var i = from
+    var i = from.coerceIn(0, to)
     fun add(kind: TokKind, start: Int, end: Int) {
         if (end > start) toks += Tok(kind, start, end, frames.isNotEmpty())
     }

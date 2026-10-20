@@ -135,7 +135,7 @@ private class Outline(val text: String, decls: List<Decl>) {
     private fun walk(decls: List<Decl>, within: IntRange, module: String?) {
         decls.forEachIndexed { i, d ->
             val start = offset(d.pos)
-            val until = decls.getOrNull(i + 1)?.let { offset(it.pos) } ?: (within.last + 1)
+            val until = (decls.getOrNull(i + 1)?.let { offset(it.pos) } ?: (within.last + 1)).coerceAtMost(text.length)
             val range = start until until
             fun params(names: List<String>) {
                 if (names.isEmpty()) return

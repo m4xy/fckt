@@ -149,7 +149,7 @@ class SemanticsTest {
     }
 
     @Test
-    fun `every example scans and colours without failing`() {
+    fun `every example and library file scans, colours and resolves without failing`() {
         val dir = java.io.File("../../examples")
         val files = dir.walk().filter { it.extension == "fk" }.toList()
         check(files.isNotEmpty())
@@ -159,6 +159,14 @@ class SemanticsTest {
             // Every character is in exactly one token.
             assertEquals(text.length, toks.sumOf { it.end - it.start }, file.path)
             semantics(text, neighbourRoles(file.parentFile, file))
+            declarations(text, file)
+        }
+        // The standard library's files, which a search goes through too, and the built-ins'.
+        for (name in uk.m4xy.fckt.STANDARD_MODULES + "prelude" + "builtins") {
+            val text = standardSource("std/$name.fk")!!
+            assertEquals(text.length, scan(text).sumOf { it.end - it.start }, name)
+            semantics(text)
+            declarations(text, null)
         }
     }
 }

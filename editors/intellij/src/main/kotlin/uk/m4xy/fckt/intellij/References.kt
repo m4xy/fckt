@@ -5,6 +5,8 @@ import com.intellij.lang.ASTNode
 import com.intellij.lang.cacheBuilder.DefaultWordsScanner
 import com.intellij.lang.cacheBuilder.WordsScanner
 import com.intellij.lang.findUsages.FindUsagesProvider
+import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.psi.PsiElement
@@ -56,8 +58,19 @@ class FcktReference(name: FcktName) : PsiPolyVariantReferenceBase<FcktName>(name
 object Resolver {
     fun declarationsOf(file: FcktFile): Map<Int, List<Target>> = CachedValuesManager.getCachedValue(file) {
         val path = file.virtualFile?.takeIf { it.isInLocalFileSystem }?.path?.let(::File)
-        CachedValueProvider.Result.create(declarations(file.text, path), file)
+        // A bug here would otherwise stop a whole search; the file's names just don't resolve.
+        val found = try {
+            declarations(file.text, path)
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: Exception) {
+            LOG.warn("couldn't resolve the names in ${file.name}", e)
+            emptyMap()
+        }
+        CachedValueProvider.Result.create(found, file)
     }
+
+    private val LOG = Logger.getInstance(Resolver::class.java)
 
     /** The name element [target] is at: in [from], another file, or the standard library. */
     fun element(from: FcktFile, target: Target): PsiElement? {

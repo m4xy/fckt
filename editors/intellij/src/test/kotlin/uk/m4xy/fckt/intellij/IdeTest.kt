@@ -41,4 +41,24 @@ class IdeTest : BasePlatformTestCase() {
         val square = myFixture.file.findElementAt(at("Square", 0))!!.parent as FcktName
         assertEquals(listOf(at("Square", 1), at("Square", 2)), myFixture.findUsages(square).map { it.element!!.textRange.startOffset }.sorted())
     }
+
+    fun `test a case goes to the one of the type it's matched against`() {
+        val text = """
+            type NotTheAlphabet { A, B }
+            type Alphabet { A, B }
+            magic(a: Alphabet) = when (a) {
+              A -> "d"
+            }
+            other(n: NotTheAlphabet) = when (n) {
+              A -> "e"
+            }
+        """.trimIndent()
+        myFixture.configureByText("letters.fk", text)
+        fun resolve(nth: Int) = ((myFixture.file.findElementAt(Regex("\\bA\\b").findAll(text).toList()[nth].range.first)!!.parent as FcktName)
+            .reference as FcktReference).multiResolve(false).map { it.element!!.textRange.startOffset }
+        val notTheAlphabet = text.indexOf("{ A") + 2
+        val alphabet = text.indexOf("{ A", text.indexOf("type Alphabet")) + 2
+        assertEquals(listOf(alphabet), resolve(2))
+        assertEquals(listOf(notTheAlphabet), resolve(3))
+    }
 }
