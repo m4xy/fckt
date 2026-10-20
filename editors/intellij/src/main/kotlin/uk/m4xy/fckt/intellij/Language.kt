@@ -52,6 +52,10 @@ object FcktTokens {
     }
     val COMMENTS = TokenSet.create(TYPES.getValue(TokKind.LINE_COMMENT), TYPES.getValue(TokKind.BLOCK_COMMENT))
     val STRINGS = TokenSet.create(TYPES.getValue(TokKind.STRING), TYPES.getValue(TokKind.CHAR))
+    val IDENTIFIERS = TokenSet.create(TYPES.getValue(TokKind.IDENT))
+
+    /** A name, wrapped around its identifier token, so it can refer to a declaration and be found. */
+    val NAME = FcktToken("NAME")
 }
 
 /**
@@ -82,12 +86,23 @@ class FcktLexer : LexerBase() {
     override fun getBufferEnd() = end
 }
 
-/** A flat tree: the file's tokens, one after another. Colours and errors come from the compiler, not the tree. */
+/**
+ * A flat tree: the file's tokens, one after another, with each name wrapped in an element that
+ * refers to its declaration. Colours, errors and what names refer to come from the compiler.
+ */
 class FcktParserDefinition : ParserDefinition {
     override fun createLexer(project: Project?): Lexer = FcktLexer()
     override fun createParser(project: Project?) = PsiParser { root, builder ->
         val file = builder.mark()
-        while (!builder.eof()) builder.advanceLexer()
+        while (!builder.eof()) {
+            if (builder.tokenType == FcktTokens.TYPES.getValue(TokKind.IDENT)) {
+                val name = builder.mark()
+                builder.advanceLexer()
+                name.done(FcktTokens.NAME)
+            } else {
+                builder.advanceLexer()
+            }
+        }
         file.done(root)
         builder.treeBuilt
     }
@@ -95,7 +110,8 @@ class FcktParserDefinition : ParserDefinition {
     override fun getWhitespaceTokens(): TokenSet = TokenSet.WHITE_SPACE
     override fun getCommentTokens() = FcktTokens.COMMENTS
     override fun getStringLiteralElements() = FcktTokens.STRINGS
-    override fun createElement(node: ASTNode): PsiElement = ASTWrapperPsiElement(node)
+    override fun createElement(node: ASTNode): PsiElement =
+        if (node.elementType == FcktTokens.NAME) FcktName(node) else ASTWrapperPsiElement(node)
     override fun createFile(viewProvider: FileViewProvider): PsiFile = FcktFile(viewProvider)
 
     companion object {

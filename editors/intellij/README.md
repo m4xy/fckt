@@ -43,6 +43,15 @@ declaration a name means, so `xs.total()` goes to the `total` for `xs`'s type, a
 functor goes to the spec's `pure`. When it doesn't, names are looked up as the compiler would:
 inside out from where they're used, with `Ratios.make` looked up in `Ratios`.
 
+Names that are built in, like `Int`, `Option`, `Some` and `Ok`, go to `builtins.fk`, which
+describes them; it isn't compiled.
+
+## Find usages
+
+Find Usages (Alt-F7), or Cmd-click on a declaration, lists the names that refer to it, worked out
+the same way, so a local's are only its own and an overload's are only the calls that chose it.
+Highlight Usages in File (Cmd-Shift-F7) works too.
+
 ## Errors
 
 The file is compiled with its directory's other files, as `fckt` would, each time it changes. The
@@ -55,4 +64,4 @@ first error is underlined where it is; one in another file is shown at the top o
 ```
 
 checks the colours of some samples, where names in the examples go, and that every example scans
-and colours without failing.
+and colours without failing; and, in a running IDE, that names resolve and Find Usages finds them.

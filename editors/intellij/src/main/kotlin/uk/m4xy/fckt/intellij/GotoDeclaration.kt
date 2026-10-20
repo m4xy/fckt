@@ -13,30 +13,16 @@ import com.intellij.testFramework.LightVirtualFile
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
-/** Cmd-click, or Go To Declaration: where the name under the caret is declared. */
+/**
+ * Cmd-click, or Go To Declaration: where the name under the caret is declared. Names' references
+ * do this too; this also handles the caret just past a name.
+ */
 class FcktGotoDeclaration : GotoDeclarationHandler {
     override fun getGotoDeclarationTargets(source: PsiElement?, offset: Int, editor: Editor?): Array<PsiElement>? {
         val file = source?.containingFile as? FcktFile ?: return null
-        val text = file.text
-        val token = scan(text).firstOrNull { it.kind == TokKind.IDENT && offset >= it.start && offset <= it.end } ?: return null
-        val targets = declarationsOf(file)[token.start] ?: return null
-        return targets.mapNotNull { element(file, it) }.distinct().toTypedArray().takeIf { it.isNotEmpty() }
-    }
-
-    /** The file's declarations, worked out again only when it changes. */
-    private fun declarationsOf(file: FcktFile): Map<Int, List<Target>> = CachedValuesManager.getCachedValue(file) {
-        val path = file.virtualFile?.path?.let(::File)
-        CachedValueProvider.Result.create(declarations(file.text, path), file)
-    }
-
-    private fun element(from: FcktFile, target: Target): PsiElement? {
-        val file: PsiFile = when {
-            target.file == null -> from
-            target.file.startsWith("std/") -> StandardFiles.psi(from.project, target.file) ?: return null
-            else -> LocalFileSystem.getInstance().findFileByPath(target.file)?.let { PsiManager.getInstance(from.project).findFile(it) } ?: return null
-        }
-        val offset = offsetOf(file.text, target.pos, target.name)
-        return file.findElementAt(offset) ?: file
+        val token = scan(file.text).firstOrNull { it.kind == TokKind.IDENT && offset >= it.start && offset <= it.end } ?: return null
+        val targets = Resolver.declarationsOf(file)[token.start] ?: return null
+        return targets.mapNotNull { Resolver.element(file, it) }.distinct().toTypedArray().takeIf { it.isNotEmpty() }
     }
 }
 

@@ -1,3 +1,4 @@
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -52,6 +53,10 @@ intellijPlatform {
 
 dependencies {
     testImplementation(kotlin("test"))
+    // The IDE's own tests, for what needs a running IDE: references and Find Usages.
+    testImplementation("junit:junit:4.13.2")
+    testRuntimeOnly("org.junit.vintage:junit-vintage-engine:5.10.2")
+    intellijPlatform { testFramework(TestFrameworkType.Platform) }
 }
 
 tasks.test { useJUnitPlatform() }

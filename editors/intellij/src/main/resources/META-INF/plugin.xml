@@ -22,6 +22,7 @@
     <lang.braceMatcher language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktBraceMatcher"/>
     <colorSettingsPage implementation="uk.m4xy.fckt.intellij.FcktColorSettingsPage"/>
     <gotoDeclarationHandler implementation="uk.m4xy.fckt.intellij.FcktGotoDeclaration"/>
+    <lang.findUsagesProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFindUsagesProvider"/>
   </extensions>
 
   <!-- Uses only Kotlin's colours, which both of its modes have. -->

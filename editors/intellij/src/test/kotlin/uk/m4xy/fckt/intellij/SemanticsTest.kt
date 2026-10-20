@@ -137,6 +137,13 @@ class SemanticsTest {
         assertEquals(listOf("here:32"), goto("monads", 33, "M", 0))
         assertEquals(listOf("here:5"), goto("monads", 33, "M", 1))
         assertEquals(listOf("here:33"), goto("monads", 33, "A", 1))
+        // Cases through their type, in a declaration and in code.
+        assertEquals(listOf("here:6"), goto("shared-cases", 9, "A"))
+        assertEquals(listOf("here:6"), goto("shared-cases", 35, "A"))
+        assertEquals(listOf("here:7"), goto("shared-cases", 35, "Zero"))
+        // What's built in is described in builtins.fk.
+        assertEquals(listOf("builtins.fk:35"), goto("stdlib", 9, "Ok"))
+        assertEquals(listOf("builtins.fk:5"), goto("stdlib", 6, "Int"))
         // A declaration's own name goes nowhere.
         assertEquals(emptyList(), goto("monads", 33, "map"))
     }

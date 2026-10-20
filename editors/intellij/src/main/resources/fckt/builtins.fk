@@ -1,0 +1,47 @@
+// What the compiler knows without a declaration. This file isn't compiled: it's here so the editor
+// can show where these names come from. `type Int = Int` means Int is built in.
+
+// A whole number: OCaml's int.
+type Int = Int
+
+// A floating-point number: OCaml's float. An Int mixed with a Float is promoted, as in Kotlin.
+type Float = Float
+
+// Another name for Float.
+type Double = Float
+
+// Text: OCaml's string.
+type String = String
+
+// true or false: OCaml's bool.
+type Boolean = Boolean
+
+// One character, like 'a': OCaml's char. `.code` is its number.
+type Char = Char
+
+// No information: OCaml's unit. Its one value is Unit.
+type Unit = Unit
+
+// A list: [], [x, y], or [head, *tail] in patterns. OCaml's list.
+type List<A> = List<A>
+
+// A value worked out when first asked for: lazy(~e), then .value. OCaml's Lazy.t.
+type Lazy<A> = Lazy<A>
+
+// A value, or none: OCaml's option.
+type Option<A> { Some(value: A), None }
+
+// A value, or the error that stopped it: OCaml's result, with the value first.
+type Result<A, E> { Ok(value: A), Error(error: E) }
+
+// Any value as text, the way Kotlin's toString() writes it: Ratio(n=1, d=2).
+A.toString(): String = ""
+
+// The list's items as text, with separator between them.
+List<A>.joinToString(separator: String): String = ""
+
+// Stops the program if condition is false.
+assert(condition: Boolean): Unit = Unit
+
+// Stops the program, showing both, if actual isn't expected.
+assertEquals<A>(expected: A, actual: A): Unit = Unit

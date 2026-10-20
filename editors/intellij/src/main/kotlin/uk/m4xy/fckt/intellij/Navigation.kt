@@ -25,8 +25,13 @@ import java.io.File
  */
 data class Target(val file: String?, val pos: Pos, val name: String)
 
-/** The standard library's source, by the path its positions name. */
-fun standardSource(path: String): String? = standardLibrary(path.removePrefix("std/").removeSuffix(".fk"))
+/** Where the compiler's built-in types and functions are described: never compiled, only read. */
+const val BUILTINS = "std/builtins.fk"
+
+/** The standard library's source, by the path its positions name, or the built-ins' description. */
+fun standardSource(path: String): String? =
+    if (path == BUILTINS) Target::class.java.getResourceAsStream("/fckt/builtins.fk")?.use { it.reader().readText() }
+    else standardLibrary(path.removePrefix("std/").removeSuffix(".fk"))
 
 /** The offset of the [name] token at or after [pos] in [text], or of [pos] if there's none nearby. */
 fun offsetOf(text: String, pos: Pos, name: String): Int {
@@ -110,6 +115,7 @@ private class Outline(val text: String, decls: List<Decl>) {
     private val entries = mutableListOf<Entry>()
     private val typeParams = mutableListOf<Pair<IntRange, Set<String>>>()
     private val modules = mutableMapOf<String, IntRange>()
+    private val cases = mutableMapOf<String, MutableList<Pair<String, Int>>>()
 
     /** The offsets of the names declarations declare. */
     val declared = mutableSetOf<Int>()
@@ -152,6 +158,7 @@ private class Outline(val text: String, decls: List<Decl>) {
                     add(d.simpleName, d.pos, within, module = module)
                     d.variants.forEach { v ->
                         add(v.name, v.pos, within, module = module)
+                        cases.getOrPut(d.simpleName) { mutableListOf() } += v.name to offsetOf(text, v.pos, v.name)
                         v.fields.forEach { declared += offsetOf(text, it.pos, it.name) }
                     }
                     params(d.typeParams)
@@ -202,9 +209,10 @@ private class Outline(val text: String, decls: List<Decl>) {
         return candidates.filter { it.within.last - it.within.first == innermost }.map { target(it.offset, it.name) }
     }
 
-    /** [name] in this file's module [module]. */
+    /** [name] in this file's module [module], or a case of its type [module]. */
     fun member(module: String, name: String): List<Target> =
-        entries.filter { it.module == module && it.name == name && !it.method }.map { target(it.offset, it.name) }
+        entries.filter { it.module == module && it.name == name && !it.method }.map { target(it.offset, it.name) } +
+            cases[module].orEmpty().filter { it.first == name }.map { target(it.second, it.first) }
 
     /** This file's extensions called [name]. */
     fun methods(name: String): List<Target> = entries.filter { it.method && it.name == name }.map { target(it.offset, it.name) }
@@ -261,7 +269,10 @@ private class Resolutions(
         if (names.isEmpty() || !names[0][0].isUpperCase()) return
         for (n in names.indices) {
             val full = names.take(n + 1).joinToString(".")
-            val module = modules[full] ?: modules.values.firstOrNull { it.name.endsWith(".$full") } ?: return
+            val module: Decl = modules[full] ?: modules.values.firstOrNull { it.name.endsWith(".$full") }
+                // Alphabet.A: a type with cases names its cases too.
+                ?: types[full]?.takeIf { it is Decl.Sealed } ?: types.values.firstOrNull { it is Decl.Sealed && it.name.endsWith(".$full") }
+                ?: return
             val node = path[n]
             val name = names[n]
             put(at(node.pos, name).let { start -> if (node is Expr.Member) memberOffset(node) else start }, of(module))
@@ -306,6 +317,13 @@ private class Resolutions(
             is Decl.Sealed -> {
                 d.variants.forEach { v -> v.fields.forEach { type(it.type) } }
                 d.includes.forEach(::type)
+                // Alphabet.A: a case taken from another type.
+                for (ref in d.caseRefs) {
+                    val owner = types.values.filterIsInstance<Decl.Sealed>().firstOrNull { it.name == ref.owner || it.simpleName == ref.owner } ?: continue
+                    val offsets = scan(text, at(ref.pos, "")).filter { it.kind == TokKind.IDENT }.take(2).map { it.start }
+                    offsets.getOrNull(0)?.let { put(it, of(owner)) }
+                    owner.variants.firstOrNull { it.name == ref.case }?.let { v -> offsets.getOrNull(1)?.let { put(it, Target(v.pos.file ?: owner.pos.file, v.pos, v.name)) } }
+                }
             }
             is Decl.Alias -> type(d.target)
             is Decl.Spec -> d.values.forEach { v -> v.params.orEmpty().forEach { type(it.type) }; type(v.type) }
@@ -448,7 +466,12 @@ private class Reach {
             }
             into.getOrPut(target.name) { mutableListOf() } += target
             when (d) {
-                is Decl.Sealed -> d.variants.forEach { into.getOrPut(it.name) { mutableListOf() } += Target(file, it.pos, it.name) }
+                is Decl.Sealed -> {
+                    val variants = d.variants.associate { it.name to listOf(Target(file, it.pos, it.name)) }
+                    variants.forEach { (name, t) -> into.getOrPut(name) { mutableListOf() } += t }
+                    // Option.Some: a type with cases names its cases.
+                    modules.putIfAbsent(d.simpleName, Module(target, variants))
+                }
                 is Decl.Module -> names(d.decls, file, into)
                 else -> {}
             }
@@ -473,6 +496,7 @@ private class Reach {
                 ?.sortedBy { it.name }
                 ?.forEach { f -> reach.module(moduleName(f), f.path, try { f.readText() } catch (e: Exception) { null }) }
             reach.parse(standardSource("std/prelude.fk"), "std/prelude.fk")?.let { reach.names(it, "std/prelude.fk", reach.prelude) }
+            reach.parse(standardSource(BUILTINS), BUILTINS)?.let { reach.names(it, BUILTINS, reach.prelude) }
             for (name in STANDARD_MODULES) reach.module(moduleName(File("$name.fk")), "std/$name.fk", standardSource("std/$name.fk"))
             return reach
         }
