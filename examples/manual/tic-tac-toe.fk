@@ -25,7 +25,7 @@ module TicTacToe {
     Error(reason: String)
   }
 
-  play(player: Player, position: Position) : TurnResult = {
+  play(game: Game, player: Player, position: Position) : TurnResult = {
     TurnResult.Error("Code unimplemented") // TODO implement code
   }
 }
