@@ -315,7 +315,7 @@ class Lowering(private val program: Program) {
             val shown = applied(type.name, params.map { typeVar(it) to false })
             sigValue(showName(type.name), (params.map { "(${typeVar(it)} -> string)" } + shown + "string").joinToString(" -> "))
         }
-        for (f in m.decls.filterIsInstance<Decl.Function>().filter { !it.isPrivate }) {
+        for (f in m.decls.filterIsInstance<Decl.Function>().filter { !it.isPrivate && it.external == null }) {
             val type = program.functionTypes.getValue(f)
             sigValue(snake(f.simpleName), typeText(type, mutableMapOf()))
         }
@@ -492,7 +492,7 @@ class Lowering(private val program: Program) {
             )
             is Expr.Name -> when (val r = e.resolved!!) {
                 is NameRef.Local -> ident(r.ocamlName)
-                is NameRef.Global -> ident(ref(r.decl.name, ::snake))
+                is NameRef.Global -> if (r.decl.external != null) gen(externalValue(r.decl)) else ident(ref(r.decl.name, ::snake))
                 is NameRef.Builtin -> {
                     if (r.ocaml == ASSERT || r.ocaml == ASSERT_EQUALS) throw CompileError(e.pos, "${r.ocaml} must be called")
                     ident(r.ocaml)
@@ -513,7 +513,14 @@ class Lowering(private val program: Program) {
                 is MemberRef.Field -> fieldGet(labelPrefix(records.getValue(r.record)) + r.ocamlName) { gen(qualified(Gen.Src(e.target), r)) }
                 is MemberRef.CastField -> fieldGet(r.ocamlName) { ident(r.recordVar) }
                 is MemberRef.CastTagField -> ident(r.variable)
-                is MemberRef.Global -> ident(ref(r.decl.name, ::snake))
+                is MemberRef.Global -> if (r.decl.external != null) gen(externalValue(r.decl)) else ident(ref(r.decl.name, ::snake))
+                is MemberRef.Extension -> {
+                    if (r.decl.external != null) gen(external(r.decl, listOf(Gen.Src(e.target))))
+                    else apply {
+                        ident(ref(r.decl.name, ::snake))
+                        expr(e.target)
+                    }
+                }
                 is MemberRef.Case -> {
                     val fn = e.type!!.prune()
                     if (fn is Type.Fn) {
@@ -599,6 +606,10 @@ class Lowering(private val program: Program) {
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         val builtin = ((e.callee as? Expr.Name)?.resolved as? NameRef.Builtin)?.ocaml
         if (builtin == ASSERT || builtin == ASSERT_EQUALS) return gen(assertion(e, builtin))
+        val global = ((e.callee as? Expr.Name)?.resolved as? NameRef.Global)?.decl ?: ((e.callee as? Expr.Member)?.resolved as? MemberRef.Global)?.decl
+        if (global?.external != null) {
+            return gen(external(global, (e.resolved as CallRef.Function).order.map { Gen.Src(e.args[it].value) }))
+        }
         when (val r = e.resolved!!) {
             is CallRef.Function -> apply {
                 expr(e.callee)
@@ -606,10 +617,13 @@ class Lowering(private val program: Program) {
                 r.order.forEach { expr(e.args[it].value) }
             }
             is CallRef.Construct -> gen(construct(r.ref, e.type!!, r.order.map { Gen.Src(e.args[it].value) }))
-            is CallRef.Extension -> apply {
-                ident(ref(r.decl.name, ::snake))
-                expr((e.callee as Expr.Member).target)
-                e.args.forEach { expr(it.value) }
+            is CallRef.Extension -> {
+                val args = listOf((e.callee as Expr.Member).target) + e.args.map { it.value }
+                if (r.decl.external != null) return gen(external(r.decl, args.map { Gen.Src(it) }))
+                apply {
+                    ident(ref(r.decl.name, ::snake))
+                    args.forEach { expr(it) }
+                }
             }
             is CallRef.Builtin -> gen(builtin(r.method, (e.callee as Expr.Member).target, e.args.map { it.value }))
             is CallRef.Copy -> {
@@ -668,6 +682,68 @@ class Lowering(private val program: Program) {
         '\t' -> "'\\t'"
         '\r' -> "'\\r'"
         else -> if (c.code < 0x20) "'\\%03d'".format(c.code) else "'$c'"
+    }
+
+    /**
+     * An external's OCaml, [decl]'s template with its parameters replaced by [args]: `List.map f
+     * this` applies List.map to the arguments for f and this. `~name` passes one as a labelled
+     * argument; anything else is OCaml as written.
+     */
+    private fun external(decl: Decl.Function, args: List<Gen>): Gen {
+        val params = decl.params.orEmpty().map { it.name }
+        val atoms = externalAtoms(decl).flatMap { atom ->
+            val label = atom.removePrefix("~")
+            when {
+                atom in params -> listOf(args[params.indexOf(atom)])
+                atom.startsWith("~") && label in params -> listOf(Gen.Lit("~$label:"), args[params.indexOf(label)])
+                else -> listOf(Gen.Lit(atom))
+            }
+        }
+        val head = atoms.first().let { if (it is Gen.Lit) Gen.Id(it.text) else it }
+        return if (atoms.size == 1) head else Gen.App(head, atoms.drop(1))
+    }
+
+    /** An external used as a value: `sqrt`, or `fun x -> List.length x` when its OCaml isn't just a function. */
+    private fun externalValue(decl: Decl.Function): Gen {
+        val params = decl.params ?: return external(decl, emptyList())
+        val atoms = externalAtoms(decl)
+        if (atoms.drop(1) == params.map { it.name }) return Gen.Id(atoms.first())
+        val names = params.indices.map { "x$it" }
+        return Gen.Fun(names.ifEmpty { listOf("()") }, external(decl, names.map { Gen.Id(it) }))
+    }
+
+    /** An external's OCaml split into what's applied: names, `( + )`, `"strings"` and `~labels`. */
+    private fun externalAtoms(decl: Decl.Function): List<String> {
+        val text = decl.external!!
+        val atoms = mutableListOf<String>()
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            when {
+                c.isWhitespace() -> i++
+                c == '(' -> {
+                    var depth = 0
+                    val start = i
+                    do {
+                        if (text[i] == '(') depth++ else if (text[i] == ')') depth--
+                        i++
+                    } while (depth > 0 && i < text.length)
+                    atoms += text.substring(start, i)
+                }
+                c == '"' -> {
+                    val start = i++
+                    while (i < text.length && text[i] != '"') i += if (text[i] == '\\') 2 else 1
+                    atoms += text.substring(start, minOf(++i, text.length))
+                }
+                else -> {
+                    val start = i
+                    while (i < text.length && !text[i].isWhitespace() && text[i] != '(') i++
+                    atoms += text.substring(start, i)
+                }
+            }
+        }
+        if (atoms.isEmpty()) throw CompileError(decl.pos, "an external needs some OCaml")
+        return atoms
     }
 
     private fun builtin(method: Builtin, receiver: Expr, args: List<Expr>): Gen = when (method) {

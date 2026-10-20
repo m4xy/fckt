@@ -35,6 +35,8 @@ tour of the core language, translated section by section.
 | `type Vowel { Alphabet.A, Alphabet.E }` | `type vowel = [ `Alphabet_A \| `Alphabet_E ]` | A type can take in other types' cases, one at a time (`Alphabet.A`) or all of them (`*Vowel`). A `Vowel` can then be used wherever an `Alphabet` is expected, and `is Vowel` narrows an `Alphabet` to a `Vowel`. When branches give different types, the result is the smallest declared type with all their cases. Types that share cases become polymorphic variants; the rest stay ordinary ones. See `examples/shared-cases.fk`. |
 | `module Ratios { ... }` | `module Ratios = struct ... end` | Groups declarations. Inside, members use each other directly; outside, they're named through the module: `Ratios.make(1, 2)`, `Shapes.Circle(1.0)`, `Shapes.Shape`. Modules can nest. See `examples/modules.fk`. |
 | `ratios.fk` | `module Ratios = struct ... end` | Each file is a module named after it (`shared-cases.fk` is `SharedCases`), with no imports: a name a file uses but doesn't declare brings in the file of that name, from the program's directory or a directory given with `fckt -I dir`. The program is compiled to one `.ml`. |
+| `List<A>.second(): Option<A> = ...` | `let list_second (this : 'a list) : 'a option = ...` | An extension function, called as `xs.second()`. It's chosen by the receiver's type, which must be known, so `List<Int>.sum()` and `List<Float>.sum()` can both exist; the most specific one that fits wins. Inside, the receiver is `this`. Bare names in the receiver, like `A`, are its type parameters. Without parentheses, `String.size: Int = ...`, it's a property: `s.size`. See `examples/extensions.fk`. |
+| `external List<A>.map<B>(f: (A) -> B): List<B> = "List.map f this"` | `List.map f xs` at each call | A function whose body is OCaml: a function applied to the parameters, by name, with `~name` for a labelled argument. It's written out at each use, so it has no OCaml definition of its own, and the compiler trusts its declared types, as OCaml trusts its own `external`. |
 | `private gcd(...)` | left out of the module's `sig` | Visible only inside its module. A public member can't expose a private type. |
 | `type Ratio private(n: Int, d: Int)` | `type ratio = private { ... }` in the `sig` | Like Kotlin's `private constructor`: readable and matchable anywhere, but only its module can build or `copy` one. |
 | `spec Counter { type T; inc(c: T): T }` | `module type Counter = sig type t val inc : t -> t ... end` | What a module must define. Each of its types gets a show function, so values of it work in string templates. Members are one per line. |
@@ -72,9 +74,9 @@ tour of the core language, translated section by section.
 `Result<E, A>` and `Lazy<T>` are built in. `Result` is OCaml's `('a, 'e) result`, built with `Ok(x)` and
 `Error(e)`; its error comes first, so `Monad<Result<String>>` fixes it. `assert(condition)` and `assertEquals(expected, actual)` stop the program
 when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` is a list literal, `Some(x)` and `None` build options, and `Unit`, as in Kotlin, is also the one value of its type. Arithmetic on an
-`Int` and a `Float` gives a `Float`, as in Kotlin. Built-in methods are defined in
-`types/Types.kt`: `map`, `filter`, `fold`, `sum`, `size`, `joinToString`, `getOrElse`, `toInt`,
-and others.
+`Int` and a `Float` gives a `Float`, as in Kotlin. Methods such as `map`, `filter`, `fold`, `sum`,
+`size`, `getOrElse` and `toInt`, and functions such as `max` and `sqrt`, are externals in
+`std/prelude.fk`; only `toString`, `joinToString`, `assert` and `assertEquals` are built in.
 
 ## Standard library
 
@@ -84,7 +86,7 @@ file of the same name takes its place.
 
 | | |
 | --- | --- |
-| `prelude.fk` | Needs no module's name: `spec Monad`, `spec Applicative`, and `type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }`. |
+| `prelude.fk` | Needs no module's name: `spec Monad`, `spec Applicative`, `type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }`, and the methods and functions on built-in types, as externals. |
 | `Options` | Option as a monad: `Options { x by half(n); x + 1 }`. |
 | `Results` | Result as a monad, for any error type, with `mapError` and `toOption`. |
 | `Validated` | Validation without bind, so `Validated { ... }` keeps every error; `fromResult` and `toResult`. |

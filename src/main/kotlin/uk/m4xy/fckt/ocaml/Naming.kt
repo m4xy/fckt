@@ -8,8 +8,10 @@ private val KEYWORDS = setOf(
     "true", "try", "type", "val", "virtual", "when", "while", "with",
 )
 
-/** `orderId` → `order_id`, `UserId` → `user_id`, `HTTPCode` → `http_code`; OCaml keywords get a `_` suffix. */
+/** `orderId` → `order_id`, `List$second` → `list_second`, `UserId` → `user_id`, `HTTPCode` → `http_code`; OCaml keywords get a `_` suffix. */
 fun snake(name: String): String {
+    // An extension, `List$second`: list_second.
+    if ('$' in name) return name.split('$').joinToString("_") { snake(it).removeSuffix("_") }.let { if (it in KEYWORDS) "${it}_" else it }
     val out = StringBuilder()
     for ((i, c) in name.withIndex()) {
         if (c.isUpperCase() && i > 0) {

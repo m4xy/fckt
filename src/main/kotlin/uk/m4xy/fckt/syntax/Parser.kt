@@ -1,5 +1,7 @@
 package uk.m4xy.fckt.syntax
 
+import uk.m4xy.fckt.types.BUILTIN_TYPES
+
 /** Recursive-descent parser for `.fk` source. */
 class Parser(private val tokens: List<Token>) {
     private var p = 0
@@ -47,7 +49,7 @@ class Parser(private val tokens: List<Token>) {
                 skipNewlines()
             }
         }
-        return SourceFile(decls)
+        return SourceFile(receiverTypeParams(decls, typeNames(decls)))
     }
 
     private fun decl(): Decl {
@@ -133,19 +135,84 @@ class Parser(private val tokens: List<Token>) {
                 expect(T.RPAREN, "')'")
                 Decl.Record(pos, name, typeParams, fields, privateConstructor = privateConstructor)
             }
-            at(T.IDENT) -> {
-                val name = next().text
-                if (name[0].isUpperCase()) throw error("functions and values start with a lower-case letter", pos)
-                val typeParams = typeParams()
-                val params = if (at(T.LPAREN)) params() else null
-                val returnType = if (accept(T.COLON) != null) type() else null
-                expect(T.ASSIGN, "'='")
-                skipNewlines()
-                Decl.Function(pos, name, typeParams, params, returnType, expr())
+            at(T.IDENT) && peek.text == "external" && peekAt(1).kind in setOf(T.IDENT, T.LPAREN) -> {
+                next()
+                val d = function(pos)
+                if (d.body !is Expr.StringLit || d.body.parts.any { it !is StringPart.Text }) {
+                    throw error("an external's body is OCaml in a string: \"List.map f this\"", d.body.pos)
+                }
+                if (d.returnType == null || d.params.orEmpty().any { it.type == null }) {
+                    throw error("an external needs the types of its parameters and result", d.pos)
+                }
+                d.copy(external = d.body.parts.joinToString("") { (it as StringPart.Text).text })
             }
+            at(T.IDENT) || at(T.LPAREN) -> function(pos)
             else -> throw error("expected a declaration but found ${describe(peek)}")
         }
     }
+
+    /**
+     * `name<T>(params): R = body`, or an extension: `Receiver.name(params): R = body`, whose
+     * receiver is the parameter `this`. A receiver starts with an upper-case letter or `(`.
+     */
+    private fun function(pos: Pos): Decl.Function {
+        val receiver = if (at(T.LPAREN) || (at(T.IDENT) && peek.text[0].isUpperCase())) {
+            type().also { expect(T.DOT, "'.' and the name of the extension") }
+        } else {
+            null
+        }
+        val name = expect(T.IDENT, "a function name").text
+        if (name[0].isUpperCase()) throw error("functions and values start with a lower-case letter", pos)
+        val typeParams = typeParams()
+        val params = if (at(T.LPAREN)) params() else null
+        val returnType = if (accept(T.COLON) != null) type() else null
+        expect(T.ASSIGN, "'='")
+        skipNewlines()
+        val body = expr()
+        if (receiver == null) return Decl.Function(pos, name, typeParams, params, returnType, body)
+        // Named for its receiver once its type parameters are known, in receiverTypeParams.
+        return Decl.Function(
+            pos, "$$name", typeParams, listOf(Param(receiver.pos, "this", receiver)) + params.orEmpty(), returnType, body,
+            extension = true, property = params == null,
+        )
+    }
+
+    /** Bare names in an extension's receiver that aren't types, `A` in `List<A>`: its type parameters. */
+    private fun receiverTypeParams(ds: List<Decl>, types: Set<String>): List<Decl> = ds.map { d ->
+        when {
+            d is Decl.Module -> d.copy(decls = receiverTypeParams(d.decls, types))
+            d is Decl.Function && d.extension -> {
+                val names = linkedSetOf<String>()
+                fun walk(t: TypeRef) {
+                    when (t) {
+                        is TypeRef.Named -> if (t.args.isEmpty() && '.' !in t.name) names += t.name else t.args.forEach(::walk)
+                        is TypeRef.Tuple -> t.elements.forEach(::walk)
+                        is TypeRef.Function -> (t.params + t.result).forEach(::walk)
+                    }
+                }
+                val receiver = d.params!!.first().type!!
+                walk(receiver)
+                val params = (names - types - BUILTIN_TYPES.keys - d.typeParams.toSet()).toList()
+                // Named for the receiver's type, without its type parameters: List<Int>.sum is ListInt$sum.
+                fun mangle(t: TypeRef): String = when (t) {
+                    is TypeRef.Named -> if (t.name in params) "" else t.name.substringAfterLast('.') + t.args.joinToString("") { mangle(it) }
+                    is TypeRef.Tuple -> "Tuple" + t.elements.joinToString("") { mangle(it) }
+                    is TypeRef.Function -> "Function"
+                }
+                d.copy(name = mangle(receiver) + "$" + d.methodName, typeParams = params + d.typeParams)
+            }
+            else -> d
+        }
+    }
+
+    private fun typeNames(ds: List<Decl>): Set<String> = ds.flatMap { d ->
+        when (d) {
+            is Decl.Module -> typeNames(d.decls)
+            is Decl.Record, is Decl.Sealed, is Decl.Alias -> listOf(d.name)
+            is Decl.Spec -> d.types.map { it.name }
+            is Decl.Function -> emptyList()
+        }
+    }.toSet()
 
     /** `Spec`, or `Spec<A, B>`, which says what the spec's types are, in order. */
     private fun specName(): TypeRef.Named = type() as? TypeRef.Named ?: throw error("expected a spec's name")

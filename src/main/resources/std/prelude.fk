@@ -19,3 +19,86 @@ spec Applicative {
 
 // A value, or every reason there isn't one.
 type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }
+
+// ---- Lists ----
+
+external List<A>.size: Int = "List.length this"
+external List<A>.isEmpty(): Boolean = "List.is_empty this"
+external List<A>.map<B>(f: (A) -> B): List<B> = "List.map f this"
+external List<A>.filter(f: (A) -> Boolean): List<A> = "List.filter f this"
+external List<A>.flatMap<B>(f: (A) -> List<B>): List<B> = "List.concat_map f this"
+external List<A>.fold<B>(initial: B, f: (B, A) -> B): B = "List.fold_left f initial this"
+external List<A>.forEach(f: (A) -> Unit): Unit = "List.iter f this"
+external List<A>.any(f: (A) -> Boolean): Boolean = "List.exists f this"
+external List<A>.all(f: (A) -> Boolean): Boolean = "List.for_all f this"
+external List<A>.find(f: (A) -> Boolean): Option<A> = "List.find_opt f this"
+external List<A>.contains(x: A): Boolean = "List.mem x this"
+external List<A>.reversed(): List<A> = "List.rev this"
+external List<A>.plus(other: List<A>): List<A> = "List.append this other"
+external List<A>.firstOrNone(): Option<A> = "List.nth_opt this 0"
+external List<Int>.sum(): Int = "List.fold_left ( + ) 0 this"
+external List<Float>.sum(): Float = "List.fold_left ( +. ) 0. this"
+
+// [(key, value), ...].lookup(key): the value of the first pair with that key.
+external List<(K, V)>.lookup(key: K): Option<V> = "List.assoc_opt key this"
+
+// ---- Options ----
+
+external Option<A>.map<B>(f: (A) -> B): Option<B> = "Option.map f this"
+external Option<A>.flatMap<B>(f: (A) -> Option<B>): Option<B> = "Option.bind this f"
+external Option<A>.getOrElse(default: A): A = "Option.value this ~default"
+external Option<A>.isSome(): Boolean = "Option.is_some this"
+external Option<A>.isNone(): Boolean = "Option.is_none this"
+
+// ---- Numbers ----
+
+external Int.toFloat(): Float = "float_of_int this"
+external Int.toDouble(): Float = "float_of_int this"
+external Int.coerceAtLeast(minimumValue: Int): Int = "max this minimumValue"
+external Int.coerceAtMost(maximumValue: Int): Int = "min this maximumValue"
+external Float.toInt(): Int = "int_of_float this"
+
+external max<A>(a: A, b: A): A = "max a b"
+external min<A>(a: A, b: A): A = "min a b"
+external abs(x: Int): Int = "abs x"
+external sin(x: Float): Float = "sin x"
+external cos(x: Float): Float = "cos x"
+external tan(x: Float): Float = "tan x"
+external asin(x: Float): Float = "asin x"
+external acos(x: Float): Float = "acos x"
+external atan(x: Float): Float = "atan x"
+external atan2(y: Float, x: Float): Float = "atan2 y x"
+external sqrt(x: Float): Float = "sqrt x"
+external exp(x: Float): Float = "exp x"
+external log(x: Float): Float = "log x"
+external floor(x: Float): Float = "floor x"
+external ceil(x: Float): Float = "ceil x"
+
+// ---- Strings and characters ----
+
+external String.length: Int = "String.length this"
+external String.isEmpty(): Boolean = "String.equal \"\" this"
+external String.uppercase(): String = "String.uppercase_ascii this"
+external String.lowercase(): String = "String.lowercase_ascii this"
+external String.trim(): String = "String.trim this"
+external String.startsWith(prefix: String): Boolean = "String.starts_with ~prefix this"
+external String.endsWith(suffix: String): Boolean = "String.ends_with ~suffix this"
+external String.contains(c: Char): Boolean = "String.contains this c"
+external String.split(separator: Char): List<String> = "String.split_on_char separator this"
+external String.toInt(): Int = "int_of_string this"
+external String.toIntOrNone(): Option<Int> = "int_of_string_opt this"
+external String.toFloat(): Float = "float_of_string this"
+external String.toDouble(): Float = "float_of_string this"
+external Char.code: Int = "Char.code this"
+
+// ---- Everything else ----
+
+external print(s: String): Unit = "print_string s"
+external println(s: String): Unit = "print_endline s"
+external identity<A>(x: A): A = "Fun.id x"
+external error<A>(message: String): A = "failwith message"
+
+// lazy(~e): computes e the first time `.value` is read, then remembers it.
+external lazy<A>(f: () -> A): Lazy<A> = "Lazy.from_fun f"
+external Lazy<A>.value: A = "Lazy.force this"
+external Lazy<A>.isInitialized(): Boolean = "Lazy.is_val this"

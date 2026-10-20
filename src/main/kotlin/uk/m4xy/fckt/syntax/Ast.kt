@@ -84,7 +84,15 @@ sealed interface Decl {
         override val isPrivate: Boolean = false,
     ) : Decl
 
-    /** `name<T>(params): R = body`; [params] is null for a value (`name = body`). */
+    /**
+     * `name<T>(params): R = body`; [params] is null for a value (`name = body`).
+     *
+     * An [extension] (`List<A>.second(): Option<A> = ...`) is called as a method, chosen by its
+     * receiver's type; the receiver is its first parameter, `this`, and its name is mangled with
+     * the receiver's (`List$second`) so several types can each have one. Without parentheses
+     * (`String.length: Int = ...`) it's a [property]. An [external] one's body is OCaml:
+     * a function applied to its parameters, by name (`"List.map f this"`).
+     */
     data class Function(
         override val pos: Pos,
         override val name: String,
@@ -93,7 +101,13 @@ sealed interface Decl {
         val returnType: TypeRef?,
         val body: Expr,
         override val isPrivate: Boolean = false,
-    ) : Decl
+        val extension: Boolean = false,
+        val property: Boolean = false,
+        val external: String? = null,
+    ) : Decl {
+        /** The name it's called by: `second` for `List$second`. */
+        val methodName: String get() = simpleName.substringAfter('$')
+    }
 
     /**
      * `module Name { declarations }`: a namespace whose `private` members stay inside it. With a
@@ -349,6 +363,9 @@ sealed interface CallRef {
 sealed interface MemberRef {
     /** A field of the record type [record], which lowering names when the label is ambiguous. */
     data class Field(val ocamlName: String, val record: String) : MemberRef
+
+    /** `s.length`, where `String.length: Int = ...` is an extension property. */
+    data class Extension(val decl: Decl.Function) : MemberRef
 
     /** A field of a variant the subject was smart-cast to; [recordVar] holds its inline record. */
     data class CastField(val recordVar: String, val ocamlName: String) : MemberRef

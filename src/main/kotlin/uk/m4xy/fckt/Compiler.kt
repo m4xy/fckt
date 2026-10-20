@@ -51,7 +51,7 @@ private val PRELUDE_TEXT by lazy { resource("std/prelude.fk") }
  * The prelude's declarations, each with the names it uses, which may bring in more. Parsed for
  * each program, since checking one fills in its declarations.
  */
-private fun prelude(): Map<String, Pair<Decl, Set<String>>> {
+private fun prelude(): List<Pair<Decl, Set<String>>> {
     val path = "std/prelude.fk"
     val text = PRELUDE_TEXT
     val decls = Parser.parse(text, path).decls
@@ -59,9 +59,8 @@ private fun prelude(): Map<String, Pair<Decl, Set<String>>> {
     return decls.mapIndexed { i, d ->
         // A declaration runs to the next one; the names in between are what it uses.
         val until = decls.getOrNull(i + 1)?.pos?.line?.minus(1) ?: lines.size
-        val own = lines.subList(d.pos.line - 1, until).joinToString("\n")
-        d.name to (d to mentioned(own, null))
-    }.toMap()
+        d to mentioned(lines.subList(d.pos.line - 1, until).joinToString("\n"), null)
+    }
 }
 
 /**
@@ -75,12 +74,24 @@ private fun link(text: String, available: Map<String, Source>): String {
     val prelude = mutableListOf<Decl>()
     val modules = mutableListOf<Decl>()
     val seen = mutableSetOf<String>()
+    val seenMethods = mutableSetOf<String>()
     // Names to look up, each with the names declared where it's used.
     val pending = ArrayDeque<Pair<Set<String>, Set<String>>>()
+    fun include(decl: Decl, uses: Set<String>) {
+        prelude += decl
+        pending += uses to declaredNames(listOf(decl))
+    }
     pending += mentioned(text, null) to declaredNames(main.decls)
     while (pending.isNotEmpty()) {
         val (names, declared) = pending.removeFirst()
         for (name in names) {
+            // A method name brings in each of the prelude's extensions by that name, as any of them
+            // may be the one called, unless the program has its own for that type.
+            if (seenMethods.add(name)) {
+                for ((decl, uses) in preludeDecls) {
+                    if (decl is Decl.Function && decl.extension && decl.methodName == name && decl.name !in own) include(decl, uses)
+                }
+            }
             if (name in declared || name in own || !seen.add(name)) continue
             val source = available[name] ?: STD[name]
             if (source != null) {
@@ -90,9 +101,7 @@ private fun link(text: String, available: Map<String, Source>): String {
                 pending += mentioned(code, source.path) to declaredNames(parsed.decls)
                 continue
             }
-            val (decl, uses) = preludeDecls[name] ?: continue
-            prelude += decl
-            pending += uses to declaredNames(listOf(decl))
+            preludeDecls.firstOrNull { (d, _) -> d.name == name && !(d is Decl.Function && d.extension) }?.let { (d, uses) -> include(d, uses) }
         }
     }
     return compile(SourceFile(prelude + modules + main.decls))
@@ -108,12 +117,12 @@ private fun compile(file: SourceFile): String {
 fun moduleName(file: File): String =
     file.nameWithoutExtension.split('-', '_').filter { it.isNotEmpty() }.joinToString("") { it.replaceFirstChar(Char::uppercaseChar) }
 
-/** Every capitalised name in [source], including inside string templates: the modules it may use. */
+/** Every name in [source], including inside string templates: the modules, types and methods it may use. */
 private fun mentioned(source: String, path: String?): Set<String> {
     val names = linkedSetOf<String>()
     fun scan(tokens: List<Token>) {
         for (token in tokens) {
-            if (token.kind == T.IDENT && token.text[0].isUpperCase()) names += token.text
+            if (token.kind == T.IDENT) names += token.text
             for (part in token.parts) if (part is RawPart.Code) scan(Lexer(part.source, part.pos).tokenize())
         }
     }

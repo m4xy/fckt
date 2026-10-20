@@ -481,6 +481,29 @@ class CompilerTest {
     }
 
     @Test
+    fun `extensions are chosen by their receiver's type`() {
+        val source = File("examples/extensions.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "let list_int_total (this : int list) : int =")
+        assertContains(ml, "let tuple_swap (this : 'a * 'b) : 'b * 'a =")
+        // Externals are their OCaml, at each use; as a value, a function of their parameters.
+        assertContains(ml, "(List.length [1; 2; 3])")
+        assertContains(ml, "List.map (fun x0 -> Float.pow x0 3.) [1.0; 2.0]")
+        assertContains(ml, "List.map (fun x0 -> ( / ) x0 2) [2; 4]")
+        assertTrue("let halve" !in ml && "let cube" !in ml)
+        assertContains(error("List<Int>.total(): Int = 0\nList<Int>.total(): Int = 1"), "'total' is declared twice for List<Int>")
+        assertContains(error("List<Int>.f(): Int = 0\nList<Float>.f(): Int = 1\ng(xs) = xs.f()"), "the receiver's type isn't known")
+        assertContains(error("List<Int>.f(): Int = 0\nList<Float>.f(): Int = 1\ng(): Int = [].f()"), "can't tell which 'f' this is: List<A> fits List<Int>.f and List<Float>.f")
+        assertContains(error("String.twice: String = this + this\nf() = \"a\".twice()"), "'twice' is a property; write it without ()")
+        assertContains(error("String.twice(): String = this + this\nf() = \"a\".twice"), "'twice' is a method; call it with ()")
+        assertContains(error("external f(x): Int = \"g x\""), "an external needs the types of its parameters and result")
+        assertContains(error("external f(x: Int): Int = x"), "an external's body is OCaml in a string")
+        // A program's own extension takes the place of the prelude's.
+        assertEquals("", run("List<A>.size: Int = 7\nmain() = assertEquals(7, [1].size)"))
+    }
+
+    @Test
     fun `files are modules`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         val lib = File(dir, "lib").apply { mkdir() }

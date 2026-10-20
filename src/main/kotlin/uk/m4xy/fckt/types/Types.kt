@@ -175,105 +175,20 @@ object Builtins {
     /** Looks up `receiver.name`, where [receiver] is already pruned. */
     fun member(receiver: Type, name: String, u: Unifier): BuiltinMember? {
         if (name == "toString") return BuiltinMember(emptyList(), Type.STRING, Builtin.Show)
-        if (receiver !is Type.Con) return null
-        val t = Type
-        return when (receiver.name) {
-            "List" -> {
-                val e = receiver.args[0]
-                when (name) {
-                    "map" -> u.fresh().let { r -> BuiltinMember(listOf(Type.Fn(listOf(e), r)), t.list(r), template("List.map", 0, "recv")) }
-                    "filter" -> BuiltinMember(listOf(Type.Fn(listOf(e), t.BOOLEAN)), receiver, template("List.filter", 0, "recv"))
-                    "flatMap" -> u.fresh().let { r -> BuiltinMember(listOf(Type.Fn(listOf(e), t.list(r))), t.list(r), template("List.concat_map", 0, "recv")) }
-                    "fold" -> u.fresh().let { a -> BuiltinMember(listOf(a, Type.Fn(listOf(a, e), a)), a, template("List.fold_left", 1, 0, "recv")) }
-                    "forEach" -> BuiltinMember(listOf(Type.Fn(listOf(e), t.UNIT)), t.UNIT, template("List.iter", 0, "recv"))
-                    "any" -> BuiltinMember(listOf(Type.Fn(listOf(e), t.BOOLEAN)), t.BOOLEAN, template("List.exists", 0, "recv"))
-                    "all" -> BuiltinMember(listOf(Type.Fn(listOf(e), t.BOOLEAN)), t.BOOLEAN, template("List.for_all", 0, "recv"))
-                    "find" -> BuiltinMember(listOf(Type.Fn(listOf(e), t.BOOLEAN)), t.option(e), template("List.find_opt", 0, "recv"))
-                    "contains" -> BuiltinMember(listOf(e), t.BOOLEAN, template("List.mem", 0, "recv"))
-                    "reversed" -> BuiltinMember(emptyList(), receiver, template("List.rev", "recv"))
-                    "isEmpty" -> BuiltinMember(emptyList(), t.BOOLEAN, template("List.is_empty", "recv"))
-                    "plus" -> BuiltinMember(listOf(receiver), receiver, template("List.append", "recv", 0))
-                    "firstOrNone" -> BuiltinMember(emptyList(), t.option(e), template("List.nth_opt", "recv", "0"))
-                    "size" -> BuiltinMember(emptyList(), t.INT, template("List.length", "recv"), isProperty = true)
-                    "joinToString" -> BuiltinMember(listOf(t.STRING), t.STRING, Builtin.JoinToString)
-                    // [(key, value), ...].lookup(key): the value of the first pair with that key.
-                    "lookup" -> (e.prune() as? Type.Con)?.takeIf { it.name == Type.TUPLE && it.args.size == 2 }?.let { pair ->
-                        BuiltinMember(listOf(pair.args[0]), t.option(pair.args[1]), template("List.assoc_opt", 0, "recv"))
-                    }
-                    "sum" -> when (e.prune()) {
-                        Type.INT -> BuiltinMember(emptyList(), t.INT, template("List.fold_left", "( + )", "0", "recv"))
-                        Type.FLOAT -> BuiltinMember(emptyList(), t.FLOAT, template("List.fold_left", "( +. )", "0.", "recv"))
-                        else -> null
-                    }
-                    else -> null
-                }
-            }
-            "Option" -> {
-                val e = receiver.args[0]
-                when (name) {
-                    "map" -> u.fresh().let { r -> BuiltinMember(listOf(Type.Fn(listOf(e), r)), t.option(r), template("Option.map", 0, "recv")) }
-                    "flatMap" -> u.fresh().let { r -> BuiltinMember(listOf(Type.Fn(listOf(e), t.option(r))), t.option(r), template("Option.bind", "recv", 0)) }
-                    "getOrElse" -> BuiltinMember(listOf(e), e, template("Option.value", "recv", "~default:", 0))
-                    "isSome" -> BuiltinMember(emptyList(), t.BOOLEAN, template("Option.is_some", "recv"))
-                    "isNone" -> BuiltinMember(emptyList(), t.BOOLEAN, template("Option.is_none", "recv"))
-                    else -> null
-                }
-            }
-            "Int" -> when (name) {
-                "toFloat", "toDouble" -> BuiltinMember(emptyList(), t.FLOAT, template("float_of_int", "recv"))
-                "coerceAtLeast" -> BuiltinMember(listOf(t.INT), t.INT, template("max", "recv", 0))
-                "coerceAtMost" -> BuiltinMember(listOf(t.INT), t.INT, template("min", "recv", 0))
-                else -> null
-            }
-            "Float" -> when (name) {
-                "toInt" -> BuiltinMember(emptyList(), t.INT, template("int_of_float", "recv"))
-                else -> null
-            }
-            "String" -> when (name) {
-                "length" -> BuiltinMember(emptyList(), t.INT, template("String.length", "recv"), isProperty = true)
-                "uppercase" -> BuiltinMember(emptyList(), t.STRING, template("String.uppercase_ascii", "recv"))
-                "lowercase" -> BuiltinMember(emptyList(), t.STRING, template("String.lowercase_ascii", "recv"))
-                "trim" -> BuiltinMember(emptyList(), t.STRING, template("String.trim", "recv"))
-                "isEmpty" -> BuiltinMember(emptyList(), t.BOOLEAN, template("String.equal", "\"\"", "recv"))
-                "startsWith" -> BuiltinMember(listOf(t.STRING), t.BOOLEAN, template("String.starts_with", "~prefix:", 0, "recv"))
-                "toIntOrNone" -> BuiltinMember(emptyList(), t.option(t.INT), template("int_of_string_opt", "recv"))
-                "toInt" -> BuiltinMember(emptyList(), t.INT, template("int_of_string", "recv"))
-                "toFloat", "toDouble" -> BuiltinMember(emptyList(), t.FLOAT, template("float_of_string", "recv"))
-                else -> null
-            }
-            "Char" -> when (name) {
-                "code" -> BuiltinMember(emptyList(), t.INT, template("Char.code", "recv"), isProperty = true)
-                else -> null
-            }
-            "Lazy" -> when (name) {
-                "value" -> BuiltinMember(emptyList(), receiver.args[0], template("Lazy.force", "recv"), isProperty = true)
-                "isInitialized" -> BuiltinMember(emptyList(), t.BOOLEAN, template("Lazy.is_val", "recv"))
-                else -> null
-            }
-            else -> null
+        // Everything else is in the prelude, as externals: std/prelude.fk.
+        if (receiver is Type.Con && receiver.name == "List" && name == "joinToString") {
+            return BuiltinMember(listOf(Type.STRING), Type.STRING, Builtin.JoinToString)
         }
+        return null
     }
 
-    private val MATH = setOf("sin", "cos", "tan", "asin", "acos", "atan", "sqrt", "exp", "log", "floor", "ceil")
-
-    /** Top-level built-in functions: their type and OCaml name. */
+    /** Top-level built-in functions: their type and OCaml name. The rest are in the prelude. */
     fun function(name: String, u: Unifier): Pair<Type, String>? = when (name) {
         // Kotlin's Unit is both the type and its one value.
         "Unit" -> Type.UNIT to "()"
-        "print" -> Type.Fn(listOf(Type.STRING), Type.UNIT) to "print_string"
-        "println" -> Type.Fn(listOf(Type.STRING), Type.UNIT) to "print_endline"
-        "max" -> u.fresh().let { a -> Type.Fn(listOf(a, a), a) to "max" }
-        "min" -> u.fresh().let { a -> Type.Fn(listOf(a, a), a) to "min" }
-        "abs" -> Type.Fn(listOf(Type.INT), Type.INT) to "abs"
-        "identity" -> u.fresh().let { a -> Type.Fn(listOf(a), a) to "Fun.id" }
-        "error" -> u.fresh().let { a -> Type.Fn(listOf(Type.STRING), a) to "failwith" }
-        "atan2" -> Type.Fn(listOf(Type.FLOAT, Type.FLOAT), Type.FLOAT) to "atan2"
         // Lowering writes these out itself, to report the failing line.
         "assert" -> Type.Fn(listOf(Type.BOOLEAN), Type.UNIT) to ASSERT
         "assertEquals" -> u.fresh().let { a -> Type.Fn(listOf(a, a), Type.UNIT) to ASSERT_EQUALS }
-        // lazy(~e): computes e the first time `.value` is read, then remembers it.
-        "lazy" -> u.fresh().let { a -> Type.Fn(listOf(Type.Fn(emptyList(), a)), Type.lazy(a)) to "Lazy.from_fun" }
-        in MATH -> Type.Fn(listOf(Type.FLOAT), Type.FLOAT) to name
         else -> null
     }
 }

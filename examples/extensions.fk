@@ -1,0 +1,52 @@
+// Extension functions, chosen by their receiver's type, and externals, whose body is OCaml.
+
+type Ratio(n: Int, d: Int)
+
+List<A>.second(): Option<A> = when (this) {
+  [_, x, *_] -> Some(x)
+  else -> None
+}
+
+Option<A>.second(): Option<A> = None
+
+Ratio.inverse(): Ratio = Ratio(this.d, this.n)
+
+Ratio.size: Int = this.n + this.d
+
+(A, B).swap(): (B, A) = {
+  (a, b) = this
+  (b, a)
+}
+
+List<Int>.total(): Int = this.fold(0, (a, b) -> a + b)
+List<Float>.total(): Float = this.fold(0.0, (a, b) -> a + b)
+
+external String.has(c: Char): Boolean = "String.contains this c"
+external String.startsAt(prefix: String): Boolean = "String.starts_with ~prefix this"
+external List<A>.pick<B>(f: (A) -> B): List<B> = "List.map f this"
+external List<A>.count: Int = "List.length this"
+external cube(x: Float): Float = "Float.pow x 3."
+external halve(x: Int): Int = "( / ) x 2"
+
+// The prelude's own: List.map, String.split and the rest are externals too.
+words(s: String): List<String> = s.split(' ').filter(w -> !w.isEmpty())
+
+main() = {
+  assertEquals(["a", "b"], words(" a  b"))
+  assert("readme.md".endsWith(".md"))
+  assertEquals(Some(2), [1, 2, 3].second())
+  assertEquals(None, Some(1).second())
+  assertEquals(Ratio(3, 2), Ratio(2, 3).inverse())
+  assertEquals(5, Ratio(2, 3).size)
+  assertEquals(("a", 1), (1, "a").swap())
+  assertEquals(6, [1, 2, 3].total())
+  assertEquals(1.5, [1.0, 0.5].total())
+  assert("hello".has('e'))
+  assert("hello".startsAt("he"))
+  assertEquals([2, 4], [1, 2].pick(x -> x * 2))
+  assertEquals(3, [1, 2, 3].count)
+  assertEquals(8.0, cube(2.0))
+  assertEquals([1.0, 8.0], [1.0, 2.0].map(cube))
+  assertEquals([1, 2], [2, 4].map(halve))
+  assertEquals(3, halve(7))
+}

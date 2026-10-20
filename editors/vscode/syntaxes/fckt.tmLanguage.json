@@ -409,6 +409,14 @@
         },
         {
           "name": "storage.modifier.fckt",
+          "match": "^\\s*(?:private\\s+)?external\\b"
+        },
+        {
+          "name": "variable.language.this.fckt",
+          "match": "\\bthis\\b"
+        },
+        {
+          "name": "storage.modifier.fckt",
           "match": "\\bprivate\\b"
         }
       ]

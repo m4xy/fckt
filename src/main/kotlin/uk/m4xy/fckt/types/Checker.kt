@@ -104,6 +104,9 @@ class Checker(file: SourceFile) {
     private val outsideSchemes = mutableMapOf<Decl.Function, Scheme>()
     private val variantsByName = mutableMapOf<String, MutableList<Pair<Decl.Sealed, VariantDef>>>()
     private val globals = linkedMapOf<String, Decl.Function>()
+
+    /** Extensions by the name they're called with: `map` for `List$map` and `Option$map`. */
+    private val extensions = mutableMapOf<String, MutableList<Decl.Function>>()
     private val caseDecls = mutableMapOf<String, List<CaseDecl>>()
     private val polymorphic = mutableSetOf<String>()
 
@@ -337,7 +340,7 @@ class Checker(file: SourceFile) {
         return Program(
             records = records.values.toList(),
             sealeds = sealeds.values.toList(),
-            groups = groups,
+            groups = groups.filter { g -> g.decls.none { it.external != null } },
             ambiguousLabels = labelCounts.filterValues { it > 1 }.keys,
             ambiguousConstructors = variantsByName.mapValues { (_, v) -> v.filter { it.first.name !in copyOrigins } }
                 .filterValues { v -> v.size > 1 && v.any { it.first.name !in polymorphic } }.keys,
@@ -655,8 +658,12 @@ class Checker(file: SourceFile) {
 
     private fun collectGlobals() {
         for (decl in decls.filterIsInstance<Decl.Function>()) {
-            if (decl.name in globals) throw CompileError(decl.pos, "'${decl.simpleName}' is declared twice")
+            if (decl.name in globals) {
+                if (decl.extension) throw CompileError(decl.pos, "'${decl.methodName}' is declared twice for ${text(decl.params!!.first().type!!)}")
+                throw CompileError(decl.pos, "'${decl.simpleName}' is declared twice")
+            }
             globals[decl.name] = decl
+            if (decl.extension) extensions.getOrPut(decl.methodName) { mutableListOf() } += decl
         }
     }
 
@@ -857,10 +864,13 @@ class Checker(file: SourceFile) {
         val saved = currentPath
         currentPath = decl.path
         try {
-            return refs.mapNotNull { ref ->
-                lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
-                    lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
-                }
+            return refs.flatMap { ref ->
+                // A method's name may be any extension of that name.
+                extensions[ref].orEmpty().filter { visible(it) } + listOfNotNull(
+                    lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
+                        lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
+                    },
+                )
             }.distinct()
         } finally {
             currentPath = saved
@@ -882,12 +892,21 @@ class Checker(file: SourceFile) {
             is Expr.ListLit -> e.items.forEach { go(it) }
             is Expr.Call -> {
                 val callee = e.callee
-                if (callee is Expr.Member && e.resolved is CallRef.Builtin) go(callee.target) else go(callee)
+                when {
+                    callee is Expr.Member && e.resolved is CallRef.Builtin -> go(callee.target)
+                    // Once checked, a method call is to the one extension it resolved to.
+                    callee is Expr.Member && e.resolved is CallRef.Extension -> {
+                        go(callee.target)
+                        into += (e.resolved as CallRef.Extension).decl.name
+                    }
+                    else -> go(callee)
+                }
                 e.args.forEach { go(it.value) }
             }
             is Expr.Member -> {
                 go(e.target)
-                val known = e.resolved is MemberRef.Builtin || e.resolved is MemberRef.Field
+                (e.resolved as? MemberRef.Extension)?.let { into += it.decl.name }
+                val known = e.resolved is MemberRef.Builtin || e.resolved is MemberRef.Field || e.resolved is MemberRef.Extension
                 if (e.name !in bound && !known) into += e.name // possibly an extension call
                 dotted(e, null)?.takeIf { it.substringBefore('.') !in bound }?.let { into += it } // possibly Module.member
             }
@@ -990,6 +1009,8 @@ class Checker(file: SourceFile) {
             typeParams = declaredParams.getValue(decl)
             val type = provisional.getValue(decl)
             val scope = Scope(null)
+            // An external's body is OCaml, trusted to have its declared type.
+            if (decl.external != null) continue
             if (type is Type.Fn) {
                 decl.params!!.zip(type.params).forEach { (p, t) -> scope.vars[p.name] = Local(t, snake(p.name)) }
                 check(decl.body, type.result, scope)
@@ -1443,6 +1464,17 @@ class Checker(file: SourceFile) {
             return receiver
         }
         if (e.args.any { it.name != null }) throw CompileError(e.pos, "named arguments aren't supported in method calls")
+        extension(member, receiver)?.let { decl ->
+            if (decl.property) throw CompileError(member.pos, "'${member.name}' is a property; write it without ()")
+            val fn = globalType(decl) as Type.Fn
+            if (fn.params.size - 1 != e.args.size) {
+                throw CompileError(e.pos, "'${member.name}' takes ${fn.params.size - 1} argument${if (fn.params.size == 2) "" else "s"}, not ${e.args.size}")
+            }
+            assign(member.target, receiver, fn.params[0])
+            checkArgs(e.args, e.args.indices.toList(), fn.params.drop(1), scope)
+            e.resolved = CallRef.Extension(decl)
+            return fn.result
+        }
         Builtins.member(receiver, member.name, u)?.let { builtin ->
             if (builtin.isProperty) throw CompileError(member.pos, "'${member.name}' is a property; write it without ()")
             if (builtin.params.size != e.args.size) {
@@ -1500,6 +1532,13 @@ class Checker(file: SourceFile) {
             e.resolved = ref
             return type
         }
+        extension(e, receiver)?.let { decl ->
+            if (!decl.property) throw CompileError(e.pos, "'${e.name}' is a method; call it with ()")
+            val fn = globalType(decl) as Type.Fn
+            assign(e.target, receiver, fn.params[0])
+            e.resolved = MemberRef.Extension(decl)
+            return fn.result
+        }
         Builtins.member(receiver, e.name, u)?.let {
             if (!it.isProperty) throw CompileError(e.pos, "'${e.name}' is a method; call it with ()")
             e.resolved = MemberRef.Builtin(it.translation)
@@ -1507,6 +1546,54 @@ class Checker(file: SourceFile) {
         }
         if (receiver is Type.Var) throw CompileError(e.pos, "can't tell what '${e.name}' is: the receiver's type isn't known here; annotate it")
         throw CompileError(e.pos, "$receiver has no field '${e.name}'")
+    }
+
+    /**
+     * The extension [member] calls on a [receiver]: of those with its name, the one whose receiver
+     * type fits, or the most specific, as `List<Int>.sum` is over `List<A>.sum`.
+     */
+    private fun extension(member: Expr.Member, receiver: Type): Decl.Function? {
+        val candidates = extensions[member.name].orEmpty().filter { visible(it) }
+        // As in Kotlin, the receiver's type must be known to choose; the caller says so if it isn't.
+        if (candidates.isEmpty() || receiver.prune() is Type.Var) return null
+        val fitting = candidates.mapNotNull { d -> fit(receiverType(d), receiver)?.let { d to it } }
+        if (fitting.isEmpty()) return null
+        val best = fitting.maxOf { it.second }
+        val chosen = fitting.filter { it.second == best }
+        chosen.singleOrNull()?.let { return it.first }
+        throw CompileError(
+            member.pos,
+            "can't tell which '${member.name}' this is: ${generic(receiver)} fits " +
+                chosen.joinToString(" and ") { (d, _) -> "${generic(receiverType(d))}.${member.name}" } + "; annotate its type",
+        )
+    }
+
+    /** [d]'s receiver type, with its type parameters as unknowns. */
+    private fun receiverType(d: Decl.Function): Type {
+        val saved = currentPath to typeParams
+        currentPath = d.path
+        typeParams = d.typeParams.associateWith { u.fresh() }
+        try {
+            return resolve(d.params!!.first().type!!)
+        } finally {
+            currentPath = saved.first
+            typeParams = saved.second
+        }
+    }
+
+    /** Whether a receiver of type [actual] can be a [wanted], and if so how specifically: the named types they share. */
+    private fun fit(wanted: Type, actual: Type): Int? {
+        val w = wanted.prune()
+        val a = actual.prune()
+        return when {
+            w is Type.Var -> 0
+            a is Type.Var -> 0
+            w is Type.Con && a is Type.Con -> if (w.name != a.name || w.args.size != a.args.size) null
+            else w.args.zip(a.args).fold(1 as Int?) { acc, (x, y) -> acc?.let { n -> fit(x, y)?.let { n + it } } }
+            w is Type.Fn && a is Type.Fn -> if (w.params.size != a.params.size) null
+            else (w.params + w.result).zip(a.params + a.result).fold(0 as Int?) { acc, (x, y) -> acc?.let { n -> fit(x, y)?.let { n + it } } }
+            else -> null
+        }
     }
 
     private fun isNumeric(t: Type) = t == Type.INT || t == Type.FLOAT
