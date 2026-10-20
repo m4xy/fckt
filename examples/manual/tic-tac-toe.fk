@@ -25,15 +25,25 @@ module TicTacToe {
     Error(reason: String)
   }
 
-  play(game: Game, player: Player, position: Position) : TurnResult = {
+  play(
+    game: Game,
+    player: Player,
+    position: Position
+  ) : TurnResult = {
     TurnResult.Error("Code unimplemented") // TODO implement code
   }
 }
 
 module Boards {
-  opaque type Board<X>(size: Int, values: ImmutableLists.ImmutableList<X>)
+  opaque type Board<X>(
+    size: Int,
+    values: ImmutableLists.ImmutableList<X>
+  )
 
-  make<X>(size: Int, default: X) = Board(size, ImmutableLists.of(default, size * size))
+  make<X>(size: Int, default: X) = Board(
+    size,
+    ImmutableLists.of(default, size * size)
+  )
 
   get<X>(board: Board<X>, x: Int, y: Int) = Options {
     _ by checkBounds(x, y, board.size)
@@ -41,7 +51,12 @@ module Boards {
     res
   }
 
-  set<X>(board: Board<X>, x: Int, y: Int, value: X) = Options {
+  set<X>(
+    board: Board<X>,
+    x: Int,
+    y: Int,
+    value: X
+  ) = Options {
     _ by checkBounds(x, y, board.size)
     res by ImmutableLists.set(board.values, x + y * board.size, value)
     res
@@ -65,7 +80,10 @@ module ImmutableLists {
     if (times <= 0) []
     else [elt, *of(elt, times - 1)]
 
-  set<T>(lst: ImmutableList<T>, i: Int, e: T) : Option<ImmutableList<T>> = when (lst) {
+  set<T>(
+    lst: ImmutableList<T>,
+    i: Int, e: T
+  ) : Option<ImmutableList<T>> = when (lst) {
     [] -> None
     [hd, *tl] ->
       if (i == 0) Some([e, *tl])
@@ -79,7 +97,9 @@ module ImmutableLists {
     _ by positive(i)
     res by when (lst) {
       [] -> None
-      [x, *rest] -> if (i == 0) Some(x) else get(rest, i - 1)
+      [x, *rest] ->
+        if (i == 0) Some(x)
+        else get(rest, i - 1)
     }
     res
   }
