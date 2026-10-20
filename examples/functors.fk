@@ -7,7 +7,7 @@ spec Ordered {
   compare(a: T, b: T): Int
 }
 
-module SortedSet<M : Ordered> {
+module SortedSet(M: Ordered) {
   // Opaque, so only insert makes a Set, and its items stay in order. A visible Set would let
   // anyone build one out of order, or pass an IntSet to a set sorted another way.
   opaque type Set(items: List<M.T>)
@@ -41,8 +41,8 @@ module ByLength : Ordered {
   compare(a: String, b: String) = a.length - b.length
 }
 
-module IntSet = SortedSet<IntOrder>
-module WordSet = SortedSet<ByLength>
+module IntSet = SortedSet(IntOrder)
+module WordSet = SortedSet(ByLength)
 
 main() = {
   numbers = [5, 1, 3, 1].fold(IntSet.empty, IntSet.insert)

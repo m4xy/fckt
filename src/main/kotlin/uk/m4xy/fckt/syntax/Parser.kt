@@ -78,23 +78,31 @@ class Parser(private val tokens: List<Token>) {
         return when {
             accept(T.MODULE) != null -> {
                 val name = upperIdent("a module name")
-                // module Name = Functor<Arg, ...>
+                // module Name = Functor(Arg, ...)
                 if (accept(T.ASSIGN) != null) {
-                    val application = type() as? TypeRef.Named ?: throw error("expected a functor applied to modules: Functor<Module>")
-                    if (application.args.isEmpty()) throw error("expected modules for ${application.name}: ${application.name}<Module>")
-                    application.args.firstOrNull { it !is TypeRef.Named || it.args.isNotEmpty() }?.let { throw error("a functor takes modules, by name", it.pos) }
-                    return Decl.Module(pos, name, emptyList(), application = application)
+                    val functorPos = peek.pos
+                    val functor = moduleName("a functor applied to modules: Functor(Module)")
+                    if (at(T.LT)) throw error("a functor takes its modules in parentheses: $functor(Module)")
+                    if (accept(T.LPAREN) == null) throw error("expected modules for $functor: $functor(Module)")
+                    val args = mutableListOf<TypeRef>()
+                    do {
+                        val argPos = peek.pos
+                        args += TypeRef.Named(argPos, moduleName("a module, by name"), emptyList())
+                    } while (accept(T.COMMA) != null)
+                    expect(T.RPAREN, "')'")
+                    return Decl.Module(pos, name, emptyList(), application = TypeRef.Named(functorPos, functor, args))
                 }
-                // module Name<M : Spec, ...>: a functor
+                // module Name(M: Spec, ...): a functor
                 val params = mutableListOf<ModuleParam>()
-                if (accept(T.LT) != null) {
+                if (at(T.LT)) throw error("a functor takes its modules in parentheses: module $name(M: Spec)")
+                if (accept(T.LPAREN) != null) {
                     do {
                         val paramPos = peek.pos
                         val paramName = upperIdent("a module parameter")
                         expect(T.COLON, "':' and the spec the module must follow")
                         params += ModuleParam(paramPos, paramName, specName())
                     } while (accept(T.COMMA) != null)
-                    expect(T.GT, "'>'")
+                    expect(T.RPAREN, "')'")
                 }
                 // module Name : Spec { ... }
                 val spec = if (accept(T.COLON) != null) specName() else null
@@ -226,6 +234,16 @@ class Parser(private val tokens: List<Token>) {
     }.toSet()
 
     /** `Spec`, or `Spec<A, B>`, which says what the spec's types are, in order. */
+    /** A module's name, which may be qualified: `Sets.SortedSet`. */
+    private fun moduleName(what: String): String {
+        var name = upperIdent(what)
+        while (at(T.DOT) && peekAt(1).kind == T.IDENT && peekAt(1).text[0].isUpperCase()) {
+            next()
+            name += "." + next().text
+        }
+        return name
+    }
+
     private fun specName(): TypeRef.Named = type() as? TypeRef.Named ?: throw error("expected a spec's name")
 
     /** Items one per line up to a `}`, after the `{`. */

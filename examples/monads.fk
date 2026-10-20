@@ -29,7 +29,7 @@ module Results : Monad<Result<_, String>> {
 // Written once, for every monad. A module's name before a block runs the block in it: each
 // `x by m` takes the value out of m, or stops the block the way M's bind stops, and the block's
 // last line goes back in with M's pure.
-module MonadOps<M : Monad> {
+module MonadOps(M: Monad) {
   map<A, B>(m: M.M<A>, f: (A) -> B): M.M<B> = M {
     x by m
     f(x)
@@ -51,8 +51,8 @@ module MonadOps<M : Monad> {
   }
 }
 
-module OptionOps = MonadOps<Options>
-module ResultOps = MonadOps<Results>
+module OptionOps = MonadOps(Options)
+module ResultOps = MonadOps(Results)
 
 half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None
 

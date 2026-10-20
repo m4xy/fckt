@@ -119,9 +119,9 @@ sealed interface Decl {
      * `module Name { declarations }`: a namespace whose `private` members stay inside it, and whose
      * `opaque` types are abstract outside it. With a [spec] (`module Name : Spec { ... }`), it must
      * define what the spec lists, with the spec's types; the spec's type arguments, if any, say
-     * what its types are (`module IntOrder : Ordered<Int>`). With [params] (`module Name<M : Spec> { ... }`) it's a
+     * what its types are (`module IntOrder : Ordered<Int>`). With [params] (`module Name(M: Spec) { ... }`) it's a
      * functor, which makes a module out of others. With an [application]
-     * (`module Name = Functor<Arg>`), it's the module a functor makes from [Arg].
+     * (`module Name = Functor(Arg)`), it's the module a functor makes from [Arg].
      */
     data class Module(
         override val pos: Pos,
@@ -146,7 +146,7 @@ sealed interface Decl {
     ) : Decl
 }
 
-/** `M : Spec` in a functor's `<...>`: a module it takes. */
+/** `M: Spec` in a functor's `(...)`: a module it takes. */
 data class ModuleParam(val pos: Pos, val name: String, val spec: TypeRef.Named)
 
 /** `type Name<A>` in a spec. */

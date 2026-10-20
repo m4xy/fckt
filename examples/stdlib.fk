@@ -15,7 +15,7 @@ checkName(name: String): Validation<String, String> = if (name == "") Invalid(["
 checkAge(age: Int): Validation<Int, String> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
 
 // Monad is the prelude's, and Options the standard library's.
-module MonadOps<M : Monad> {
+module MonadOps(M: Monad) {
   twice<A>(m: M.M<A>): M.M<(A, A)> = M {
     a by m
     b by m
@@ -23,7 +23,7 @@ module MonadOps<M : Monad> {
   }
 }
 
-module OptionOps = MonadOps<Options>
+module OptionOps = MonadOps(Options)
 
 main() = {
   assertEquals(Some(3), Options { h by half(12); q by half(h); q })

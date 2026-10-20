@@ -51,7 +51,7 @@ shout(name: String): Validation<String, String> = Validated {
 }
 
 // Written once, for any module that follows Applicative.
-module Pairs<M : Applicative> {
+module Pairs(M: Applicative) {
   pair<A, B>(ma: M.M<A>, mb: M.M<B>): M.M<(A, B)> = M {
     a by ma
     b by mb
@@ -59,7 +59,7 @@ module Pairs<M : Applicative> {
   }
 }
 
-module ValidatedPairs = Pairs<Validated>
+module ValidatedPairs = Pairs(Validated)
 
 main() = {
   assertEquals(Valid(User("Ada", 36, "ada@example.com")), user(" Ada ", 36, "ada@example.com"))

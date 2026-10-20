@@ -401,7 +401,7 @@ class CompilerTest {
               type T
               compare(a: T, b: T): Int
             }
-            module SortedSet<M : Ordered> {
+            module SortedSet(M: Ordered) {
               type Set(items: List<M.T>)
               empty = Set([])
               insert(s: Set, x: M.T): Set = Set([x, *s.items])
@@ -410,25 +410,29 @@ class CompilerTest {
         """.trimIndent()
         val intOrder = "module IntOrder {\n  type T = Int\n  compare(a: Int, b: Int) = a - b\n}\n"
         assertContains(error(sortedSet + "x = SortedSet.empty"), "'empty' is in the functor SortedSet")
-        assertContains(error(sortedSet + "module A { type T = Int }\nmodule S = SortedSet<A>"), "A can't be SortedSet's M: it doesn't define 'compare'")
+        assertContains(error(sortedSet + "module A { type T = Int }\nmodule S = SortedSet(A)"), "A can't be SortedSet's M: it doesn't define 'compare'")
         assertContains(
-            error(sortedSet + "module A {\n  type T = Int\n  compare(a: Int, b: Int) = \"x\"\n}\nmodule S = SortedSet<A>"),
+            error(sortedSet + "module A {\n  type T = Int\n  compare(a: Int, b: Int) = \"x\"\n}\nmodule S = SortedSet(A)"),
             "A can't be SortedSet's M: 'compare' has type (Int, Int) -> String, but Ordered needs (T, T) -> Int",
         )
-        assertContains(error(sortedSet + "spec Other { type T }\nmodule A : Other { type T = Int }\nmodule S = SortedSet<A>"), "it follows Other, not Ordered")
-        assertContains(error(sortedSet + intOrder + "module S = IntOrder<IntOrder>"), "IntOrder isn't a functor")
-        assertContains(error(sortedSet + intOrder + "module S = SortedSet<IntOrder, IntOrder>"), "SortedSet takes 1 module, not 2")
-        assertContains(error(sortedSet + "module S = SortedSet<Missing>"), "unknown module 'Missing'")
+        assertContains(error(sortedSet + "spec Other { type T }\nmodule A : Other { type T = Int }\nmodule S = SortedSet(A)"), "it follows Other, not Ordered")
+        assertContains(error(sortedSet + intOrder + "module S = IntOrder(IntOrder)"), "IntOrder isn't a functor")
+        assertContains(error(sortedSet + intOrder + "module S = SortedSet(IntOrder, IntOrder)"), "SortedSet takes 1 module, not 2")
+        assertContains(error(sortedSet + "module S = SortedSet(Missing)"), "unknown module 'Missing'")
+        // Modules go in parentheses, like a constructor's arguments; <...> is for types.
+        assertContains(error("spec S { type T }\nmodule F<M : S> { x = 1 }"), "a functor takes its modules in parentheses: module F(M: Spec)")
+        assertContains(error(sortedSet + intOrder + "module S = SortedSet<IntOrder>"), "a functor takes its modules in parentheses: SortedSet(Module)")
+        assertContains(error(sortedSet + "module S = SortedSet(List<Int>)"), "expected ')'")
         // The body works for any M, so it can't assume what M.T is.
-        assertContains(error("spec S { type T }\nmodule F<M : S> {\n  f(x: M.T): Int = x\n}"), "expected Int but found F.M.T")
+        assertContains(error("spec S { type T }\nmodule F(M: S) {\n  f(x: M.T): Int = x\n}"), "expected Int but found F.M.T")
         // An opaque T stays abstract, so an IntSet takes only IntOrder.Ts.
         assertContains(
-            error(sortedSet + intOrder.replace("type T = Int", "opaque type T = Int").replace("a: Int, b: Int", "a: T, b: T") + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)"),
+            error(sortedSet + intOrder.replace("type T = Int", "opaque type T = Int").replace("a: Int, b: Int", "a: T, b: T") + "module IntSet = SortedSet(IntOrder)\nx = IntSet.insert(IntSet.empty, 5)"),
             "expected IntOrder.T but found Int",
         )
         // Otherwise it shows T is Int, with a spec or without.
-        compile(sortedSet + intOrder + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)")
-        compile(sortedSet + intOrder.replace("module IntOrder {", "module IntOrder : Ordered {") + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)")
+        compile(sortedSet + intOrder + "module IntSet = SortedSet(IntOrder)\nx = IntSet.insert(IntSet.empty, 5)")
+        compile(sortedSet + intOrder.replace("module IntOrder {", "module IntOrder : Ordered {") + "module IntSet = SortedSet(IntOrder)\nx = IntSet.insert(IntSet.empty, 5)")
     }
 
     @Test
@@ -450,16 +454,16 @@ class CompilerTest {
         assertContains(error(monad + "module R : Monad<Result<Int>> {\n$results"), "R follows Monad with M as Result<Int, A>, but its M is Result<A, Int>")
         assertContains(error(monad + "module R : Monad<Result<_, _>> {\n$results"), "Monad's M takes 1 type parameter, so Result needs 1 '_', not 2")
         assertContains(error("f(x: List<_>): Int = 1"), "'_' only marks a spec type's parameters")
-        val twice = "spec Ordered {\n  type T\n  compare(a: T, b: T): Int\n}\nmodule Twice<M : Ordered<Int>> {\n  f(a: Int, b: Int): Int = M.compare(a, b)\n}\n"
+        val twice = "spec Ordered {\n  type T\n  compare(a: T, b: T): Int\n}\nmodule Twice(M: Ordered<Int>) {\n  f(a: Int, b: Int): Int = M.compare(a, b)\n}\n"
         assertContains(
-            error(twice + "module S {\n  type T = String\n  compare(a: String, b: String) = 0\n}\nmodule X = Twice<S>"),
+            error(twice + "module S {\n  type T = String\n  compare(a: String, b: String) = 0\n}\nmodule X = Twice(S)"),
             "S can't be Twice's M: Twice needs its T to be Int, but here it's String",
         )
         assertContains(
-            error(twice + "module I : Ordered {\n  opaque type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice<I>"),
+            error(twice + "module I : Ordered {\n  opaque type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice(I)"),
             "Twice needs its T to be Int, but here it's I.T",
         )
-        assertContains(compile(twice + "module I : Ordered<Int> {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice<I>"), "(M : Ordered with type t = int)")
+        assertContains(compile(twice + "module I : Ordered<Int> {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice(I)"), "(M : Ordered with type t = int)")
     }
 
     @Test

@@ -132,7 +132,7 @@ class Checker(file: SourceFile) {
     /** For each module made by a functor: the functor, and the module given for each parameter. */
     private val applications = linkedMapOf<String, Pair<Decl.Module, List<Decl.Module>>>()
 
-    /** `IntSet.M` names `IntOrder` inside `module IntSet = SortedSet<IntOrder>`. */
+    /** `IntSet.M` names `IntOrder` inside `module IntSet = SortedSet(IntOrder)`. */
     private val moduleAliases = mutableMapOf<String, String>()
     private val copyOrigins = mutableMapOf<String, String>()
     private val argumentsChecked = mutableSetOf<Pair<String, String>>()
@@ -177,7 +177,7 @@ class Checker(file: SourceFile) {
         }
     }
 
-    /** `module IntSet = SortedSet<IntOrder>`: a copy of SortedSet's declarations, with its `M` naming IntOrder. */
+    /** `module IntSet = SortedSet(IntOrder)`: a copy of SortedSet's declarations, with its `M` naming IntOrder. */
     private fun apply(app: Decl.Module) {
         val ref = app.application!!
         enclosingFunctor(app.path)?.let { throw CompileError(app.pos, "a functor can't be applied inside another functor (${it.simpleName}) yet") }
@@ -453,7 +453,7 @@ class Checker(file: SourceFile) {
     private fun whyHidden(d: Decl): String? {
         if (d.isPrivate && !inside(d.path)) return "'${d.simpleName}' is private to ${d.path.joinToString(".").ifEmpty { "this file" }}"
         enclosingFunctor(d.path)?.takeIf { !inside(it.name.split('.')) }?.let {
-            return "'${d.simpleName}' is in the functor ${it.simpleName}, which makes modules: use it through one, made with module Name = ${it.simpleName}<...>"
+            return "'${d.simpleName}' is in the functor ${it.simpleName}, which makes modules: use it through one, made with module Name = ${it.simpleName}(...)"
         }
         for (n in 1..d.path.size) modules[d.path.take(n).joinToString(".")]?.let { m -> whyHidden(m)?.let { return it } }
         return null
