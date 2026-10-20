@@ -425,12 +425,10 @@ class Lowering(private val program: Program) {
             // A spec's own type, inside its module type.
             else -> if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
         }
-        // Result<E, A> is OCaml's ('a, 'e) result.
-        val ordered = if (name == "Result") args.reversed() else args
-        return when (ordered.size) {
+        return when (args.size) {
             0 -> base
-            1 -> ordered[0].let { (text, paren) -> if (paren) "($text) $base" else "$text $base" }
-            else -> "(${ordered.joinToString(", ") { it.first }}) $base"
+            1 -> args[0].let { (text, paren) -> if (paren) "($text) $base" else "$text $base" }
+            else -> "(${args.joinToString(", ") { it.first }}) $base"
         }
     }
 
@@ -1261,7 +1259,7 @@ class Lowering(private val program: Program) {
             }
             if ("fk_show_result" in helpers) {
                 binding("fk_show_result") {
-                    params = listOf("show_error", "show", "r")
+                    params = listOf("show", "show_error", "r")
                     gen(
                         Gen.Match(
                             Gen.Id("r"),

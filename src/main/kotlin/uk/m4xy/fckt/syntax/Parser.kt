@@ -341,7 +341,8 @@ class Parser(private val tokens: List<Token>) {
         }
         val args = mutableListOf<TypeRef>()
         if (accept(T.LT) != null) {
-            do args += type() while (accept(T.COMMA) != null)
+            // `_` marks where a spec's type takes its parameters: Monad<Result<_, String>>.
+            do args += accept(T.UNDERSCORE)?.let { TypeRef.Named(it.pos, "_", emptyList()) } ?: type() while (accept(T.COMMA) != null)
             expect(T.GT, "'>'")
         }
         return TypeRef.Named(pos, name, args)

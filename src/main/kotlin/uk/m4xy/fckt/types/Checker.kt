@@ -201,7 +201,8 @@ class Checker(file: SourceFile) {
     /**
      * `Spec<A, B>` for [module], written in [scope]: an alias for each of the spec's types, in order,
      * saying what it is. A type that takes parameters takes a type that takes as many more:
-     * `Monad<Option>` makes `M<A>` an `Option<A>`, and `Monad<Result<String>>` a `Result<String, A>`.
+     * `Monad<Option>` makes `M<A>` an `Option<A>`. The parameters go at the end, or where `_` marks
+     * them: `Monad<Result<_, String>>` makes `M<A>` a `Result<A, String>`.
      */
     private fun fixTypes(module: String, scope: List<String>, spec: Decl.Spec, ref: TypeRef.Named) {
         if (ref.args.size > spec.types.size) {
@@ -211,7 +212,16 @@ class Checker(file: SourceFile) {
             val params = t.typeParams.map { TypeRef.Named(arg.pos, it, emptyList()) }
             val target = when {
                 params.isEmpty() -> arg
-                arg is TypeRef.Named -> arg.copy(args = arg.args + params)
+                arg is TypeRef.Named -> {
+                    val holes = arg.args.count { it is TypeRef.Named && it.name == "_" }
+                    if (holes == 0) arg.copy(args = arg.args + params)
+                    else if (holes != params.size) {
+                        throw CompileError(arg.pos, "${spec.simpleName}'s ${t.name} takes ${params.size} type parameter${if (params.size == 1) "" else "s"}, so ${arg.name} needs ${params.size} '_', not $holes")
+                    } else {
+                        val fill = params.iterator()
+                        arg.copy(args = arg.args.map { if (it is TypeRef.Named && it.name == "_") fill.next() else it })
+                    }
+                }
                 else -> throw CompileError(arg.pos, "${spec.simpleName}'s ${t.name} takes type parameters, so it needs a named type, like Option")
             }
             val alias = Decl.Alias(arg.pos, (scope + "${module.substringAfterLast('.')}#${t.name}").joinToString("."), t.typeParams, target)
@@ -701,7 +711,7 @@ class Checker(file: SourceFile) {
                     typeNames[ref] = it.name
                     typeOf(it, args)
                 }
-                ?: throw CompileError(ref.pos, "unknown type '${ref.name}'")
+                ?: throw CompileError(ref.pos, if (ref.name == "_") "'_' only marks a spec type's parameters, as in Monad<Result<_, String>>" else "unknown type '${ref.name}'")
         }
     }
 
@@ -1347,8 +1357,8 @@ class Checker(file: SourceFile) {
         val error = u.fresh()
         val value = u.fresh()
         val ref = ConstructorRef.Variant(null, null, name)
-        return if (name == "Ok") ConstructorShape(ref, listOf("value"), listOf(value), Type.result(error, value))
-        else ConstructorShape(ref, listOf("error"), listOf(error), Type.result(error, value))
+        return if (name == "Ok") ConstructorShape(ref, listOf("value"), listOf(value), Type.result(value, error))
+        else ConstructorShape(ref, listOf("error"), listOf(error), Type.result(value, error))
     }
 
     /** `Alphabet.A`, `Ratios.Ratio` or `Shapes.Circle`: what qualifies a constructor, if [member] names one. */

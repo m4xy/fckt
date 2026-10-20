@@ -411,6 +411,12 @@ class CompilerTest {
         assertContains(error(monad + "module O : Monad<(Int) -> Int> {\n$options"), "it needs a named type, like Option")
         assertContains(error(monad + "module O : Monad<List> {\n$options"), "O follows Monad with M as List<A>, but its M is Option<A>")
         assertContains(error(monad + "module O : Monad<Option, Int> {\n$options"), "Monad has 1 type, so it takes at most that many type arguments, not 2")
+        // `_` marks where M's parameter goes in a type that takes two.
+        val results = "  type M<A> = Result<A, Int>\n  pure(x) = Ok(x)\n}"
+        compile(monad + "module R : Monad<Result<_, Int>> {\n$results")
+        assertContains(error(monad + "module R : Monad<Result<Int>> {\n$results"), "R follows Monad with M as Result<Int, A>, but its M is Result<A, Int>")
+        assertContains(error(monad + "module R : Monad<Result<_, _>> {\n$results"), "Monad's M takes 1 type parameter, so Result needs 1 '_', not 2")
+        assertContains(error("f(x: List<_>): Int = 1"), "'_' only marks a spec type's parameters")
         val twice = "spec Ordered {\n  type T\n  compare(a: T, b: T): Int\n}\nmodule Twice<M : Ordered<Int>> {\n  f(a: Int, b: Int): Int = M.compare(a, b)\n}\n"
         assertContains(
             error(twice + "module S {\n  type T = String\n  compare(a: String, b: String) = 0\n}\nmodule X = Twice<S>"),
@@ -469,12 +475,12 @@ class CompilerTest {
         // Only what's used: no Applicative, and nothing at all for a program that uses none of it.
         assertTrue("Applicative" !in ml)
         assertTrue("module" !in compile("main() = assertEquals(1, 1)"))
-        assertTrue("module type" !in compile("v(): Validation<String, Int> = Valid(1)\nmain() = assert(v() == Valid(1))"))
+        assertTrue("module type" !in compile("v(): Validation<Int, String> = Valid(1)\nmain() = assert(v() == Valid(1))"))
         // The program's own declarations take the place of the library's.
         assertEquals("", run("module Options { one() = 1 }\nmain() = assertEquals(1, Options.one())"))
         assertEquals("", run("type Validation { Valid }\nmain() = assert(Valid == Valid)"))
-        // Result is OCaml's, error last; Ok and Error are a program's own cases if it has them.
-        assertContains(compile("f(): Result<String, Int> = Ok(1)"), "let f () : (int, string) result = Ok 1")
+        // Result is OCaml's, value first; Ok and Error are a program's own cases if it has them.
+        assertContains(compile("f(): Result<Int, String> = Ok(1)"), "let f () : (int, string) result = Ok 1")
         assertEquals("", run("type Outcome { Fine, Error(why: String) }\nmain() = assertEquals(\"x\", when (Error(\"x\")) {\n  Error(why) -> why\n  Fine -> \"\"\n})"))
         // `xs.map(f)` inside a function called map is the list's, so map isn't recursive.
         assertContains(compile("module M {\n  map(xs: List<Int>): List<Int> = xs.map(x -> x + 1)\n}"), "  let map (xs")

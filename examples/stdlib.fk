@@ -5,14 +5,14 @@ type User(name: String, age: Int)
 
 half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None
 
-parse(s: String): Result<String, Int> = when (s.toIntOrNone()) {
+parse(s: String): Result<Int, String> = when (s.toIntOrNone()) {
   Some(n) -> Ok(n)
   None -> Error("$s isn't a number")
 }
 
 checkName(name: String): Validation<String, String> = if (name == "") Invalid(["name is empty"]) else Valid(name)
 
-checkAge(age: Int): Validation<String, Int> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
+checkAge(age: Int): Validation<Int, String> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
 
 // Monad is the prelude's, and Options the standard library's.
 module MonadOps<M : Monad> {
@@ -32,6 +32,6 @@ main() = {
   assertEquals(Invalid(["name is empty", "age -1 is negative"]), Validated { n by checkName(""); a by checkAge(-1); User(n, a) })
   assertEquals([(2, "a"), (2, "b"), (3, "a"), (3, "b")], Lists { x by [1, 2, 3]; _ by Lists.guard(x > 1); y by ["a", "b"]; (x, y) })
   assertEquals(Some((4, 4)), OptionOps.twice(Some(4)))
-  bad: Result<String, Int> = Error("bad")
+  bad: Result<Int, String> = Error("bad")
   assertEquals(Error(["bad"]), Validated.toResult(Validated.fromResult(bad)))
 }

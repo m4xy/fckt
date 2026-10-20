@@ -16,9 +16,9 @@ module Options : Monad<Option> {
   }
 }
 
-// A type that takes two can fill M<A> with its first given: M<A> is Result<String, A>.
-module Results : Monad<Result<String>> {
-  type M<A> = Result<String, A>
+// A type that takes two marks where M<A>'s parameter goes with _: M<A> is Result<A, String>.
+module Results : Monad<Result<_, String>> {
+  type M<A> = Result<A, String>
   pure(x) = Ok(x)
   bind(m, f) = when (m) {
     Ok(x) -> f(x)
@@ -56,9 +56,9 @@ module ResultOps = MonadOps<Results>
 
 half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None
 
-positive(n: Int): Result<String, Int> = if (n > 0) Ok(n) else Error("$n isn't positive")
+positive(n: Int): Result<Int, String> = if (n > 0) Ok(n) else Error("$n isn't positive")
 
-check(ok: Boolean, why: String): Result<String, Unit> = if (ok) Ok(Unit) else Error(why)
+check(ok: Boolean, why: String): Result<Unit, String> = if (ok) Ok(Unit) else Error(why)
 
 // Stops at the first None; otherwise the last line comes back as Some.
 quarter(n: Int): Option<Int> = Options {
@@ -68,7 +68,7 @@ quarter(n: Int): Option<Int> = Options {
 }
 
 // Plain lines mix with `by` lines, and `_ by` checks without naming anything.
-divide(a: Int, b: Int): Result<String, Int> = Results {
+divide(a: Int, b: Int): Result<Int, String> = Results {
   x by positive(a)
   y by positive(b)
   _ by check(x % y == 0, "$y doesn't divide $x")

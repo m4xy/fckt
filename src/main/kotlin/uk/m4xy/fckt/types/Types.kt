@@ -50,8 +50,8 @@ sealed class Type {
         fun list(element: Type) = Con("List", listOf(element))
         fun option(element: Type) = Con("Option", listOf(element))
 
-        /** `Result<E, A>`: OCaml's `('a, 'e) result`, with the error first so `Result<E>` can be a monad's `M`. */
-        fun result(error: Type, value: Type) = Con("Result", listOf(error, value))
+        /** `Result<A, E>`: OCaml's `('a, 'e) result`. */
+        fun result(value: Type, error: Type) = Con("Result", listOf(value, error))
         fun tuple(elements: List<Type>) = Con(TUPLE, elements)
         fun lazy(element: Type) = Con("Lazy", listOf(element))
 

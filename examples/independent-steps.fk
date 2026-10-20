@@ -7,10 +7,10 @@ spec Applicative {
   product<A, B>(ma: M<A>, mb: M<B>): M<(A, B)>
 }
 
-type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }
+type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }
 
-module Validated : Applicative<Validation<String>> {
-  type M<A> = Validation<String, A>
+module Validated : Applicative<Validation<_, String>> {
+  type M<A> = Validation<A, String>
 
   map(m, f) = when (m) {
     Valid(x) -> Valid(f(x))
@@ -30,12 +30,12 @@ type User(name: String, age: Int, email: String)
 
 checkName(name: String): Validation<String, String> = if (name == "") Invalid(["name is empty"]) else Valid(name)
 
-checkAge(age: Int): Validation<String, Int> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
+checkAge(age: Int): Validation<Int, String> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
 
 checkEmail(email: String): Validation<String, String> = if (email.length < 3) Invalid(["$email is too short"]) else Valid(email)
 
 // Lines before the `by` lines run first; lines after them can use what they hold.
-user(name: String, age: Int, email: String): Validation<String, User> = Validated {
+user(name: String, age: Int, email: String): Validation<User, String> = Validated {
   trimmed = name.trim()
   n by checkName(trimmed)
   a by checkAge(age)

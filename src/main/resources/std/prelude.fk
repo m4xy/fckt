@@ -18,7 +18,7 @@ spec Applicative {
 }
 
 // A value, or every reason there isn't one.
-type Validation<E, A> { Valid(value: A), Invalid(errors: List<E>) }
+type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }
 
 // ---- Lists ----
 

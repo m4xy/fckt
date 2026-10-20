@@ -1,31 +1,31 @@
 // Result as a monad: Results { x by parse(s); y by check(x); y } stops at the first Error.
-// It works for any error type; for a functor's Monad, fix one: module R : Monad<Result<String>>.
+// It works for any error type; for a functor's Monad, fix one: module R : Monad<Result<_, String>>.
 
-pure<E, A>(x: A): Result<E, A> = Ok(x)
+pure<A, E>(x: A): Result<A, E> = Ok(x)
 
-bind<E, A, B>(m: Result<E, A>, f: (A) -> Result<E, B>): Result<E, B> = when (m) {
+bind<A, B, E>(m: Result<A, E>, f: (A) -> Result<B, E>): Result<B, E> = when (m) {
   Ok(x) -> f(x)
   Error(e) -> Error(e)
 }
 
-map<E, A, B>(m: Result<E, A>, f: (A) -> B): Result<E, B> = when (m) {
+map<A, B, E>(m: Result<A, E>, f: (A) -> B): Result<B, E> = when (m) {
   Ok(x) -> Ok(f(x))
   Error(e) -> Error(e)
 }
 
-mapError<E, F, A>(m: Result<E, A>, f: (E) -> F): Result<F, A> = when (m) {
+mapError<A, E, F>(m: Result<A, E>, f: (E) -> F): Result<A, F> = when (m) {
   Ok(x) -> Ok(x)
   Error(e) -> Error(f(e))
 }
 
 // The first error, if either has one.
-product<E, A, B>(ma: Result<E, A>, mb: Result<E, B>): Result<E, (A, B)> = when (ma, mb) {
+product<A, B, E>(ma: Result<A, E>, mb: Result<B, E>): Result<(A, B), E> = when (ma, mb) {
   (Ok(a), Ok(b)) -> Ok((a, b))
   (Error(e), _) -> Error(e)
   (_, Error(e)) -> Error(e)
 }
 
-toOption<E, A>(m: Result<E, A>): Option<A> = when (m) {
+toOption<A, E>(m: Result<A, E>): Option<A> = when (m) {
   Ok(x) -> Some(x)
   Error(_) -> None
 }
