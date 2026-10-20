@@ -212,19 +212,16 @@ class Lowering(private val program: Program) {
                 is StructureChild.ModuleType -> ModuleDefChild.ModuleType(child.element)
             }
         }
-        // A module with a spec shows what the spec lists. One with private members states what it
-        // shows; otherwise OCaml infers it.
-        currentPath = path.dropLast(1)
-        val spec = program.moduleSpecs[m.name]?.let { specText(m.name, it) }
+        // A module with private members or opaque types states what it shows; otherwise OCaml
+        // infers it. A spec is checked already, so it hides nothing.
         currentPath = path
-        val signature = if (spec == null && hasPrivate(m)) {
+        val signature = if (hasHidden(m)) {
             listOf(ModuleDefChild.Signature(SignatureElement.build<Unit> { signatureItems(m) }))
         } else {
             emptyList()
         }
         return ModuleDefElement(
             name = uk.m4xy.kastor.Attribute.Value(m.simpleName),
-            spec = spec?.let { uk.m4xy.kastor.Attribute.Value(it) },
             params = params?.let { uk.m4xy.kastor.Attribute.Value(it) },
             children = signature + items,
         )
@@ -268,8 +265,8 @@ class Lowering(private val program: Program) {
 
     private fun modulesIn(m: Decl.Module): List<Decl.Module> = listOf(m) + m.decls.filterIsInstance<Decl.Module>().flatMap { modulesIn(it) }
 
-    private fun hasPrivate(m: Decl.Module): Boolean = m.decls.any {
-        it.isPrivate || (it is Decl.Record && it.privateConstructor) || (it is Decl.Module && hasPrivate(it))
+    private fun hasHidden(m: Decl.Module): Boolean = m.decls.any {
+        it.isPrivate || it.isOpaque || (it is Decl.Record && it.privateConstructor) || (it is Decl.Module && hasHidden(it))
     }
 
     /** The functions in [m], and in the modules inside it, including those a functor made for it. */
@@ -304,9 +301,7 @@ class Lowering(private val program: Program) {
         for (group in typeGroups(types)) types { typeDefinitions(group, forSignature = true) }
         for (spec in m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }) moduleType(spec.simpleName) { specItems(spec) }
         for (inner in m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate }) {
-            val spec = program.moduleSpecs[inner.name]
-            if (spec != null) sigModule(inner.simpleName) { this.spec = specText(inner.name, spec) }
-            else sigModule(inner.simpleName) { signatureItems(inner) }
+            sigModule(inner.simpleName) { signatureItems(inner) }
             currentPath = path
         }
         for (type in types) {
@@ -316,7 +311,7 @@ class Lowering(private val program: Program) {
             sigValue(showName(type.name), (params.map { "(${typeVar(it)} -> string)" } + shown + "string").joinToString(" -> "))
         }
         for (f in m.decls.filterIsInstance<Decl.Function>().filter { !it.isPrivate && it.external == null }) {
-            val type = program.functionTypes.getValue(f)
+            val type = program.outsideTypes[f] ?: program.functionTypes.getValue(f)
             sigValue(snake(f.simpleName), typeText(type, mutableMapOf()))
         }
     }
@@ -341,9 +336,16 @@ class Lowering(private val program: Program) {
         else -> emptyList()
     }
 
-    /** A group of type definitions; [forSignature] makes a record with a private constructor `private`. */
+    /**
+     * A group of type definitions; [forSignature] makes a record with a private constructor
+     * `private`, and an opaque type abstract.
+     */
     private fun TypeGroupScope<Unit>.typeDefinitions(group: List<Decl>, forSignature: Boolean) {
         for (decl in group) {
+            if (forSignature && decl.isOpaque) {
+                typeDef(snake(decl.simpleName)) { params = typeParamsOf(decl).map(::typeVar) }
+                continue
+            }
             when (decl) {
                 is Decl.Record -> typeDef(snake(decl.simpleName)) {
                     params = decl.typeParams.map(::typeVar)

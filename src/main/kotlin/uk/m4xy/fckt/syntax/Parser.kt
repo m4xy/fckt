@@ -54,7 +54,18 @@ class Parser(private val tokens: List<Token>) {
 
     private fun decl(): Decl {
         val pos = peek.pos
+        // `opaque type T = ...`: outside its module, T can be held and passed back, but not built or looked into.
+        if (at(T.IDENT) && peek.text == "opaque" && peekAt(1).kind == T.TYPE) {
+            next()
+            return when (val d = decl()) {
+                is Decl.Record -> d.copy(isOpaque = true)
+                is Decl.Sealed -> d.copy(isOpaque = true)
+                is Decl.Alias -> d.copy(isOpaque = true)
+                else -> throw IllegalStateException("opaque applies to a type")
+            }
+        }
         if (accept(T.PRIVATE) != null) {
+            if (at(T.IDENT) && peek.text == "opaque") throw error("a private type is hidden already; it can't also be opaque")
             return when (val d = decl()) {
                 is Decl.Record -> d.copy(isPrivate = true)
                 is Decl.Sealed -> d.copy(isPrivate = true)

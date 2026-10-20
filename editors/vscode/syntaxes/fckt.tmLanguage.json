@@ -418,6 +418,10 @@
         {
           "name": "storage.modifier.fckt",
           "match": "\\bprivate\\b"
+        },
+        {
+          "name": "storage.modifier.fckt",
+          "match": "\\bopaque(?=\\s+type\\b)"
         }
       ]
     },

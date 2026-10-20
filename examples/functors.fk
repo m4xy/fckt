@@ -8,7 +8,9 @@ spec Ordered {
 }
 
 module SortedSet<M : Ordered> {
-  type Set(items: List<M.T>)
+  // Opaque, so only insert makes a Set, and its items stay in order. A visible Set would let
+  // anyone build one out of order, or pass an IntSet to a set sorted another way.
+  opaque type Set(items: List<M.T>)
 
   empty = Set([])
 
@@ -27,14 +29,14 @@ module SortedSet<M : Ordered> {
   }
 }
 
-// Ordered<Int> says T is Int, so everyone can see it is, and an IntSet takes Ints. Plain
-// `: Ordered` would keep T abstract: an IntSet would then take only IntOrder.Ts.
-module IntOrder : Ordered<Int> {
+// T is Int, and everyone can see it is, so an IntSet takes Ints. With `opaque type T = Int`,
+// an IntSet would take only IntOrder.Ts.
+module IntOrder : Ordered {
   type T = Int
   compare(a: Int, b: Int) = a - b
 }
 
-module ByLength : Ordered<String> {
+module ByLength : Ordered {
   type T = String
   compare(a: String, b: String) = a.length - b.length
 }

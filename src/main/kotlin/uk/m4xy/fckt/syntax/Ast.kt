@@ -43,6 +43,9 @@ sealed interface Decl {
     /** `private`: visible only inside the module that declares it. */
     val isPrivate: Boolean
 
+    /** `opaque type`: outside its module, a type that can be named but not built or looked into. */
+    val isOpaque: Boolean get() = false
+
     /** The modules around it, from its full name: `Ratios.make` is in `[Ratios]`. */
     val path: List<String> get() = name.split('.').dropLast(1)
     val simpleName: String get() = name.substringAfterLast('.')
@@ -58,6 +61,7 @@ sealed interface Decl {
         val fields: List<FieldDef>,
         override val isPrivate: Boolean = false,
         val privateConstructor: Boolean = false,
+        override val isOpaque: Boolean = false,
     ) : Decl
 
     /**
@@ -73,6 +77,7 @@ sealed interface Decl {
         val caseRefs: List<CaseRefDef> = emptyList(),
         val includes: List<TypeRef.Named> = emptyList(),
         override val isPrivate: Boolean = false,
+        override val isOpaque: Boolean = false,
     ) : Decl
 
     /** `type Name<T> = Other<T>`: another name for a type. */
@@ -82,6 +87,7 @@ sealed interface Decl {
         val typeParams: List<String>,
         val target: TypeRef,
         override val isPrivate: Boolean = false,
+        override val isOpaque: Boolean = false,
     ) : Decl
 
     /**
@@ -110,10 +116,10 @@ sealed interface Decl {
     }
 
     /**
-     * `module Name { declarations }`: a namespace whose `private` members stay inside it. With a
-     * [spec] (`module Name : Spec { ... }`), only what the spec lists is seen outside, and the
-     * spec's types are abstract there, unless the spec's type arguments say what they are
-     * (`module IntOrder : Ordered<Int>`). With [params] (`module Name<M : Spec> { ... }`) it's a
+     * `module Name { declarations }`: a namespace whose `private` members stay inside it, and whose
+     * `opaque` types are abstract outside it. With a [spec] (`module Name : Spec { ... }`), it must
+     * define what the spec lists, with the spec's types; the spec's type arguments, if any, say
+     * what its types are (`module IntOrder : Ordered<Int>`). With [params] (`module Name<M : Spec> { ... }`) it's a
      * functor, which makes a module out of others. With an [application]
      * (`module Name = Functor<Arg>`), it's the module a functor makes from [Arg].
      */

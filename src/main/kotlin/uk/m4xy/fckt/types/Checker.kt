@@ -37,6 +37,8 @@ class Program(
     val root: List<Decl>,
     /** Each function's type, generalized. */
     val functionTypes: Map<Decl.Function, Type>,
+    /** A function's type as callers outside its module see it, where that differs: its spec's, or with opaque types. */
+    val outsideTypes: Map<Decl.Function, Type>,
     /** The functions each function uses. */
     val uses: Map<Decl.Function, List<Decl.Function>>,
     /** The full name each written user type refers to. */
@@ -123,6 +125,9 @@ class Checker(file: SourceFile) {
     private val parameterMembers = mutableSetOf<Decl.Function>()
     private val functorParams = linkedMapOf<String, List<Pair<String, Decl.Spec>>>()
     private val parameterModules = mutableSetOf<String>()
+
+    /** Set while reading a function's written type as callers outside its module see it. */
+    private var outsideView = false
 
     /** For each module made by a functor: the functor, and the module given for each parameter. */
     private val applications = linkedMapOf<String, Pair<Decl.Module, List<Decl.Module>>>()
@@ -238,6 +243,13 @@ class Checker(file: SourceFile) {
             } catch (e: CompileError) {
                 val n = fixed.typeParams.size
                 throw if (n == 0) e else CompileError(e.pos, "${name} takes $n type parameter${if (n == 1) "" else "s"}, so its type argument must take $n more: ${e.message}")
+            }
+        } ?: typeDecl("$module.$name")?.takeIf { module !in parameterModules }?.let { d ->
+            when {
+                // An opaque record or type with cases keeps its name; only what's in it is hidden.
+                d is Decl.Alias && d.isOpaque -> null
+                d is Decl.Alias -> expand(d, args)
+                else -> Type.Con(d.name, args)
             }
         } ?: Type.Con(Type.ABSTRACT + "$module.$name", args)
 
@@ -359,6 +371,7 @@ class Checker(file: SourceFile) {
             polymorphic = polymorphic,
             root = root,
             functionTypes = schemes.mapValues { it.value.type.zonk() },
+            outsideTypes = outsideSchemes.filterKeys { it !in parameterMembers }.mapValues { it.value.type.zonk() },
             uses = uses,
             typeNames = typeNames,
             aliases = aliases.values.toList(),
@@ -388,8 +401,7 @@ class Checker(file: SourceFile) {
             user.pos,
             "'${user.simpleName}' is public, but its type uses ${hidden.simpleName}, which is private to ${hidden.path.joinToString(".")}",
         )
-        // A spec'd module's functions show only their spec's types.
-        for (f in globals.values.filter { moduleSpecs[it.path.joinToString(".")] == null }) {
+        for (f in globals.values.filter { it !in parameterMembers }) {
             privateTypes(schemes.getValue(f).type).firstOrNull { exposes(f, it) }?.let { complain(f, it) }
         }
         for (d in records.values + sealeds.values) {
@@ -399,6 +411,9 @@ class Checker(file: SourceFile) {
             withTypeParams(withParams) {
                 fields.flatMap { privateTypes(resolve(it.type)) }.firstOrNull { exposes(d, it) }?.let { complain(d, it) }
             }
+        }
+        for (d in records.values + sealeds.values + aliases.values) {
+            if (d.isOpaque && d.path.isEmpty()) throw CompileError(d.pos, "an opaque type is opaque outside its module, so it needs to be in one")
         }
         for (a in aliases.values) {
             currentPath = a.path
@@ -436,7 +451,6 @@ class Checker(file: SourceFile) {
 
     /** Why [d] can't be seen from the current module, or null if it can. */
     private fun whyHidden(d: Decl): String? {
-        hiddenBySpec(d)?.let { return "'${d.simpleName}' isn't in ${it.simpleName}, the spec of ${d.path.joinToString(".")}" }
         if (d.isPrivate && !inside(d.path)) return "'${d.simpleName}' is private to ${d.path.joinToString(".").ifEmpty { "this file" }}"
         enclosingFunctor(d.path)?.takeIf { !inside(it.name.split('.')) }?.let {
             return "'${d.simpleName}' is in the functor ${it.simpleName}, which makes modules: use it through one, made with module Name = ${it.simpleName}<...>"
@@ -445,27 +459,26 @@ class Checker(file: SourceFile) {
         return null
     }
 
-    /** The spec of [d]'s module, if it has one and the current module is outside it. */
-    private fun sealingSpec(d: Decl): Decl.Spec? =
-        if (d.path.isEmpty() || inside(d.path)) null else moduleSpecs[d.path.joinToString(".")]
-
-    /** The spec that keeps [d] inside its module, because it doesn't list it. */
-    private fun hiddenBySpec(d: Decl): Decl.Spec? = sealingSpec(d)?.takeIf { spec ->
-        when (d) {
-            is Decl.Function -> spec.values.none { it.name == d.simpleName }
-            is Decl.Module, is Decl.Spec -> true
-            is Decl.Record, is Decl.Sealed, is Decl.Alias -> spec.types.none { it.name == d.simpleName }
-        }
+    /**
+     * Whether [d] is a type that's abstract here: it can be named, but not built or looked into.
+     * An `opaque` type is, outside its module; so is a functor parameter's type, outside the
+     * module it stands for. Reading a function's type as callers outside see it, [outsideView]
+     * makes it so inside too.
+     */
+    private fun abstractHere(d: Decl): Boolean {
+        if (d !is Decl.Record && d !is Decl.Sealed && d !is Decl.Alias) return false
+        val abstract = d.isOpaque || d.path.joinToString(".") in parameterModules
+        return abstract && (outsideView || !inside(d.path))
     }
 
-    /** Whether [d] is a type whose module's spec makes it abstract here: it can be named, but not looked into. */
-    private fun abstractHere(d: Decl): Boolean =
-        d !is Decl.Function && sealingSpec(d)?.types?.any { it.name == d.simpleName } == true
-
-    private fun abstractError(d: Decl, pos: Pos): Nothing = throw CompileError(
-        pos,
-        "${d.simpleName} is abstract outside ${d.path.joinToString(".")}: its spec ${moduleSpecs.getValue(d.path.joinToString(".")).simpleName} hides what it is",
-    )
+    private fun abstractError(d: Decl, pos: Pos): Nothing {
+        val module = d.path.joinToString(".")
+        throw CompileError(
+            pos,
+            if (module in parameterModules) "${d.simpleName} is abstract here: ${moduleSpecs.getValue(module).simpleName} doesn't say what it is"
+            else "${d.simpleName} is opaque outside $module: only $module can build one or look into it",
+        )
+    }
 
     /**
      * Finds what [name] means from the current module: in module `A.B`, `x` could be `A.B.x`, `A.x`
@@ -779,6 +792,9 @@ class Checker(file: SourceFile) {
                 val d = typeDecl("$name.${t.name}")
                     ?: throw CompileError(m.pos, "${m.simpleName} doesn't define type ${t.name}, which its spec ${spec.simpleName} needs")
                 if (d.isPrivate) throw CompileError(d.pos, "${t.name} is in ${m.simpleName}'s spec ${spec.simpleName}, so it can't be private")
+                if (d.isOpaque && "$name.${t.name}" in fixedTypes && name !in parameterModules) {
+                    throw CompileError(m.spec!!.pos, "${t.name} is opaque, so ${spec.simpleName}'s type arguments can't say what it is")
+                }
                 val n = typeParamsOf(d).size
                 if (n != t.typeParams.size) {
                     throw CompileError(d.pos, "${spec.simpleName} says ${t.name} takes ${t.typeParams.size} type parameter${if (t.typeParams.size == 1) "" else "s"}, not $n")
@@ -1004,16 +1020,32 @@ class Checker(file: SourceFile) {
 
     private fun checkGroupBody(group: FunctionGroup) {
         val declaredParams = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
+        val outside = mutableMapOf<Decl.Function, Type>()
         currentPath = group.decls.first().path
         for (decl in group.decls) {
             val vars = decl.typeParams.associateWith { u.fresh() }
             declaredParams[decl] = vars
             typeParams = vars
             val result = decl.returnType?.let { resolve(it) } ?: u.fresh()
-            provisional[decl] = decl.params?.let { params ->
+            val inside = decl.params?.let { params ->
                 checkDistinct(params.map { it.name to it.pos })
                 Type.Fn(params.map { p -> p.type?.let { resolve(it) } ?: u.fresh() }, result)
             } ?: result
+            provisional[decl] = inside
+            // Inside, an opaque type is what it stands for; callers outside see the type as written.
+            if (decl !in parameterMembers && opaqueAround(decl.path)) {
+                outsideView = true
+                try {
+                    val shownResult = decl.returnType?.let { resolve(it) } ?: result
+                    outside[decl] = if (inside is Type.Fn) {
+                        Type.Fn(decl.params!!.zip(inside.params).map { (p, t) -> p.type?.let { resolve(it) } ?: t }, shownResult)
+                    } else {
+                        shownResult
+                    }
+                } finally {
+                    outsideView = false
+                }
+            }
         }
         for (decl in group.decls) {
             typeParams = declaredParams.getValue(decl)
@@ -1040,6 +1072,7 @@ class Checker(file: SourceFile) {
             val type = provisional.remove(decl)!!.zonk()
             // Values aren't generalized: OCaml's value restriction wouldn't generalize most of them either.
             schemes[decl] = if (decl.params == null) Scheme.mono(type) else Scheme(type.freeVars().toList(), type)
+            outside[decl]?.zonk()?.let { shown -> outsideSchemes[decl] = if (decl.params == null) Scheme.mono(shown) else Scheme(shown.freeVars().toList(), shown) }
         }
         for (decl in group.decls) conform(decl)
     }
@@ -1050,8 +1083,12 @@ class Checker(file: SourceFile) {
         }
     }
 
+    /** Whether a module that [path] is in has an opaque alias, which its functions' inferred types show as what it stands for. */
+    private fun opaqueAround(path: List<String>): Boolean =
+        aliases.values.any { it.isOpaque && it.path.isNotEmpty() && path.take(it.path.size) == it.path }
+
     private fun globalType(decl: Decl.Function): Type {
-        if (sealingSpec(decl) != null) outsideSchemes[decl]?.let { return u.instantiate(it) }
+        if (!inside(decl.path)) outsideSchemes[decl]?.let { return u.instantiate(it) }
         return provisional[decl] ?: u.instantiate(schemes[decl] ?: error("${decl.name} used before it was checked"))
     }
 
@@ -1458,6 +1495,7 @@ class Checker(file: SourceFile) {
         }
         if (member.name == "copy" && receiver is Type.Con && receiver.name in records) {
             val record = records.getValue(receiver.name)
+            if (abstractHere(record)) abstractError(record, member.pos)
             if (record.privateConstructor && !inside(record.path)) {
                 throw CompileError(member.pos, "${record.simpleName}'s constructor is private to ${record.path.joinToString(".")}, so only it can copy one")
             }
@@ -1522,6 +1560,7 @@ class Checker(file: SourceFile) {
         val record = records[receiver.name] ?: return null
         val index = record.fields.indexOfFirst { it.name == member.name }
         if (index < 0) return null
+        if (abstractHere(record)) abstractError(record, member.pos)
         val type = fieldTypes(record.typeParams, record.fields, receiver.args)[index]
         return MemberRef.Field(snake(member.name), receiver.name) to type
     }
@@ -1770,6 +1809,7 @@ class Checker(file: SourceFile) {
                 val t = type.prune()
                 val record = (t as? Type.Con)?.let { records[it.name] }
                 if (record != null) {
+                    if (abstractHere(record)) abstractError(record, p.pos)
                     // A record's fields, in declaration order, like a Kotlin data class.
                     if (p.elements.size != record.fields.size) {
                         throw CompileError(p.pos, "${record.name} has ${record.fields.size} fields, not ${p.elements.size}")

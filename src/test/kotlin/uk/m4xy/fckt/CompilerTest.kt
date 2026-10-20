@@ -299,13 +299,32 @@ class CompilerTest {
     }
 
     @Test
-    fun `specs make a module's types abstract`() {
+    fun `opaque types are abstract outside their module`() {
         val source = File("examples/specs.fk").readText()
         assertEquals("", run(source))
         val ml = compile(source)
         assertContains(ml, "module type Counter = sig\n  type t\n  val show_t : t -> string\n  val zero : t")
         assertContains(ml, "val pop : 'a s -> ('a * 'a s) option")
-        assertContains(ml, "module Tally : Counter = struct\n  type t = int")
+        assertContains(ml, "module Tally : sig\n  type t\n  val show_t : t -> string\n  val zero : t\n  val inc : t -> t")
+        assertContains(ml, "end = struct\n  type t = int")
+        // A spec checks a module; it hides nothing, so without opaque types OCaml infers the signature.
+        assertContains(ml, "module ListStack = struct")
+        // Without a spec: a function's outside type is what's written, with the opaque type's name.
+        val percent = """
+            module Percent {
+              opaque type T = Int
+              of(n: Int): Option<T> = if (n >= 0 && n <= 100) Some(n) else None
+              value(p: T): Int = p
+              twice(n: Int) = n * 2
+            }
+
+        """.trimIndent()
+        assertEquals("", run(percent + "main() = assertEquals(Some(42), Percent.of(42).map(Percent.value))"))
+        assertContains(compile(percent), "val of_ : int -> t option")
+        assertContains(error(percent + "x = Percent.of(1).map(p -> p + 1)"), "'+' can't be applied to Percent.T and Int")
+        assertContains(error(percent + "x: Percent.T = 3"), "expected Percent.T but found Int")
+        // Nothing written says twice takes a T, so it takes an Int.
+        assertEquals("", run(percent + "main() = assertEquals(4, Percent.twice(2))"))
     }
 
     @Test
@@ -317,13 +336,13 @@ class CompilerTest {
               count(c: T): Int
             }
             module Tally : Counter {
-              type T = Int
+              opaque type T = Int
               zero = 0
               count(c: Int) = c
               helper(c: Int) = c
             }
             module Clicks : Counter {
-              type T(clicks: List<String>)
+              opaque type T(clicks: List<String>)
               zero = T([])
               count(c: T) = c.clicks.size
             }
@@ -332,9 +351,20 @@ class CompilerTest {
         assertContains(error(counter + "x = Tally.zero + 1"), "'+' can't be applied to Tally.T and Int")
         assertContains(error(counter + "x: Tally.T = 3"), "expected Tally.T but found Int")
         assertContains(error(counter + "x = Tally.count(Clicks.zero)"), "expected Tally.T but found Clicks.T")
-        assertContains(error(counter + "x = Clicks.T([])"), "T is abstract outside Clicks: its spec Counter hides what it is")
-        assertContains(error(counter + "x = Clicks.zero.clicks"), "Clicks.T has no field 'clicks'")
-        assertContains(error(counter + "x = Tally.helper(1)"), "'helper' isn't in Counter, the spec of Tally")
+        assertContains(error(counter + "x = Clicks.T([])"), "T is opaque outside Clicks: only Clicks can build one or look into it")
+        assertContains(error(counter + "x = Clicks.zero.clicks"), "T is opaque outside Clicks")
+        assertContains(error(counter + "x = Clicks.zero.copy(clicks = [])"), "T is opaque outside Clicks")
+        assertContains(error(counter + "f(c: Clicks.T) = when (c) {\n  Clicks.T(cs) -> cs\n}"), "T is opaque outside Clicks")
+        // What a spec doesn't list is still visible; only private hides it.
+        compile(counter + "x = Tally.helper(1)")
+        // Without opaque, the type is visible.
+        compile(counter.replace("opaque type T = Int", "type T = Int") + "x = Tally.zero + 1")
+        assertContains(error("type T = Int\nopaque type U = Int"), "an opaque type is opaque outside its module, so it needs to be in one")
+        assertContains(error("module M { private opaque type T = Int }"), "a private type is hidden already")
+        assertContains(
+            error("spec S { type T }\nmodule M : S<Int> { opaque type T = Int }"),
+            "T is opaque, so S's type arguments can't say what it is",
+        )
         assertContains(error("spec S {\n  type T\n  f(x: T): Int\n}\nmodule M : S { type T = Int }"), "M doesn't define 'f', which its spec S needs")
         assertContains(error("spec S {\n  type T\n}\nmodule M : S { x = 1 }"), "M doesn't define type T")
         assertContains(
@@ -359,6 +389,8 @@ class CompilerTest {
         val ml = compile(source)
         assertContains(ml, "module SortedSet (M : Ordered) : sig")
         assertContains(ml, "module IntSet = SortedSet (IntOrder)")
+        // Set is opaque, so only SortedSet's functions make one, in order.
+        assertContains(error(source.replace("main() = {", "bad = IntSet.Set([3, 1])\nmain() = {")), "Set is opaque outside IntSet")
         assertContains(ml, "\"Set(items=[1, 3, 5])\" (IntSet.show_set numbers)")
     }
 
@@ -389,13 +421,14 @@ class CompilerTest {
         assertContains(error(sortedSet + "module S = SortedSet<Missing>"), "unknown module 'Missing'")
         // The body works for any M, so it can't assume what M.T is.
         assertContains(error("spec S { type T }\nmodule F<M : S> {\n  f(x: M.T): Int = x\n}"), "expected Int but found F.M.T")
-        // A module that follows Ordered keeps T abstract, as in OCaml.
+        // An opaque T stays abstract, so an IntSet takes only IntOrder.Ts.
         assertContains(
-            error(sortedSet + intOrder.replace("module IntOrder {", "module IntOrder : Ordered {") + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)"),
+            error(sortedSet + intOrder.replace("type T = Int", "opaque type T = Int").replace("a: Int, b: Int", "a: T, b: T") + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)"),
             "expected IntOrder.T but found Int",
         )
-        // Unsealed, it shows T is Int.
+        // Otherwise it shows T is Int, with a spec or without.
         compile(sortedSet + intOrder + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)")
+        compile(sortedSet + intOrder.replace("module IntOrder {", "module IntOrder : Ordered {") + "module IntSet = SortedSet<IntOrder>\nx = IntSet.insert(IntSet.empty, 5)")
     }
 
     @Test
@@ -403,8 +436,8 @@ class CompilerTest {
         val source = File("examples/monads.fk").readText()
         assertEquals("", run(source))
         val ml = compile(source)
-        assertContains(ml, "module Options : Monad with type 'a m = 'a option = struct")
-        assertContains(ml, "module Results : Monad with type 'a m = ('a, string) result = struct")
+        assertContains(ml, "module Options = struct\n  type 'a m = 'a option")
+        assertContains(ml, "module Results = struct\n  type 'a m = ('a, string) result")
         val monad = "spec Monad {\n  type M<A>\n  pure<A>(x: A): M<A>\n}\n"
         val options = "  type M<A> = Option<A>\n  pure(x) = Some(x)\n}"
         assertContains(error(monad + "module O : Monad<Int> {\n$options"), "its type argument must take 1 more")
@@ -423,7 +456,7 @@ class CompilerTest {
             "S can't be Twice's M: Twice needs its T to be Int, but here it's String",
         )
         assertContains(
-            error(twice + "module I : Ordered {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice<I>"),
+            error(twice + "module I : Ordered {\n  opaque type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice<I>"),
             "Twice needs its T to be Int, but here it's I.T",
         )
         assertContains(compile(twice + "module I : Ordered<Int> {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice<I>"), "(M : Ordered with type t = int)")
