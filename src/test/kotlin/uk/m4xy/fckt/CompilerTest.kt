@@ -10,6 +10,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class CompilerTest {
@@ -323,6 +324,40 @@ class CompilerTest {
         )
         // Taking a record apart doesn't need its constructor.
         compile(ratios + "f(r: Ratios.Ratio) = when (r) {\n  Ratios.Ratio(n, d) -> n + d\n}")
+    }
+
+    @Test
+    fun `annotations are checked, then compiled away`() {
+        val source = File("examples/annotations.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        listOf("Route", "Pure", "Codec", "route", "pure", "codec").forEach { assertFalse(it in ml, it) }
+        // Every declaration in it, but main.
+        val header = source.substringBefore("@Route(\"/hello\"")
+        fun annotated(annotation: String, on: String = "f() = 1") = error("$header$annotation\n$on\nmain() = assert(true)")
+        assertContains(annotated("@Unknown"), "unknown annotation 'Unknown'")
+        assertContains(annotated("@Shape"), "'Shape' isn't an annotation; declare one with annotation type Shape(...)")
+        assertContains(annotated("@Route(\"/a\", handler = 1)"), "expected (String) -> String but found Int")
+        assertContains(annotated("@Route(path = \"/a\", greet)"), "an argument passed in order can't follow one passed by name")
+        assertContains(annotated("@Route(\"/a\", x -> x)"), "so not a lambda: name a function instead")
+        assertContains(
+            annotated("annotation type Name(value: String)\n@Name(greet(\"x\"))"),
+            "an annotation's arguments are constants and references, so not a call",
+        )
+        assertContains(annotated("@Codec(1)"), "this should be a type, like List<User>")
+        assertContains(annotated("@Codec(List<Nope>)"), "unknown type 'Nope'")
+        assertContains(annotated("@SortedBy(Other)", "module Other { x = 1 }"), "Other doesn't follow Ordered: declare it as module Other : Ordered")
+        assertContains(annotated("@Default(Triangle)"), "'Triangle' isn't a case of Shape")
+        assertContains(annotated("@Index(User.age)"), "User has no field 'age'")
+        assertContains(annotated("@Index(name)"), "write a field with its type, like User.name")
+        assertContains(annotated("annotation type Ages(field: Field<User, Int>)\n@Ages(User.name)"), "User.name is a String, not a Int")
+        assertContains(annotated("@Derive([IntOrder])"), "unknown spec 'IntOrder'")
+        assertContains(annotated("@Routes([Route(\"/a\")])"), "@Route takes 2 arguments, not 1")
+        assertContains(annotated("", "f(r: Route) = 1"), "'Route' is an annotation, written @Route(...) before a declaration")
+        assertContains(annotated("annotation type Bad<A>(x: A)"), "an annotation has no type parameters")
+        assertContains(annotated("annotation type Bad(x: Case<Int>)"), "Case<...> takes a type with cases, not Int")
+        // A case can be named alone, and a field's type left open.
+        compile("$header@Default(Square)\nannotation type Any(field: Field<User, _>)\n@Any(User.name)\nf() = 1\nmain() = assert(true)")
     }
 
     @Test

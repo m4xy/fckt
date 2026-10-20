@@ -54,6 +54,25 @@ class Parser(private val tokens: List<Token>) {
 
     private fun decl(): Decl {
         val pos = peek.pos
+        if (at(T.AT)) {
+            val annotations = annotations()
+            if (at(T.EOF) || at(T.RBRACE)) throw error("an annotation goes before a declaration", annotations.last().pos)
+            return annotate(decl(), annotations)
+        }
+        // `annotation type Name(fields)`: written `@Name(...)` on declarations, and only checked.
+        if (at(T.IDENT) && peek.text == "annotation" && peekAt(1).kind == T.TYPE) {
+            next()
+            next()
+            val name = upperIdent("an annotation's name")
+            if (at(T.LT)) throw error("an annotation has no type parameters: its fields say what it refers to, like Type or Case<T>")
+            if (at(T.LBRACE) || at(T.ASSIGN)) throw error("an annotation is a record: annotation type $name(field: Type)")
+            val fields = if (accept(T.LPAREN) != null) {
+                (if (at(T.RPAREN)) emptyList() else fieldList(pos)).also { expect(T.RPAREN, "')'") }
+            } else {
+                emptyList()
+            }
+            return Decl.Record(pos, name, emptyList(), fields, isAnnotation = true)
+        }
         // `opaque type T = ...`: outside its module, T can be held and passed back, but not built or looked into.
         if (at(T.IDENT) && peek.text == "opaque" && peekAt(1).kind == T.TYPE) {
             next()
@@ -268,7 +287,11 @@ class Parser(private val tokens: List<Token>) {
         val caseRefs = mutableListOf<CaseRefDef>()
         val includes = mutableListOf<TypeRef.Named>()
         while (!at(T.RBRACE)) {
+            val annotations = annotations()
             val variantPos = peek.pos
+            if (annotations.isNotEmpty() && (at(T.STAR) || peekAt(1).kind == T.DOT)) {
+                throw error("annotate a case where it's declared")
+            }
             if (accept(T.STAR) != null) {
                 // *Other<T>: every case of Other
                 includes += type() as? TypeRef.Named ?: throw error("'*' takes a type with cases", variantPos)
@@ -281,7 +304,7 @@ class Parser(private val tokens: List<Token>) {
                     caseRefs += CaseRefDef(variantPos, path.dropLast(1).joinToString("."), path.last())
                 } else {
                     val fields = if (accept(T.LPAREN) != null) fieldList(variantPos).also { expect(T.RPAREN, "')'") } else emptyList()
-                    variants += VariantDef(variantPos, variantName, fields)
+                    variants += VariantDef(variantPos, variantName, fields, annotations)
                 }
             }
             accept(T.COMMA)
@@ -309,13 +332,14 @@ class Parser(private val tokens: List<Token>) {
     private fun fieldList(declPos: Pos): List<FieldDef> {
         val fields = mutableListOf<FieldDef>()
         while (!at(T.RPAREN)) {
+            val annotations = annotations()
             val pos = peek.pos
             if (at(T.IDENT) && peekAt(1).kind == T.COLON) {
                 val name = next().text
                 next()
-                fields += FieldDef(pos, name, type())
+                fields += FieldDef(pos, name, type(), annotations)
             } else {
-                fields += FieldDef(pos, "", type())
+                fields += FieldDef(pos, "", type(), annotations)
             }
             if (accept(T.COMMA) == null) break
         }
@@ -332,14 +356,108 @@ class Parser(private val tokens: List<Token>) {
         expect(T.LPAREN, "'('")
         val params = mutableListOf<Param>()
         while (!at(T.RPAREN)) {
+            val annotations = annotations()
             val pos = peek.pos
             val name = ident("a parameter name")
             val type = if (accept(T.COLON) != null) type() else null
-            params += Param(pos, name, type)
+            params += Param(pos, name, type, annotations)
             if (accept(T.COMMA) == null) break
         }
         expect(T.RPAREN, "')'")
         return params
+    }
+
+    // ---- Annotations ----
+
+    /** [annotations] before [d]'s own. */
+    private fun annotate(d: Decl, annotations: List<Annotation>): Decl = when (d) {
+        is Decl.Record -> d.copy(annotations = annotations + d.annotations)
+        is Decl.Sealed -> d.copy(annotations = annotations + d.annotations)
+        is Decl.Function -> d.copy(annotations = annotations + d.annotations)
+        is Decl.Module -> d.copy(annotations = annotations + d.annotations)
+        is Decl.Alias -> d.copy(annotations = annotations + d.annotations)
+        is Decl.Spec -> d.copy(annotations = annotations + d.annotations)
+    }
+
+    /** `@Name` or `@Name(args)`, as many as there are, each on its line or before what it's on. */
+    private fun annotations(): List<Annotation> {
+        val annotations = mutableListOf<Annotation>()
+        while (at(T.AT)) {
+            val pos = next().pos
+            var name = ident("an annotation's name")
+            while (at(T.DOT) && peekAt(1).kind == T.IDENT) {
+                next()
+                name += "." + next().text
+            }
+            annotations += Annotation(pos, name, if (at(T.LPAREN)) metaArgs() else emptyList())
+            skipNewlines()
+        }
+        return annotations
+    }
+
+    private fun metaArgs(): List<MetaArg> {
+        expect(T.LPAREN, "'('")
+        val args = mutableListOf<MetaArg>()
+        while (!at(T.RPAREN)) {
+            val name = if (at(T.IDENT) && peekAt(1).kind == T.ASSIGN) next().text.also { next() } else null
+            args += MetaArg(name, meta())
+            if (accept(T.COMMA) == null) break
+        }
+        expect(T.RPAREN, "')'")
+        return args
+    }
+
+    /** An annotation's argument: a constant or a reference, never a calculation. */
+    private fun meta(): Meta {
+        val pos = peek.pos
+        if (at(T.TILDE) || (at(T.IDENT) && peekAt(1).kind == T.ARROW) || (at(T.LPAREN) && isLambdaParams())) {
+            throw error("an annotation's arguments are constants and references, so not a lambda: name a function instead")
+        }
+        return when {
+            at(T.INT) || at(T.FLOAT) || at(T.CHAR) || at(T.TRUE) || at(T.FALSE) -> Meta.Literal(primary())
+            at(T.STRING) -> {
+                val e = primary() as Expr.StringLit
+                if (e.parts.any { it !is StringPart.Text }) throw error("an annotation's strings are constants, without templates", pos)
+                Meta.Literal(e)
+            }
+            at(T.MINUS) && (peekAt(1).kind == T.INT || peekAt(1).kind == T.FLOAT) -> {
+                next()
+                Meta.Literal(Expr.Unary(pos, "-", primary()))
+            }
+            accept(T.LBRACKET) != null -> {
+                val items = mutableListOf<Meta>()
+                while (!at(T.RBRACKET)) {
+                    items += meta()
+                    if (accept(T.COMMA) == null) break
+                }
+                expect(T.RBRACKET, "']'")
+                Meta.ListOf(pos, items)
+            }
+            accept(T.LPAREN) != null -> {
+                val items = mutableListOf(meta())
+                while (accept(T.COMMA) != null) items += meta()
+                expect(T.RPAREN, "')'")
+                items.singleOrNull() ?: Meta.TupleOf(pos, items)
+            }
+            at(T.IDENT) -> {
+                var name = next().text
+                while (at(T.DOT) && peekAt(1).kind == T.IDENT) {
+                    next()
+                    name += "." + next().text
+                }
+                // No comparisons here, so `<` always starts type arguments: List<User>.
+                val typeArgs = if (accept(T.LT) != null) {
+                    val args = mutableListOf(type())
+                    while (accept(T.COMMA) != null) args += type()
+                    expect(T.GT, "'>'")
+                    args
+                } else {
+                    null
+                }
+                Meta.Ref(pos, name, typeArgs, if (at(T.LPAREN)) metaArgs() else null)
+            }
+            else -> throw error("an annotation's argument is a constant or a reference, like 1, \"text\", a name or List<Type>, not ${describe(peek)}")
+        }
     }
 
     // ---- Types ----

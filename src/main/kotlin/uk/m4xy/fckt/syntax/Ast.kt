@@ -28,9 +28,9 @@ sealed interface TypeRef {
 
 // ---- Declarations ----
 
-data class FieldDef(val pos: Pos, val name: String, val type: TypeRef)
+data class FieldDef(val pos: Pos, val name: String, val type: TypeRef, val annotations: List<Annotation> = emptyList())
 
-data class Param(val pos: Pos, val name: String, val type: TypeRef?)
+data class Param(val pos: Pos, val name: String, val type: TypeRef?, val annotations: List<Annotation> = emptyList())
 
 /**
  * A declaration. The parser gives each its own [name]; the checker renames them to their full
@@ -46,13 +46,18 @@ sealed interface Decl {
     /** `opaque type`: outside its module, a type that can be named but not built or looked into. */
     val isOpaque: Boolean get() = false
 
+    /** `@Name(...)` before it: checked, then compiled away. */
+    val annotations: List<Annotation>
+
     /** The modules around it, from its full name: `Ratios.make` is in `[Ratios]`. */
     val path: List<String> get() = name.split('.').dropLast(1)
     val simpleName: String get() = name.substringAfterLast('.')
 
     /**
      * `type Name<T>(a: A, b: B)`, or `type Name(A)`, whose one field is called `value`. With
-     * [privateConstructor] (`type Name private(...)`), only its module can build one.
+     * [privateConstructor] (`type Name private(...)`), only its module can build one. An
+     * [isAnnotation] one (`annotation type Name(...)`) is written `@Name(...)` on declarations,
+     * and exists only while checking: no value has its type.
      */
     data class Record(
         override val pos: Pos,
@@ -62,6 +67,8 @@ sealed interface Decl {
         override val isPrivate: Boolean = false,
         val privateConstructor: Boolean = false,
         override val isOpaque: Boolean = false,
+        override val annotations: List<Annotation> = emptyList(),
+        val isAnnotation: Boolean = false,
     ) : Decl
 
     /**
@@ -78,6 +85,7 @@ sealed interface Decl {
         val includes: List<TypeRef.Named> = emptyList(),
         override val isPrivate: Boolean = false,
         override val isOpaque: Boolean = false,
+        override val annotations: List<Annotation> = emptyList(),
     ) : Decl
 
     /** `type Name<T> = Other<T>`: another name for a type. */
@@ -88,6 +96,7 @@ sealed interface Decl {
         val target: TypeRef,
         override val isPrivate: Boolean = false,
         override val isOpaque: Boolean = false,
+        override val annotations: List<Annotation> = emptyList(),
     ) : Decl
 
     /**
@@ -110,6 +119,7 @@ sealed interface Decl {
         val extension: Boolean = false,
         val property: Boolean = false,
         val external: String? = null,
+        override val annotations: List<Annotation> = emptyList(),
     ) : Decl {
         /** The name it's called by: `second` for `List$second`. */
         val methodName: String get() = simpleName.substringAfter('$')
@@ -131,6 +141,7 @@ sealed interface Decl {
         val spec: TypeRef.Named? = null,
         val params: List<ModuleParam> = emptyList(),
         val application: TypeRef.Named? = null,
+        override val annotations: List<Annotation> = emptyList(),
     ) : Decl
 
     /**
@@ -143,6 +154,7 @@ sealed interface Decl {
         val types: List<SpecType>,
         val values: List<SpecValue>,
         override val isPrivate: Boolean = false,
+        override val annotations: List<Annotation> = emptyList(),
     ) : Decl
 }
 
@@ -155,12 +167,62 @@ data class SpecType(val pos: Pos, val name: String, val typeParams: List<String>
 /** `name<A>(params): R` or `name: T` in a spec; [params] is null for a value. */
 data class SpecValue(val pos: Pos, val name: String, val typeParams: List<String>, val params: List<Param>?, val type: TypeRef)
 
-data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>)
+data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>, val annotations: List<Annotation> = emptyList())
 
 /** `Owner.Case` in a type's cases: a case declared by another type. [owner] may be qualified: `Letters.Alphabet`. */
 data class CaseRefDef(val pos: Pos, val owner: String, val case: String)
 
 data class SourceFile(val decls: List<Decl>)
+
+// ---- Annotations ----
+
+/**
+ * `@Name` or `@Name(args)`, on a declaration, a field, a case or a parameter. Its arguments are
+ * constants and references, never calculations, so a tool can read them without running anything;
+ * the checker resolves each against the annotation's declaration, and then it's compiled away.
+ */
+class Annotation(val pos: Pos, val name: String, val args: List<MetaArg>) {
+    /** Its declaration, set by the checker. */
+    var decl: Decl.Record? = null
+}
+
+/** An annotation's argument, by position or by [name]. */
+data class MetaArg(val name: String?, val value: Meta)
+
+/**
+ * What an annotation's argument can be: a constant, a reference, or a list or tuple of them. The
+ * checker sets what it [resolved] to.
+ */
+sealed class Meta {
+    abstract val pos: Pos
+    var resolved: MetaRef? = null
+
+    /** A number, string, character or Boolean. */
+    class Literal(val expr: Expr) : Meta() {
+        override val pos get() = expr.pos
+    }
+
+    /**
+     * A name, maybe qualified: a function, value, case, field, module, spec or type. With
+     * [typeArgs], a type, `List<User>`; with [args], a case, record or annotation made of constants.
+     */
+    class Ref(override val pos: Pos, val name: String, val typeArgs: List<TypeRef>?, val args: List<MetaArg>?) : Meta()
+
+    class ListOf(override val pos: Pos, val items: List<Meta>) : Meta()
+    class TupleOf(override val pos: Pos, val items: List<Meta>) : Meta()
+}
+
+/** What a [Meta] refers to, set by the checker. */
+sealed interface MetaRef {
+    /** An ordinary value, checked as [expr]: a constant, a function or value by name, or a case or record made of constants. */
+    data class Value(val expr: Expr) : MetaRef
+    data class Type(val type: uk.m4xy.fckt.types.Type) : MetaRef
+    data class Spec(val spec: Decl.Spec) : MetaRef
+    data class Module(val module: Decl.Module) : MetaRef
+    data class Case(val sealed: Decl.Sealed, val variant: VariantDef) : MetaRef
+    data class Field(val record: Decl.Record, val field: FieldDef) : MetaRef
+    data class Annotation(val annotation: uk.m4xy.fckt.syntax.Annotation) : MetaRef
+}
 
 // ---- Expressions ----
 // The checker fills in [Expr.type] and, for nodes whose translation depends on types, a resolution.

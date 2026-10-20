@@ -29,7 +29,8 @@ enum class Role {
     LOCAL_VARIABLE, // bound in a block: x = ..., x by ..., (a, b) = ...
     PROPERTY,       // a field: r.n, or where a record declares it
     NAMED_ARGUMENT,
-    KEYWORD,        // spec, external, opaque and by, where they're keywords
+    KEYWORD,        // spec, external, opaque, annotation and by, where they're keywords
+    ANNOTATION,     // @Name, and annotation type Name
 }
 
 data class Span(val start: Int, val end: Int, val role: Role)
@@ -54,7 +55,7 @@ private fun declaredRoles(decls: List<Decl>, into: MutableMap<String, Role>) {
                 into[d.simpleName] = Role.INTERFACE
                 d.variants.forEach { into[it.name] = Role.DATA_CLASS }
             }
-            is Decl.Record -> into[d.simpleName] = Role.DATA_CLASS
+            is Decl.Record -> into[d.simpleName] = if (d.isAnnotation) Role.ANNOTATION else Role.DATA_CLASS
             is Decl.Alias -> into[d.simpleName] = Role.TYPE_ALIAS
             is Decl.Module -> {
                 into[d.simpleName] = Role.OBJECT
@@ -416,6 +417,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
         val next = code.getOrNull(i + 1)
         fun sameLine(a: Tok, b: Tok) = text.substring(a.end, b.start).none { it == '\n' }
         val role: Role? = fixed[t.start] ?: when {
+            prev?.kind == TokKind.AT -> Role.ANNOTATION
             name[0].isUpperCase() -> {
                 if (typeParams.any { (range, names, _) -> t.start in range && name in names } && prev?.kind != TokKind.DOT) Role.TYPE_PARAMETER
                 else {
@@ -433,7 +435,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
             }
             // Keywords only in place.
             name == "spec" && word(next)?.firstOrNull()?.isUpperCase() == true -> Role.KEYWORD
-            name == "opaque" && word(next) == "type" -> Role.KEYWORD
+            (name == "opaque" || name == "annotation") && word(next) == "type" -> Role.KEYWORD
             name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN) &&
                 (prev == null || !sameLine(prev, t) || word(prev) == "private") -> Role.KEYWORD
             name == "by" && prev != null && sameLine(prev, t) && (prev.kind == TokKind.IDENT || prev.kind == TokKind.RPAREN) &&

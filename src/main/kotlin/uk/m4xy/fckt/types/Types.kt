@@ -67,8 +67,11 @@ sealed class Type {
         /** Before a spec's own type, while the spec says what a module must define. */
         const val SPEC_TYPE = "@"
 
+        /** Before what an annotation's field can refer to: `Type`, `Spec`, `Module`, `Case`, `Field`, or `@` and an annotation. */
+        const val META = "meta "
+
         /** A type's name in messages and output, without the markers above or a type parameter's `#`. */
-        fun displayName(name: String) = name.removePrefix(ABSTRACT).removePrefix(SPEC_TYPE).removePrefix("#")
+        fun displayName(name: String) = name.removePrefix(META).removePrefix(ABSTRACT).removePrefix(SPEC_TYPE).removePrefix("#")
 
         fun render(type: Type, names: MutableMap<Var, String>): String = when (val t = type.prune()) {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }

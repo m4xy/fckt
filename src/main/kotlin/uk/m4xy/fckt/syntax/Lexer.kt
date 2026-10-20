@@ -3,7 +3,7 @@ package uk.m4xy.fckt.syntax
 enum class T {
     IDENT, INT, FLOAT, STRING, CHAR, NEWLINE, EOF,
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
-    COMMA, DOT, COLON, SEMI, ASSIGN, ARROW, PIPE, TILDE, BANG, UNDERSCORE,
+    COMMA, DOT, COLON, SEMI, ASSIGN, ARROW, PIPE, TILDE, BANG, UNDERSCORE, AT,
     PLUS, MINUS, STAR, SLASH, PERCENT, EQ, NEQ, LT, GT, LE, GE, AND, OR,
     TYPE, MODULE, PRIVATE, WHEN, IF, ELSE, IS, TRUE, FALSE,
 }
@@ -263,7 +263,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
             '(' -> T.LPAREN; ')' -> T.RPAREN; '{' -> T.LBRACE; '}' -> T.RBRACE; '[' -> T.LBRACKET; ']' -> T.RBRACKET
             ',' -> T.COMMA; '.' -> T.DOT; ':' -> T.COLON; ';' -> T.SEMI; '=' -> T.ASSIGN; '~' -> T.TILDE
             '!' -> T.BANG; '+' -> T.PLUS; '-' -> T.MINUS; '*' -> T.STAR; '/' -> T.SLASH; '%' -> T.PERCENT
-            '<' -> T.LT; '>' -> T.GT
+            '<' -> T.LT; '>' -> T.GT; '@' -> T.AT
             else -> throw CompileError(pos, "unexpected character '${src[i]}'")
         }
         val text = src[i].toString()

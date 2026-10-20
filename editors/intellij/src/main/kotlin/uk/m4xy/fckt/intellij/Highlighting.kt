@@ -63,6 +63,7 @@ object FcktColors {
     val LOCAL_VARIABLE = key("LOCAL_VARIABLE", K.LOCAL_VARIABLE)
     val FIELD = key("FIELD", K.INSTANCE_PROPERTY)
     val NAMED_ARGUMENT = key("NAMED_ARGUMENT", K.NAMED_ARGUMENT)
+    val ANNOTATION = key("ANNOTATION", K.ANNOTATION)
 
     fun of(role: Role): TextAttributesKey = when (role) {
         Role.INTERFACE -> INTERFACE
@@ -78,6 +79,7 @@ object FcktColors {
         Role.PROPERTY -> FIELD
         Role.NAMED_ARGUMENT -> NAMED_ARGUMENT
         Role.KEYWORD -> KEYWORD
+        Role.ANNOTATION -> ANNOTATION
     }
 }
 
@@ -105,6 +107,7 @@ class FcktSyntaxHighlighter : SyntaxHighlighterBase() {
         TokKind.COLON to FcktColors.COLON,
         TokKind.SEMI to FcktColors.SEMICOLON,
         TokKind.ARROW to FcktColors.ARROW,
+        TokKind.AT to FcktColors.ANNOTATION,
         TokKind.BAD to FcktColors.BAD,
     ).mapKeys { FcktTokens.TYPES.getValue(it.key) }
 
@@ -210,6 +213,7 @@ class FcktColorSettingsPage : ColorSettingsPage {
         "field" to FcktColors.FIELD,
         "named" to FcktColors.NAMED_ARGUMENT,
         "kw" to FcktColors.KEYWORD,
+        "ann" to FcktColors.ANNOTATION,
     )
 
     override fun getIcon() = FcktFileType.INSTANCE.icon
@@ -241,6 +245,7 @@ class FcktColorSettingsPage : ColorSettingsPage {
         AttributesDescriptor("Local variable", FcktColors.LOCAL_VARIABLE),
         AttributesDescriptor("Field, or what a case's pattern takes out", FcktColors.FIELD),
         AttributesDescriptor("Named argument", FcktColors.NAMED_ARGUMENT),
+        AttributesDescriptor("Annotation", FcktColors.ANNOTATION),
     )
 
     override fun getDemoText() = """
@@ -261,6 +266,8 @@ class FcktColorSettingsPage : ColorSettingsPage {
         <kw>type</kw> <interface>Validation</interface><<tp>A</tp>, <tp>E</tp>> { <data>Valid</data>(<field>value</field>: <tp>A</tp>), <data>Invalid</data>(<field>errors</field>: <class>List</class><<tp>E</tp>>) }
         <kw>type</kw> <data>Ratio</data>(<field>n</field>: <class>Int</class>, <field>d</field>: <class>Int</class>)
 
+        <kw>annotation</kw> <kw>type</kw> <ann>Pure</ann>
+        <ann>@Pure</ann>
         <fn>half</fn>(<param>n</param>: <class>Int</class>): <interface>Option</interface><<class>Int</class>> = <kw>if</kw> (<param>n</param> % 2 == 0) <data>Some</data>(<param>n</param> / 2) <kw>else</kw> <data>None</data>
 
         <fn>main</fn>() = {

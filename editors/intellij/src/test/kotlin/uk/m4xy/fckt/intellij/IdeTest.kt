@@ -1,6 +1,7 @@
 package uk.m4xy.fckt.intellij
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.io.File
 
 /** What needs a running IDE: names resolve to their declarations, and Find Usages finds them. */
 class IdeTest : BasePlatformTestCase() {
@@ -60,5 +61,28 @@ class IdeTest : BasePlatformTestCase() {
         val alphabet = text.indexOf("{ A", text.indexOf("type Alphabet")) + 2
         assertEquals(listOf(alphabet), resolve(2))
         assertEquals(listOf(notTheAlphabet), resolve(3))
+    }
+
+    fun `test what an annotation refers to goes to its declaration`() {
+        val text = File("../../examples/annotations.fk").readText()
+        myFixture.configureByText("annotations.fk", text)
+        fun goes(use: String, declaration: String) {
+            val at = text.indexOf(use).also { assertTrue(use, it >= 0) } + use.indexOfFirst { it.isLetter() }
+            val name = (myFixture.file.findElementAt(at)!!.parent as FcktName).reference.resolve() as FcktName
+            assertEquals(use, text.indexOf(declaration) + declaration.indexOfFirst { it.isLetter() }.let { declaration.indexOf(name.text, it) }, name.textRange.startOffset)
+        }
+        goes("@Route(\"/hello\"", "annotation type Route")
+        goes("greet)", "greet(name")
+        goes("IntOrder)", "module IntOrder")
+        goes("Ordered])", "spec Ordered")
+        goes("Circle)", "Circle(radius")
+        goes("Shape.Circle", "type Shape")
+        goes("email)", "email: String")
+        goes("User, Shape)>", "type User")
+        goes("Route(\"/a\"", "annotation type Route")
+        goes("shout)", "shout(@Pure")
+        // Find Usages finds a function where an annotation names it.
+        val greet = myFixture.file.findElementAt(text.indexOf("greet(name"))!!.parent as FcktName
+        assertTrue(myFixture.findUsages(greet).any { it.element!!.textRange.startOffset == text.indexOf("greet)") })
     }
 }

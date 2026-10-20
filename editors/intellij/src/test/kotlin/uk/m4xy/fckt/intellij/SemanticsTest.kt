@@ -169,4 +169,21 @@ class SemanticsTest {
             declarations(text, null)
         }
     }
+
+    @Test
+    fun `annotations`() {
+        val source = """
+            annotation type Route(path: String, handler: (String) -> String)
+            @Route("/a", handler = greet)
+            greet(@Pure s: String) = s
+        """.trimIndent()
+        assertEquals(
+            """
+            [KEYWORD:annotation] type [ANNOTATION:Route]([PROPERTY:path]: [CLASS:String], [PROPERTY:handler]: ([CLASS:String]) -> [CLASS:String])
+            @[ANNOTATION:Route]("/a", [NAMED_ARGUMENT:handler] = greet)
+            [FUNCTION_DECLARATION:greet](@[ANNOTATION:Pure] [PARAMETER:s]: [CLASS:String]) = [PARAMETER:s]
+            """.trimIndent(),
+            marked(source),
+        )
+    }
 }

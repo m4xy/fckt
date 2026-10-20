@@ -6,14 +6,14 @@ enum class TokKind {
     KEYWORD, IDENT, NUMBER,
     STRING, CHAR, ESCAPE, TEMPLATE,
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
-    COMMA, DOT, COLON, SEMI, ARROW, ASSIGN, OPERATOR,
+    COMMA, DOT, COLON, SEMI, ARROW, ASSIGN, OPERATOR, AT,
     BAD,
 }
 
 /** A token from [start] to [end]; [nested] if it's inside a string, where lexing can't restart. */
 data class Tok(val kind: TokKind, val start: Int, val end: Int, val nested: Boolean)
 
-/** Words that are keywords wherever they appear. `spec`, `external`, `opaque` and `by` are keywords only in place. */
+/** Words that are keywords wherever they appear. `spec`, `external`, `opaque`, `annotation` and `by` are keywords only in place. */
 val KEYWORDS = setOf("type", "module", "private", "when", "if", "else", "is", "true", "false", "this")
 
 /**
@@ -150,6 +150,7 @@ fun scan(text: CharSequence, from: Int = 0, until: Int = text.length): List<Tok>
                         ':' -> TokKind.COLON to 1
                         ';' -> TokKind.SEMI to 1
                         '=' -> TokKind.ASSIGN to 1
+                        '@' -> TokKind.AT to 1
                         '+', '-', '*', '/', '%', '<', '>', '!', '~', '|', '&' -> TokKind.OPERATOR to 1
                         else -> TokKind.BAD to 1
                     }

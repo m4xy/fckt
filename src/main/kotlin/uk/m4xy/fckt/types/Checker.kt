@@ -1,6 +1,7 @@
 package uk.m4xy.fckt.types
 
 import uk.m4xy.fckt.ocaml.snake
+import uk.m4xy.fckt.syntax.Annotation
 import uk.m4xy.fckt.syntax.Arg
 import uk.m4xy.fckt.syntax.BinaryRef
 import uk.m4xy.fckt.syntax.CallRef
@@ -11,6 +12,8 @@ import uk.m4xy.fckt.syntax.Decl
 import uk.m4xy.fckt.syntax.FieldDef
 import uk.m4xy.fckt.syntax.Expr
 import uk.m4xy.fckt.syntax.MemberRef
+import uk.m4xy.fckt.syntax.Meta
+import uk.m4xy.fckt.syntax.MetaRef
 import uk.m4xy.fckt.syntax.NameRef
 import uk.m4xy.fckt.syntax.Pattern
 import uk.m4xy.fckt.syntax.Pos
@@ -56,6 +59,8 @@ class Program(
     val copyOrigins: Map<String, String>,
     /** What a spec's type arguments make each of a module's types, by the type's full name. */
     val fixedTypes: Map<String, Decl.Alias>,
+    /** The `annotation type`s, which [root] leaves out, as they're only checked. */
+    val annotationTypes: List<Decl.Record>,
 )
 
 /** A case of a sealed type: [variant], declared by [origin], with [fields] typed in the sealed type's own terms. */
@@ -103,6 +108,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private val sealeds = linkedMapOf<String, Decl.Sealed>()
     private val aliases = linkedMapOf<String, Decl.Alias>()
     private val specs = linkedMapOf<String, Decl.Spec>()
+
+    /** `annotation type`s, which aren't types values can have, and what their fields are. */
+    private val annotationTypes = linkedMapOf<String, Decl.Record>()
+    private val annotationFields = mutableMapOf<Decl.Record, List<Type>>()
     private val moduleSpecs = mutableMapOf<String, Decl.Spec>()
     private val specSchemes = mutableMapOf<Decl.Spec, Map<String, Scheme>>()
 
@@ -354,6 +363,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for (group in groups) checkGroup(group)
         for (app in applications.keys) checkArgumentTypes(app)
         checkExposure()
+        checkAnnotations()
 
         // Copies made by functors share the functor's OCaml labels and constructors.
         val labelCounts = records.values.filter { it.name !in copyOrigins }.flatMap { r -> r.fields.map { snake(it.name) } }.groupingBy { it }.eachCount()
@@ -376,7 +386,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             main = main,
             cases = caseDecls,
             polymorphic = polymorphic,
-            root = root,
+            // Annotations are only checked: their types aren't compiled.
+            root = withoutAnnotationTypes(root),
+            annotationTypes = annotationTypes.values.toList(),
             functionTypes = schemes.mapValues { it.value.type.zonk() },
             outsideTypes = outsideSchemes.filterKeys { it !in parameterMembers }.mapValues { it.value.type.zonk() },
             uses = uses,
@@ -549,10 +561,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (decl is Decl.Function) continue
             if (decl is Decl.Spec) continue
             if (decl.simpleName in BUILTIN_TYPES) throw CompileError(decl.pos, "'${decl.simpleName}' is a built-in type")
-            if (typeDecl(decl.name) != null) throw CompileError(decl.pos, "type '${decl.simpleName}' is declared twice")
+            if (typeDecl(decl.name) != null || decl.name in annotationTypes) throw CompileError(decl.pos, "type '${decl.simpleName}' is declared twice")
             when (decl) {
                 is Decl.Alias -> aliases[decl.name] = decl
-                is Decl.Record -> records[decl.name] = decl
+                is Decl.Record -> if (decl.isAnnotation) annotationTypes[decl.name] = decl else records[decl.name] = decl
                 is Decl.Sealed -> {
                     if (decl.variants.isEmpty() && decl.caseRefs.isEmpty() && decl.includes.isEmpty()) {
                         throw CompileError(decl.pos, "type '${decl.simpleName}' has no cases")
@@ -609,6 +621,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         for (s in sealeds.values) computeCases(s, emptySet())
+        for (a in annotationTypes.values) {
+            currentPath = a.path
+            checkFieldNames(a.fields.map { it.name to it.pos })
+            annotationFields[a] = a.fields.map { resolveMeta(it.type) }
+        }
         currentPath = emptyList()
         // A sealed type that takes in another's cases, and the sealed types it takes them from, share
         // values, so they become polymorphic variants.
@@ -734,6 +751,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     typeNames[ref] = it.name
                     typeOf(it, args)
                 }
+                ?: find(ref.name, annotationTypes, null)?.let {
+                    throw CompileError(ref.pos, "'${ref.name}' is an annotation, written @${ref.name}(...) before a declaration; no value has its type")
+                }
                 ?: throw CompileError(ref.pos, if (ref.name == "_") "'_' only marks a spec type's parameters, as in Monad<Result<_, String>>" else "unknown type '${ref.name}'")
         }
     }
@@ -761,6 +781,221 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             expanding.remove(a.name)
         }
     }
+
+    // ---- Annotations ----
+
+    /**
+     * An annotation's field's type: an ordinary type, or a reference only the checker knows:
+     * `Type`, `Spec`, `Module` or `Module<Spec>`, `Case<T>`, `Field<R, T>` (`_` for any T), another
+     * annotation, or lists and tuples of them. Those are [Type.Con]s named with [Type.META].
+     */
+    private fun resolveMeta(ref: TypeRef): Type {
+        if (ref is TypeRef.Tuple) return Type.tuple(ref.elements.map { resolveMeta(it) })
+        if (ref !is TypeRef.Named) return resolve(ref)
+        fun arity(n: Int) {
+            if (ref.args.size != n) throw CompileError(ref.pos, "'${ref.name}' takes $n type argument${if (n == 1) "" else "s"}, not ${ref.args.size}")
+        }
+        return when (ref.name) {
+            "Type", "Spec" -> Type.Con(Type.META + ref.name).also { arity(0) }
+            "Module" -> {
+                if (ref.args.size > 1) arity(1)
+                val spec = ref.args.singleOrNull()?.let { arg ->
+                    (arg as? TypeRef.Named)?.takeIf { it.args.isEmpty() }?.let { find(it.name, specs, it.pos) }
+                        ?: throw CompileError(arg.pos, "Module<...> takes a spec, like Module<Ordered>")
+                }
+                Type.Con(Type.META + "Module", listOfNotNull(spec?.let { Type.Con(it.name) }))
+            }
+            "Case" -> {
+                arity(1)
+                val type = resolve(ref.args[0])
+                if (sealedName(type) == null) throw CompileError(ref.args[0].pos, "Case<...> takes a type with cases, not $type")
+                Type.Con(Type.META + "Case", listOf(type))
+            }
+            "Field" -> {
+                arity(2)
+                val record = resolve(ref.args[0])
+                if ((record.prune() as? Type.Con)?.name !in records) throw CompileError(ref.args[0].pos, "Field<R, T> takes a record type as R, not $record")
+                val any = (ref.args[1] as? TypeRef.Named)?.takeIf { it.name == "_" && it.args.isEmpty() }
+                Type.Con(Type.META + "Field", listOf(record, if (any != null) Type.Con(Type.META + "_") else resolve(ref.args[1])))
+            }
+            "List" -> Type.list(resolveMeta(ref.args.singleOrNull() ?: return resolve(ref)))
+            else -> find(ref.name, annotationTypes, ref.pos)?.let { Type.Con(Type.META + "@" + it.name).also { arity(0) } } ?: resolve(ref)
+        }
+    }
+
+    private fun hasMeta(type: Type): Boolean = (type.prune() as? Type.Con)?.let { it.name.startsWith(Type.META) || it.args.any(::hasMeta) } ?: false
+
+    /** What an argument of [type] must be, for messages. */
+    private fun metaName(type: Type): String {
+        val t = type.prune() as? Type.Con ?: return "a value of type $type"
+        return when (t.name.removePrefix(Type.META).takeIf { t.name.startsWith(Type.META) }) {
+            "Type" -> "a type, like List<User>"
+            "Spec" -> "a spec, by name"
+            "Module" -> t.args.singleOrNull()?.let { "a module that follows ${Type.displayName((it as Type.Con).name)}" } ?: "a module, by name"
+            "Case" -> "a case of ${t.args[0]}"
+            "Field" -> "a field of ${t.args[0]}, like ${t.args[0]}.name"
+            null -> when (t.name) {
+                "List" -> "a list of ${metaName(t.args[0])}s"
+                Type.TUPLE -> "a tuple of ${t.args.joinToString(", ") { metaName(it) }}"
+                else -> "a value of type $type"
+            }
+            else -> "an annotation, @${t.name.removePrefix(Type.META + "@").substringAfterLast('.')}(...)"
+        }
+    }
+
+    /** The program's annotations, each against its declaration, from the module it's written in. */
+    private fun checkAnnotations() {
+        val seen = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Annotation, Boolean>())
+        fun check(path: List<String>, annotations: List<Annotation>) {
+            currentPath = path
+            for (a in annotations) if (seen.add(a)) checkAnnotation(a)
+        }
+        for (d in decls + modules.values) {
+            check(d.path, d.annotations)
+            when (d) {
+                is Decl.Record -> d.fields.forEach { check(d.path, it.annotations) }
+                is Decl.Sealed -> d.variants.forEach { v ->
+                    check(d.path, v.annotations)
+                    v.fields.forEach { check(d.path, it.annotations) }
+                }
+                is Decl.Function -> d.params.orEmpty().forEach { check(d.path, it.annotations) }
+                else -> {}
+            }
+        }
+        currentPath = emptyList()
+    }
+
+    private fun checkAnnotation(a: Annotation) {
+        val decl = find(a.name, annotationTypes, a.pos) ?: throw CompileError(
+            a.pos,
+            if (find(a.name, records, null) != null || find(a.name, sealeds, null) != null) {
+                "'${a.name}' isn't an annotation; declare one with annotation type ${a.name.substringAfterLast('.')}(...)"
+            } else {
+                "unknown annotation '${a.name}'"
+            },
+        )
+        a.decl = decl
+        val order = argOrder(a.args.map { it.name to it.value.pos }, decl.fields.map { it.name }, a.pos, "@${a.name}")
+        annotationFields.getValue(decl).forEachIndexed { i, type -> checkMeta(a.args[order[i]].value, type) }
+    }
+
+    /** Checks [m] is what an argument of [expected] can be, and sets what it refers to. */
+    private fun checkMeta(m: Meta, expected: Type) {
+        val t = expected.prune() as? Type.Con
+        if (t == null || !hasMeta(t)) return checkConstant(m, expected)
+        fun wrong(): Nothing = throw CompileError(m.pos, "this should be ${metaName(expected)}")
+        val ref = m as? Meta.Ref
+        // A reference by name alone: not a type with arguments, or something made with arguments.
+        fun name(): String = ref?.takeIf { it.typeArgs == null && it.args == null }?.name ?: wrong()
+        m.resolved = when (t.name) {
+            "List" -> {
+                (m as? Meta.ListOf ?: wrong()).items.forEach { checkMeta(it, t.args[0]) }
+                null
+            }
+            Type.TUPLE -> {
+                val items = (m as? Meta.TupleOf)?.items?.takeIf { it.size == t.args.size } ?: wrong()
+                items.zip(t.args).forEach { (item, type) -> checkMeta(item, type) }
+                null
+            }
+            Type.META + "Type" -> MetaRef.Type(resolve(typeRefOf(m) ?: wrong()))
+            Type.META + "Spec" -> MetaRef.Spec(find(name(), specs, m.pos) ?: throw CompileError(m.pos, "unknown spec '${name()}'"))
+            Type.META + "Module" -> {
+                val module = lookupModule(name(), m.pos) ?: throw CompileError(m.pos, "unknown module '${name()}'")
+                if (module.params.isNotEmpty()) throw CompileError(m.pos, "${module.simpleName} is a functor; pass a module it makes, module Name = ${module.simpleName}(...)")
+                val spec = (t.args.singleOrNull() as? Type.Con)?.name
+                if (spec != null && moduleSpecs[module.name]?.name != spec) {
+                    val simple = Type.displayName(spec).substringAfterLast('.')
+                    throw CompileError(m.pos, "${module.simpleName} doesn't follow $simple: declare it as module ${module.simpleName} : $simple")
+                }
+                MetaRef.Module(module)
+            }
+            Type.META + "Case" -> {
+                val name = name()
+                val sealed = sealedName(t.args[0])!!
+                val qualifier = name.substringBeforeLast('.', "").ifEmpty { null }?.let { q ->
+                    lookupSealed(q, m.pos) ?: throw CompileError(m.pos, "unknown type '$q'")
+                }
+                val case = cases(sealed, (t.args[0].prune() as Type.Con).args).map { it.first }
+                    .firstOrNull { c -> c.name == name.substringAfterLast('.') && (qualifier == null || caseDecls.getValue(qualifier.name).any { it.sameCase(c) }) }
+                    ?: throw CompileError(m.pos, "'$name' isn't a case of ${t.args[0]}")
+                MetaRef.Case(case.origin, case.variant)
+            }
+            Type.META + "Field" -> {
+                val name = name()
+                val owner = name.substringBeforeLast('.', "").ifEmpty { throw CompileError(m.pos, "write a field with its type, like ${t.args[0]}.$name") }
+                val wanted = (t.args[0].prune() as Type.Con)
+                val record = lookupRecord(owner, m.pos)?.takeIf { it.name == wanted.name } ?: throw CompileError(m.pos, "expected a field of ${t.args[0]}, not of $owner")
+                val index = record.fields.indexOfFirst { it.name == name.substringAfterLast('.') }
+                if (index < 0) throw CompileError(m.pos, "${record.simpleName} has no field '${name.substringAfterLast('.')}'")
+                val actual = fieldTypes(record.typeParams, record.fields, wanted.args)[index]
+                val type = t.args[1]
+                if ((type.prune() as? Type.Con)?.name != Type.META + "_" && !u.unify(actual, type)) {
+                    throw CompileError(m.pos, "$name is a $actual, not a ${type.zonk()}")
+                }
+                MetaRef.Field(record, record.fields[index])
+            }
+            else -> {
+                val wanted = annotationTypes.getValue(t.name.removePrefix(Type.META + "@"))
+                if (ref?.typeArgs != null || find(ref?.name ?: wrong(), annotationTypes, m.pos) !== wanted) wrong()
+                val nested = Annotation(m.pos, ref.name, ref.args.orEmpty())
+                checkAnnotation(nested)
+                MetaRef.Annotation(nested)
+            }
+        }
+    }
+
+    /** [m] as a type: `User`, `List<User>`, `(Int, String)`. */
+    private fun typeRefOf(m: Meta): TypeRef? = when (m) {
+        is Meta.Ref -> if (m.args != null) null else TypeRef.Named(m.pos, m.name, m.typeArgs.orEmpty())
+        is Meta.TupleOf -> TypeRef.Tuple(m.pos, m.items.map { typeRefOf(it) ?: return null })
+        else -> null
+    }
+
+    /**
+     * Checks [m], an ordinary value, as an expression of type [expected]: a constant, a function or
+     * value by name, or a case or record made of them. Never a call, which would need running.
+     */
+    private fun checkConstant(m: Meta, expected: Type) {
+        val e = expressionOf(m)
+        check(e, expected, Scope(null))
+        fun constant(e: Expr) {
+            when (e) {
+                is Expr.Call -> {
+                    if (e.resolved !is CallRef.Construct) throw CompileError(e.pos, "an annotation's arguments are constants and references, so not a call: pass the function itself")
+                    e.args.forEach { constant(it.value) }
+                }
+                is Expr.Member -> if (e.resolved !is MemberRef.Global && e.resolved !is MemberRef.Case) {
+                    throw CompileError(e.pos, "an annotation's arguments are constants and references, so not a field of a value")
+                }
+                is Expr.ListLit -> e.items.forEach(::constant)
+                is Expr.Tuple -> e.elements.forEach(::constant)
+                else -> {}
+            }
+        }
+        constant(e)
+        m.resolved = MetaRef.Value(e)
+    }
+
+    private fun expressionOf(m: Meta): Expr = when (m) {
+        is Meta.Literal -> m.expr
+        is Meta.ListOf -> Expr.ListLit(m.pos, m.items.map(::expressionOf))
+        is Meta.TupleOf -> Expr.Tuple(m.pos, m.items.map(::expressionOf))
+        is Meta.Ref -> {
+            if (m.typeArgs != null) throw CompileError(m.pos, "a type goes only where an annotation's field is a Type, like List<User>")
+            val path = m.name.split('.')
+            val callee = path.drop(1).fold<String, Expr>(Expr.Name(m.pos, path[0])) { target, name -> Expr.Member(m.pos, target, name) }
+            m.args?.let { args -> Expr.Call(m.pos, callee, args.map { Arg(it.name, expressionOf(it.value)) }) } ?: callee
+        }
+    }
+
+    /** [ds] without annotation types, which are only checked. */
+    private fun withoutAnnotationTypes(ds: List<Decl>): List<Decl> = ds.filter { !(it is Decl.Record && it.isAnnotation) }.map { d ->
+        // Only a module that holds one is copied, so the rest stay the declarations the checker knows.
+        if (d is Decl.Module && hasAnnotationType(d)) d.copy(decls = withoutAnnotationTypes(d.decls)) else d
+    }
+
+    private fun hasAnnotationType(m: Decl.Module): Boolean =
+        m.decls.any { (it is Decl.Record && it.isAnnotation) || (it is Decl.Module && hasAnnotationType(it)) }
 
     // ---- Specs ----
 
@@ -1479,16 +1714,26 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return qualifier.takeIf { lookupSealed(it, null) != null || lookupModule(it, null) != null }
     }
 
-    /** Maps declared parameter names to argument indices: `order[i]` is the argument for parameter i. */
-    private fun argOrder(args: List<Arg>, params: List<String>, pos: Pos, what: String): List<Int> {
-        if (args.none { it.name != null }) {
+    /**
+     * Maps declared parameter names to argument indices: `order[i]` is the argument for parameter
+     * i. Each of [args] is its name, if it's passed by one, and where it's written.
+     */
+    private fun argOrder(args: List<Pair<String?, Pos>>, params: List<String>, pos: Pos, what: String): List<Int> {
+        if (args.none { it.first != null }) {
             if (args.size != params.size) throw CompileError(pos, "$what takes ${params.size} argument${if (params.size == 1) "" else "s"}, not ${args.size}")
             return params.indices.toList()
         }
+        // As in Kotlin, the first arguments can be passed in order, and the rest by name.
         val byName = mutableMapOf<String, Int>()
-        args.forEachIndexed { i, arg ->
-            if (arg.name !in params) throw CompileError(arg.value.pos, "$what has no parameter '${arg.name}'")
-            if (byName.put(arg.name!!, i) != null) throw CompileError(arg.value.pos, "'${arg.name}' is passed twice")
+        args.forEachIndexed { i, (name, at) ->
+            if (name == null) {
+                if (args.take(i).any { it.first != null }) throw CompileError(at, "an argument passed in order can't follow one passed by name")
+                if (i >= params.size) throw CompileError(pos, "$what takes ${params.size} argument${if (params.size == 1) "" else "s"}, not ${args.size}")
+                byName[params[i]] = i
+            } else {
+                if (name !in params) throw CompileError(at, "$what has no parameter '$name'")
+                if (byName.put(name, i) != null) throw CompileError(at, "'$name' is passed twice")
+            }
         }
         return params.map { byName[it] ?: throw CompileError(pos, "$what is missing argument '$it'") }
     }
@@ -1514,7 +1759,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 else -> {}
             }
             callee.type = fn
-            val order = argOrder(e.args, global.params.map { it.name }, e.pos, "'${global.simpleName}'")
+            val order = argOrder(e.args.map { it.name to it.value.pos }, global.params.map { it.name }, e.pos, "'${global.simpleName}'")
             checkArgs(e.args, order, fn.params, scope)
             e.resolved = CallRef.Function(order)
             return fn.result
@@ -1552,7 +1797,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun construct(e: Expr.Call, shape: ConstructorShape, name: String, expected: Type?, scope: Scope): Type {
         if (shape.fieldTypes.isEmpty()) throw CompileError(e.pos, "'$name' takes no arguments; write it without ()")
-        val order = argOrder(e.args, shape.fieldNames, e.pos, "'$name'")
+        val order = argOrder(e.args.map { it.name to it.value.pos }, shape.fieldNames, e.pos, "'$name'")
         expected?.let { u.unify(shape.result, it) }
         checkArgs(e.args, order, shape.fieldTypes, scope)
         e.resolved = CallRef.Construct(shape.ref, order)

@@ -216,6 +216,7 @@ class Layout(private val text: String) {
         if (a.tok.nested || b.tok.nested || (k == TokKind.STRING && l == TokKind.STRING) || k == TokKind.BAD || l == TokKind.BAD) return null
         return when {
             b.isComment || k == TokKind.BLOCK_COMMENT -> 1
+            k == TokKind.AT -> 0
             l == TokKind.COMMA || l == TokKind.SEMI -> 0
             k == TokKind.COMMA || k == TokKind.SEMI -> 1
             k == TokKind.LPAREN || k == TokKind.LBRACKET || l == TokKind.RPAREN || l == TokKind.RBRACKET -> 0

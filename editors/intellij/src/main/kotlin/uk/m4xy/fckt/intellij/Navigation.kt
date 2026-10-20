@@ -4,11 +4,14 @@ import uk.m4xy.fckt.STANDARD_MODULES
 import uk.m4xy.fckt.analyse
 import uk.m4xy.fckt.moduleName
 import uk.m4xy.fckt.standardLibrary
+import uk.m4xy.fckt.syntax.Annotation
 import uk.m4xy.fckt.syntax.CallRef
 import uk.m4xy.fckt.syntax.ConstructorRef
 import uk.m4xy.fckt.syntax.Decl
 import uk.m4xy.fckt.syntax.Expr
 import uk.m4xy.fckt.syntax.MemberRef
+import uk.m4xy.fckt.syntax.Meta
+import uk.m4xy.fckt.syntax.MetaRef
 import uk.m4xy.fckt.syntax.NameRef
 import uk.m4xy.fckt.syntax.Parser
 import uk.m4xy.fckt.syntax.Pattern
@@ -17,6 +20,7 @@ import uk.m4xy.fckt.syntax.Statement
 import uk.m4xy.fckt.syntax.StringPart
 import uk.m4xy.fckt.syntax.TypeRef
 import uk.m4xy.fckt.types.Program
+import uk.m4xy.fckt.types.Type
 import java.io.File
 
 /**
@@ -244,7 +248,7 @@ private class Resolutions(
         return Target(member.first.file ?: spec.pos.file, member.first, member.second)
     }
 
-    private val types: Map<String, Decl> = (program.records + program.sealeds + program.aliases).associateBy { it.name }
+    private val types: Map<String, Decl> = (program.records + program.sealeds + program.aliases + program.annotationTypes).associateBy { it.name }
     private val modules = mutableMapOf<String, Decl.Module>().also { m ->
         fun deep(ds: List<Decl>): Unit = ds.forEach {
             if (it is Decl.Module) {
@@ -309,13 +313,30 @@ private class Resolutions(
     fun decls(decls: List<Decl>) {
         for (d in decls) when (d) {
             is Decl.Function -> {
-                d.params.orEmpty().forEach { type(it.type) }
+                annotations(d.annotations)
+                d.params.orEmpty().forEach {
+                    annotations(it.annotations)
+                    type(it.type)
+                }
                 type(d.returnType)
                 if (d.external == null) expr(d.body)
             }
-            is Decl.Record -> d.fields.forEach { type(it.type) }
+            is Decl.Record -> {
+                annotations(d.annotations)
+                d.fields.forEach {
+                    annotations(it.annotations)
+                    type(it.type)
+                }
+            }
             is Decl.Sealed -> {
-                d.variants.forEach { v -> v.fields.forEach { type(it.type) } }
+                annotations(d.annotations)
+                d.variants.forEach { v ->
+                    annotations(v.annotations)
+                    v.fields.forEach {
+                        annotations(it.annotations)
+                        type(it.type)
+                    }
+                }
                 d.includes.forEach(::type)
                 // Alphabet.A: a case taken from another type.
                 for (ref in d.caseRefs) {
@@ -325,9 +346,71 @@ private class Resolutions(
                     owner.variants.firstOrNull { it.name == ref.case }?.let { v -> offsets.getOrNull(1)?.let { put(it, Target(v.pos.file ?: owner.pos.file, v.pos, v.name)) } }
                 }
             }
-            is Decl.Alias -> type(d.target)
-            is Decl.Spec -> d.values.forEach { v -> v.params.orEmpty().forEach { type(it.type) }; type(v.type) }
-            is Decl.Module -> decls(d.decls)
+            is Decl.Alias -> {
+                annotations(d.annotations)
+                type(d.target)
+            }
+            is Decl.Spec -> {
+                annotations(d.annotations)
+                d.values.forEach { v -> v.params.orEmpty().forEach { type(it.type) }; type(v.type) }
+            }
+            is Decl.Module -> {
+                annotations(d.annotations)
+                decls(d.decls)
+            }
+        }
+    }
+
+    /** `@Route("/a", handler = greet)`: the annotation's declaration, and what its arguments refer to. */
+    private fun annotations(annotations: List<Annotation>) {
+        for (a in annotations) {
+            a.decl?.let { put(at(a.pos, a.name.substringAfterLast('.')), of(it)) }
+            a.args.forEach { meta(it.value) }
+        }
+    }
+
+    private fun meta(m: Meta) {
+        when (m) {
+            is Meta.ListOf -> m.items.forEach(::meta)
+            is Meta.TupleOf -> (m.resolved as? MetaRef.Type)?.let { metaType(m, it.type) } ?: m.items.forEach(::meta)
+            is Meta.Literal -> {}
+            is Meta.Ref -> {
+                // The last name is what's referred to; one before it, its type or module.
+                val last = m.name.substringAfterLast('.')
+                val owner = m.name.substringBeforeLast('.', "").substringAfterLast('.')
+                fun ownedBy(decl: Decl) {
+                    if (owner.isNotEmpty()) put(at(m.pos, owner), of(decl))
+                }
+                when (val r = m.resolved) {
+                    is MetaRef.Value -> expr(r.expr)
+                    is MetaRef.Type -> metaType(m, r.type)
+                    is MetaRef.Spec -> put(at(m.pos, last), of(r.spec))
+                    is MetaRef.Module -> put(at(m.pos, last), of(r.module))
+                    is MetaRef.Case -> {
+                        put(at(m.pos, last), Target(r.variant.pos.file ?: r.sealed.pos.file, r.variant.pos, r.variant.name))
+                        ownedBy(r.sealed)
+                    }
+                    is MetaRef.Field -> {
+                        put(at(m.pos, last), Target(r.field.pos.file ?: r.record.pos.file, r.field.pos, r.field.name))
+                        ownedBy(r.record)
+                    }
+                    is MetaRef.Annotation -> annotations(listOf(r.annotation))
+                    null -> {}
+                }
+            }
+        }
+    }
+
+    /** [m], written as a type, and the [type] it is: `List<(User, Shape)>`. */
+    private fun metaType(m: Meta, type: Type) {
+        val t = type.prune() as? Type.Con ?: return
+        when (m) {
+            is Meta.TupleOf -> m.items.zip(t.args).forEach { (item, arg) -> metaType(item, arg) }
+            is Meta.Ref -> {
+                types[t.name]?.let { put(at(m.pos, m.name.substringAfterLast('.')), of(it)) }
+                m.typeArgs?.forEach(::type)
+            }
+            else -> {}
         }
     }
 

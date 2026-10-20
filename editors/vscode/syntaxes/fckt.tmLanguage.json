@@ -26,6 +26,9 @@
           "include": "#chars"
         },
         {
+          "include": "#annotations"
+        },
+        {
           "include": "#spec-declaration"
         },
         {
@@ -110,6 +113,10 @@
           "include": "#identifiers"
         }
       ]
+    },
+    "annotations": {
+      "name": "storage.type.annotation.fckt",
+      "match": "@[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*"
     },
     "comments": {
       "patterns": [
@@ -478,6 +485,10 @@
         {
           "name": "storage.modifier.fckt",
           "match": "\\bopaque(?=\\s+type\\b)"
+        },
+        {
+          "name": "storage.modifier.fckt",
+          "match": "\\bannotation(?=\\s+type\\b)"
         }
       ]
     },
