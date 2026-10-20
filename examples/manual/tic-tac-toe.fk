@@ -1,0 +1,88 @@
+
+module TicTacToe {
+  type Player {
+    ONE,
+    TWO
+  }
+
+  opaque type State {
+    Empty,
+    Occupied(Player)
+  }
+
+  type Game(board: Boards.Board<State>, connectedToWin: Int)
+
+  create(size: Int, connectedToWin: Int) = Game(
+    Boards.make(size, State.Empty),
+    connectedToWin
+  )
+
+  type Position(x: Int, y: Int)
+
+  opaque type TurnResult {
+    Win,
+    Success(Game),
+    Error(reason: String)
+  }
+
+  play(player: Player, position: Position) : TurnResult = {
+    TurnResult.Error("Code unimplemented") // TODO implement code
+  }
+}
+
+module Boards {
+  opaque type Board<X>(size: Int, values: ImmutableLists.ImmutableList<X>)
+
+  make<X>(size: Int, default: X) = Board(size, ImmutableLists.of(default, size * size))
+
+  get<X>(board: Board<X>, x: Int, y: Int) = Options {
+    _ by checkBounds(x, y, board.size)
+    res by ImmutableLists.get(board.values, x + y * board.size)
+    res
+  }
+
+  set<X>(board: Board<X>, x: Int, y: Int, value: X) = Options {
+    _ by checkBounds(x, y, board.size)
+    res by ImmutableLists.set(board.values, x + y * board.size, value)
+    res
+  }
+
+  private checkBounds(x: Int, y: Int, size: Int) = Options {
+      _ by bounded(x, size)
+      _ by bounded(y, size)
+      Some(true)
+  }
+
+  private bounded(x: Int, size: Int) =
+    if (x > 0) Some(x)
+    else None
+}
+
+module ImmutableLists {
+  opaque type ImmutableList<T> = List<T>
+
+  of<T>(elt: T, times: Int) : ImmutableList<T> =
+    if (times <= 0) []
+    else [elt, *of(elt, times - 1)]
+
+  set<T>(lst: ImmutableList<T>, i: Int, e: T) : Option<ImmutableList<T>> = when (lst) {
+    [] -> None
+    [hd, *tl] ->
+      if (i == 0) Some([e, *tl])
+      else Options {
+        rest by set(tl, i - 1, e)
+        [hd, *rest]
+      }
+  }
+
+  get<T>(lst: ImmutableList<T>, i: Int) = Options {
+    _ by positive(i)
+    res by when (lst) {
+      [] -> None
+      [x, *rest] -> if (i == 0) Some(x) else get(rest, i - 1)
+    }
+    res
+  }
+}
+
+positive(x: Int) = if (x >= 0) Some(x) else None
