@@ -15,7 +15,7 @@ import uk.m4xy.kastor.resolve
 import java.io.File
 
 /** fckt source to OCaml source, with the standard library. Throws [uk.m4xy.fckt.syntax.CompileError]. */
-fun compile(source: String): String = link(source, emptyMap())
+fun compile(source: String): String = compile(link(source, emptyMap()).file)
 
 /**
  * [entry] and the files it uses, to one OCaml source. Each file is a module named after it:
@@ -26,15 +26,31 @@ fun compile(source: String): String = link(source, emptyMap())
 fun compile(entry: File, dirs: List<File>): String = compile(entry.readText(), entry, dirs)
 
 /** [text] as the contents of [entry], which an editor may not have saved yet, and the files it uses. */
-fun compile(text: String, entry: File, dirs: List<File>): String {
+fun compile(text: String, entry: File, dirs: List<File>): String = compile(link(text, available(entry, dirs)).file)
+
+/** A checked program: [decls] are the entry file's own, with what each name refers to filled in. */
+class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
+
+/**
+ * [text], as [entry], checked with the files it uses, for tools: what each name in it refers to.
+ * Each declaration's position names its file: null for [entry], a path, or `std/...` for the
+ * standard library. Throws [uk.m4xy.fckt.syntax.CompileError].
+ */
+fun analyse(text: String, entry: File?, dirs: List<File>): Analysis {
+    val linked = link(text, available(entry, dirs))
+    return Analysis(linked.main, Checker(linked.file).check())
+}
+
+/** The `.fk` files in [dirs] other than [entry], by module name; the first of a name wins. */
+private fun available(entry: File?, dirs: List<File>): Map<String, Source> {
     val available = linkedMapOf<String, Source>()
     for (dir in dirs) {
         val files = dir.listFiles { f -> f.isFile && f.extension == "fk" }?.sortedBy { it.name } ?: continue
         for (file in files) {
-            if (file.canonicalFile != entry.canonicalFile) available.putIfAbsent(moduleName(file), Source(file.path) { file.readText() })
+            if (file.canonicalFile != entry?.canonicalFile) available.putIfAbsent(moduleName(file), Source(file.path) { file.readText() })
         }
     }
-    return link(text, available)
+    return available
 }
 
 /** The source of the standard library's [name] (`prelude`, `options`, ...), for tools that read it. */
@@ -73,11 +89,14 @@ private fun prelude(): List<Pair<Decl, Set<String>>> {
     }
 }
 
+/** A program with what it uses ([file]), and the program's own declarations ([main]). */
+private class Linked(val file: SourceFile, val main: List<Decl>)
+
 /**
  * The program [text] with what it uses: files from [available] then the standard library, as
  * modules, and the prelude's declarations, at the top level. The program's own come first.
  */
-private fun link(text: String, available: Map<String, Source>): String {
+private fun link(text: String, available: Map<String, Source>): Linked {
     val main = Parser.parse(text)
     val preludeDecls = prelude()
     val own = main.decls.map { it.name }.toSet()
@@ -114,7 +133,7 @@ private fun link(text: String, available: Map<String, Source>): String {
             preludeDecls.firstOrNull { (d, _) -> d.name == name && !(d is Decl.Function && d.extension) }?.let { (d, uses) -> include(d, uses) }
         }
     }
-    return compile(SourceFile(prelude + modules + main.decls))
+    return Linked(SourceFile(prelude + modules + main.decls), main.decls)
 }
 
 private fun compile(file: SourceFile): String {

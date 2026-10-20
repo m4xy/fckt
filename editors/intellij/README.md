@@ -34,6 +34,15 @@ that suits Kotlin suits fckt:
 
 Each can be changed on its own under Settings → Editor → Color Scheme → fckt.
 
+## Go to declaration
+
+Cmd-click a name, or use Go To → Declaration, to go where it's declared: a local or parameter
+where it was bound, a function, type, case, field or module in this file, the directory's other
+files, or the standard library (opened read-only). When the file checks, the checker says which
+declaration a name means, so `xs.total()` goes to the `total` for `xs`'s type, and `M.pure` in a
+functor goes to the spec's `pure`. When it doesn't, names are looked up as the compiler would:
+inside out from where they're used, with `Ratios.make` looked up in `Ratios`.
+
 ## Errors
 
 The file is compiled with its directory's other files, as `fckt` would, each time it changes. The
@@ -45,4 +54,5 @@ first error is underlined where it is; one in another file is shown at the top o
 ./gradlew :intellij:test
 ```
 
-checks the colours of some samples, and that every example scans and colours without failing.
+checks the colours of some samples, where names in the examples go, and that every example scans
+and colours without failing.

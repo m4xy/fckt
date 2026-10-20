@@ -138,23 +138,22 @@ private object NeighbourCache {
  * pattern its body. An inner one hides an outer one of the same name. Names the walk doesn't find
  * in scope are global, and keep the colours their tokens give them.
  */
-private class Scopes(private val at: (Pos, String) -> Unit) {
+internal class Scopes {
+    /** What each name, where it's written, refers to. */
     val found = mutableMapOf<Pos, Role>()
 
-    private class Scope(val parent: Scope?) {
-        val names = mutableMapOf<String, Role>()
-        fun lookup(name: String): Role? = names[name] ?: parent?.lookup(name)
-    }
+    /** Where each use of a local or parameter was bound, by the use's position. */
+    val bindings = mutableMapOf<Pos, Pos>()
 
-    private fun mark(pos: Pos, name: String, role: Role) {
-        found[pos] = role
-        at(pos, name)
+    private class Scope(val parent: Scope?) {
+        val names = mutableMapOf<String, Pair<Role, Pos>>()
+        fun lookup(name: String): Pair<Role, Pos>? = names[name] ?: parent?.lookup(name)
     }
 
     private fun bind(scope: Scope, pos: Pos, name: String, role: Role) {
         if (name == "_" || name == "this") return
-        scope.names[name] = role
-        mark(pos, name, role)
+        scope.names[name] = role to pos
+        found[pos] = role
     }
 
     fun decls(decls: List<Decl>) {
@@ -188,10 +187,14 @@ private class Scopes(private val at: (Pos, String) -> Unit) {
 
     private fun expr(e: Expr, scope: Scope) {
         when (e) {
-            is Expr.Name -> if (e.name[0].isLowerCase()) scope.lookup(e.name)?.let { mark(e.pos, e.name, it) }
+            is Expr.Name -> if (e.name[0].isLowerCase()) scope.lookup(e.name)?.let { (role, at) ->
+                found[e.pos] = role
+                bindings[e.pos] = at
+            }
             is Expr.Call -> {
-                // A called name keeps its call colour; what it's called with is looked up.
-                if (e.callee !is Expr.Name) expr(e.callee, scope)
+                // A called name keeps its call colour, but still refers to where it was bound.
+                val callee = e.callee
+                if (callee is Expr.Name) scope.lookup(callee.name)?.let { bindings[callee.pos] = it.second } else expr(callee, scope)
                 e.args.forEach { arg: Arg -> expr(arg.value, scope) }
             }
             is Expr.Member -> expr(e.target, scope)
@@ -207,7 +210,8 @@ private class Scopes(private val at: (Pos, String) -> Unit) {
             }
             is Expr.Pipe -> {
                 expr(e.value, scope)
-                if (e.function !is Expr.Name) expr(e.function, scope)
+                val function = e.function
+                if (function is Expr.Name) scope.lookup(function.name)?.let { bindings[function.pos] = it.second } else expr(function, scope)
             }
             is Expr.If -> {
                 expr(e.condition, scope)
@@ -239,7 +243,7 @@ private class Scopes(private val at: (Pos, String) -> Unit) {
         for (st in b.statements) when (st) {
             is Statement.Binding -> if (st.params != null) {
                 // A local function: its name is in scope in its own body, for recursion.
-                scope.names[st.name] = Role.LOCAL_VARIABLE
+                scope.names[st.name] = Role.LOCAL_VARIABLE to st.pos
                 val inner = Scope(scope)
                 params(st.params!!, inner)
                 expr(st.value, inner)
@@ -383,7 +387,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
 
     // Lower-case names by scope, when the file parses; otherwise, a branch's names by its lines.
     if (parsed != null) {
-        val scopes = Scopes { _, _ -> }
+        val scopes = Scopes()
         scopes.decls(parsed)
         for ((pos, role) in scopes.found) {
             val start = offset(pos)

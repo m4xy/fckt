@@ -109,6 +109,38 @@ class SemanticsTest {
         )
     }
 
+    /** Where the [nth] [word] on [line] of [example] goes: `file:line`, one per target. */
+    private fun goto(example: String, line: Int, word: String, nth: Int = 0): List<String> {
+        val file = java.io.File("../../examples/$example.fk").canonicalFile
+        val text = file.readText()
+        val lineStart = text.lines().take(line - 1).sumOf { it.length + 1 }
+        val offset = Regex("\\b$word\\b").findAll(text.substring(lineStart, lineStart + text.lines()[line - 1].length)).toList()[nth].range.first + lineStart
+        return declarations(text, file)[offset].orEmpty().map { "${it.file?.substringAfterLast('/') ?: "here"}:${it.pos.line}" }
+    }
+
+    @Test
+    fun `names go to their declarations`() {
+        // The checker's choice: total for a list of Ints, and for one of Floats.
+        assertEquals(listOf("here:21"), goto("extensions", 42, "total"))
+        assertEquals(listOf("here:22"), goto("extensions", 43, "total"))
+        // The prelude's externals.
+        assertEquals(listOf("prelude.fk:30"), goto("extensions", 21, "fold"))
+        // Through modules, each segment to its own: Shapes.Units.twice
+        assertEquals(listOf("here:19"), goto("modules", 47, "Shapes", 1))
+        assertEquals(listOf("here:27"), goto("modules", 47, "Units"))
+        assertEquals(listOf("here:28"), goto("modules", 47, "twice"))
+        // A field, and a local where it was bound.
+        assertEquals(listOf("here:7"), goto("modules", 43, "num"))
+        assertEquals(listOf("here:44"), goto("modules", 45, "r"))
+        // In a functor, M.pure is the spec's pure, and M.M<A> the spec's M; A is the function's own.
+        assertEquals(listOf("here:6"), goto("monads", 45, "pure"))
+        assertEquals(listOf("here:32"), goto("monads", 33, "M", 0))
+        assertEquals(listOf("here:5"), goto("monads", 33, "M", 1))
+        assertEquals(listOf("here:33"), goto("monads", 33, "A", 1))
+        // A declaration's own name goes nowhere.
+        assertEquals(emptyList(), goto("monads", 33, "map"))
+    }
+
     @Test
     fun `every example scans and colours without failing`() {
         val dir = java.io.File("../../examples")
