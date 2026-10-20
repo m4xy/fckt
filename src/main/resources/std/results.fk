@@ -1,5 +1,5 @@
 // Result as a monad: Results { x by parse(s); y by check(x); y } stops at the first Error.
-// It works for any error type; for a functor's Monad, fix one: module R : Monad<Result<_, String>>.
+// It works for any error type.
 
 pure<A, E>(x: A): Result<A, E> = Ok(x)
 

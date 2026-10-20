@@ -561,13 +561,16 @@ class Checker(file: SourceFile) {
                 is Decl.Function, is Decl.Module, is Decl.Spec -> {}
             }
         }
-        // Which spec each module follows; that decides what's visible outside it, so it comes first.
+        // Which spec each module follows. A functor's parameters have theirs already, with what
+        // their type arguments say; a module says what its types are in its body.
         for (m in modules.values) {
             val ref = m.spec ?: continue
             currentPath = m.path
             val spec = find(ref.name, specs, ref.pos) ?: throw CompileError(ref.pos, "unknown spec '${ref.name}'")
+            if (ref.args.isNotEmpty() && m.name !in parameterModules) {
+                throw CompileError(ref.args.first().pos, "${m.simpleName} says what its types are in its body, so write just : ${spec.simpleName}; type arguments are for a functor's parameters, like F(M: ${spec.simpleName}<...>)")
+            }
             moduleSpecs[m.name] = spec
-            fixTypes(m.name, m.path, spec, ref)
         }
         currentPath = emptyList()
         for ((name, variants) in variantsByName) {
@@ -792,23 +795,9 @@ class Checker(file: SourceFile) {
                 val d = typeDecl("$name.${t.name}")
                     ?: throw CompileError(m.pos, "${m.simpleName} doesn't define type ${t.name}, which its spec ${spec.simpleName} needs")
                 if (d.isPrivate) throw CompileError(d.pos, "${t.name} is in ${m.simpleName}'s spec ${spec.simpleName}, so it can't be private")
-                if (d.isOpaque && "$name.${t.name}" in fixedTypes && name !in parameterModules) {
-                    throw CompileError(m.spec!!.pos, "${t.name} is opaque, so ${spec.simpleName}'s type arguments can't say what it is")
-                }
                 val n = typeParamsOf(d).size
                 if (n != t.typeParams.size) {
                     throw CompileError(d.pos, "${spec.simpleName} says ${t.name} takes ${t.typeParams.size} type parameter${if (t.typeParams.size == 1) "" else "s"}, not $n")
-                }
-                // Ordered<Int> says T is Int: inside the module, it must be.
-                if ("$name.${t.name}" in fixedTypes && name !in parameterModules) {
-                    val rigid = t.typeParams.map { Type.Con("#$it") }
-                    currentPath = m.name.split('.')
-                    val inside = typeOf(d, rigid)
-                    currentPath = m.path
-                    val said = outsideType(name, t.name, rigid)
-                    if (!u.unify(inside, said)) {
-                        throw CompileError(d.pos, "${m.simpleName} follows ${spec.simpleName} with ${t.name} as $said, but its ${t.name} is $inside")
-                    }
                 }
             }
             for (v in spec.values) {

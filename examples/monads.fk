@@ -1,5 +1,5 @@
 // A monad as a spec: a type that takes a type, a way to wrap a value, and a way to chain a step
-// that might stop. Monad<Option> says the module's M is Option, so its M<Int> is an Option<Int>.
+// that might stop. Options says its M is Option, so its M<Int> is an Option<Int>.
 
 spec Monad {
   type M<A>
@@ -7,7 +7,7 @@ spec Monad {
   bind<A, B>(m: M<A>, f: (A) -> M<B>): M<B>
 }
 
-module Options : Monad<Option> {
+module Options : Monad {
   type M<A> = Option<A>
   pure(x) = Some(x)
   bind(m, f) = when (m) {
@@ -16,8 +16,8 @@ module Options : Monad<Option> {
   }
 }
 
-// A type that takes two marks where M<A>'s parameter goes with _: M<A> is Result<A, String>.
-module Results : Monad<Result<_, String>> {
+// M can be a type that takes two, with one fixed: M<Int> is Result<Int, String>.
+module Results : Monad {
   type M<A> = Result<A, String>
   pure(x) = Ok(x)
   bind(m, f) = when (m) {

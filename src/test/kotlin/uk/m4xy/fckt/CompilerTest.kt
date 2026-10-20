@@ -361,10 +361,7 @@ class CompilerTest {
         compile(counter.replace("opaque type T = Int", "type T = Int") + "x = Tally.zero + 1")
         assertContains(error("type T = Int\nopaque type U = Int"), "an opaque type is opaque outside its module, so it needs to be in one")
         assertContains(error("module M { private opaque type T = Int }"), "a private type is hidden already")
-        assertContains(
-            error("spec S { type T }\nmodule M : S<Int> { opaque type T = Int }"),
-            "T is opaque, so S's type arguments can't say what it is",
-        )
+        assertContains(error("spec S { type T }\nmodule M : S<Int> { opaque type T = Int }"), "M says what its types are in its body, so write just : S")
         assertContains(error("spec S {\n  type T\n  f(x: T): Int\n}\nmodule M : S { type T = Int }"), "M doesn't define 'f', which its spec S needs")
         assertContains(error("spec S {\n  type T\n}\nmodule M : S { x = 1 }"), "M doesn't define type T")
         assertContains(
@@ -436,23 +433,28 @@ class CompilerTest {
     }
 
     @Test
-    fun `spec type arguments say what a module's types are`() {
+    fun `spec type arguments say what a functor's parameter's types are`() {
         val source = File("examples/monads.fk").readText()
         assertEquals("", run(source))
         val ml = compile(source)
         assertContains(ml, "module Options = struct\n  type 'a m = 'a option")
         assertContains(ml, "module Results = struct\n  type 'a m = ('a, string) result")
         val monad = "spec Monad {\n  type M<A>\n  pure<A>(x: A): M<A>\n}\n"
-        val options = "  type M<A> = Option<A>\n  pure(x) = Some(x)\n}"
-        assertContains(error(monad + "module O : Monad<Int> {\n$options"), "its type argument must take 1 more")
-        assertContains(error(monad + "module O : Monad<(Int) -> Int> {\n$options"), "it needs a named type, like Option")
-        assertContains(error(monad + "module O : Monad<List> {\n$options"), "O follows Monad with M as List<A>, but its M is Option<A>")
-        assertContains(error(monad + "module O : Monad<Option, Int> {\n$options"), "Monad has 1 type, so it takes at most that many type arguments, not 2")
+        // A module says what its types are in its body; type arguments are for a functor's parameters.
+        assertContains(
+            error(monad + "module O : Monad<Option> {\n  type M<A> = Option<A>\n  pure(x) = Some(x)\n}"),
+            "O says what its types are in its body, so write just : Monad",
+        )
+        fun functor(arg: String) = monad + "module F(M: Monad<$arg>) {\n  one = M.pure(1)\n}\n"
+        assertContains(error(functor("Int")), "its type argument must take 1 more")
+        assertContains(error(functor("(Int) -> Int")), "it needs a named type, like Option")
+        assertContains(error(monad + "module F(M: Monad<Option, Int>) { x = 1 }"), "Monad has 1 type, so it takes at most that many type arguments, not 2")
+        // Inside, M's M<Int> is an Option<Int>.
+        compile(monad + "module G(M: Monad<Option>) {\n  two: Option<Int> = M.pure(2)\n}")
         // `_` marks where M's parameter goes in a type that takes two.
-        val results = "  type M<A> = Result<A, Int>\n  pure(x) = Ok(x)\n}"
-        compile(monad + "module R : Monad<Result<_, Int>> {\n$results")
-        assertContains(error(monad + "module R : Monad<Result<Int>> {\n$results"), "R follows Monad with M as Result<Int, A>, but its M is Result<A, Int>")
-        assertContains(error(monad + "module R : Monad<Result<_, _>> {\n$results"), "Monad's M takes 1 type parameter, so Result needs 1 '_', not 2")
+        compile(monad + "module G(M: Monad<Result<_, String>>) {\n  two: Result<Int, String> = M.pure(2)\n}")
+        assertContains(error(monad + "module G(M: Monad<Result<Int>>) {\n  two: Result<Int, String> = M.pure(2)\n}"), "expected Result<Int, String> but found Result<Int, Int>")
+        assertContains(error(monad + "module G(M: Monad<Result<_, _>>) { x = 1 }"), "Monad's M takes 1 type parameter, so Result needs 1 '_', not 2")
         assertContains(error("f(x: List<_>): Int = 1"), "'_' only marks a spec type's parameters")
         val twice = "spec Ordered {\n  type T\n  compare(a: T, b: T): Int\n}\nmodule Twice(M: Ordered<Int>) {\n  f(a: Int, b: Int): Int = M.compare(a, b)\n}\n"
         assertContains(
@@ -463,7 +465,7 @@ class CompilerTest {
             error(twice + "module I : Ordered {\n  opaque type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice(I)"),
             "Twice needs its T to be Int, but here it's I.T",
         )
-        assertContains(compile(twice + "module I : Ordered<Int> {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice(I)"), "(M : Ordered with type t = int)")
+        assertContains(compile(twice + "module I : Ordered {\n  type T = Int\n  compare(a: Int, b: Int) = 0\n}\nmodule X = Twice(I)"), "(M : Ordered with type t = int)")
     }
 
     @Test

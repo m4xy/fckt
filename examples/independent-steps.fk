@@ -9,7 +9,7 @@ spec Applicative {
 
 type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }
 
-module Validated : Applicative<Validation<_, String>> {
+module Validated : Applicative {
   type M<A> = Validation<A, String>
 
   map(m, f) = when (m) {
