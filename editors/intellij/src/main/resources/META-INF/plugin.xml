@@ -22,6 +22,8 @@
     <lang.braceMatcher language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktBraceMatcher"/>
     <colorSettingsPage implementation="uk.m4xy.fckt.intellij.FcktColorSettingsPage"/>
     <gotoDeclarationHandler implementation="uk.m4xy.fckt.intellij.FcktGotoDeclaration"/>
+    <lang.formatter language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFormattingModelBuilder"/>
+    <langCodeStyleSettingsProvider implementation="uk.m4xy.fckt.intellij.FcktCodeStyleSettingsProvider"/>
     <lang.findUsagesProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFindUsagesProvider"/>
   </extensions>
 

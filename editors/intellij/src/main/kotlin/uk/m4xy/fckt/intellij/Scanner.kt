@@ -105,7 +105,15 @@ fun scan(text: CharSequence, from: Int = 0, until: Int = text.length): List<Tok>
                 add(if (text.substring(start, i) in KEYWORDS) TokKind.KEYWORD else TokKind.IDENT, start, i)
             }
             c.isDigit() -> {
-                while (i < to && (text[i].isLetterOrDigit() || text[i] == '_' || (text[i] == '.' && i + 1 < to && text[i + 1].isDigit()))) i++
+                // 1_000, 2.5 and 1e-6, as the compiler reads them.
+                while (i < to && (text[i].isDigit() || text[i] == '_')) i++
+                if (i + 1 < to && text[i] == '.' && text[i + 1].isDigit()) i++
+                while (i < to && text[i].isDigit()) i++
+                if (i < to && (text[i] == 'e' || text[i] == 'E')) {
+                    i++
+                    if (i < to && (text[i] == '+' || text[i] == '-')) i++
+                }
+                while (i < to && (text[i].isLetterOrDigit() || text[i] == '_')) i++
                 add(TokKind.NUMBER, start, i)
             }
             at("\"\"\"") -> {
