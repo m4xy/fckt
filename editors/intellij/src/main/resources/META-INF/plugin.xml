@@ -1,0 +1,30 @@
+<idea-plugin>
+  <id>uk.m4xy.fckt</id>
+  <name>fckt</name>
+  <vendor>m4xy</vendor>
+  <description><![CDATA[
+    Support for fckt, a language with Kotlin's syntax that compiles to OCaml: highlighting that
+    colours each name by what it is, as Kotlin does, and the compiler's errors as you type.
+  ]]></description>
+
+  <depends>com.intellij.modules.platform</depends>
+  <!-- fckt's colours fall back to Kotlin's. -->
+  <depends>org.jetbrains.kotlin</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <fileType name="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFileType" fieldName="INSTANCE"
+              language="fckt" extensions="fk"/>
+    <lang.parserDefinition language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktParserDefinition"/>
+    <lang.syntaxHighlighterFactory language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktSyntaxHighlighterFactory"/>
+    <annotator language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktAnnotator"/>
+    <externalAnnotator language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktErrorAnnotator"/>
+    <lang.commenter language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktCommenter"/>
+    <lang.braceMatcher language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktBraceMatcher"/>
+    <colorSettingsPage implementation="uk.m4xy.fckt.intellij.FcktColorSettingsPage"/>
+  </extensions>
+
+  <!-- Uses only Kotlin's colours, which both of its modes have. -->
+  <extensions defaultExtensionNs="org.jetbrains.kotlin">
+    <supportsKotlinPluginMode supportsK1="true" supportsK2="true"/>
+  </extensions>
+</idea-plugin>

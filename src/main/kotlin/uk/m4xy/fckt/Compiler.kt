@@ -23,7 +23,10 @@ fun compile(source: String): String = link(source, emptyMap())
  * declare brings in the file of that name from [dirs], or from the standard library, whose own
  * names bring in more, as OCaml finds a module's file from its name.
  */
-fun compile(entry: File, dirs: List<File>): String {
+fun compile(entry: File, dirs: List<File>): String = compile(entry.readText(), entry, dirs)
+
+/** [text] as the contents of [entry], which an editor may not have saved yet, and the files it uses. */
+fun compile(text: String, entry: File, dirs: List<File>): String {
     val available = linkedMapOf<String, Source>()
     for (dir in dirs) {
         val files = dir.listFiles { f -> f.isFile && f.extension == "fk" }?.sortedBy { it.name } ?: continue
@@ -31,14 +34,21 @@ fun compile(entry: File, dirs: List<File>): String {
             if (file.canonicalFile != entry.canonicalFile) available.putIfAbsent(moduleName(file), Source(file.path) { file.readText() })
         }
     }
-    return link(entry.readText(), available)
+    return link(text, available)
 }
+
+/** The source of the standard library's [name] (`prelude`, `options`, ...), for tools that read it. */
+fun standardLibrary(name: String): String? =
+    Source::class.java.getResourceAsStream("/std/$name.fk")?.use { it.reader().readText() }
+
+/** The standard library's modules, by file name. */
+val STANDARD_MODULES = listOf("options", "results", "validated", "lists")
 
 /** A file to read if it's used: one of the program's, or the standard library's. */
 class Source(val path: String, val read: () -> String)
 
 /** The standard library's modules, in `std/` among the compiler's resources. */
-private val STD = listOf("options", "results", "validated", "lists").associate { name ->
+private val STD = STANDARD_MODULES.associate { name ->
     moduleName(File("$name.fk")) to Source("std/$name.fk") { resource("std/$name.fk") }
 }
 

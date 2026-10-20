@@ -464,6 +464,14 @@
           "match": "\\bthis\\b"
         },
         {
+          "match": "(?<=[A-Za-z0-9_)])\\s+(by)(?=\\s)",
+          "captures": {
+            "1": {
+              "name": "keyword.other.by.fckt"
+            }
+          }
+        },
+        {
           "name": "storage.modifier.fckt",
           "match": "\\bprivate\\b"
         },
@@ -478,11 +486,11 @@
       "match": "\\b(true|false)\\b"
     },
     "builtin-types": {
-      "name": "support.type.builtin.fckt",
+      "name": "entity.name.type.builtin.fckt",
       "match": "\\b(Int|Float|Double|String|Boolean|Unit|Char|List|Option)\\b"
     },
     "option": {
-      "name": "support.constant.option.fckt",
+      "name": "entity.name.type.variant.fckt",
       "match": "\\b(Some|None)\\b"
     },
     "types": {

@@ -123,4 +123,4 @@ Kastor comes from `../kastor` through a Gradle included build.
 
 ## Editor support
 
-`editors/vscode` has syntax highlighting for VS Code and IntelliJ. See its README for how to install it.
+`editors/intellij` is an IntelliJ IDEA plugin: it colours each name by what it is, as IntelliJ does for Kotlin, and shows the compiler's errors as you type. `editors/vscode` has a TextMate grammar for VS Code. See each one's README for how to install it.
