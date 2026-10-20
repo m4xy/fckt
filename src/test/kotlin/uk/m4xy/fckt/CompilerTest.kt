@@ -75,6 +75,33 @@ class CompilerTest {
         }
 
     @Test
+    fun `a when must cover every value`() {
+        val letters = "type Letter { X, Y, Z }\n"
+        assertContains(error(letters + "f(a: Letter) = when (a) {\n  X -> 1\n}"), "2:16: error: this when doesn't cover Y, Z; add them, or an else")
+        assertContains(error(letters + "f(a: Letter) = when (a) {\n  X, Y -> 1\n}"), "this when doesn't cover Z; add it, or an else")
+        assertEquals("", run(letters + "f(a: Letter) = when (a) {\n  X -> 1\n  else -> 2\n}\nmain() = assertEquals(2, f(Z))"))
+        // Inside cases, tuples and lists, with an example of what's missing.
+        assertContains(
+            error("f(o: Option<Result<Int, String>>) = when (o) {\n  Some(Ok(x)) -> x\n  None -> 0\n}"),
+            "this when doesn't cover Some(Error(_)); add it, or an else",
+        )
+        assertContains(
+            error("f(a: Boolean, b: Boolean) = when (a, b) {\n  (true, true) -> 1\n  (false, _) -> 2\n}"),
+            "this when doesn't cover (true, false)",
+        )
+        assertContains(error("f(xs: List<Int>) = when (xs) {\n  [] -> 0\n  [x] -> x\n}"), "this when doesn't cover [_, _, *_]")
+        assertEquals("", run("f(xs: List<Int>) = when (xs) {\n  [] -> 0\n  [x, *_] -> x\n}\nmain() = assertEquals(1, f([1, 2]))"))
+        // Numbers and strings can't all be listed.
+        assertContains(error("f(n: Int) = when (n) {\n  0 -> \"zero\"\n  1 -> \"one\"\n}"), "this when doesn't cover every Int; add an else")
+        // `is Vowel` covers Vowel's cases, which are some of Alphabet's.
+        val alphabet = "type Alphabet { A, B, E }\ntype Vowel { Alphabet.A, Alphabet.E }\n"
+        compile(alphabet + "f(c: Alphabet) = when (c) {\n  is Vowel -> 1\n  Alphabet.B -> 2\n}")
+        assertContains(error(alphabet + "f(c: Alphabet) = when (c) {\n  is Vowel -> 1\n}"), "this when doesn't cover B")
+        // A record has one shape, so its fields decide.
+        compile("type P(a: Boolean, b: Int)\nf(p: P) = when (p) {\n  P(true, n) -> n\n  P(false, _) -> 0\n}")
+    }
+
+    @Test
     fun `records, types with cases and when`() {
         val ml = compile(File("examples/orders.fk").readText())
         assertContains(ml, "type user_id = { value : string }")

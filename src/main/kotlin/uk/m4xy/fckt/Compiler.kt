@@ -38,7 +38,8 @@ class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
  */
 fun analyse(text: String, entry: File?, dirs: List<File>): Analysis {
     val linked = link(text, available(entry, dirs))
-    return Analysis(linked.main, Checker(linked.file).check())
+    // A when that misses some cases is still clear about what its names refer to.
+    return Analysis(linked.main, Checker(linked.file, coverage = false).check())
 }
 
 /** The `.fk` files in [dirs] other than [entry], by module name; the first of a name wins. */

@@ -82,7 +82,11 @@ private class Scope(val parent: Scope?) {
     fun lookup(name: String): Local? = vars[name] ?: parent?.lookup(name)
 }
 
-class Checker(file: SourceFile) {
+/**
+ * Infers and checks [file]'s types. Without [coverage], a `when` that misses some values isn't an
+ * error, for tools that want to know what names refer to while it's being written.
+ */
+class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private val u = Unifier()
 
     /** The declarations with their full names: `make` in `module Ratios` is `Ratios.make`. */
@@ -110,6 +114,9 @@ class Checker(file: SourceFile) {
     /** Extensions by the name they're called with: `map` for `List$map` and `Option$map`. */
     private val extensions = mutableMapOf<String, MutableList<Decl.Function>>()
     private val caseDecls = mutableMapOf<String, List<CaseDecl>>()
+
+    /** Each `when` with a subject in the group being checked, with its subject's type, to check it covers every value. */
+    private val pendingWhens = mutableListOf<Pair<Expr.When, Type>>()
     private val polymorphic = mutableSetOf<String>()
 
     private val schemes = mutableMapOf<Decl.Function, Scheme>()
@@ -1064,7 +1071,85 @@ class Checker(file: SourceFile) {
             outside[decl]?.zonk()?.let { shown -> outsideSchemes[decl] = if (decl.params == null) Scheme.mono(shown) else Scheme(shown.freeVars().toList(), shown) }
         }
         for (decl in group.decls) conform(decl)
+        // Now its types are known, each `when` must cover every value of its subject's.
+        val whens = pendingWhens.toList()
+        pendingWhens.clear()
+        if (coverage) whens.forEach { (e, type) -> checkCovers(e, type) }
     }
+
+    /** That [e]'s patterns match every value of [subject], as Kotlin requires of a `when` over a sealed type. */
+    private fun checkCovers(e: Expr.When, subject: Type) {
+        val patterns = e.branches.flatMap { b -> if (b.patterns.isEmpty()) listOf(Pat.ANY) else b.patterns.flatMap(::coverage) }
+        val missing = Coverage(::shapes).missing(patterns, subject.zonk())
+        if (missing.isEmpty()) return
+        val type = subject.prune()
+        if (missing.size == 1 && missing[0].ctor == null) {
+            val what = if (type is Type.Var) "every value" else "every $type"
+            throw CompileError(e.pos, "this when doesn't cover $what; add an else")
+        }
+        val shown = missing.map(Coverage::show)
+        val list = if (shown.size > 10) shown.take(8).joinToString(", ") + " and ${shown.size - 8} more" else shown.joinToString(", ")
+        throw CompileError(e.pos, "this when doesn't cover $list; add ${if (shown.size == 1) "it" else "them"}, or an else")
+    }
+
+    /** The shapes a value of [type] can have, with their fields' types; null if they can't all be listed. */
+    private fun shapes(type: Type): List<Pair<Ctor, List<Type>>>? {
+        val t = type.prune() as? Type.Con ?: return null
+        val args = t.args
+        return when {
+            t.name in sealeds -> cases(t.name, args).map { (case, fields) -> Ctor.Case(case.origin.name, case.name) to fields }
+            t.name in records -> records.getValue(t.name).let { r -> listOf(Ctor.Record(r.name) to fieldTypes(r.typeParams, r.fields, args)) }
+            t.name == Type.TUPLE -> listOf(Ctor.Tuple(args.size) to args)
+            t.name == "List" -> listOf(Ctor.Nil to emptyList(), Ctor.Cons to listOf(args[0], t))
+            t.name == "Option" -> listOf(Ctor.Case("", "Some") to listOf(args[0]), Ctor.Case("", "None") to emptyList())
+            t.name == "Result" -> listOf(Ctor.Case("", "Ok") to listOf(args[0]), Ctor.Case("", "Error") to listOf(args[1]))
+            t.name == "Boolean" -> listOf(Ctor.Bool(true) to emptyList(), Ctor.Bool(false) to emptyList())
+            else -> null
+        }
+    }
+
+    /** What [p] matches, as coverage patterns: several for `is Vowel`, which matches each of Vowel's cases. */
+    private fun coverage(p: Pattern): List<Pat> = when (p) {
+        is Pattern.Wildcard, is Pattern.Bind -> listOf(Pat.ANY)
+        is Pattern.Literal -> listOf(literal(p.expr))
+        is Pattern.Tuple -> product(p.elements.map(::coverage)).map { Pat(p.record?.let { Ctor.Record(it.name) } ?: Ctor.Tuple(p.elements.size), it) }
+        is Pattern.ListPattern -> {
+            // [a, b, *rest] is a, then b, then rest; without a rest, the list ends there.
+            val end = p.rest?.let(::coverage) ?: listOf(Pat(Ctor.Nil))
+            p.elements.foldRight(end) { element, tails -> coverage(element).flatMap { e -> tails.map { Pat(Ctor.Cons, listOf(e, it)) } } }
+        }
+        is Pattern.Constructor -> {
+            val narrowTo = p.narrowTo
+            if (narrowTo != null) {
+                caseDecls.getValue(narrowTo.name).map { c -> Pat(Ctor.Case(c.origin.name, c.name), c.fields.map { Pat.ANY }) }
+            } else when (val ref = p.resolved) {
+                is ConstructorRef.Record -> {
+                    val args = p.args?.map(::coverage) ?: ref.decl.fields.map { listOf(Pat.ANY) }
+                    product(args).map { Pat(Ctor.Record(ref.decl.name), it) }
+                }
+                is ConstructorRef.Variant -> {
+                    val ctor = Ctor.Case(ref.sealed?.name ?: "", ref.name)
+                    val arity = ref.variant?.fields?.size ?: if (ref.name == "None") 0 else 1
+                    product(p.args?.map(::coverage) ?: List(arity) { listOf(Pat.ANY) }).map { Pat(ctor, it) }
+                }
+                null -> listOf(Pat.ANY)
+            }
+        }
+    }
+
+    private fun literal(e: Expr): Pat = when (e) {
+        is Expr.BoolLit -> Pat(Ctor.Bool(e.value))
+        is Expr.IntLit -> Pat(Ctor.Literal(e.value.toString()))
+        is Expr.FloatLit -> Pat(Ctor.Literal(e.value.toString()))
+        is Expr.CharLit -> Pat(Ctor.Literal("'${e.value}'"))
+        is Expr.StringLit -> Pat(Ctor.Literal("\"" + e.parts.joinToString("") { (it as? StringPart.Text)?.text ?: "\$" } + "\""))
+        is Expr.Unary -> Pat(Ctor.Literal(e.op + ((literal(e.operand).ctor as? Ctor.Literal)?.text ?: "")))
+        else -> Pat(Ctor.Literal(e.toString()))
+    }
+
+    /** Every way of picking one from each of [choices]. */
+    private fun product(choices: List<List<Pat>>): List<List<Pat>> =
+        choices.fold(listOf(emptyList())) { acc, options -> acc.flatMap { prefix -> options.map { prefix + it } } }
 
     private fun checkDistinct(names: List<Pair<String, Pos>>) {
         names.groupBy { it.first }.values.firstOrNull { it.size > 1 }?.let {
@@ -1767,6 +1852,7 @@ class Checker(file: SourceFile) {
             }
         } else {
             val subjectType = infer(subject, null, scope)
+            pendingWhens += e to subjectType
             for (branch in e.branches) {
                 val inner = Scope(scope)
                 if (branch.patterns.size > 1 && branch.patterns.any { patternNames(it).isNotEmpty() }) {
