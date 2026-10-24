@@ -470,6 +470,34 @@ class CompilerTest {
     }
 
     @Test
+    fun `a copy of an effect is a separate effect`() {
+        val database = "effect Database { query(sql: String): List<String> }\neffect OrdersDb = Database\neffect UsersDb = Database\n"
+        val source = database + """
+            @OrdersDb @UsersDb report(): List<String> = OrdersDb.query("orders") + UsersDb.query("users")
+            main() = {
+              result = OrdersDb(query = sql -> ["pg ${'$'}sql"]) {
+                UsersDb(query = sql -> ["dynamo ${'$'}sql"]) { report() }
+              }
+              assertEquals(["pg orders", "dynamo users"], result)
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        assertContains(compile(source), "| OrdersDb_query : string -> string list Effect.t")
+        fun program(source: String) = error("$database$source")
+        assertContains(program("@OrdersDb f() = query(\"x\")\nmain() = Unit"), "'query' is an operation of Database and OrdersDb and UsersDb; write Database.query or OrdersDb.query or UsersDb.query")
+        // Handling Database doesn't handle a copy.
+        assertContains(program("@OrdersDb f() = OrdersDb.query(\"x\")\nmain() = Database(query = s -> [s]) { f() }"), "main does @OrdersDb, but nothing handles it")
+        assertContains(program("effect Loop = Loop\nmain() = Unit"), "effect 'Loop' is a copy of itself")
+        assertContains(program("type T(x: Int)\neffect X = T\nmain() = Unit"), "'T' isn't an effect, so there's nothing to copy")
+        assertContains(program("effect X = Nope\nmain() = Unit"), "unknown effect 'Nope'")
+        // A module that follows a copy handles it, and the prelude's effects can be copied.
+        assertEquals("", run("${database}module Pg : OrdersDb {\n  query(sql: String) = [\"pg ${'$'}sql\"]\n}\nmain() = assertEquals([\"pg x\"], Pg { OrdersDb.query(\"x\") })"))
+        val errors = "effect Errors = Console\n@Errors warn(s: String) = Errors.println(\"warning: ${'$'}s\")\n" +
+            "@Console main() = Errors(print = Console.print, println = s -> Console.println(\"[err] ${'$'}s\"), readLine = Console.readLine) { warn(\"disk\") }"
+        assertEquals("[err] warning: disk\n", run(errors))
+    }
+
+    @Test
     fun `a when branch can have a guard`() {
         val source = """
             type Shape { Circle(radius: Float), Square(side: Float) }
@@ -718,7 +746,7 @@ class CompilerTest {
         assertContains(program("effect Log { println(s: String): Unit }\nf() = println(\"x\")\nmain() = assert(true)"), "'f' does @Log")
         assertContains(
             program("effect Log { println(s: String): Unit }\n@Console f() = Console.println(\"x\")\ng() = println(\"x\")\nmain() = assert(true)"),
-            "'println' is an operation of Console and Log; write Console.println",
+            "'println' is an operation of Console and Log; write Console.println or Log.println",
         )
         assertContains(program("main() = Clock(now = 1) { 1 }"), "expected () -> Int but found Int")
         assertContains(program("main() = {\n  h = 1\n  h { 2 }\n}"), "this isn't a handler")

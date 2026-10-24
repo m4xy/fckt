@@ -157,6 +157,12 @@ class Parser(private val tokens: List<Token>) {
                 val name = upperIdent("an effect's name")
                 val typeParams = typeParams()
                 val effect = listOf(Annotation(pos, EFFECT_ANNOTATION, emptyList()))
+                // `effect OrdersDb = Database`: the same operations, as a separate effect.
+                if (accept(T.ASSIGN) != null) {
+                    if (typeParams.isNotEmpty()) throw error("a copy of an effect takes the type parameters of the one it copies: effect $name = ...")
+                    val target = peek.pos
+                    return annotate(Decl.Spec(pos, name, emptyList(), emptyList(), copyOf = TypeRef.Named(target, moduleName("the effect it's a copy of"), emptyList())), effect)
+                }
                 if (at(T.LPAREN)) throw error("an effect has no fields: its operations go in braces, as in effect $name { op(x: Int): Unit }")
                 if (accept(T.LBRACE) != null) return annotate(specBody(pos, name, typeParams), effect)
                 if (typeParams.isNotEmpty()) throw error("only an effect with operations takes type parameters, which its operations use")

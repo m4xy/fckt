@@ -1319,7 +1319,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val found = operations[(currentPath.take(n) + name).joinToString(".")]?.filter { visible(it.first) }.orEmpty()
             if (found.isEmpty()) continue
             if (found.size > 1) {
-                throw CompileError(pos, "'$name' is an operation of ${found.joinToString(" and ") { it.first.simpleName }}; write ${found.first().first.simpleName}.$name")
+                throw CompileError(pos, "'$name' is an operation of ${found.joinToString(" and ") { it.first.simpleName }}; write ${found.joinToString(" or ") { "${it.first.simpleName}.$name" }}")
             }
             return found.single()
         }
@@ -2764,6 +2764,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 ?: throw CompileError(e.pos, "$qualifier has no '${e.name}'")
             e.resolved = MemberRef.Case(shape.ref)
             return if (shape.fieldTypes.isEmpty()) shape.result else Type.Fn(shape.fieldTypes, shape.result, u.fresh())
+        }
+        // `Console.print` as a value, as in a handler made for a copy of Console.
+        if (e.target is Expr.Name && scope.lookup((e.target as Expr.Name).name) == null) {
+            qualifiedOperation(e, scope)?.let { (spec, op) ->
+                e.resolved = MemberRef.Operation(spec, op)
+                return operationValue(spec, op, e.pos)
+            }
         }
         val receiver = infer(e.target, null, scope).prune()
         field(e, receiver, scope)?.let { (ref, type) ->

@@ -2,6 +2,8 @@ package uk.m4xy.fckt
 
 import uk.m4xy.fckt.ocaml.Lowering
 import uk.m4xy.fckt.ocaml.Printer
+import uk.m4xy.fckt.syntax.CompileError
+import uk.m4xy.fckt.syntax.Copier
 import uk.m4xy.fckt.syntax.Decl
 import uk.m4xy.fckt.syntax.Lexer
 import uk.m4xy.fckt.syntax.Parser
@@ -144,7 +146,52 @@ private fun link(text: String, available: Map<String, Source>): Linked {
             }?.let { (d, uses) -> include(d, uses) }
         }
     }
-    return Linked(SourceFile(prelude + modules + main.decls), main.decls)
+    val all = copyEffects(prelude + modules + main.decls)
+    return Linked(SourceFile(all), all.takeLast(main.decls.size))
+}
+
+/**
+ * [decls] with each `effect OrdersDb = Database` made a copy of Database: the same operations,
+ * under its own name, so a separate effect, handled on its own. What it copies is found as the
+ * checker would find it, from the inside out.
+ */
+private fun copyEffects(decls: List<Decl>): List<Decl> {
+    fun find(name: String, scopes: List<List<Decl>>): Decl? {
+        val parts = name.split('.')
+        for (scope in scopes) {
+            var here = scope
+            for ((i, part) in parts.withIndex()) {
+                val d = here.firstOrNull { it.name == part && it !is Decl.Function } ?: break
+                if (i == parts.lastIndex) return d
+                here = (d as? Decl.Module)?.decls ?: break
+            }
+        }
+        return null
+    }
+    fun copy(d: Decl.Spec, scopes: List<List<Decl>>, seen: Set<Decl.Spec>): Decl {
+        val ref = d.copyOf!!
+        if (d in seen) throw CompileError(d.pos, "effect '${d.name}' is a copy of itself")
+        val target = find(ref.name, scopes) ?: throw CompileError(ref.pos, "unknown effect '${ref.name}'")
+        val original = if (target is Decl.Spec && target.copyOf != null) copy(target, scopes, seen + d) else target
+        if (original.annotations.none { it.name == EFFECT }) throw CompileError(ref.pos, "'${ref.name}' isn't an effect, so there's nothing to copy")
+        return when (original) {
+            is Decl.Spec -> (Copier({ it }).decl(original) as Decl.Spec)
+                .copy(pos = d.pos, name = d.name, annotations = d.annotations, isPrivate = d.isPrivate, copyOf = null)
+            is Decl.Record -> Decl.Record(d.pos, d.name, emptyList(), emptyList(), isAnnotation = true, annotations = d.annotations, isPrivate = d.isPrivate)
+            else -> throw CompileError(ref.pos, "'${ref.name}' isn't an effect, so there's nothing to copy")
+        }
+    }
+    fun walk(here: List<Decl>, outer: List<List<Decl>>): List<Decl> {
+        val scopes = listOf(here) + outer
+        return here.map { d ->
+            when {
+                d is Decl.Spec && d.copyOf != null -> copy(d, scopes, emptySet())
+                d is Decl.Module -> d.copy(decls = walk(d.decls, scopes))
+                else -> d
+            }
+        }
+    }
+    return walk(decls, emptyList())
 }
 
 private fun compile(file: SourceFile): String {

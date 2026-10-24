@@ -184,6 +184,8 @@ sealed interface Decl {
         override val isPrivate: Boolean = false,
         override val annotations: List<Annotation> = emptyList(),
         val typeParams: List<String> = emptyList(),
+        /** `effect OrdersDb = Database`: a separate effect with the same operations, which linking fills in. */
+        val copyOf: TypeRef.Named? = null,
     ) : Decl
 }
 

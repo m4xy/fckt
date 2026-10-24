@@ -60,7 +60,23 @@ module Silent : Console {
   readLine() = ""
 }
 
+// A copy of an effect: the same operations, as a separate effect, handled on its own. Two stores
+// can then be answered by two handlers, and each operation is called through the one it's on.
+effect Store {
+  load(key: String): String
+}
+
+effect Orders = Store
+effect Users = Store
+
+@Orders @Users summary(id: String): String = "${Users.load(id)} ordered ${Orders.load(id)}"
+
+summaryFrom(id: String): String = Orders(load = key -> "a book") {
+  Users(load = key -> "Ada") { summary(id) }
+}
+
 main(args: List<String>) = {
+  assertEquals("Ada ordered a book", summaryFrom("1"))
   assertEquals(["hello Ada"], greeted("Ada"))
   assertEquals("[1700000000] ready", stamped("ready"))
   assertEquals("[5] ready", Clock(now = ~5) { stamped("ready") })
