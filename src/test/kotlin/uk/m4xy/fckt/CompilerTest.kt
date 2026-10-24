@@ -406,7 +406,6 @@ class CompilerTest {
         assertContains(program("f(n: Int) = { n += 1 }"), "'n' can't be changed; declare it with var n = ...")
         assertContains(program("f() = { n = 1; n = 2; n }"), "to change it, declare it with var n = ...")
         assertContains(program("f() = { n = 5 }"), "a block must end with an expression, not a binding")
-        assertContains(program("type Holder { H(var acc: Int) }"), "only a record's fields can be var")
         // Whatever holds it, it's the same account: in an option, a box, a case, or passed back.
         assertContains(program("f(o: Option<Account>) = when (o) {\n  Some(a) -> { a.balance = 1 }\n  None -> Unit\n}"), "'f' does @Mutating")
         assertContains(program("type Box<T>(value: T)\nf(b: Box<Account>) = { b.value.balance = 1 }"), "'f' does @Mutating")
@@ -468,6 +467,21 @@ class CompilerTest {
         assertContains(program("@D annotation type C\n@C annotation type D"), "annotations can't be annotated in a circle")
         // Console is an effect because it's marked @Effect, which isn't passed on: @Loud carries Console but isn't an effect itself.
         compile("$io@Console annotation type Loud\n@Loud f() = println(\"x\")\nmain() = assert(true)")
+    }
+
+    @Test
+    fun `a case's fields can be var`() {
+        val tree = "type Tree { Leaf, Node(var left: Tree, value: Int, var right: Tree) }\n"
+        fun program(source: String) = error("$tree$source\nmain() = assert(true)")
+        assertContains(compile(tree + "@Mutating f(t: Tree) = when (t) {\n  is Node -> { t.left = Leaf }\n  else -> Unit\n}\nmain() = Unit"), "| Node of { mutable left : tree; value : int; mutable right : tree }")
+        assertContains(program("@Mutating f(t: Tree) = when (t) {\n  is Node -> { t.value = 1 }\n  else -> Unit\n}"), "Node's value can't be changed; declare it with var value: ...")
+        assertContains(program("f(t: Tree) = when (t) {\n  is Node -> { t.left = Leaf }\n  else -> Unit\n}"), "'f' does @Mutating")
+        assertContains(program("@Mutating f(t: Tree) = { t.left = Leaf }"), "only Node of Tree has left: check which it is first, as in when (t) { is Node -> ... t.left ... }")
+        // A case shared with another type is an OCaml polymorphic variant, whose fields can't change.
+        assertContains(
+            error("type Cell { Empty, Full(var n: Int) }\ntype Slot { Cell.Full, Spare }\n@Mutating f(s: Slot) = when (s) {\n  is Full -> { s.n = 2 }\n  else -> Unit\n}\nmain() = Unit"),
+            "n can't be changed here: its case is shared with another type",
+        )
     }
 
     @Test

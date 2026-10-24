@@ -888,17 +888,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun newRegion(d: Decl): Type? = if (d.name in regioned) u.fresh() else null
 
     /**
-     * Which types' values can change: a record with a `var` field, then, until there are no more,
-     * the records and types with cases whose fields hold one. Only a record's fields can be `var`.
+     * Which types' values can change: a record, or a type with a case, with a `var` field, then,
+     * until there are no more, the records and types with cases whose fields hold one.
      */
     private fun findRegioned() {
-        for (s in sealeds.values) {
-            s.variants.flatMap { it.fields }.firstOrNull { it.isVar }?.let {
-                throw CompileError(it.pos, "only a record's fields can be var; make ${it.name}'s case hold a record with a var field")
-            }
-        }
         // An OCaml type may change too: its own functions say if they do.
         records.values.filter { r -> r.external != null || r.fields.any { it.isVar } }.forEach { regioned += it.name }
+        sealeds.values.filter { s -> s.variants.any { v -> v.fields.any { it.isVar } } }.forEach { regioned += it.name }
         fun holds(ref: TypeRef): Boolean = when (ref) {
             // A function isn't a value that changes, whatever it takes or gives.
             is TypeRef.Function -> false
@@ -1191,14 +1187,22 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             is Expr.Member -> {
                 val receiver = infer(target.target, null, scope).prune()
-                val (ref, _) = field(target, receiver, scope) ?: throw CompileError(target.pos, "$receiver has no field '${target.name}'")
+                val (ref, _) = field(target, receiver, scope) ?: throw noField(target, receiver)
                 target.resolved = ref
-                val record = records.getValue((receiver as Type.Con).name)
-                if (!record.fields.first { it.name == target.name }.isVar) {
-                    throw CompileError(target.pos, "${record.simpleName}'s ${target.name} can't be changed; declare it with var ${target.name}: ...")
+                // A record's field, or one of the case the value was smart-cast to: `if (n is Branch) n.left = ...`.
+                val (owner, fields) = when (ref) {
+                    is MemberRef.CastField -> scope.lookup((target.target as Expr.Name).name)!!.cast!!.variant.let { it.name to it.fields }
+                    is MemberRef.CastTagField -> throw CompileError(
+                        target.pos,
+                        "${target.name} can't be changed here: its case is shared with another type, and OCaml can't change such a case's fields in place",
+                    )
+                    else -> records.getValue((receiver as Type.Con).name).let { it.simpleName to it.fields }
+                }
+                if (!fields.first { it.name == target.name }.isVar) {
+                    throw CompileError(target.pos, "$owner's ${target.name} can't be changed; declare it with var ${target.name}: ...")
                 }
                 infer(target, null, scope)
-                receiver.region!!
+                (receiver as Type.Con).region!!
             }
             else -> throw CompileError(e.pos, "only a var or a var field can be assigned to")
         }
@@ -2778,7 +2782,20 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             return it.result
         }
         if (receiver is Type.Var) throw CompileError(e.pos, "can't tell what '${e.name}' is: the receiver's type isn't known here; annotate it")
-        throw CompileError(e.pos, "$receiver has no field '${e.name}'")
+        throw noField(e, receiver)
+    }
+
+    /** That [receiver] has no field [e] names; if some of its cases do, which, and how to get at it. */
+    private fun noField(e: Expr.Member, receiver: Type): CompileError {
+        val sealed = (receiver.prune() as? Type.Con)?.let { sealeds[it.name] }
+        val having = sealed?.variants?.filter { v -> v.fields.any { it.name == e.name } }.orEmpty()
+        if (having.isEmpty() || e.target !is Expr.Name) return CompileError(e.pos, "$receiver has no field '${e.name}'")
+        val name = (e.target as Expr.Name).name
+        return CompileError(
+            e.pos,
+            "only ${having.joinToString(" and ") { it.name }} of ${sealed!!.simpleName} has ${e.name}: check which it is first, " +
+                "as in when ($name) { is ${having.first().name} -> ... $name.${e.name} ... }",
+        )
     }
 
     /**

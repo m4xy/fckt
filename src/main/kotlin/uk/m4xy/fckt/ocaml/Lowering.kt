@@ -495,7 +495,7 @@ class Lowering(private val program: Program) {
                     params = decl.typeParams.ocaml().map(::typeVar)
                     for (variant in decl.variants) {
                         variant(variant.name) {
-                            for (field in variant.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams.ocaml()))
+                            for (field in variant.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams.ocaml())) { if (field.isVar) isMutable = true }
                         }
                     }
                 }

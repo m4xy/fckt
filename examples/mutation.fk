@@ -40,7 +40,35 @@ counter(): @Mutating () -> Int = {
   }
 }
 
+// A case's fields can be var too. Which case a value is must be checked first, so the field is there.
+type Tree { Leaf, Node(var left: Tree, value: Int, var right: Tree) }
+
+@Mutating insert(tree: Tree, x: Int): Tree = when (tree) {
+  is Leaf -> Node(Leaf, x, Leaf)
+  is Node -> {
+    if (x < tree.value) {
+      tree.left = insert(tree.left, x)
+    } else {
+      tree.right = insert(tree.right, x)
+    }
+    tree
+  }
+}
+
+toList(tree: Tree): List<Int> = when (tree) {
+  Leaf -> []
+  Node(left, value, right) -> [*toList(left), value, *toList(right)]
+}
+
+// The tree is made and changed here, and never leaves: pure.
+sorted(xs: List<Int>): List<Int> = {
+  var tree = Leaf
+  xs.forEach(x -> { tree = insert(tree, x) })
+  toList(tree)
+}
+
 main() = {
+  assertEquals([1, 2, 3, 5, 8], sorted([5, 3, 8, 1, 2]))
   account = opened("Ada", 50)
   deposit(account, 25)
   account.balance = account.balance - 5
