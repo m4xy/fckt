@@ -271,6 +271,9 @@ const val MUTATING = "Mutating"
 const val META_ANNOTATION = "Meta"
 const val REPEATABLE = "Repeatable"
 
+/** On an annotation for specs, as `@Persistence @Encapsulates annotation type Repository`: what a module following such a spec does beyond what it says stays inside it. */
+const val ENCAPSULATES = "Encapsulates"
+
 /** The effect no operation has: a module or function that may only do it does nothing. */
 const val PURE = "Pure"
 

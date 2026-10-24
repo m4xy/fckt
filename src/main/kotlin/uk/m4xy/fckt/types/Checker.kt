@@ -355,7 +355,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 if (f !in schemes || !argumentsChecked.add(app to f.name)) continue
                 val wanted = specSchemes.getValue(spec).getValue(v.name)
                 val names = wanted.vars.zip(v.typeParams)
-                val inside = specView(wanted.type, names.associate { (tv, n) -> tv to Type.Con("#$n") as Type }) { t, targs ->
+                val open = wanted.vars.drop(names.size).associateWith { u.fresh() as Type }
+                val inside = specView(wanted.type, names.associate { (tv, n) -> tv to Type.Con("#$n") as Type } + open) { t, targs ->
                     typeOf(typeDecl("${arg.name}.$t")!!, targs)
                 }
                 val actual = globalType(f)
@@ -1272,7 +1273,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private fun checkEffects(decl: Decl.Function, row: Type) {
         if (decl.name == "main") return
-        val done = Type.effectNames(row)
+        // A module a functor made was checked as the functor; what it does with its real modules is theirs.
+        if (enclosingApplication(decl.path) != null) return
+        // What a functor's parameters do is theirs too: a use case may do whatever its repositories do.
+        val done = Type.effectNames(row) - parameterEffects(decl.path)
         if (decl.params == null) {
             if (done.isNotEmpty()) throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(done)}, but a top-level value runs when the program starts; make it a function: ${decl.simpleName}() = ...")
             return
@@ -1334,7 +1338,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 val result = resolve(v.type)
                 // What it may do: what it declares, and whatever its function parameters do.
                 val rest = u.fresh()
-                val row = Type.effects(effectsOf(v.annotations, spec.path, v.pos), rest)
+                val row = Type.effects(specEffects(spec, v), rest)
                 val type = v.params?.let { params ->
                     checkDistinct(params.map { it.name to it.pos })
                     arrowEffects = row
@@ -1399,16 +1403,47 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (!u.unify(actual, inside)) {
             throw CompileError(decl.pos, "'${decl.simpleName}' has type $shown, but ${spec.simpleName} needs ${Type.render(wanted.type, names.toMap().toMutableMap())}, which here is ${inside.zonk()}")
         }
-        // It can't do more than the spec says, as callers through the spec wouldn't know.
+        // What it does, against what the spec says its function may do.
         val value = spec.values.first { it.name == decl.simpleName }
-        val allowed = effectsOf(value.annotations, spec.path, value.pos)
-        (inside as? Type.Fn)?.let { fn ->
-            val extra = Type.effectNames(fn.effects) - allowed
-            if (extra.isNotEmpty()) {
-                throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(extra)}, but ${spec.simpleName}'s ${decl.simpleName} doesn't say it can: declare it there, as ${shown(extra)} ${decl.simpleName}(...)")
-            }
+        val declared = specEffects(spec, value)
+        val hides = hides(spec, value)
+        val done = (inside as? Type.Fn)?.let { Type.effectNames(it.effects) }.orEmpty()
+        val extra = done - declared
+        if (extra.isNotEmpty() && declared.isNotEmpty() && !hides) {
+            throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(extra)}, but ${spec.simpleName}'s ${decl.simpleName} doesn't say it can: declare it there, as ${shown(extra)} ${decl.simpleName}(...)")
         }
-        outsideSchemes[decl] = Scheme(wanted.vars, specView(wanted.type, emptyMap()) { name, args -> outsideType(module, name, args) })
+        // Callers outside see the spec's view: with what the spec says it does, or, where the spec
+        // says nothing, what this one does.
+        val shownType = specView(wanted.type, emptyMap()) { name, args -> outsideType(module, name, args) }
+        outsideSchemes[decl] = if (declared.isEmpty() && shownType is Type.Fn) {
+            val rest = u.fresh()
+            Scheme(wanted.vars + rest, Type.Fn(shownType.params, shownType.result, Type.effects(done, rest)))
+        } else {
+            Scheme(wanted.vars, shownType)
+        }
+    }
+
+    /**
+     * What [spec]'s [value] says it may do: its own effects, or, if it has none, the spec's, which
+     * pass to everything in it as a module's do. Empty if neither says: then it's whatever the
+     * module that follows it does.
+     */
+    private fun specEffects(spec: Decl.Spec, value: uk.m4xy.fckt.syntax.SpecValue): Set<String> =
+        effectsOf(value.annotations, spec.path, value.pos).ifEmpty { effectsOf(spec.annotations, spec.path, spec.pos) }
+
+    /**
+     * Whether what a module following [spec] does beyond what [value] says stays inside it: so for
+     * a spec annotated with an `@Encapsulates` annotation, as `@Repository` may be, unless [value]
+     * says what it does itself.
+     */
+    private fun hides(spec: Decl.Spec, value: uk.m4xy.fckt.syntax.SpecValue): Boolean =
+        effectsOf(value.annotations, spec.path, value.pos).isEmpty() &&
+            reached(spec.annotations, spec.path, spec.pos).any { it.type.name == ENCAPSULATES || marked(it.type, ENCAPSULATES) }
+
+    /** The effects the specs of the functor around [path] say its parameters' functions have, which aren't the functor's own. */
+    private fun parameterEffects(path: List<String>): Set<String> {
+        val functor = enclosingFunctor(path) ?: return emptySet()
+        return functorParams[functor.name].orEmpty().flatMap { (_, spec) -> spec.values.flatMap { specEffects(spec, it) } }.toSet()
     }
 
     /** A spec's [type] with its type variables replaced from [vars], and each of its own types by [own]. */

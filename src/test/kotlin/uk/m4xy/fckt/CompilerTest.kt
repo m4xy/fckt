@@ -377,15 +377,17 @@ class CompilerTest {
         assertContains(program("mk(): (String) -> Unit = s -> println(s)"), "this does @Console, but the type of the function it's in says it's pure")
         assertContains(program("f(g: @Console () -> Unit) = g()"), "'f' does @Console")
         assertContains(program("annotation type Pure\nf(g: @Pure () -> Unit) = 1"), "'Pure' isn't an effect; declare one with @Effect annotation type Pure")
-        // A spec says what its functions may do, and its modules must keep to it.
+        // A spec that says what its functions may do is a promise its modules must keep.
         assertContains(
-            program("spec Logger { log(s: String): Unit }\nmodule L : Logger { @Console log(s: String) = println(s) }"),
+            program("spec Logger { @Pure log(s: String): Unit }\nmodule L : Logger { @Console log(s: String) = println(s) }"),
             "'log' does @Console, but Logger's log doesn't say it can: declare it there, as @Console log(...)",
         )
-        assertContains(
-            program("spec Logger { @Console log(s: String): Unit }\nmodule F(M: Logger) { run() = M.log(\"x\") }"),
-            "'run' does @Console",
-        )
+        // One that says nothing takes what its module does, which shows wherever that module is used.
+        val logger = "spec Logger { log(s: String): Unit }\nmodule L : Logger { @Console log(s: String) = println(s) }\n"
+        assertContains(program("${logger}f() = L.log(\"x\")"), "'f' does @Console")
+        // A functor may do what its parameters do, which shows where it's given real modules.
+        assertContains(program("${logger}module F(M: Logger) { run() = M.log(\"x\") }\nmodule G = F(L)\ng() = G.run()"), "'g' does @Console")
+        compile("${logger}module F(M: Logger) { run() = M.log(\"x\") }\nmodule G = F(L)\n@Console g() = G.run()\nmain() = assert(true)")
         // Calls inside a lambda happen when it's called, not where it's written.
         compile("f() = { g = (s: String) -> println(s); 1 }\nmain() = assert(true)")
     }
@@ -436,7 +438,18 @@ class CompilerTest {
 
     @Test
     fun `annotations pass on what they carry, and a module's effects pass to what's in it`() {
-        assertEquals("published OrderPlaced(id=order-1, total=30)\n", run(File("examples/ordering.fk").readText()))
+        val ordering = File("examples/ordering.fk").readText()
+        assertEquals("UPSERT INTO orders ...\nSELECT * FROM orders WHERE id = 'order-1'\nUPSERT INTO orders ...\n", run(ordering))
+        // What a repository does underneath stays inside it: its callers see @Persistence, not @Console.
+        val withoutMain = ordering.substringBefore("main() =")
+        fun ordering(source: String) = error("$withoutMain$source\nmain() = assert(true)")
+        assertContains(ordering("f() = Live.run(\"x\")"), "'f' does @Persistence, so it must say so")
+        compile("$withoutMain@Persistence f() = Live.run(\"x\")\n@Persistence g(id: Ordering.OrderId) = PostgresOrders.find(id)\nmain() = assert(true)")
+        // And the domain can't reach one at all.
+        assertContains(
+            error(withoutMain.replace("  private total(order: Order)", "  peek(customer: String) = LoyalCustomers.discountFor(customer)\n  private total(order: Order)") + "main() = assert(true)"),
+            "'peek' does @Persistence, but it's in Ordering, which may only be pure",
+        )
         val io = "@Effect annotation type Network\n@Console @Network annotation type Io\n"
         fun program(source: String) = error("$io$source\nmain() = assert(true)")
         compile("$io@Io f() = println(\"x\")\n@Io module M {\n  g() = println(\"y\")\n}\nh(k: @Io () -> Unit) = 1\nmain() = assert(true)")

@@ -51,6 +51,7 @@ external Option<A>.getOrElse(default: A): A = "Option.value this ~default"
 external Option<A>.isSome(): Boolean = "Option.is_some this"
 external Option<A>.isNone(): Boolean = "Option.is_none this"
 external Option<A>.toResult<E>(none: E): Result<A, E> = "Option.to_result ~none this"
+external Result<A, E>.map<B>(f: (A) -> B): Result<B, E> = "Result.map f this"
 
 // ---- Numbers ----
 
@@ -101,6 +102,11 @@ external Char.code: Int = "Char.code this"
 // A @Repeatable one may reach something more than once, with different values.
 annotation type Meta
 @Meta annotation type Repeatable
+
+// On an annotation for specs: what a module following such a spec does beyond what the spec says
+// stays inside it. @Persistence @Encapsulates annotation type Repository makes every @Repository's
+// callers see @Persistence, whether it's Postgres or a list in memory underneath.
+@Meta annotation type Encapsulates
 
 // What a function may do besides work out its result. It must say so, and so must every function
 // that calls it: @Console greet(name: String) = println("hello $name"). A module's effects pass to
