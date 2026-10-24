@@ -51,7 +51,8 @@ tour of the core language, translated section by section.
 | `@Effect @HandledBy(Terminal) spec Console` | | The handler `main` uses for an effect it does but doesn't handle; an effect without one must be handled before `main`. |
 | `Fail(fail = (reason, resume) -> Error(reason)) { Ok(parse(text)) }` | `{ fail = fun reason resume -> Error reason }` | A function answering an operation can take one more parameter, `resume`: the rest of the handled block, waiting where the operation was called. Calling it with the operation's result carries on, and gives what the block gives, which is also what the handler gives when it doesn't call it. It can call it straight away, later or never: never is an early exit, later is a generator or a scheduler. It can be called at most once (OCaml's continuations are one-shot). See `examples/resume.fk`. |
 | `fail(reason: String): Nothing` | `type fk_nothing = \|` | The type with no values: a call that gives `Nothing` never returns, so it fits wherever it is (`if (bad) fail("why") else 1`). An operation giving `Nothing` can't be answered or resumed, so the code after it never runs. |
-| `sequence { naturals(0) }` | `sequence (fun () -> ...)` | A function taking a function, called with a block after it, gets the block as that function, as in Kotlin. |
+| `sequence { naturals(0) }`, `retry(3) { fetch() }` | `sequence (fun () -> ...)` | A block after a function, or after a call missing its last argument, is that argument, as in Kotlin's trailing lambdas. |
+| `attempt<A>(block: @Fail () -> A)` | | A parameter's function type that names effects may do those and more: what else it does is done where it's called, so `attempt { println("x"); fail("y") }` is `@Console`. An unannotated one does what the function it's given to may do. |
 | `@Console @Network annotation type Io` | nothing | An annotation's annotations pass on to whatever it's used on, so `@Io` means `@Console @Network`, in a function type too. `@Meta` ones, like `@Effect`, describe the annotation itself and stay put. The same annotation reached two ways with different values is an error, unless it's `@Repeatable` or declared directly, which chooses. |
 | `@Persistence @Encapsulates annotation type Repository` | | A spec's annotations pass to its functions, as a module's do. With `@Encapsulates`, what a module following the spec does beyond that stays inside it: every `@Repository` is `@Persistence` to its callers, whether it's Postgres or a list in memory underneath. A handled effect can be hidden only if it has a default, which `main` puts around everything. |
 | `@Pure module Ordering { ... }`, `@Io module PlaceOrder { ... }` | | A module's effects pass to everything in it, which can do no more: a `@Pure` module's functions do nothing, and an `@Io` module's can't add `@Clock`. A module inside it can only narrow them. See `examples/ordering.fk`: a pure domain, repositories as specs, a use case as a functor of them, and configurations that make it with real or fake ones. |
@@ -71,7 +72,7 @@ tour of the core language, translated section by section.
 | `f(x: Int, y: Int): Int = e` | `let f (x : int) (y : int) : int = e` | Top-level order doesn't matter; mutual recursion becomes `let rec ... and`. |
 | `name = e` | `let name = e` | A top-level value or a binding in a block. |
 | `{ a = 1; f(a) }` | `let a = 1 in f a` | A block is an expression; it ends with its value. Unit expressions before that run in order (`e1; e2`). |
-| `x -> e`, `(a, b) -> e` | `fun x -> e`, `fun a b -> e` | Lambdas never use braces, so `{` always starts a block. |
+| `x -> e`, `(a, b) -> e` | `fun x -> e`, `fun a b -> e` | Lambdas never use braces, so `{` always starts a block. `_` is a parameter that isn't used: `(reason, _) -> Error(reason)`. |
 | `~e` | `fun () -> e`, `fun _ _ -> e` | A function that ignores its arguments. It takes as many as the expected type has, so `~true` can be a `(String, Money) -> Boolean`. With no expected function type it's a thunk, `() -> T`. |
 | `x \|> f` | `x \|> f` | |
 | `x \|> f(a)` | `x \|> f a` | When `f` takes one more argument than it's given, `x` is passed last. |
@@ -85,7 +86,7 @@ tour of the core language, translated section by section.
 | `lazy(~e)`, `l.value` | `Lazy.from_fun`, `Lazy.force` | |
 | `is V -> x.field` | `V x__v -> x__v.field` | `is` narrows a variable, so the branch can read the variant's fields. |
 | `when { c -> e; else -> e }` | `if c then e else ...` | |
-| `if (c) a else b` | `if c then a else b` | `else` is required. |
+| `if (c) a else b` | `if c then a else b` | Without `else`, `if (c) println("x")` is a statement, and its branch must be `Unit` (or `Nothing`, as `if (bad) fail("why")`). |
 | `x.f(a)` | `f x a` | Calls a top-level `f` on `x` when `x` has no member `f`. |
 | `main(args: List<String>)` | `let () = main ...` | `main` may take the command-line arguments. |
 | `"$x and ${f(y)}"` | `"" ^ show x ^ ...` | Values print like Kotlin's `toString()`, e.g. `Money(value=3)`. |
@@ -106,7 +107,7 @@ file of the same name takes its place.
 
 | | |
 | --- | --- |
-| `prelude.fk` | Needs no module's name: `spec Monad`, `spec Applicative`, `type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }`, and the methods and functions on built-in types, as externals. |
+| `prelude.fk` | Needs no module's name: `spec Monad`, `spec Applicative`, `type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }`, and the methods and functions on built-in types: lists have Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count` and more. The effects `Console` (with `Terminal`), `Mutating`, `Fail` with `attempt { ... }`, and `Yielding<A>` with `sequence { ... }`, which makes a lazy `Stream<A>`. A program's own effect, or operation, of the same name takes the place of the prelude's. |
 | `Options` | Option as a monad: `Options { x by half(n); x + 1 }`. |
 | `Results` | Result as a monad, for any error type, with `mapError` and `toOption`. |
 | `Validated` | Validation without bind, so `Validated { ... }` keeps every error; `fromResult` and `toResult`. |

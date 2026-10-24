@@ -40,6 +40,32 @@ external List<A>.firstOrNone(): Option<A> = "List.nth_opt this 0"
 external List<Int>.sum(): Int = "List.fold_left ( + ) 0 this"
 external List<Float>.sum(): Float = "List.fold_left ( +. ) 0. this"
 
+external List<A>.take(n: Int): List<A> = "List.take n this"
+external List<A>.drop(n: Int): List<A> = "List.drop n this"
+external List<A>.mapIndexed<B>(f: (Int, A) -> B): List<B> = "List.mapi f this"
+external List<A>.sortedWith(comparison: (A, A) -> Int): List<A> = "List.stable_sort comparison this"
+List<A>.lastOrNull(): Option<A> = this.reversed().firstOrNull()
+List<A>.getOrNull(index: Int): Option<A> = if (index < 0) None else this.drop(index).firstOrNull()
+List<A>.count(f: (A) -> Boolean): Int = this.filter(f).size
+List<A>.withIndex(): List<(Int, A)> = this.mapIndexed((i, a) -> (i, a))
+
+// Pairs of items in the same place, as long as the shorter list.
+List<A>.zip<B>(other: List<B>): List<(A, B)> = when (this, other) {
+  ([a, *xs], [b, *ys]) -> [(a, b), *xs.zip(ys)]
+  else -> []
+}
+
+// Each item once, where it first appears.
+List<A>.distinct(): List<A> = this.fold([], (seen, a) -> if (seen.contains(a)) seen else [a, *seen]).reversed()
+
+// Smallest first, by OCaml's ordering of values: numbers, then strings, then fields in order.
+List<A>.sorted(): List<A> = this.sortedWith(compareValues)
+List<A>.sortedBy<K>(key: (A) -> K): List<A> = this.sortedWith((a, b) -> compareValues(key(a), key(b)))
+List<A>.sortedDescending(): List<A> = this.sorted().reversed()
+
+// Below 0 if a comes first, 0 if they're equal, above 0 if b does.
+external compareValues<A>(a: A, b: A): Int = "compare a b"
+
 // [(key, value), ...].lookup(key): the value of the first pair with that key.
 external List<(K, V)>.lookup(key: K): Option<V> = "List.assoc_opt key this"
 
@@ -141,6 +167,36 @@ module Terminal : Console {
 // Changes a var that someone else can see. Changing one that was made in a function and never
 // left it isn't seen, so it doesn't count: a function can use vars inside and still be pure.
 @Effect annotation type Mutating
+
+// Stops what it's in: fail("why") never returns, so it fits anywhere, as in
+// if (n < 0) fail("negative"). attempt { ... } turns it into a Result.
+@Effect spec Fail {
+  fail(reason: String): Nothing
+}
+
+// Ok with what block gives, or Error with why it failed.
+attempt<A>(block: @Fail () -> A): Result<A, String> = Fail(fail = (reason, _) -> Error(reason)) { Ok(block()) }
+
+// Hands out values one at a time, each when it's asked for: see sequence.
+@Effect spec Yielding<A> {
+  yield(value: A): Unit
+}
+
+// A list worked out as it's read, so it can go on forever.
+type Stream<A> { End, Next(value: A, rest: Lazy<Stream<A>>) }
+
+// What block yields, as a Stream: block runs up to each yield as the stream is read that far.
+// sequence { yield(1); yield(2) } is 1, then 2.
+sequence<A>(block: @Yielding<A> () -> Unit): Stream<A> = Yielding(yield = (a, resume) -> Next(a, lazy(~resume(Unit)))) {
+  block()
+  End
+}
+
+// The first n values, or all of them if there are fewer.
+Stream<A>.take(n: Int): List<A> = when (this) {
+  End -> []
+  Next(a, rest) -> if (n <= 0) [] else if (n == 1) [a] else [a, *rest.value.take(n - 1)]
+}
 
 // ---- Values that change ----
 

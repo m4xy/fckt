@@ -173,7 +173,8 @@ private fun declaredNames(decls: List<Decl>): Set<String> = decls.flatMap { d ->
     listOf(d.name) + when (d) {
         is Decl.Module -> declaredNames(d.decls) + d.params.map { it.name }
         is Decl.Sealed -> d.variants.map { it.name }
-        is Decl.Spec -> d.types.map { it.name }
+        // A handled effect's operations, which stand in for the prelude's of the same name.
+        is Decl.Spec -> d.types.map { it.name } + d.values.map { it.name }
         else -> emptyList()
     }
 }.toSet()

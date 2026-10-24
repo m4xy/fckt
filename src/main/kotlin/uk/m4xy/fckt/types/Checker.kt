@@ -773,7 +773,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> Type.Fn(
             ref.params.map { resolve(it) },
             resolve(ref.result),
-            if (ref.effects.isEmpty()) arrowEffects ?: Type.effects(emptySet(), null) else Type.row(effectLabels(ref.effects), null),
+            when {
+                ref.effects.isEmpty() -> arrowEffects ?: Type.effects(emptySet(), null)
+                // A parameter's `@Fail () -> A` may do Fail and more, which calling it passes on:
+                // attempt { println("x"); fail("y") } is @Console where it's called.
+                arrowEffects != null -> Type.row(effectLabels(ref.effects), u.fresh())
+                else -> Type.row(effectLabels(ref.effects), null)
+            },
         )
         is TypeRef.Tuple -> Type.tuple(ref.elements.map { resolve(it) })
         is TypeRef.Named -> {
@@ -1356,12 +1362,21 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** `handler { block }`. */
     private fun inferHandle(e: Expr.Handle, expected: Type?, scope: Scope): Type {
+        // A function given its last argument as a block, as in Kotlin: `sequence { ... }` is
+        // `sequence(~{ ... })`, and `retry(3) { ... }` is `retry(3, ~{ ... })`.
+        val block = Arg(null, Expr.Lambda(e.block.pos, emptyList(), e.block))
+        val h = e.handler
+        val makesHandler = h is Expr.Call && h.callee is Expr.Name && scope.lookup(h.callee.name) == null &&
+            lookupGlobal(h.callee.name, h.callee.pos) == null && find(h.callee.name, specs, null)?.let { isEffect(it) } == true
+        if (h is Expr.Call && !makesHandler) {
+            val callee = infer(h.callee, null, scope).prune()
+            if (callee is Type.Fn && callee.params.size == h.args.size + 1) {
+                return infer(Expr.Call(e.pos, h.callee, h.args + block).also { e.call = it }, expected, scope)
+            }
+        }
         val type = infer(e.handler, null, scope).prune()
-        // A function, as in `sequence { ... }`, is called with the block as a lambda, as in Kotlin.
         if (type is Type.Fn && type.params.size == 1) {
-            val call = Expr.Call(e.pos, e.handler, listOf(Arg(null, Expr.Lambda(e.block.pos, emptyList(), e.block))))
-            e.call = call
-            return infer(call, expected, scope)
+            return infer(Expr.Call(e.pos, e.handler, listOf(block)).also { e.call = it }, expected, scope)
         }
         val handler = type as? Type.Con
         val spec = handler?.name?.takeIf { it.startsWith(Type.HANDLER) }?.let { specs[it.removePrefix(Type.HANDLER)] }
@@ -1474,7 +1489,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private fun perform(row: Type, pos: Pos) {
         val (labels, rest) = Type.row(row)
-        val open = if (rest == null) Type.row(labels, u.fresh()) else row
+        // Doing what may include what the function does anyway, as a parameter's @Fail () -> A
+        // does, is doing its own labels.
+        val open = if (rest == null || rest === Type.row(effects).second) Type.row(labels, u.fresh()) else row
         if (!u.unify(open, effects)) {
             val allowed = Type.effectNames(effects)
             val extra = labels.map { it.name }.toSet() - allowed
@@ -1525,7 +1542,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Type.Con -> {
                 t.region?.prune()?.let { into += it }
                 if (t.name == Type.EFFECTS) {
-                    Type.row(t).first.forEach { label -> label.args.firstOrNull()?.prune()?.let { into += it } }
+                    // A parameter's row can hold the function's own, which isn't seen through it.
+                    val own = skip?.let { Type.row(it).first }.orEmpty()
+                    Type.row(t).first.filter { label -> own.none { Type.sameEffect(it, label) } }.forEach { label -> label.args.firstOrNull()?.prune()?.let { into += it } }
                 } else {
                     t.args.forEach { regionsIn(it, skip, into) }
                 }
@@ -2045,7 +2064,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         choices.fold(listOf(emptyList())) { acc, options -> acc.flatMap { prefix -> options.map { prefix + it } } }
 
     private fun checkDistinct(names: List<Pair<String, Pos>>) {
-        names.groupBy { it.first }.values.firstOrNull { it.size > 1 }?.let {
+        names.filter { it.first != "_" }.groupBy { it.first }.values.firstOrNull { it.size > 1 }?.let {
             throw CompileError(it[1].second, "'${it[1].first}' is declared twice")
         }
     }
@@ -2249,7 +2268,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         is Expr.Lambda -> inferLambda(e, expected, scope)
         is Expr.Pipe -> inferPipe(e, scope)
-        is Expr.If -> {
+        is Expr.If -> if (!e.hasElse) {
+            check(e.condition, Type.BOOLEAN, scope)
+            val then = infer(e.then, null, scope).prune()
+            if (then !is Type.Var && then != Type.UNIT) {
+                throw CompileError(e.pos, "an 'if' without 'else' gives Unit, but this branch gives $then: add an 'else' to give a value")
+            }
+            assign(e.then, then, Type.UNIT)
+            infer(e.otherwise, Type.UNIT, scope)
+        } else {
             check(e.condition, Type.BOOLEAN, scope)
             val expected = known(expected)
             if (expected != null) {

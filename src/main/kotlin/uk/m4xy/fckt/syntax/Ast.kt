@@ -303,7 +303,8 @@ sealed class Expr {
         var partial = false
     }
 
-    class If(override val pos: Pos, val condition: Expr, val then: Expr, val otherwise: Expr) : Expr()
+    /** `if (c) a else b`; without [hasElse], `if (c) a` is a statement, with `Unit` for [otherwise]. */
+    class If(override val pos: Pos, val condition: Expr, val then: Expr, val otherwise: Expr, val hasElse: Boolean = true) : Expr()
 
     /** `when (subject) { ... }`, or `when { cond -> ... }` when [subject] is null. */
     class When(override val pos: Pos, val subject: Expr?, val branches: List<Branch>) : Expr() {

@@ -471,6 +471,76 @@ class CompilerTest {
     }
 
     @Test
+    fun `an if without an else is a statement`() {
+        assertEquals("big\n", run("@Console main() = {\n  if (2 > 1) println(\"big\")\n  if (1 > 2) println(\"small\")\n}"))
+        // fail gives Nothing, which fits as Unit.
+        assertEquals("", run("@Fail check(n: Int): Int = {\n  if (n < 0) fail(\"negative\")\n  n\n}\nmain() = assertEquals(Error(\"negative\"), attempt { check(-1) })"))
+        assertContains(error("f(b: Boolean) = {\n  if (b) 1\n  2\n}\nmain() = assert(true)"), "an 'if' without 'else' gives Unit, but this branch gives Int: add an 'else' to give a value")
+    }
+
+    @Test
+    fun `a block after a call is its last argument`() {
+        val source = """
+            @Console prefixed<A>(prefix: String, block: @Console () -> A): A = Console(
+              print = s -> print("${'$'}prefix${'$'}s"),
+              println = line -> println("${'$'}prefix${'$'}line"),
+              readLine = readLine,
+            ) { block() }
+            twice(f: () -> Int): Int = f() + f()
+            @Console main() = {
+              prefixed("> ") { println("hello") }
+              println(twice { 21 }.toString())
+            }
+        """.trimIndent()
+        assertEquals("> hello\n42\n", run(source))
+    }
+
+    @Test
+    fun `the prelude's Fail and sequence pass on what their blocks do`() {
+        val source = """
+            @Console main() = {
+              tried = attempt {
+                println("trying")
+                if (true) fail("nope")
+                1
+              }
+              assertEquals(Error("nope"), tried)
+              numbers = sequence {
+                println("making 1")
+                yield(1)
+                println("making 2")
+                yield(2)
+              }
+              println(numbers.take(1).toString())
+            }
+        """.trimIndent()
+        assertEquals("trying\nmaking 1\n[1]\n", run(source))
+    }
+
+    @Test
+    fun `lists have Kotlin's everyday functions`() {
+        val source = """
+            type Person(name: String, age: Int)
+            main() = {
+              xs = [3, 1, 2, 3, 1]
+              assertEquals([3, 1, 2], xs.distinct())
+              assertEquals([1, 1, 2, 3, 3], xs.sorted())
+              assertEquals([3, 3, 2, 1, 1], xs.sortedDescending())
+              assertEquals(Some(1), xs.lastOrNull())
+              assertEquals(Some(2), xs.getOrNull(2))
+              assertEquals(None, xs.getOrNull(-1))
+              assertEquals(2, xs.count(x -> x == 3))
+              assertEquals([(1, "a"), (2, "b")], [1, 2, 3].zip(["a", "b"]))
+              assertEquals([(0, "a"), (1, "b")], ["a", "b"].withIndex())
+              assertEquals([3, 1], xs.take(2))
+              assertEquals([3, 1], xs.drop(3))
+              assertEquals(["b", "a"], [Person("a", 30), Person("b", 20)].sortedBy(p -> p.age).map(p -> p.name))
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+    }
+
+    @Test
     fun `arguments run left to right, as in Kotlin`() {
         val source = """
             @Console f(s: String): Int = {
@@ -523,7 +593,12 @@ class CompilerTest {
         assertContains(program("@Yielding<String> bad() = yield(1)\nmain() = assert(true)"), "'bad' does @Yielding<Int>, but says <String>")
         assertContains(program("module Gen : Yielding { yield(value: Int) = Unit }\nmain() = assert(true)"), "Gen can't follow Yielding, which takes type parameters")
         // Two effects with an operation of the same name: say which.
-        assertContains(program("@Effect spec Log { println(s: String): Unit }\nf() = println(\"x\")\nmain() = assert(true)"), "'println' is an operation of Console and Log; write Console.println")
+        // A program's own operation stands in for the prelude's of the same name, unless both are named.
+        assertContains(program("@Effect spec Log { println(s: String): Unit }\nf() = println(\"x\")\nmain() = assert(true)"), "'f' does @Log")
+        assertContains(
+            program("@Effect spec Log { println(s: String): Unit }\n@Console f() = Console.println(\"x\")\ng() = println(\"x\")\nmain() = assert(true)"),
+            "'println' is an operation of Console and Log; write Console.println",
+        )
         assertContains(program("main() = Clock(now = 1) { 1 }"), "expected () -> Int but found Int")
         assertContains(program("main() = {\n  h = 1\n  h { 2 }\n}"), "this isn't a handler")
         // A repository hides what its module does, but not an effect that needs a handler.
@@ -862,7 +937,7 @@ class CompilerTest {
 
     @Test
     fun `syntax errors`() {
-        assertContains(error("f(x: Int) = if (x > 0) 1"), "'if' needs an 'else'")
+        assertContains(error("f(x: Int) = if (x > 0) 1"), "an 'if' without 'else' gives Unit, but this branch gives Int")
         assertContains(error("f(x: Int) = when { x > 0 -> 1 }"), "needs an 'else' branch")
         assertContains(error("interface Shape { Circle }"), "write a type with cases as 'type Shape { ... }'")
         assertContains(error("f() = {\n  y = 1\n  y = 2\n  y\n}"), "'y' is already defined in this block")

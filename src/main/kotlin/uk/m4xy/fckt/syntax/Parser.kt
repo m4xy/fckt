@@ -379,7 +379,8 @@ class Parser(private val tokens: List<Token>) {
         while (!at(T.RPAREN)) {
             val annotations = annotations()
             val pos = peek.pos
-            val name = ident("a parameter name")
+            // `_` for one that isn't used, as in Kotlin's lambdas.
+            val name = if (accept(T.UNDERSCORE) != null) "_" else ident("a parameter name")
             val type = if (accept(T.COLON) != null) type() else null
             params += Param(pos, name, type, annotations)
             if (accept(T.COMMA) == null) break
@@ -561,8 +562,8 @@ class Parser(private val tokens: List<Token>) {
     private fun lambdaStart(): Expr? {
         val pos = peek.pos
         if (accept(T.TILDE) != null) return Expr.Lambda(pos, emptyList(), expr(), ignoresArguments = true)
-        if (at(T.IDENT) && peekAt(1).kind == T.ARROW) {
-            val name = next().text
+        if ((at(T.IDENT) || at(T.UNDERSCORE)) && peekAt(1).kind == T.ARROW) {
+            val name = if (at(T.UNDERSCORE)) next().let { "_" } else next().text
             next()
             return Expr.Lambda(pos, listOf(Param(pos, name, null)), expr())
         }
@@ -732,9 +733,10 @@ class Parser(private val tokens: List<Token>) {
         val then = expr()
         val save = p
         skipNewlines()
+        // Without an else, it's done for what it does, and gives Unit.
         if (accept(T.ELSE) == null) {
             p = save
-            throw error("'if' needs an 'else': every expression must have a value", pos)
+            return Expr.If(pos, condition, then, Expr.Name(pos, "Unit"), hasElse = false)
         }
         skipNewlines()
         return Expr.If(pos, condition, then, expr())

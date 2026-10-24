@@ -58,7 +58,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
         is Expr.Assign -> Expr.Assign(e.pos, expr(e.target), expr(e.value))
         is Expr.Lambda -> Expr.Lambda(e.pos, e.params.map(::param), expr(e.body), e.ignoresArguments)
         is Expr.Pipe -> Expr.Pipe(e.pos, expr(e.value), expr(e.function))
-        is Expr.If -> Expr.If(e.pos, expr(e.condition), expr(e.then), expr(e.otherwise))
+        is Expr.If -> Expr.If(e.pos, expr(e.condition), expr(e.then), expr(e.otherwise), e.hasElse)
         is Expr.When -> Expr.When(
             e.pos,
             e.subject?.let(::expr),
