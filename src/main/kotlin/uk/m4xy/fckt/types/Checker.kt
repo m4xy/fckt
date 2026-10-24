@@ -915,6 +915,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         fun check(path: List<String>, annotations: List<Annotation>) {
             currentPath = path
             for (a in annotations) if (seen.add(a)) checkAnnotation(a)
+            // What they pass on must agree.
+            if (annotations.isNotEmpty()) reached(annotations, path, annotations.first().pos)
+        }
+        // A module inside one that says what may be done can only narrow it.
+        for (m in modules.values) {
+            val effects = effectsOf(m.annotations, m.path, m.pos)
+            val (outer, allowed) = ceiling(m.path) ?: continue
+            (effects - allowed).takeIf { effects.isNotEmpty() && it.isNotEmpty() }?.let {
+                throw CompileError(m.pos, "${m.simpleName} is in ${outer.simpleName}, which may only ${allows(allowed)}, so it can't be ${shown(it)}")
+            }
         }
         for (d in decls + modules.values) {
             check(d.path, d.annotations)
@@ -1097,26 +1107,122 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return Type.UNIT
     }
 
-    /** Whether [a] names an effect: an annotation type that is itself annotated `@Effect`. */
-    private fun isEffect(a: Annotation): Boolean = find(a.name, annotationTypes, null)?.let(::isEffect) ?: false
-
-    private fun isEffect(d: Decl.Record): Boolean {
+    /** The annotation type [a], written in [path], names; null if it names none, which checking it reports. */
+    private fun annotationType(a: Annotation, path: List<String>): Decl.Record? {
+        a.decl?.let { return it }
         val saved = currentPath
-        currentPath = d.path
+        currentPath = path
         try {
-            return d.annotations.any { find(it.name, annotationTypes, null)?.name == EFFECT }
+            return find(a.name, annotationTypes, null)
         } finally {
             currentPath = saved
         }
     }
 
-    /** The full names of the effects [annotations] name, each of which must be one. */
-    private fun effectNames(annotations: List<Annotation>): Set<String> = annotations.map { a ->
+    /** Whether annotation type [d] is annotated with the prelude's [name], as `@Meta annotation type Effect` is with Meta. */
+    private fun marked(d: Decl.Record, name: String): Boolean = d.annotations.any { annotationType(it, d.path)?.name == name }
+
+    /** An effect: an annotation type annotated `@Effect`. */
+    private fun isEffect(d: Decl.Record): Boolean = marked(d, EFFECT)
+
+    /** An annotation as it reaches what it's on: its type, as written, and the annotation types it came through. */
+    private class Reached(val type: Decl.Record, val annotation: Annotation, val via: List<Decl.Record>)
+
+    /**
+     * [annotations], written in [path], with every annotation they pass on: an annotation type's own
+     * annotations reach whatever it's used on, as `@Console @Network annotation type Io` makes `@Io`
+     * mean both, except `@Meta` ones, which describe the annotation type itself, as `@Effect` does.
+     * The same annotation reached twice with different arguments is an error, unless it's
+     * `@Repeatable`, or declared directly here, which chooses.
+     */
+    private fun reached(annotations: List<Annotation>, path: List<String>, pos: Pos): List<Reached> {
+        val all = mutableListOf<Reached>()
+        fun walk(list: List<Annotation>, at: List<String>, via: List<Decl.Record>) {
+            for (a in list) {
+                val type = annotationType(a, at) ?: continue
+                if (type in via) {
+                    val loop = via.dropWhile { it !== type } + type
+                    throw CompileError(type.pos, "annotations can't be annotated in a circle: ${loop.joinToString(" -> ") { "@" + it.simpleName }}")
+                }
+                all += Reached(type, a, via)
+                walk(type.annotations.filter { annotationType(it, type.path)?.let { t -> marked(t, META_ANNOTATION) } != true }, type.path, via + type)
+            }
+        }
+        walk(annotations, path, emptyList())
+        val direct = all.filter { it.via.isEmpty() }.map { it.type }.toSet()
+        val kept = all.filter { it.via.isEmpty() || it.type !in direct }
+        for ((type, list) in kept.groupBy { it.type }) {
+            if (marked(type, REPEATABLE)) continue
+            val values = list.distinctBy { text(it.annotation) }
+            if (values.size > 1) {
+                val ways = values.joinToString(", and ") { r -> "@" + text(r.annotation) + (r.via.lastOrNull()?.let { " through ${it.simpleName}" } ?: "") }
+                throw CompileError(pos, "this gets @${type.simpleName} more than once, with different values: $ways; choose one by declaring @${type.simpleName} here")
+            }
+        }
+        return kept
+    }
+
+    /** An annotation as written, to tell apart two with different arguments. */
+    private fun text(a: Annotation): String =
+        a.name.substringAfterLast('.') + if (a.args.isEmpty()) "" else a.args.joinToString(", ", "(", ")") { (it.name?.let { n -> "$n = " } ?: "") + text(it.value) }
+
+    private fun text(m: Meta): String = when (m) {
+        is Meta.Literal -> when (val e = m.expr) {
+            is Expr.StringLit -> "\"" + e.parts.joinToString("") { (it as StringPart.Text).text } + "\""
+            is Expr.IntLit -> e.value.toString()
+            is Expr.FloatLit -> e.value.toString()
+            is Expr.BoolLit -> e.value.toString()
+            is Expr.CharLit -> "'${e.value}'"
+            is Expr.Unary -> "-" + text(Meta.Literal(e.operand))
+            else -> "?"
+        }
+        is Meta.Ref -> m.name + (m.typeArgs?.joinToString(", ", "<", ">") { text(it) } ?: "") + (m.args?.joinToString(", ", "(", ")") { text(it.value) } ?: "")
+        is Meta.ListOf -> m.items.joinToString(", ", "[", "]") { text(it) }
+        is Meta.TupleOf -> m.items.joinToString(", ", "(", ")") { text(it) }
+    }
+
+    /** The effects [annotations], written in [path], allow, directly or through the annotations they're made of. */
+    private fun effectsOf(annotations: List<Annotation>, path: List<String>, pos: Pos): Set<String> =
+        reached(annotations, path, pos).filter { isEffect(it.type) }.map { it.type.name }.toSet()
+
+    /** The effects a function type's [annotations] say it has, `@Io (String) -> Unit`: each must be or carry one. */
+    private fun effectNames(annotations: List<Annotation>): Set<String> = annotations.flatMap { a ->
         val decl = find(a.name, annotationTypes, a.pos) ?: throw CompileError(a.pos, "unknown effect '${a.name}'")
-        if (!isEffect(decl)) throw CompileError(a.pos, "'${a.name}' isn't an effect; declare one with @Effect annotation type ${a.name.substringAfterLast('.')}")
         a.decl = decl
-        decl.name
+        effectsOf(listOf(a), currentPath, a.pos).ifEmpty {
+            throw CompileError(a.pos, "'${a.name}' isn't an effect; declare one with @Effect annotation type ${a.name.substringAfterLast('.')}")
+        }
     }.toSet()
+
+    /**
+     * The module around [path] that says what may be done in it, with what: the innermost one with
+     * effects, which pass to everything in it. A module a functor made has the functor's.
+     */
+    private fun ceiling(path: List<String>): Pair<Decl.Module, Set<String>>? {
+        for (n in path.size downTo 1) {
+            val name = path.take(n).joinToString(".")
+            val module = applications[name]?.first ?: modules[name] ?: continue
+            val effects = effectsOf(module.annotations, module.path, module.pos)
+            if (effects.isNotEmpty()) return module to effects
+        }
+        return null
+    }
+
+    /**
+     * What [decl] may do: what its module allows, if its module says, and then it can't add more;
+     * otherwise what it declares itself.
+     */
+    private fun allowed(decl: Decl.Function): Set<String> {
+        val own = effectsOf(decl.annotations, decl.path, decl.pos)
+        val (module, effects) = ceiling(decl.path) ?: return own
+        (own - effects).takeIf { it.isNotEmpty() }?.let {
+            throw CompileError(decl.pos, "'${decl.simpleName}' is in ${module.simpleName}, which may only ${allows(effects)}, so it can't be ${shown(it)}")
+        }
+        return effects
+    }
+
+    /** What a module's effects let its functions do, for messages: `do @Console`, or nothing for `@Pure`. */
+    private fun allows(effects: Set<String>): String = if (effects - PURE == emptySet<String>()) "be pure" else "do ${shown(effects - PURE)}"
 
     /** Effects as they're written: `@Console @FileSystem`. */
     private fun shown(effects: Set<String>): String = effects.sorted().joinToString(" ") { "@" + it.substringAfterLast('.') }
@@ -1160,8 +1266,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     /**
-     * That [decl] declares what its body does, [row]: no more, no less. `main` may do anything, as
-     * running a program is what it's for; a top-level value can't do anything, as it runs on its own.
+     * That [decl] may do what its body does, [row]: what it declares, or what its module allows.
+     * `main` may do anything, as running a program is what it's for; a top-level value can't do
+     * anything, as it runs on its own.
      */
     private fun checkEffects(decl: Decl.Function, row: Type) {
         if (decl.name == "main") return
@@ -1170,13 +1277,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (done.isNotEmpty()) throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(done)}, but a top-level value runs when the program starts; make it a function: ${decl.simpleName}() = ...")
             return
         }
-        val declared = effectNames(decl.annotations.filter { isEffect(it) })
-        val undeclared = done - declared
-        if (undeclared.isNotEmpty()) {
-            throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(undeclared)}, so it must say so: ${shown(undeclared)} ${decl.simpleName}(...)")
+        val undeclared = done - allowed(decl)
+        if (undeclared.isEmpty()) return
+        ceiling(decl.path)?.let { (module, effects) ->
+            throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(undeclared)}, but it's in ${module.simpleName}, which may only ${allows(effects)}")
         }
-        val unused = declared - done
-        if (unused.isNotEmpty()) throw CompileError(decl.pos, "'${decl.simpleName}' is declared ${shown(unused)}, but doesn't do it")
+        throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(undeclared)}, so it must say so: ${shown(undeclared)} ${decl.simpleName}(...)")
     }
 
     /**
@@ -1228,7 +1334,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 val result = resolve(v.type)
                 // What it may do: what it declares, and whatever its function parameters do.
                 val rest = u.fresh()
-                val row = Type.effects(effectNames(v.annotations.filter { isEffect(it) }), rest)
+                val row = Type.effects(effectsOf(v.annotations, spec.path, v.pos), rest)
                 val type = v.params?.let { params ->
                     checkDistinct(params.map { it.name to it.pos })
                     arrowEffects = row
@@ -1295,7 +1401,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         // It can't do more than the spec says, as callers through the spec wouldn't know.
         val value = spec.values.first { it.name == decl.simpleName }
-        val allowed = effectNames(value.annotations.filter { isEffect(it) })
+        val allowed = effectsOf(value.annotations, spec.path, value.pos)
         (inside as? Type.Fn)?.let { fn ->
             val extra = Type.effectNames(fn.effects) - allowed
             if (extra.isNotEmpty()) {
@@ -1532,7 +1638,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             // An external's body is OCaml, trusted to have its declared type and effects.
             if (decl.external != null) {
                 // An external that's @Mutating changes what it's given, so where that was made decides who sees it.
-                val declared = effectNames(decl.annotations.filter { isEffect(it) })
+                // What it does is what it declares: its body is OCaml, which can't be checked.
+                val declared = effectsOf(decl.annotations, decl.path, decl.pos)
+                allowed(decl)
                 val regions = (type as? Type.Fn)?.params.orEmpty().flatMap { regionsIn(it) }.filterIsInstance<Type.Var>().distinct()
                 val changes = if (MUTATING in declared && regions.isNotEmpty()) regions.map { Type.Con(MUTATING, listOf(it)) } else emptyList()
                 val labels = declared.filter { it != MUTATING || changes.isEmpty() }.map { Type.Con(it) } + changes

@@ -365,7 +365,8 @@ class CompilerTest {
         assertEquals("hello fckt\nhello Ada\nhello Grace\ntotal: 3\nhi, there\ntransferred 10\n", run(File("examples/effects.fk").readText()))
         fun program(source: String) = error("$source\nmain() = assert(true)")
         assertContains(program("greet(n: String) = println(n)"), "'greet' does @Console, so it must say so: @Console greet(...)")
-        assertContains(program("@Console f() = 1"), "'f' is declared @Console, but doesn't do it")
+        // What a function declares is what it may do: doing less is fine.
+        compile("@Console f() = 1\nmain() = assert(true)")
         assertContains(program("x = println(\"hi\")"), "a top-level value runs when the program starts; make it a function")
         // Through what a function is given: map does what its function does.
         assertContains(program("shout(xs: List<String>) = xs.forEach(println)"), "'shout' does @Console")
@@ -431,6 +432,29 @@ class CompilerTest {
         assertContains(program("f() = { 1 + 1 = 2; 3 }"), "only a var, a var field or an index can be assigned to")
         // A type of OCaml's own, with its type parameters in place.
         assertContains(compile("external type Table<K, V> = \"('k, 'v) Hashtbl.t\"\nexternal table<K, V>(): Table<K, V> = \"Hashtbl.create 8\"\nt: Table<String, List<Int>> = table()\nmain() = assert(true)"), "(string, int list) Hashtbl.t")
+    }
+
+    @Test
+    fun `annotations pass on what they carry, and a module's effects pass to what's in it`() {
+        assertEquals("published OrderPlaced(id=order-1, total=30)\n", run(File("examples/ordering.fk").readText()))
+        val io = "@Effect annotation type Network\n@Console @Network annotation type Io\n"
+        fun program(source: String) = error("$io$source\nmain() = assert(true)")
+        compile("$io@Io f() = println(\"x\")\n@Io module M {\n  g() = println(\"y\")\n}\nh(k: @Io () -> Unit) = 1\nmain() = assert(true)")
+        // A module with effects is a ceiling: nothing in it can add more, and @Pure allows nothing.
+        assertContains(program("@Pure module D {\n  f() = println(\"x\")\n}"), "'f' does @Console, but it's in D, which may only be pure")
+        assertContains(program("@Io module M {\n  @Mutating f(a: Mutable<Int>) = { a.value = 1 }\n}"), "'f' is in M, which may only do @Console @Network, so it can't be @Mutating")
+        assertContains(program("@Pure module Outer {\n  @Console module Inner {\n    f() = 1\n  }\n}"), "Inner is in Outer, which may only be pure, so it can't be @Console")
+        // The same annotation by two ways with different values must be chosen between.
+        val a = "annotation type A(v: String)\n@A(\"X\") annotation type C\n@A(\"Y\") annotation type D\n"
+        assertContains(
+            program("$a@C @D annotation type Z"),
+            "this gets @A more than once, with different values: @A(\"X\") through C, and @A(\"Y\") through D; choose one by declaring @A here",
+        )
+        compile("$io$a@A(\"Z\") @C @D annotation type Z\nmain() = assert(true)")
+        compile("$io" + a.replace("annotation type A", "@Repeatable annotation type A") + "@C @D annotation type Z\nmain() = assert(true)")
+        assertContains(program("@D annotation type C\n@C annotation type D"), "annotations can't be annotated in a circle")
+        // @Effect describes Console; it isn't passed on, so @Loud carries Console but isn't an effect itself.
+        compile("$io@Console annotation type Loud\n@Loud f() = println(\"x\")\nmain() = assert(true)")
     }
 
     @Test

@@ -1,5 +1,6 @@
 package uk.m4xy.fckt.intellij
 
+import uk.m4xy.fckt.standardLibrary
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -124,7 +125,8 @@ class SemanticsTest {
         assertEquals(listOf("here:21"), goto("extensions", 42, "total"))
         assertEquals(listOf("here:22"), goto("extensions", 43, "total"))
         // The prelude's externals.
-        assertEquals(listOf("prelude.fk:30"), goto("extensions", 21, "fold"))
+        val fold = standardLibrary("prelude")!!.lines().indexOfFirst { "List<A>.fold" in it } + 1
+        assertEquals(listOf("prelude.fk:$fold"), goto("extensions", 21, "fold"))
         // Through modules, each segment to its own: Shapes.Units.twice
         assertEquals(listOf("here:19"), goto("modules", 47, "Shapes", 1))
         assertEquals(listOf("here:27"), goto("modules", 47, "Units"))

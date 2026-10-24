@@ -267,6 +267,13 @@ const val EFFECT = "Effect"
 /** The effect, declared in the prelude, of assigning a `var`: changing a value someone else may see. */
 const val MUTATING = "Mutating"
 
+/** Prelude annotations: one that describes an annotation type, and isn't passed on to what that's used on; one that may be given more than once. */
+const val META_ANNOTATION = "Meta"
+const val REPEATABLE = "Repeatable"
+
+/** The effect no operation has: a module or function that may only do it does nothing. */
+const val PURE = "Pure"
+
 const val ASSERT = "assert"
 const val ASSERT_EQUALS = "assertEquals"
 

@@ -1,0 +1,113 @@
+// Domain-driven design. The domain is pure, and the compiler holds it to that: Ordering is @Pure,
+// so nothing in it can print, read a database or call anything that does. The application layer is
+// where the effects are: PlaceOrder is @Io, which passes Io's effects to everything in it, and no
+// more. Ports are specs, whose effects are part of the contract; adapters are modules that follow
+// them; and a functor wires a use case to its adapters, for production or for tests.
+
+// ---- Domain ----
+
+@Pure
+module Ordering {
+  // Value objects: opaque, so the only way to get one is through its check.
+  opaque type OrderId = String
+  orderId(raw: String): Result<OrderId, String> = if (raw.isBlank()) Error("an order needs an id") else Ok(raw)
+
+  opaque type Quantity = Int
+  quantity(n: Int): Result<Quantity, String> = if (n > 0) Ok(n) else Error("a quantity must be positive, not $n")
+
+  type Line(sku: String, quantity: Quantity, price: Int)
+  type Status { Draft, Placed, Shipped }
+
+  // The aggregate: only the functions below change it, and they keep its rules.
+  type Order private(id: OrderId, lines: List<Line>, status: Status)
+
+  // What happened, as values.
+  type Event {
+    OrderPlaced(id: OrderId, total: Int)
+    OrderShipped(id: OrderId)
+  }
+
+  draft(id: OrderId) = Order(id, [], Draft)
+
+  addLine(order: Order, line: Line): Result<Order, String> = when (order.status) {
+    Draft -> Ok(order.copy(lines = order.lines + [line]))
+    else -> Error("only a draft order can change")
+  }
+
+  place(order: Order): Result<(Order, Event), String> = when {
+    order.status != Draft -> Error("this order is already placed")
+    order.lines.isEmpty() -> Error("an empty order can't be placed")
+    else -> Ok((order.copy(status = Placed), OrderPlaced(order.id, total(order))))
+  }
+
+  private total(order: Order) = order.lines.map(line -> line.quantity * line.price).sum()
+}
+
+// ---- Ports ----
+
+// Using the database changes state, so anything that may use it may also be @Mutating: an
+// in-memory stand-in, which changes a Mutable instead, fits the same port.
+@Effect @Mutating annotation type Database
+@Effect annotation type Network
+@Console @Database @Network annotation type Io
+
+spec OrderRepository {
+  @Database find(id: Ordering.OrderId): Option<Ordering.Order>
+  @Database save(order: Ordering.Order): Unit
+}
+
+// Any input or output: a message bus over the network, or, below, the console.
+spec EventBus {
+  @Io publish(event: Ordering.Event): Unit
+}
+
+// ---- Application ----
+
+@Io
+module PlaceOrder(Orders: OrderRepository, Events: EventBus) {
+  run(rawId: String): Result<Ordering.Event, String> = Results {
+    id by Ordering.orderId(rawId)
+    order by Orders.find(id).toResult("no order $rawId")
+    (placed, event) by Ordering.place(order)
+    Orders.save(placed)
+    Events.publish(event)
+    event
+  }
+}
+
+// ---- Adapters ----
+
+// Keeps orders in memory: it does less than the port allows, which is fine.
+module InMemoryOrders : OrderRepository {
+  store: Mutable<List<Ordering.Order>> = Mutable([])
+  @Mutating find(id: Ordering.OrderId) = store.value.filter(order -> order.id == id).firstOrNull()
+  @Mutating save(order: Ordering.Order) = {
+    store.value = [order, *store.value.filter(o -> o.id != order.id)]
+  }
+}
+
+// Prints each event, standing in for a message bus.
+module PrintedEvents : EventBus {
+  @Console publish(event: Ordering.Event) = println("published $event")
+}
+
+module Placing = PlaceOrder(InMemoryOrders, PrintedEvents)
+
+main() = {
+  draft = Results {
+    id by Ordering.orderId("order-1")
+    quantity by Ordering.quantity(2)
+    order by Ordering.addLine(Ordering.draft(id), Ordering.Line("book", quantity, 15))
+    order
+  }
+  when (draft) {
+    Ok(order) -> InMemoryOrders.save(order)
+    Error(reason) -> println(reason)
+  }
+  when (Placing.run("order-1")) {
+    Ok(Ordering.OrderPlaced(_, total)) -> assertEquals(30, total)
+    else -> assert(false)
+  }
+  assertEquals(Error("this order is already placed"), Placing.run("order-1"))
+  assertEquals(Error("no order order-2"), Placing.run("order-2"))
+}
