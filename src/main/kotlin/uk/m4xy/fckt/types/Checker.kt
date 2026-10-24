@@ -723,6 +723,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             else ref.copy(args = ref.args.map { substitute(it, substitution) }).also { copy -> typeNames[ref]?.let { typeNames[copy] = it } }
         is TypeRef.Function -> ref.copy(params = ref.params.map { substitute(it, substitution) }, result = substitute(ref.result, substitution))
         is TypeRef.Tuple -> ref.copy(elements = ref.elements.map { substitute(it, substitution) })
+        is TypeRef.Effects -> ref
     }
 
     /** Written type syntax as text, ignoring positions. */
@@ -730,6 +731,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Named -> if (ref.args.isEmpty()) ref.name else "${ref.name}<${ref.args.joinToString(", ") { text(it) }}>"
         is TypeRef.Function -> "(${ref.params.joinToString(", ") { text(it) }}) -> ${text(ref.result)}"
         is TypeRef.Tuple -> "(${ref.elements.joinToString(", ") { text(it) }})"
+        is TypeRef.Effects -> ref.effects.joinToString(" ") { "@" + it.name }
     }
 
     /** The cases of sealed type [name] applied to [args], each with its field types. */
@@ -760,7 +762,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private inline fun <R> withTypeParams(names: List<String>, block: () -> R): R {
         val saved = typeParams
-        typeParams = names.associateWith { Type.Con("#$it") }
+        // An effect parameter stands for any effects, which nothing here needs to tell apart.
+        typeParams = names.associateWith { if (it.startsWith("@")) u.fresh() else Type.Con("#$it") }
         try {
             return block()
         } finally {
@@ -773,17 +776,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> Type.Fn(
             ref.params.map { resolve(it) },
             resolve(ref.result),
-            when {
-                ref.effects.isEmpty() -> arrowEffects ?: Type.effects(emptySet(), null)
-                // A parameter's `@Fail () -> A` may do Fail and more, which calling it passes on:
-                // attempt { println("x"); fail("y") } is @Console where it's called.
-                arrowEffects != null -> Type.row(effectLabels(ref.effects), u.fresh())
-                else -> Type.row(effectLabels(ref.effects), null)
-            },
+            // A parameter's `@Fail () -> A` may do Fail and more, which calling it passes on:
+            // attempt { println("x"); fail("y") } is @Console where it's called.
+            if (ref.effects.isEmpty()) arrowEffects ?: Type.effects(emptySet(), null) else effectRow(ref.effects, open = arrowEffects != null),
         )
+        is TypeRef.Effects -> effectRow(ref.effects, open = false, pure = true)
         is TypeRef.Tuple -> Type.tuple(ref.elements.map { resolve(it) })
         is TypeRef.Named -> {
-            val args = ref.args.map { resolve(it) }
+            var args = ref.args.map { resolve(it) }
             fun arity(n: Int) {
                 if (args.size != n) throw CompileError(ref.pos, "'${ref.name}' takes $n type argument${if (n == 1) "" else "s"}, not ${args.size}")
             }
@@ -798,6 +798,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 }
                 // Once found, a written type keeps meaning the same declaration wherever its type is needed.
                 ?: (typeNames[ref]?.let { typeDecl(it) } ?: lookupRecord(ref.name, ref.pos) ?: lookupSealed(ref.name, ref.pos) ?: lookupAlias(ref.name, ref.pos))?.let {
+                    args = effectArgs(ref, typeParamsOf(it), args)
                     arity(typeParamsOf(it).size)
                     typeNames[ref] = it.name
                     typeOf(it, args)
@@ -805,8 +806,47 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 ?: find(ref.name, annotationTypes, null)?.let {
                     throw CompileError(ref.pos, "'${ref.name}' is an annotation, written @${ref.name}(...) before a declaration; no value has its type")
                 }
+                ?: typeParams["@" + ref.name]?.let { throw CompileError(ref.pos, "'${ref.name}' is an effect parameter, written @${ref.name}, as in @${ref.name} () -> Unit") }
                 ?: throw CompileError(ref.pos, if (ref.name == "_") "'_' only marks a spec type's parameters, as in Monad<Result<_, String>>" else "unknown type '${ref.name}'")
         }
+    }
+
+    /**
+     * [args], written for [ref] of a type with [params], with what goes to its effect parameters:
+     * effects, as in Queue<@Console>, and any left out, which may be anything, as Queue is.
+     */
+    private fun effectArgs(ref: TypeRef.Named, params: List<String>, args: List<Type>): List<Type> {
+        val effects = params.count { it.startsWith("@") }
+        if (effects == 0 && ref.args.none { it is TypeRef.Effects }) return args
+        if (args.size == params.size) {
+            for ((i, p) in params.withIndex()) {
+                val given = ref.args[i]
+                if (p.startsWith("@") && given !is TypeRef.Effects) {
+                    throw CompileError(given.pos, "${ref.name}'s ${p.removePrefix("@")} is effects, like ${ref.name}<@Console>, not a type")
+                }
+                if (!p.startsWith("@") && given is TypeRef.Effects) {
+                    throw CompileError(given.pos, "${ref.name}'s $p is a type, not effects")
+                }
+            }
+            return args
+        }
+        if (args.size != params.size - effects || ref.args.any { it is TypeRef.Effects }) return args
+        val types = args.iterator()
+        return params.map { if (it.startsWith("@")) u.fresh() else types.next() }
+    }
+
+    /**
+     * The row [annotations] say: the effects they name, and an effect parameter's, whose rest is
+     * its own. Without one, [open] leaves room for more. A row of effects alone may be [pure].
+     */
+    private fun effectRow(annotations: List<Annotation>, open: Boolean, pure: Boolean = false): Type {
+        val (params, named) = annotations.partition { "@" + it.name in typeParams }
+        if (params.size > 1) throw CompileError(params[1].pos, "effects can name only one effect parameter")
+        val labels = effectLabels(named).filter { !pure || it.name != PURE }
+        val param = params.firstOrNull()?.let { typeParams.getValue("@" + it.name) }
+            ?: return Type.row(labels, if (open) u.fresh() else null)
+        val (more, rest) = Type.row(param)
+        return Type.row((labels + more).distinct(), rest)
     }
 
     /** The type declaration [d] applied to [args], as seen from the current module. */
@@ -842,6 +882,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             // A function isn't a value that changes, whatever it takes or gives.
             is TypeRef.Function -> false
             is TypeRef.Tuple -> ref.elements.any(::holds)
+            is TypeRef.Effects -> false
             is TypeRef.Named -> ref.args.any(::holds) || (lookupRecord(ref.name, null) ?: lookupSealed(ref.name, null))?.name in regioned ||
                 lookupAlias(ref.name, null)?.let { holds(it.target) } == true
         }
@@ -1472,12 +1513,39 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** Checks [block] as code that does [row], as a function's or a lambda's body does. */
     private inline fun <R> doing(row: Type, block: () -> R): R {
-        val saved = effects
+        val saved = effects to included
         effects = row
+        included = mutableListOf()
         try {
-            return block()
+            val result = block()
+            include(row, included!!)
+            return result
         } finally {
-            effects = saved
+            effects = saved.first
+            included = saved.second
+        }
+    }
+
+    /**
+     * Effects that are someone else's to say, each where it was done: a parameter's, as in a
+     * `Queue<@E>`'s tasks. They're added once the code is checked, as the rest of its own, so the
+     * code does what it does itself and E, rather than E being made to hold all it does.
+     */
+    private var included: MutableList<Pair<Type.Var, Pos>>? = null
+
+    /** Adds each of [rests] to [row], once nothing more of the code's own will be. */
+    private fun include(row: Type, rests: List<Pair<Type.Var, Pos>>) {
+        for ((v, pos) in rests) {
+            val (labels, rest) = Type.row(v)
+            if (labels.isNotEmpty()) performIn(Type.row(labels, null), row, pos)
+            val own = Type.row(row).second
+            when {
+                rest == null || rest === own -> {}
+                // Closed: E may do only what the row says.
+                own == null -> if (!u.unify(Type.row(emptyList(), rest), row)) performIn(rest, row, pos)
+                // Open: the row's rest is E, with whatever else gets added to it.
+                else -> u.unify(own, rest)
+            }
         }
     }
 
@@ -1488,6 +1556,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      * also write files.
      */
     private fun perform(row: Type, pos: Pos) {
+        val (labels, rest) = Type.row(row)
+        // A rest that's someone else's is added once the code is checked.
+        if (rest != null && rest !== Type.row(effects).second && included != null) {
+            included!! += rest to pos
+            return performIn(Type.row(labels, null), effects, pos)
+        }
+        performIn(row, effects, pos)
+    }
+
+    private fun performIn(row: Type, effects: Type, pos: Pos) {
         val (labels, rest) = Type.row(row)
         // Doing what may include what the function does anyway, as a parameter's @Fail () -> A
         // does, is doing its own labels.
@@ -1944,12 +2022,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 continue
             }
             effects = row
+            included = mutableListOf()
             if (type is Type.Fn) {
                 decl.params!!.zip(type.params).forEach { (p, t) -> scope.vars[p.name] = Local(t, snake(p.name)) }
                 check(decl.body, type.result, scope)
             } else {
                 check(decl.body, type, scope)
             }
+            include(row, included!!)
+            included = null
         }
         effects = u.fresh()
         typeParams = emptyMap()
@@ -1971,6 +2052,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val vars = declaredParams.getValue(decl)
             val seen = mutableSetOf<Type>()
             for ((name, v) in vars) {
+                // An effect parameter's is a row, which must be only its own rest: any effects.
+                if (name.startsWith("@")) {
+                    val (labels, rest) = Type.row(v)
+                    if (labels.isNotEmpty() || rest == null || !seen.add(rest)) {
+                        throw CompileError(decl.pos, "effect parameter $name of '${decl.simpleName}' always does ${shown(labels.map { it.name }.toSet())} here")
+                    }
+                    continue
+                }
                 val t = v.prune()
                 if (t !is Type.Var || !seen.add(t)) throw CompileError(decl.pos, "type parameter $name of '${decl.name}' is always $t here")
             }

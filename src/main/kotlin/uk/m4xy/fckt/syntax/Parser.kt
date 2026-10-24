@@ -244,6 +244,7 @@ class Parser(private val tokens: List<Token>) {
                         is TypeRef.Named -> if (t.args.isEmpty() && '.' !in t.name) names += t.name else t.args.forEach(::walk)
                         is TypeRef.Tuple -> t.elements.forEach(::walk)
                         is TypeRef.Function -> (t.params + t.result).forEach(::walk)
+                        is TypeRef.Effects -> {}
                     }
                 }
                 val receiver = d.params!!.first().type!!
@@ -254,6 +255,7 @@ class Parser(private val tokens: List<Token>) {
                     is TypeRef.Named -> if (t.name in params) "" else t.name.substringAfterLast('.') + t.args.joinToString("") { mangle(it) }
                     is TypeRef.Tuple -> "Tuple" + t.elements.joinToString("") { mangle(it) }
                     is TypeRef.Function -> "Function"
+                    is TypeRef.Effects -> ""
                 }
                 d.copy(name = mangle(receiver) + "$" + d.methodName, typeParams = params + d.typeParams)
             }
@@ -338,10 +340,12 @@ class Parser(private val tokens: List<Token>) {
         return token.text
     }
 
+    /** `<A, B>`; an effect parameter is `@E`, and named `@E` here. */
     private fun typeParams(): List<String> {
         if (accept(T.LT) == null) return emptyList()
-        val names = mutableListOf(upperIdent("a type parameter"))
-        while (accept(T.COMMA) != null) names += upperIdent("a type parameter")
+        fun param() = (if (accept(T.AT) != null) "@" else "") + upperIdent("a type parameter")
+        val names = mutableListOf(param())
+        while (accept(T.COMMA) != null) names += param()
         expect(T.GT, "'>'")
         return names
     }
@@ -517,6 +521,8 @@ class Parser(private val tokens: List<Token>) {
                 }
                 effects += Annotation(at, name, emptyList(), typeArgs)
             }
+            // Effects alone are a type argument for an effect parameter: Queue<@Console>.
+            if (!at(T.LPAREN)) return TypeRef.Effects(pos, effects)
             val function = type() as? TypeRef.Function ?: throw error("an effect goes before a function type, like @Console (String) -> Unit", pos)
             return function.copy(pos = pos, effects = effects + function.effects)
         }

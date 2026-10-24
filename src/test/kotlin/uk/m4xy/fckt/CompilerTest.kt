@@ -471,6 +471,33 @@ class CompilerTest {
     }
 
     @Test
+    fun `a type can take effects as a parameter`() {
+        val box = "@Effect spec Clock { now(): Int }\ntype Box<@E>(run: @E () -> Unit)\n"
+        fun program(source: String) = error("$box$source")
+        // Given, as several effects, or one with a parameter's; left out, it's whatever's put in.
+        val source = box + """
+            @Console @Clock both(b: Box<@Console @Clock>) = b.run()
+            @Console logged<@E>(b: Box<@Console @E>) = {
+              println("running")
+              b.run()
+            }
+            runIt(b: Box) = b.run()
+            @Console main() = Clock(now = ~7) {
+              both(Box(~println("tick ${'$'}{now()}")))
+              logged(Box(~println("inside")))
+              runIt(Box(~println("anything")))
+            }
+        """.trimIndent()
+        assertEquals("tick 7\nrunning\ninside\nanything\n", run(source))
+        assertContains(program("@Console main() = {\n  b: Box<@Console> = Box(~println(now().toString()))\n  b.run()\n}"), "this does @Clock")
+        assertContains(program("f(b: Box<Int>) = Unit\nmain() = assert(true)"), "Box's E is effects, like Box<@Console>, not a type")
+        assertContains(program("f<@E>(b: Box<@E>): Box<@E> = Box(~println(\"x\"))\nmain() = assert(true)"), "effect parameter @E of 'f' always does @Console here")
+        assertContains(program("f<@E>(x: E) = x\nmain() = assert(true)"), "'E' is an effect parameter, written @E")
+        assertContains(program("f<@E, @F>(b: Box<@E @F>) = Unit\nmain() = assert(true)"), "effects can name only one effect parameter")
+        assertContains(program("pureRun(b: Box<@Pure>) = b.run()\n@Console main() = pureRun(Box(~println(\"no\")))"), "says it's pure")
+    }
+
+    @Test
     fun `an if without an else is a statement`() {
         assertEquals("big\n", run("@Console main() = {\n  if (2 > 1) println(\"big\")\n  if (1 > 2) println(\"small\")\n}"))
         // fail gives Nothing, which fits as Unit.

@@ -29,9 +29,11 @@ parseAll(lines: List<String>): Result<List<(String, String)>, String> = attempt 
   pause(): Unit
 }
 
-type Queue(var tasks: List<@Mutating @Console () -> Unit>)
+// Tasks that may do anything: what they do is the effect parameter E, as a type parameter is a type.
+type Queue<@E>(var tasks: List<@E () -> Unit>)
 
-@Mutating @Console runQueue(queue: Queue): Unit = when (queue.tasks) {
+// Does @Mutating, and whatever the tasks do.
+@Mutating runQueue<@E>(queue: Queue<@E>): Unit = when (queue.tasks) {
   [] -> Unit
   [task, *rest] -> {
     queue.tasks = rest
@@ -40,8 +42,8 @@ type Queue(var tasks: List<@Mutating @Console () -> Unit>)
   }
 }
 
-// The queue is local, so this only prints.
-@Console roundRobin(tasks: List<@Async @Console () -> Unit>): Unit = {
+// The queue is local, so this does only what the tasks do, besides pausing.
+roundRobin<@E>(tasks: List<@Async @E () -> Unit>): Unit = {
   queue = Queue([])
   queue.tasks = tasks.map(task -> ~Async(pause = resume -> { queue.tasks = queue.tasks + [~resume(Unit)] }) { task() })
   runQueue(queue)
@@ -53,10 +55,24 @@ type Queue(var tasks: List<@Mutating @Console () -> Unit>)
   println("$name: finished")
 }
 
+@Async @Mutating step(log: Mutable<List<String>>, name: String): Unit = {
+  log.value = log.value + ["$name 1"]
+  pause()
+  log.value = log.value + ["$name 2"]
+}
+
+// The same scheduler, for tasks that don't print: this is pure.
+interleaved(): List<String> = {
+  log = Mutable([])
+  roundRobin([~step(log, "a"), ~step(log, "b")])
+  log.value
+}
+
 @Console main() = {
   assertEquals(Ok([("a", "1"), ("b", "2")]), parse(["a=1", "b=2"]))
   assertEquals(Error("no '=' in 'oops'"), parse(["a=1", "oops", "c"]))
   assertEquals(parse(["a=1", "oops"]), parseAll(["a=1", "oops"]))
   assertEquals([0, 1, 2, 3, 4], sequence { naturals(0) }.take(5))
+  assertEquals(["a 1", "b 1", "a 2", "b 2"], interleaved())
   roundRobin([~worker("a"), ~worker("b")])
 }

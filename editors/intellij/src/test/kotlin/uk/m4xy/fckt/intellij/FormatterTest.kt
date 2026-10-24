@@ -102,6 +102,8 @@ class FormatterTest : BasePlatformTestCase() {
             shapes = Some({}) |> map(x -> x)
             @Route("/a") type Logger(log: @Console (String) -> Unit)
             f(xs: Array<Int>) = Lists { x by [1, 2]; xs[x] += ys[0][1] }
+            type Queue<@E>(var tasks: List<@Console @E () -> Unit>)
+            run<@E>(q: Queue<@Console  @E>) = Unit
         """.trimIndent()
         val formatted = """
             pair<A, B>(ma: M.M<A>, mb: M.M<List<B>>): M.M<(A, B)> = M {
@@ -117,6 +119,8 @@ class FormatterTest : BasePlatformTestCase() {
             shapes = Some({}) |> map(x -> x)
             @Route("/a") type Logger(log: @Console (String) -> Unit)
             f(xs: Array<Int>) = Lists { x by [1, 2]; xs[x] += ys[0][1] }
+            type Queue<@E>(var tasks: List<@Console @E () -> Unit>)
+            run<@E>(q: Queue<@Console @E>) = Unit
         """.trimIndent()
         assertEquals(formatted, reformat(messy))
     }

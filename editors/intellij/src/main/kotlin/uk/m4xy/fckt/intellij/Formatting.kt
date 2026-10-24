@@ -131,7 +131,7 @@ class Layout(private val text: String) {
                 }
                 a.kind == TokKind.LPAREN -> parens++
                 a.kind == TokKind.RPAREN -> if (--parens < 0) return
-                a.kind !in setOf(TokKind.IDENT, TokKind.COMMA, TokKind.DOT, TokKind.ARROW) -> return
+                a.kind !in setOf(TokKind.IDENT, TokKind.COMMA, TokKind.DOT, TokKind.ARROW, TokKind.AT) -> return
             }
         }
     }

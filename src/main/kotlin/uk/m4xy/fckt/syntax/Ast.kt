@@ -24,6 +24,9 @@ sealed interface TypeRef {
 
     /** `(A, B)`: a tuple. */
     data class Tuple(override val pos: Pos, val elements: List<TypeRef>) : TypeRef
+
+    /** `@Console @Clock`, or an effect parameter's `@E`: a type argument that's effects, as in `Queue<@Console>`. */
+    data class Effects(override val pos: Pos, val effects: List<Annotation>) : TypeRef
 }
 
 // ---- Declarations ----

@@ -60,6 +60,9 @@ private const val NOTHING = "fk_nothing"
 /** The type variable for what a handled block gives: a handler's answer. */
 private const val ANSWER = "'fk_answer"
 
+/** Type parameters OCaml has: all but effect parameters, `@E`, which only the checker uses. */
+private fun List<String>.ocaml() = filter { !it.startsWith("@") }
+
 /** Translates a checked program into the Kastor-built OCaml tree. */
 class Lowering(private val program: Program) {
     private val records = program.records.associateBy { it.name }
@@ -402,6 +405,7 @@ class Lowering(private val program: Program) {
         is TypeRef.Named -> listOfNotNull(program.typeNames[ref]) + ref.args.flatMap(::typeRefNames)
         is TypeRef.Function -> ref.params.flatMap(::typeRefNames) + typeRefNames(ref.result)
         is TypeRef.Tuple -> ref.elements.flatMap(::typeRefNames)
+        is TypeRef.Effects -> emptyList()
     }
 
     /** The full names of the user types a type declaration's fields use. */
@@ -453,12 +457,13 @@ class Lowering(private val program: Program) {
 
     // ---- Types ----
 
-    private fun typeParamsOf(d: Decl): List<String> = when (d) {
+    /** [d]'s type parameters in OCaml, or [all] of them, with its effect parameters. */
+    private fun typeParamsOf(d: Decl, all: Boolean = false): List<String> = when (d) {
         is Decl.Record -> d.typeParams
         is Decl.Sealed -> d.typeParams
         is Decl.Alias -> d.typeParams
         else -> emptyList()
-    }
+    }.let { if (all) it else it.ocaml() }
 
     /**
      * A group of type definitions; [forSignature] makes a record with a private constructor
@@ -472,31 +477,31 @@ class Lowering(private val program: Program) {
             }
             when (decl) {
                 is Decl.Record -> typeDef(snake(decl.simpleName)) {
-                    params = decl.typeParams.map(::typeVar)
+                    params = decl.typeParams.ocaml().map(::typeVar)
                     if (forSignature && decl.privateConstructor) isPrivate = true
-                    for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams)) { if (field.isVar) isMutable = true }
+                    for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams.ocaml())) { if (field.isVar) isMutable = true }
                 }
                 is Decl.Sealed -> if (decl.name in program.polymorphic) {
                     typeDef(snake(decl.simpleName)) {
-                        params = decl.typeParams.map(::typeVar)
+                        params = decl.typeParams.ocaml().map(::typeVar)
                         polymorphic = true
                         for (case in program.cases.getValue(decl.name)) {
                             variant(tagName(case.origin, case.variant)) {
-                                for (field in case.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams))
+                                for (field in case.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams.ocaml()))
                             }
                         }
                     }
                 } else typeDef(snake(decl.simpleName)) {
-                    params = decl.typeParams.map(::typeVar)
+                    params = decl.typeParams.ocaml().map(::typeVar)
                     for (variant in decl.variants) {
                         variant(variant.name) {
-                            for (field in variant.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams))
+                            for (field in variant.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams.ocaml()))
                         }
                     }
                 }
                 is Decl.Alias -> typeDef(snake(decl.simpleName)) {
-                    params = decl.typeParams.map(::typeVar)
-                    alias = typeText(decl.target, decl.typeParams)
+                    params = decl.typeParams.ocaml().map(::typeVar)
+                    alias = typeText(decl.target, decl.typeParams.ocaml())
                 }
                 is Decl.Function, is Decl.Module, is Decl.Spec -> {}
             }
@@ -517,7 +522,8 @@ class Lowering(private val program: Program) {
         is TypeRef.Tuple -> tupleText(ref.elements.map { typeText(it, typeParams) to compound(it) })
         is TypeRef.Named ->
             if (ref.name in typeParams) typeVar(ref.name)
-            else applied(program.typeNames[ref] ?: ref.name, ref.args.map { typeText(it, typeParams) to compound(it) })
+            else applied(program.typeNames[ref] ?: ref.name, ref.args.filter { it !is TypeRef.Effects }.map { typeText(it, typeParams) to compound(it) })
+        is TypeRef.Effects -> error("effects aren't an OCaml type")
     }
 
     /** Whether a type needs parentheses as an argument or a tuple element. */
@@ -536,12 +542,18 @@ class Lowering(private val program: Program) {
         is Type.Fn -> functionText(t.params.map { typeText(it, vars) to compound(it) }, typeText(t.result, vars))
         is Type.Con ->
             if (t.name == Type.TUPLE) tupleText(t.args.map { typeText(it, vars) to compound(it) })
-            else applied(t.name, t.args.map { typeText(it, vars) to compound(it) })
+            else applied(t.name, ocamlArgs(t.name, t.args).map { typeText(it, vars) to compound(it) })
     }
 
     private fun functionText(params: List<Pair<String, Boolean>>, result: String): String {
         val ps = if (params.isEmpty()) listOf("unit") else params.map { (text, paren) -> if (paren) "($text)" else text }
         return (ps + result).joinToString(" -> ")
+    }
+
+    /** [args] of the type [name] without those for its effect parameters, which OCaml doesn't have. */
+    private fun <T> ocamlArgs(name: String, args: List<T>): List<T> {
+        val params = (records[name] ?: sealeds[name] ?: aliases[name])?.let { typeParamsOf(it, all = true) } ?: return args
+        return if (params.size == args.size) args.filterIndexed { i, _ -> !params[i].startsWith("@") } else args
     }
 
     private fun applied(name: String, args: List<Pair<String, Boolean>>): String {
@@ -1032,7 +1044,7 @@ class Lowering(private val program: Program) {
     private fun qualified(record: Gen, field: MemberRef.Field): Gen {
         if (field.ocamlName !in program.ambiguousLabels) return record
         val decl = records.getValue(field.record)
-        return Gen.Ann(record, applied(decl.name, decl.typeParams.map { "_" to false }))
+        return Gen.Ann(record, applied(decl.name, decl.typeParams.ocaml().map { "_" to false }))
     }
 
     // ---- when ----
@@ -1268,7 +1280,7 @@ class Lowering(private val program: Program) {
     private fun show(type: Type, at: Expr): Gen = when (val t = type.prune()) {
         is Type.Var -> throw CompileError(at.pos, "can't turn a value of unknown type into a string; annotate its type")
         is Type.Fn -> Gen.Fun(listOf("_"), Gen.Str("<fun>"))
-        is Type.Con -> showCon(t.name.removePrefix(Type.ABSTRACT), t.args.map { show(it, at) })
+        is Type.Con -> showCon(t.name.removePrefix(Type.ABSTRACT), ocamlArgs(t.name, t.args).map { show(it, at) })
     }
 
     private fun showCon(name: String, args: List<Gen>): Gen = when (name) {
@@ -1314,7 +1326,8 @@ class Lowering(private val program: Program) {
         is TypeRef.Tuple -> showCon(Type.TUPLE, ref.elements.map { showRef(it, typeParams) })
         is TypeRef.Named ->
             if (ref.name in typeParams) Gen.Id("show_${ref.name.lowercase()}")
-            else showCon(program.typeNames[ref] ?: if (ref.name == "Double") "Float" else ref.name, ref.args.map { showRef(it, typeParams) })
+            else showCon(program.typeNames[ref] ?: if (ref.name == "Double") "Float" else ref.name, ref.args.filter { it !is TypeRef.Effects }.map { showRef(it, typeParams) })
+        is TypeRef.Effects -> error("effects aren't shown")
     }
 
     /** The show functions for whichever of [types] need one; only those that call each other share a `let rec`. */
@@ -1367,18 +1380,18 @@ class Lowering(private val program: Program) {
             )
 
         records[name]?.let { r ->
-            val params = r.typeParams.map { "show_${it.lowercase()}" } +
-                "(v : ${applied(r.name, r.typeParams.map { typeVar(it) to false })})"
-            return params to fieldsText(r.simpleName, r.fields, r.typeParams, v)
+            val params = r.typeParams.ocaml().map { "show_${it.lowercase()}" } +
+                "(v : ${applied(r.name, r.typeParams.ocaml().map { typeVar(it) to false })})"
+            return params to fieldsText(r.simpleName, r.fields, r.typeParams.ocaml(), v)
         }
         // An alias shows as what it stands for.
         aliases[name]?.let { a ->
-            val params = a.typeParams.map { "show_${it.lowercase()}" } +
-                "(v : ${applied(a.name, a.typeParams.map { typeVar(it) to false })})"
-            return params to Gen.App(showRef(a.target, a.typeParams), listOf(v))
+            val params = a.typeParams.ocaml().map { "show_${it.lowercase()}" } +
+                "(v : ${applied(a.name, a.typeParams.ocaml().map { typeVar(it) to false })})"
+            return params to Gen.App(showRef(a.target, a.typeParams.ocaml()), listOf(v))
         }
         val s = sealeds.getValue(name)
-        val params = s.typeParams.map { "show_${it.lowercase()}" } + "(v : ${applied(s.name, s.typeParams.map { typeVar(it) to false })})"
+        val params = s.typeParams.ocaml().map { "show_${it.lowercase()}" } + "(v : ${applied(s.name, s.typeParams.ocaml().map { typeVar(it) to false })})"
         if (s.name in program.polymorphic) {
             // Tags carry their fields as a tuple; bind each to show it.
             return params to Gen.Match(
@@ -1396,7 +1409,7 @@ class Lowering(private val program: Program) {
                         listOf<Gen>(Gen.Str("${case.name}(")) + case.fields.flatMapIndexed { i, f ->
                             listOf(
                                 Gen.Str((if (i > 0) ", " else "") + f.name + "="),
-                                Gen.App(showRef(f.type, s.typeParams), listOf(Gen.Id(names[i]))),
+                                Gen.App(showRef(f.type, s.typeParams.ocaml()), listOf(Gen.Id(names[i]))),
                             )
                         } + Gen.Str(")"),
                     )
@@ -1407,7 +1420,7 @@ class Lowering(private val program: Program) {
             v,
             s.variants.map { variant ->
                 if (variant.fields.isEmpty()) variant.name to Gen.Str(variant.name)
-                else "${variant.name} r" to fieldsText(variant.name, variant.fields, s.typeParams, Gen.Id("r"))
+                else "${variant.name} r" to fieldsText(variant.name, variant.fields, s.typeParams.ocaml(), Gen.Id("r"))
             },
         )
     }

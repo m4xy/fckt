@@ -151,7 +151,11 @@ sealed class Type {
 
         fun render(type: Type, names: MutableMap<Var, String>): String = when (val t = type.prune()) {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }
-            is Con -> if (t.name.startsWith(HANDLER)) "a handler for @${t.name.removePrefix(HANDLER).substringAfterLast('.')}"
+            // Effects, as a type argument: Queue<@Console>, Queue<@T1>, or Queue<@Pure> for none.
+            is Con -> if (t.name == EFFECTS) row(t).let { (labels, rest) ->
+                (labels.map { "@" + displayName(it.name).substringAfterLast('.') } + listOfNotNull(rest?.let { "@" + render(it, names) })).ifEmpty { listOf("@Pure") }.joinToString(" ")
+            }
+            else if (t.name.startsWith(HANDLER)) "a handler for @${t.name.removePrefix(HANDLER).substringAfterLast('.')}"
             else if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
             else if (t.args.isEmpty()) displayName(t.name) else "${displayName(t.name)}<${t.args.joinToString(", ") { render(it, names) }}>"
             is Fn -> effectNames(t.effects).sorted().joinToString("") { "@${displayName(it).substringAfterLast('.')} " } +

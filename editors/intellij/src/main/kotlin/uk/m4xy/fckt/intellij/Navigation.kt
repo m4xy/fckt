@@ -308,6 +308,7 @@ private class Resolutions(
                 type(ref.result)
             }
             is TypeRef.Tuple -> ref.elements.forEach(::type)
+            is TypeRef.Effects -> annotations(ref.effects)
         }
     }
 
