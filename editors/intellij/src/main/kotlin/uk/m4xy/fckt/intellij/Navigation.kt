@@ -591,10 +591,16 @@ private class Reach {
     companion object {
         fun of(entry: File?): Reach {
             val reach = Reach()
-            // The program's own files come first: they stand in for the library's modules of the same name.
+            // The program's own package comes first: its folder's modules, each a capitalised file, and
+            // the declarations of its lower-case files, but those that are programs, with a main.
             entry?.parentFile?.listFiles { f -> f.isFile && f.extension == "fk" && f.canonicalFile != entry.canonicalFile }
                 ?.sortedBy { it.name }
-                ?.forEach { f -> reach.module(moduleName(f), f.path, try { f.readText() } catch (e: Exception) { null }) }
+                ?.forEach { f ->
+                    val text = try { f.readText() } catch (e: Exception) { null }
+                    if (f.name[0].isUpperCase()) return@forEach reach.module(f.nameWithoutExtension, f.path, text)
+                    val decls = reach.parse(text, f.path) ?: return@forEach
+                    if (decls.none { it is Decl.Function && it.name == "main" }) reach.names(decls, f.path, reach.prelude)
+                }
             reach.parse(standardSource("std/prelude.fk"), "std/prelude.fk")?.let { reach.names(it, "std/prelude.fk", reach.prelude) }
             reach.parse(standardSource(BUILTINS), BUILTINS)?.let { reach.names(it, BUILTINS, reach.prelude) }
             for (name in STANDARD_MODULES) reach.module(moduleName(File("$name.fk")), "std/$name.fk", standardSource("std/$name.fk"))

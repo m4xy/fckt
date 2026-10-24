@@ -324,7 +324,7 @@ class Lowering(private val program: Program) {
         program.applications[m.name]?.let { (functor, args) ->
             currentPath = path.dropLast(1)
             val applies = (listOf(ref(functor) { it }) + args.map { "(${ref(it) { name -> name }})" }).joinToString(" ")
-            return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(m.simpleName), applies = uk.m4xy.kastor.Attribute.Value(applies))
+            return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(moduleName(m.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(applies))
         }
         currentPath = path.dropLast(1)
         val params = program.functorParams[m.name]?.joinToString(" ") { (name, spec) -> "($name : ${specText("${m.name}.$name", spec)})" }
@@ -347,7 +347,7 @@ class Lowering(private val program: Program) {
             emptyList()
         }
         return ModuleDefElement(
-            name = uk.m4xy.kastor.Attribute.Value(m.simpleName),
+            name = uk.m4xy.kastor.Attribute.Value(moduleName(m.simpleName)),
             params = params?.let { uk.m4xy.kastor.Attribute.Value(it) },
             children = signature + items,
         )
@@ -429,7 +429,7 @@ class Lowering(private val program: Program) {
         for (group in typeGroups(types)) types { typeDefinitions(group, forSignature = true) }
         for (spec in m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }) moduleType(spec.simpleName) { specItems(spec) }
         for (inner in m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate }) {
-            sigModule(inner.simpleName) { signatureItems(inner) }
+            sigModule(moduleName(inner.simpleName)) { signatureItems(inner) }
             currentPath = path
         }
         for (type in types) {
@@ -449,8 +449,11 @@ class Lowering(private val program: Program) {
         val parts = full.split('.')
         val module = parts.dropLast(1)
         val common = module.zip(currentPath).takeWhile { (a, b) -> a == b }.size
-        return (module.drop(common) + transform(parts.last())).joinToString(".")
+        return (module.drop(common).map(::moduleName) + transform(parts.last())).joinToString(".")
     }
+
+    /** A module's OCaml name, which must be capitalised: a package's folder, `geometry`, is `Geometry`. */
+    private fun moduleName(name: String) = name.replaceFirstChar { it.uppercaseChar() }
 
     /** What to put before a record's labels from here: `Ratios.` outside Ratios, else nothing. */
     private fun labelPrefix(record: Decl.Record): String = ref((record.path + "x").joinToString("."), { "" })

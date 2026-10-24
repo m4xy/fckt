@@ -145,8 +145,8 @@ class SemanticsTest {
         assertEquals(listOf("here:7"), goto("shared-cases", 35, "Zero"))
         // What's built in is described in builtins.fk.
         val result = standardSource(BUILTINS)!!.lines().indexOfFirst { "type Result" in it } + 1
-        assertEquals(listOf("builtins.fk:$result"), goto("stdlib", 9, "Ok"))
-        assertEquals(listOf("builtins.fk:5"), goto("stdlib", 6, "Int"))
+        assertEquals(listOf("builtins.fk:$result"), goto("stdlib", 15, "Ok"))
+        assertEquals(listOf("builtins.fk:5"), goto("stdlib", 12, "Int"))
         // A declaration's own name goes nowhere.
         assertEquals(emptyList(), goto("monads", 33, "map"))
     }
@@ -254,6 +254,14 @@ class SemanticsTest {
             }
             """.trimIndent(),
             marked(source),
+        )
+    }
+
+    @Test
+    fun `import and as are keywords on an import line`() {
+        assertEquals(
+            "[KEYWORD:import] geometry.[OBJECT:Shapes].[CLASS:Shape] [KEYWORD:as] [CLASS:Form]\n[FUNCTION_DECLARATION:as]([PARAMETER:x]: [CLASS:Int]) = [PARAMETER:x]",
+            marked("import geometry.Shapes.Shape as Form\nas(x: Int) = x"),
         )
     }
 }

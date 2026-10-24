@@ -87,6 +87,11 @@ class FormatterTest : BasePlatformTestCase() {
         assertEquals(formatted, reformat(formatted))
     }
 
+    fun `test imports stay as they're written`() {
+        val imports = "import geometry.*\nimport geometry.Shapes.Shape as Form\nimport fckt.Options\n\nmain() = Unit"
+        assertEquals(imports, reformat(imports))
+    }
+
     fun `test leaves strings alone, and tells type arguments from comparisons`() {
         val messy = """
             pair<A, B>(ma: M.M<A>, mb : M.M<List<B>>) : M.M<(A, B)> = M {

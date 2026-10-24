@@ -1,5 +1,11 @@
-// The standard library: Monad, Applicative and Validation need no module's name, and Options,
-// Results, Validated and Lists come in when a program uses them. Result is OCaml's result.
+// The standard library: Monad, Applicative and Validation are in the prelude, which needs no
+// import; Options, Results, Validated and Lists are modules of the package fckt, imported as any
+// other module is. Result is OCaml's result.
+
+import fckt.Lists
+import fckt.Options
+import fckt.Results
+import fckt.Validated
 
 type User(name: String, age: Int)
 

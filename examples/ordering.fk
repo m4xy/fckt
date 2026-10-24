@@ -4,6 +4,8 @@
 // only @Persistence, as a Kotlin use case sees only the repository's interface. A use case is a
 // functor that takes its repositories, and configurations make one with real or fake ones.
 
+import fckt.Results
+
 // ---- Domain ----
 
 @Pure

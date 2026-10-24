@@ -17,6 +17,9 @@
           "include": "#comments"
         },
         {
+          "include": "#import"
+        },
+        {
           "include": "#raw-strings"
         },
         {
@@ -222,6 +225,26 @@
           }
         }
       ]
+    },
+    "import": {
+      "match": "^\\s*(import)\\s+([A-Za-z_][A-Za-z0-9_.]*?)(\\.\\*)?(?:\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*$",
+      "captures": {
+        "1": {
+          "name": "keyword.other.import.fckt"
+        },
+        "2": {
+          "name": "entity.name.namespace.fckt"
+        },
+        "3": {
+          "name": "keyword.operator.wildcard.fckt"
+        },
+        "4": {
+          "name": "keyword.other.import.fckt"
+        },
+        "5": {
+          "name": "entity.name.type.fckt"
+        }
+      }
     },
     "effect-declaration": {
       "patterns": [

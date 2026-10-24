@@ -3,8 +3,10 @@ package uk.m4xy.fckt
 import uk.m4xy.fckt.ocaml.Lowering
 import uk.m4xy.fckt.ocaml.Printer
 import uk.m4xy.fckt.syntax.CompileError
+import uk.m4xy.fckt.syntax.CompileErrors
 import uk.m4xy.fckt.syntax.Copier
 import uk.m4xy.fckt.syntax.Decl
+import uk.m4xy.fckt.syntax.Import
 import uk.m4xy.fckt.syntax.Lexer
 import uk.m4xy.fckt.syntax.Parser
 import uk.m4xy.fckt.syntax.Pos
@@ -14,24 +16,22 @@ import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.syntax.Token
 import uk.m4xy.fckt.types.Checker
 import uk.m4xy.fckt.types.EFFECT
-import uk.m4xy.fckt.types.EFFECT
 import uk.m4xy.fckt.types.MUTATING
 import uk.m4xy.kastor.resolve
 import java.io.File
 
 /** fckt source to OCaml source, with the standard library. Throws [uk.m4xy.fckt.syntax.CompileError]. */
-fun compile(source: String): String = compile(link(source, emptyMap()).file)
+fun compile(source: String): String = compile(link(source, Packages(emptyList(), null)).file)
 
 /**
- * [entry] and the files it uses, to one OCaml source. Each file is a module named after it:
- * `ratios.fk` is Ratios, and `shared-cases.fk` is SharedCases. A name a file uses but doesn't
- * declare brings in the file of that name from [dirs], or from the standard library, whose own
- * names bring in more, as OCaml finds a module's file from its name.
+ * [entry] and the files it uses, to one OCaml source. A file's folder, under one of [dirs], is its
+ * package; a capitalised file is a module, `Ratios.fk` is Ratios, and a lower-case one holds
+ * declarations of its package. A file uses its package's by name, and others' by importing them.
  */
 fun compile(entry: File, dirs: List<File>): String = compile(entry.readText(), entry, dirs)
 
 /** [text] as the contents of [entry], which an editor may not have saved yet, and the files it uses. */
-fun compile(text: String, entry: File, dirs: List<File>): String = compile(link(text, available(entry, dirs)).file)
+fun compile(text: String, entry: File, dirs: List<File>): String = compile(link(text, Packages(dirs, entry)).file)
 
 /** A checked program: [decls] are the entry file's own, with what each name refers to filled in. */
 class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
@@ -42,37 +42,23 @@ class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
  * standard library. Throws [uk.m4xy.fckt.syntax.CompileError].
  */
 fun analyse(text: String, entry: File?, dirs: List<File>): Analysis {
-    val linked = link(text, available(entry, dirs))
+    val linked = link(text, Packages(dirs, entry))
     // A when that misses some cases is still clear about what its names refer to.
     return Analysis(linked.main, Checker(linked.file, coverage = false).check())
 }
 
-/** The `.fk` files in [dirs] other than [entry], by module name; the first of a name wins. */
-private fun available(entry: File?, dirs: List<File>): Map<String, Source> {
-    val available = linkedMapOf<String, Source>()
-    for (dir in dirs) {
-        val files = dir.listFiles { f -> f.isFile && f.extension == "fk" }?.sortedBy { it.name } ?: continue
-        for (file in files) {
-            if (file.canonicalFile != entry?.canonicalFile) available.putIfAbsent(moduleName(file), Source(file.path) { file.readText() })
-        }
-    }
-    return available
-}
-
-/** The source of the standard library's [name] (`prelude`, `options`, ...), for tools that read it. */
+/** The source of the standard library's [name] (`prelude`, `fckt/Options`, ...), for tools that read it. */
 fun standardLibrary(name: String): String? =
     Source::class.java.getResourceAsStream("/std/$name.fk")?.use { it.reader().readText() }
 
-/** The standard library's modules, by file name. */
-val STANDARD_MODULES = listOf("options", "results", "validated", "lists")
+/** The package the standard library's modules are in: `import fckt.Options`. */
+const val STANDARD_PACKAGE = "fckt"
+
+/** The standard library's modules, as their files are named under `std/`. */
+val STANDARD_MODULES = listOf("Options", "Results", "Validated", "Lists").map { "$STANDARD_PACKAGE/$it" }
 
 /** A file to read if it's used: one of the program's, or the standard library's. */
 class Source(val path: String, val read: () -> String)
-
-/** The standard library's modules, in `std/` among the compiler's resources. */
-private val STD = STANDARD_MODULES.associate { name ->
-    moduleName(File("$name.fk")) to Source("std/$name.fk") { resource("std/$name.fk") }
-}
 
 private fun resource(path: String): String =
     Source::class.java.getResourceAsStream("/$path")?.use { it.reader().readText() } ?: error("missing $path")
@@ -83,15 +69,54 @@ private val PRELUDE_TEXT by lazy { resource("std/prelude.fk") }
  * The prelude's declarations, each with the names it uses, which may bring in more. Parsed for
  * each program, since checking one fills in its declarations.
  */
-private fun prelude(): List<Pair<Decl, Set<String>>> {
-    val path = "std/prelude.fk"
-    val text = PRELUDE_TEXT
-    val decls = Parser.parse(text, path).decls
+private fun prelude(): List<Pair<Decl, Set<String>>> = withUses(PRELUDE_TEXT, Parser.parse(PRELUDE_TEXT, "std/prelude.fk").decls)
+
+/** Each of [decls], from [text], with the names it uses: those up to the next declaration. */
+private fun withUses(text: String, decls: List<Decl>): List<Pair<Decl, Set<String>>> {
     val lines = text.lines()
     return decls.mapIndexed { i, d ->
-        // A declaration runs to the next one; the names in between are what it uses.
         val until = decls.getOrNull(i + 1)?.pos?.line?.minus(1) ?: lines.size
         d to mentioned(lines.subList(d.pos.line - 1, until).joinToString("\n"), null)
+    }
+}
+
+/**
+ * Where a program's packages are: each a folder, under one of [roots], or the standard library's.
+ * Names are matched against what's in a folder, so `ratios.fk` is never taken for `Ratios.fk`.
+ */
+private class Packages(private val roots: List<File>, private val entry: File?) {
+    private val listings = mutableMapOf<List<String>, List<File>>()
+
+    /** The files in [pkg]'s folders, in each root, but the program's own. */
+    private fun files(pkg: List<String>): List<File> = listings.getOrPut(pkg) {
+        roots.map { File(it, pkg.joinToString("/")) }.filter { it.isDirectory }.flatMap { dir ->
+            dir.listFiles().orEmpty().filter { it.canonicalFile != entry?.canonicalFile }.sortedBy { it.name }
+        }
+    }
+
+    /** Whether [pkg] is a package: a folder, named as a value is, or the standard library's. */
+    fun isPackage(pkg: List<String>): Boolean = pkg == listOf(STANDARD_PACKAGE) ||
+        pkg.isNotEmpty() && pkg.all { IDENTIFIER.matches(it) } && roots.any { File(it, pkg.joinToString("/")).isDirectory }
+
+    /** The module [name] in [pkg]: its file, `Name.fk`. */
+    fun module(pkg: List<String>, name: String): Source? {
+        if (!name[0].isUpperCase()) return null
+        if (pkg == listOf(STANDARD_PACKAGE)) return "$STANDARD_PACKAGE/$name".takeIf { it in STANDARD_MODULES }?.let { Source("std/$it.fk") { resource("std/$it.fk") } }
+        return files(pkg).firstOrNull { it.isFile && it.name == "$name.fk" }?.let { f -> Source(f.path) { f.readText() } }
+    }
+
+    /** The names of [pkg]'s modules. */
+    fun modules(pkg: List<String>): List<String> =
+        if (pkg == listOf(STANDARD_PACKAGE)) STANDARD_MODULES.map { it.substringAfter('/') }
+        else files(pkg).filter { it.isFile && it.extension == "fk" && it.name[0].isUpperCase() }.map { it.nameWithoutExtension }
+
+    /** [pkg]'s lower-case files, whose declarations are the package's own. */
+    fun declarationFiles(pkg: List<String>): List<Source> =
+        if (pkg == listOf(STANDARD_PACKAGE)) emptyList()
+        else files(pkg).filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }.map { f -> Source(f.path) { f.readText() } }
+
+    companion object {
+        val IDENTIFIER = Regex("[a-z_][A-Za-z0-9_]*")
     }
 }
 
@@ -99,55 +124,151 @@ private fun prelude(): List<Pair<Decl, Set<String>>> {
 private class Linked(val file: SourceFile, val main: List<Decl>)
 
 /**
- * The program [text] with what it uses: files from [available] then the standard library, as
- * modules, and the prelude's declarations, at the top level. The program's own come first.
+ * The program [text] with what it uses: from its own package, the modules it names and the
+ * declarations of its lower-case files; what it imports; and the prelude's declarations, which
+ * need no import. Each package is a module named after its folder: `geometry.Shapes`.
  */
-private fun link(text: String, available: Map<String, Source>): Linked {
+private fun link(text: String, packages: Packages): Linked {
     val main = Parser.parse(text)
     val preludeDecls = prelude()
     val own = main.decls.map { it.name }.toSet()
-    val prelude = mutableListOf<Decl>()
-    val modules = mutableListOf<Decl>()
-    val seen = mutableSetOf<String>()
+    // What each package has, by its path; the program's own package is the root, [].
+    val contents = linkedMapOf<List<String>, MutableList<Decl>>(emptyList<String>() to mutableListOf())
+    val imports = mutableMapOf<String?, List<Import>>(null to main.imports[null].orEmpty())
+    val included = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Decl, Boolean>())
+    val loaded = mutableSetOf<String>()
     val seenMethods = mutableSetOf<String>()
-    // Names to look up, each with the names declared where it's used.
-    val pending = ArrayDeque<Pair<Set<String>, Set<String>>>()
-    fun include(decl: Decl, uses: Set<String>) {
-        // A declaration can be reached by several names: a handled effect by its own and its operations'.
-        if (prelude.any { it === decl }) return
-        prelude += decl
-        pending += uses to declaredNames(listOf(decl))
+    // Each package's lower-case files' declarations, once read.
+    val packageDecls = mutableMapOf<List<String>, List<Triple<Decl, Set<String>, Source>>>()
+    // Names to look up: where they're used, which names are declared there, and the names.
+    class Use(val pkg: List<String>, val declared: Set<String>, val names: Set<String>)
+    val pending = ArrayDeque<Use>()
+    // Imports of the files brought in, still to bring in what they name.
+    val pendingImports = ArrayDeque<Import>()
+    val errors = mutableListOf<CompileError>()
+
+    fun packageContents(pkg: List<String>) = contents.getOrPut(pkg) { mutableListOf() }
+
+    // A file with a main is a program of its own, so what it declares isn't its package's.
+    fun declsOf(pkg: List<String>) = packageDecls.getOrPut(pkg) {
+        packages.declarationFiles(pkg).flatMap { source ->
+            val code = source.read()
+            val parsed = Parser.parse(code, source.path)
+            if (parsed.decls.any { it is Decl.Function && it.name == "main" }) return@flatMap emptyList()
+            imports[source.path] = parsed.imports[source.path].orEmpty()
+            withUses(code, parsed.decls).map { (d, uses) -> Triple(d, uses, source) }
+        }
     }
-    // A var's effect, which assigning one has without naming it; what xs[i] and xs[i] = v call; and
-    // what `effect Name` declares one with.
-    pending += (mentioned(text, null) + MUTATING + "get" + "set" + EFFECT) to declaredNames(main.decls)
-    while (pending.isNotEmpty()) {
-        val (names, declared) = pending.removeFirst()
-        for (name in names) {
+
+    fun includePrelude(decl: Decl, uses: Set<String>) {
+        if (!included.add(decl)) return
+        packageContents(emptyList()) += decl
+        pending += Use(emptyList(), declaredNames(listOf(decl)), uses)
+    }
+
+    fun loadModule(pkg: List<String>, name: String, source: Source) {
+        if (!loaded.add(source.path)) return
+        val code = source.read()
+        val parsed = Parser.parse(code, source.path)
+        imports[source.path] = parsed.imports[source.path].orEmpty()
+        val decls = parsed.decls
+        // X.fk is `module X { ... }`, with anything else beside it private to the file.
+        val module = decls.firstOrNull { it is Decl.Module && it.name == name && !it.isPrivate }
+        if (module == null) errors += CompileError(Pos(1, 1, source.path), "$name.fk must declare module $name { ... }, which it's named for")
+        for (d in decls) {
+            if (d === module || d.isPrivate) continue
+            errors += CompileError(
+                d.pos,
+                if (d is Decl.Module) "module ${d.name} belongs in its own file, ${d.name}.fk; or make it private to $name.fk"
+                else "'${d.name}' is outside module $name: put it inside, or make it private to $name.fk",
+            )
+        }
+        packageContents(pkg) += decls
+        pending += Use(pkg, declaredNames(decls) + name, mentioned(code, source.path))
+        pendingImports += parsed.imports[source.path].orEmpty()
+    }
+
+    fun includeDecl(pkg: List<String>, decl: Decl, uses: Set<String>, source: Source) {
+        if (!included.add(decl)) return
+        packageContents(pkg) += decl
+        pending += Use(pkg, declaredNames(listOf(decl)), uses)
+        // The imports of the file it's in, for what it uses through them.
+        if (loaded.add(source.path)) pendingImports += imports[source.path].orEmpty()
+    }
+
+    /** Brings in what [import] names; a wildcard, all of a package or module. */
+    fun resolveImport(import: Import) {
+        val path = import.path
+        // The longest start of the path that's a package; what comes next is in it.
+        val pkgLength = (path.size downTo 1).firstOrNull { packages.isPackage(path.take(it)) }
+        if (pkgLength == null) {
+            errors += CompileError(import.pos, "import ${path.joinToString(".")}${if (import.wildcard) ".*" else ""} names no package: a package is a folder, as geometry is for geometry/Shapes.fk")
+            return
+        }
+        val pkg = path.take(pkgLength)
+        val rest = path.drop(pkgLength)
+        if (rest.isEmpty()) {
+            if (!import.wildcard) {
+                errors += CompileError(import.pos, "${path.joinToString(".")} is a package; import what's in it, as in import ${path.joinToString(".")}.*")
+                return
+            }
+            for (m in packages.modules(pkg)) packages.module(pkg, m)?.let { loadModule(pkg, m, it) }
+            for ((d, uses, source) in declsOf(pkg)) if (!d.isPrivate) includeDecl(pkg, d, uses, source)
+            return
+        }
+        val first = rest.first()
+        packages.module(pkg, first)?.let { return loadModule(pkg, first, it) }
+        val decls = declsOf(pkg).filter { (d, _, _) -> d.name == first || (d is Decl.Function && d.extension && d.methodName == first) }
+        if (decls.isNotEmpty()) return decls.forEach { (d, uses, source) -> includeDecl(pkg, d, uses, source) }
+        errors += CompileError(import.pos, "${pkg.joinToString(".")} has no '$first'")
+    }
+
+    pending += Use(emptyList(), declaredNames(main.decls), mentioned(text, null) + MUTATING + "get" + "set" + EFFECT)
+    pendingImports += main.imports[null].orEmpty()
+    while (pending.isNotEmpty() || pendingImports.isNotEmpty()) {
+        pendingImports.removeFirstOrNull()?.let { resolveImport(it) }
+        val use = pending.removeFirstOrNull() ?: continue
+        for (name in use.names) {
             // A method name brings in each of the prelude's extensions by that name, as any of them
             // may be the one called, unless the program has its own for that type.
             if (seenMethods.add(name)) {
                 for ((decl, uses) in preludeDecls) {
-                    if (decl is Decl.Function && decl.extension && decl.methodName == name && decl.name !in own) include(decl, uses)
+                    if (decl is Decl.Function && decl.extension && decl.methodName == name && decl.name !in own) includePrelude(decl, uses)
                 }
             }
-            if (name in declared || name in own || !seen.add(name)) continue
-            val source = available[name] ?: STD[name]
-            if (source != null) {
-                val code = source.read()
-                val parsed = Parser.parse(code, source.path)
-                modules += Decl.Module(Pos(1, 1, source.path), name, parsed.decls)
-                pending += mentioned(code, source.path) to declaredNames(parsed.decls)
-                continue
+            if (name in use.declared || (use.pkg.isEmpty() && name in own)) continue
+            // A module of the package it's used in, or a declaration of one of its lower-case files.
+            packages.module(use.pkg, name)?.let { loadModule(use.pkg, name, it) }
+            val siblings = declsOf(use.pkg).filter { (d, _, _) -> !d.isPrivate && (d.name == name || (d is Decl.Function && d.extension && d.methodName == name)) }
+            siblings.forEach { (d, uses, source) -> includeDecl(use.pkg, d, uses, source) }
+            // A package, named in full, as geometry is in geometry.Shapes.area: the modules after it.
+            if (packages.isPackage(listOf(name))) {
+                fun reach(pkg: List<String>) {
+                    for (next in use.names) {
+                        packages.module(pkg, next)?.let { loadModule(pkg, next, it) }
+                        if (packages.isPackage(pkg + next)) reach(pkg + next)
+                    }
+                }
+                reach(listOf(name))
             }
-            // A declaration of that name, or the handled effect with an operation of that name.
+            // A declaration of the prelude's of that name, or the handled effect with an operation of that name.
             preludeDecls.firstOrNull { (d, _) ->
                 (d.name == name && !(d is Decl.Function && d.extension)) || (d is Decl.Spec && d.annotations.any { it.name == EFFECT } && d.values.any { it.name == name })
-            }?.let { (d, uses) -> include(d, uses) }
+            }?.let { (d, uses) -> includePrelude(d, uses) }
         }
     }
-    val all = copyEffects(prelude + modules + main.decls)
-    return Linked(SourceFile(all), all.takeLast(main.decls.size))
+    CompileErrors.throwIfAny(errors)
+    // Each package a module named after its folder, inside its parent's.
+    fun tree(pkg: List<String>): List<Decl> {
+        val children = contents.keys.filter { it.size == pkg.size + 1 && it.take(pkg.size) == pkg }.distinct()
+        val packageModules = children.map { child -> Decl.Module(Pos(1, 1, null), child.last(), tree(child), isPackage = true) }
+        val mine = contents[pkg].orEmpty()
+        return packageModules + if (pkg.isEmpty()) mine.filter { it !in main.decls } else mine
+    }
+    // Every package on the way to one with contents has a module too.
+    for (pkg in contents.keys.toList()) for (n in 1 until pkg.size) packageContents(pkg.take(n))
+    val all = copyEffects(tree(emptyList()) + main.decls)
+    return Linked(SourceFile(all, imports), all.takeLast(main.decls.size))
 }
 
 /**

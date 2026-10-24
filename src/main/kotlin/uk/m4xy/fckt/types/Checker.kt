@@ -112,6 +112,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** The module being checked, which decides what names mean and what's visible. */
     private var currentPath: List<String> = emptyList()
+
+    /** The file being checked, null for the program's own, whose imports name things too. */
+    private var currentFile: String? = null
+
+    /** Each file's imports, as written. */
+    private val fileImports = file.imports
+
+    /** What each name a file imports means: the full name of what it names, by file. */
+    private val imported = mutableMapOf<String?, Map<String, String>>()
+
+    /** Names a file's imports bring in from more than one place, which it must import itself to use. */
+    private val ambiguousImports = mutableMapOf<String?, Map<String, List<String>>>()
     private val typeNames = java.util.IdentityHashMap<TypeRef.Named, String>()
     private val uses = mutableMapOf<Decl.Function, List<Decl.Function>>()
 
@@ -200,9 +212,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (d.name in specs) throw CompileError(d.pos, "spec '${d.simpleName}' is declared twice")
             specs[d.name] = d
         }
+        // Before functors are applied, whose modules a file may name through its imports.
+        collectImports()
         for (f in modules.values.filter { it.params.isNotEmpty() }) addParameters(f)
         for (app in modules.values.filter { it.application != null }) apply(app)
         currentPath = emptyList()
+        currentFile = null
     }
 
     /**
@@ -213,6 +228,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (f.spec != null) throw CompileError(f.spec.pos, "a functor can't have a spec yet")
         enclosingFunctor(f.path)?.let { throw CompileError(f.pos, "a functor can't be inside another functor (${it.simpleName}) yet") }
         currentPath = f.path
+        currentFile = f.pos.file
         checkDistinct(f.params.map { it.name to it.pos })
         functorParams[f.name] = f.params.map { p ->
             val spec = find(p.spec.name, specs, p.spec.pos) ?: throw CompileError(p.spec.pos, "unknown spec '${p.spec.name}'")
@@ -234,6 +250,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val ref = app.application!!
         enclosingFunctor(app.path)?.let { throw CompileError(app.pos, "a functor can't be applied inside another functor (${it.simpleName}) yet") }
         currentPath = app.path
+        currentFile = app.pos.file
         val functor = find(ref.name, modules, ref.pos) ?: throw CompileError(ref.pos, "unknown module '${ref.name}'")
         if (functor.params.isEmpty()) throw CompileError(ref.pos, "${functor.simpleName} isn't a functor: it takes no modules")
         if (functor.params.size != ref.args.size) {
@@ -327,6 +344,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for ((app, made) in applications) {
             val (functor, args) = made
             currentPath = modules.getValue(app).path
+            currentFile = modules.getValue(app).pos.file
             for ((param, arg) in functorParams.getValue(functor.name).zip(args)) {
                 val (name, spec) = param
                 val argSpec = moduleSpecs[arg.name]
@@ -354,6 +372,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         currentPath = emptyList()
+        currentFile = null
     }
 
     /**
@@ -363,7 +382,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun checkArgumentTypes(app: String) {
         val (functor, args) = applications.getValue(app)
         val saved = currentPath
+        val savedFile = currentFile
         currentPath = modules.getValue(app).path
+        currentFile = modules.getValue(app).pos.file
         for ((param, arg) in functorParams.getValue(functor.name).zip(args)) {
             val (name, spec) = param
             if (moduleSpecs[arg.name] === spec) continue
@@ -388,6 +409,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         currentPath = saved
+        currentFile = savedFile
     }
 
     fun check(): Program {
@@ -484,6 +506,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val fields = if (d is Decl.Record) d.fields else caseDecls.getValue(d.name).flatMap { it.fields }
             val withParams = if (d is Decl.Record) d.typeParams else (d as Decl.Sealed).typeParams
             currentPath = d.path
+            currentFile = d.pos.file
             withTypeParams(withParams) {
                 fields.flatMap { privateTypes(resolve(it.type)) }.firstOrNull { exposes(d, it) }?.let { complain(d, it) }
             }
@@ -493,9 +516,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         for (a in aliases.values) {
             currentPath = a.path
+            currentFile = a.pos.file
             withTypeParams(a.typeParams) { privateTypes(resolve(a.target)).firstOrNull { exposes(a, it) }?.let { complain(a, it) } }
         }
         currentPath = emptyList()
+        currentFile = null
     }
 
     // ---- Modules and names ----
@@ -519,6 +544,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
     }
 
+    /** For a name that isn't found but is one of the standard library's modules: how to import it. */
+    private fun importHint(name: String?): String =
+        name?.takeIf { "${uk.m4xy.fckt.STANDARD_PACKAGE}/$it" in uk.m4xy.fckt.STANDARD_MODULES }?.let { "; it's in the standard library: import ${uk.m4xy.fckt.STANDARD_PACKAGE}.$it" }.orEmpty()
+
+    /** Whether [d] is directly in a package, the program's or a folder's, rather than in a module. */
+    private fun inPackage(d: Decl): Boolean = d.path.isEmpty() || modules[d.path.joinToString(".")]?.isPackage == true
+
     /** Whether the current module is [path] or inside it. */
     private fun inside(path: List<String>) = currentPath.take(path.size) == path
 
@@ -528,6 +560,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     /** Why [d] can't be seen from the current module, or null if it can. */
     private fun whyHidden(d: Decl): String? {
         if (d.isPrivate && !inside(d.path)) return "'${d.simpleName}' is private to ${d.path.joinToString(".").ifEmpty { "this file" }}"
+        // Private in a package, out of any module: private to its file, as in Kotlin.
+        if (d.isPrivate && d !is Decl.Module && inPackage(d) && d.pos.file != currentFile) return "'${d.simpleName}' is private to ${d.pos.file ?: "the program's file"}"
         enclosingFunctor(d.path)?.takeIf { !inside(it.name.split('.')) }?.let {
             return "'${d.simpleName}' is in the functor ${it.simpleName}, which makes modules: use it through one, made with module Name = ${it.simpleName}(...)"
         }
@@ -571,7 +605,79 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             return d
         }
-        return null
+        // What the file imports: `Shapes.area`, with `import geometry.Shapes`, is geometry.Shapes.area.
+        // Two imports bringing in the same name matter only if both mean something of this kind.
+        val names = importedNames(name)
+        val found = names.mapNotNull { table[canonical(it)] }.distinct()
+        // A record and a type with cases of the same name are as alike as two records.
+        val alike = if (table === records || table === sealeds || table === aliases) {
+            names.mapNotNull { records[canonical(it)] ?: sealeds[canonical(it)] ?: aliases[canonical(it)] }.distinct()
+        } else {
+            found
+        }
+        if (alike.size > 1) {
+            if (pos == null) return null
+            throw CompileError(pos, "'${name.substringBefore('.')}' is imported from ${alike.joinToString(" and ") { it.name }}; import the one you mean by name")
+        }
+        if (found.size > 1) {
+            if (pos == null) return null
+            throw CompileError(pos, "'${name.substringBefore('.')}' is imported from ${found.joinToString(" and ") { it.name }}; import the one you mean by name")
+        }
+        val d = found.singleOrNull() ?: return null
+        whyHidden(d)?.let { if (pos == null) return null else throw CompileError(pos, it) }
+        return d
+    }
+
+    /** The full names [name] may mean through the current file's imports, if it starts with one. */
+    private fun importedNames(name: String): List<String> {
+        val first = name.substringBefore('.')
+        val targets = imported[currentFile]?.get(first)?.let(::listOf) ?: ambiguousImports[currentFile]?.get(first) ?: return emptyList()
+        return targets.map { it + name.removePrefix(first) }
+    }
+
+    /** The one full name [name] means through the current file's imports, if it starts with one. */
+    private fun importedName(name: String, pos: Pos?): String? = importedNames(name).singleOrNull()
+
+    /**
+     * Each file's imports, as the names they bring in: a declaration, by its name or its `as`; a
+     * module, with its types and their cases; and for `.*`, all of a package or module. One named
+     * outright comes before one brought in with a module or a wildcard.
+     */
+    private fun collectImports() {
+        // Everything that can be imported, by its full name.
+        val known = mutableMapOf<String, Decl>()
+        for (d in decls) known[d.name] = d
+        for (m in modules.values) known[m.name] = m
+        val cases = decls.filterIsInstance<Decl.Sealed>().flatMap { s -> s.variants.map { "${s.name}.${it.name}" to s } }.toMap()
+        fun members(of: String): List<Pair<String, String>> {
+            val inside = known.values.filter { it.name.substringBeforeLast('.', "") == of }.map { it.simpleName to it.name }
+            val itsCases = decls.filterIsInstance<Decl.Sealed>().filter { it.name.substringBeforeLast('.', "") == of }
+                .flatMap { s -> s.variants.map { it.name to "${s.name}.${it.name}" } }
+            return inside + itsCases
+        }
+        fun types(of: String): List<Pair<String, String>> = members(of).filter { (_, full) ->
+            val d = known[full]
+            d == null || d is Decl.Record || d is Decl.Sealed || d is Decl.Alias || d is Decl.Spec
+        }
+        for ((file, imports) in fileImports) {
+            val named = mutableMapOf<String, String>()
+            val implied = mutableMapOf<String, MutableSet<String>>()
+            for (i in imports) {
+                val full = i.path.joinToString(".")
+                if (i.wildcard) {
+                    if (full !in modules) throw CompileError(i.pos, "import $full.* names no package or module")
+                    members(full).forEach { (name, target) -> implied.getOrPut(name) { linkedSetOf() } += target }
+                    continue
+                }
+                if (full !in known && full !in cases) throw CompileError(i.pos, "import $full names nothing")
+                named[i.name]?.takeIf { it != full }?.let { throw CompileError(i.pos, "'${i.name}' is imported already, as $it; import this one as another name, with as") }
+                named[i.name] = full
+                // A module brings its types, and their cases, with it.
+                if (known[full] is Decl.Module) types(full).forEach { (name, target) -> implied.getOrPut(name) { linkedSetOf() } += target }
+            }
+            imported[file] = implied.filterValues { it.size == 1 }.mapValues { it.value.single() } + named
+            ambiguousImports[file] = implied.filter { (name, targets) -> targets.size > 1 && name !in named }.mapValues { it.value.toList() }
+        }
     }
 
     private fun lookupGlobal(name: String, pos: Pos?) = find(name, globals, pos)
@@ -642,6 +748,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for (m in modules.values) {
             val ref = m.spec ?: continue
             currentPath = m.path
+            currentFile = m.pos.file
             val spec = find(ref.name, specs, ref.pos) ?: throw CompileError(ref.pos, "unknown spec '${ref.name}'")
             if (ref.args.isNotEmpty() && m.name !in parameterModules) {
                 throw CompileError(ref.args.first().pos, "${m.simpleName} says what its types are in its body, so write just : ${spec.simpleName}; type arguments are for a functor's parameters, like F(M: ${spec.simpleName}<...>)")
@@ -652,6 +759,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             moduleSpecs[m.name] = spec
         }
         currentPath = emptyList()
+        currentFile = null
         for ((name, variants) in variantsByName) {
             variants.firstOrNull { (s, _) -> (s.path + name).joinToString(".") in records }?.let {
                 throw CompileError(it.second.pos, "'$name' is both a type and a variant")
@@ -664,15 +772,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         // Resolve every field type now, so bad references are reported at the declaration.
         for (a in aliases.values.filter { it !in fixedTypes.values }) {
             currentPath = a.path
+            currentFile = a.pos.file
             expand(a, a.typeParams.map { Type.Con("#$it") })
         }
         for (r in records.values) {
             currentPath = r.path
+            currentFile = r.pos.file
             checkFieldNames(r.fields.map { it.name to it.pos })
             withTypeParams(r.typeParams) { r.fields.forEach { resolve(it.type) } }
         }
         for (s in sealeds.values) {
             currentPath = s.path
+            currentFile = s.pos.file
             withTypeParams(s.typeParams) {
                 s.variants.forEach { v ->
                     checkFieldNames(v.fields.map { it.name to it.pos })
@@ -684,10 +795,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for (s in sealeds.values) computeCases(s, emptySet())
         for (a in annotationTypes.values) {
             currentPath = a.path
+            currentFile = a.pos.file
             checkFieldNames(a.fields.map { it.name to it.pos })
             annotationFields[a] = a.fields.map { resolveMeta(it.type) }
         }
         currentPath = emptyList()
+        currentFile = null
         // A sealed type that takes in another's cases, and the sealed types it takes them from, share
         // values, so they become polymorphic variants.
         for ((name, cases) in caseDecls) {
@@ -705,7 +818,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         caseDecls[s.name]?.let { return it }
         if (s.name in visiting) throw CompileError(s.pos, "type '${s.simpleName}' includes itself")
         val outerPath = currentPath
+        val outerPathFile = currentFile
         currentPath = s.path
+        currentFile = s.pos.file
         val result = mutableListOf<CaseDecl>()
         fun add(case: CaseDecl, pos: Pos) {
             val same = result.firstOrNull { it.sameCase(case) }
@@ -735,6 +850,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         caseDecls[s.name] = result
         currentPath = outerPath
+        currentFile = outerPathFile
         return result
     }
 
@@ -908,26 +1024,31 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             for (d in records.values + sealeds.values) {
                 if (d.name in regioned) continue
                 currentPath = d.path
+                currentFile = d.pos.file
                 val fields = if (d is Decl.Record) d.fields else (d as Decl.Sealed).variants.flatMap { it.fields }
                 if (fields.any { holds(it.type) }) regioned += d.name
             }
         } while (regioned.size != before)
         currentPath = emptyList()
+        currentFile = null
     }
 
     /** What alias [a] stands for, applied to [args]; its target means what it does where it's written. */
     private fun expand(a: Decl.Alias, args: List<Type>): Type {
         if (!expanding.add(a.name)) throw CompileError(a.pos, "type '${a.simpleName}' is defined in terms of itself")
         val saved = Triple(typeParams, specTypes, currentPath)
+        val savedFile = currentFile
         typeParams = a.typeParams.zip(args).toMap()
         specTypes = emptyMap()
         currentPath = a.path
+        currentFile = a.pos.file
         try {
             return resolve(a.target)
         } finally {
             typeParams = saved.first
             specTypes = saved.second
             currentPath = saved.third
+            currentFile = savedFile
             expanding.remove(a.name)
         }
     }
@@ -998,6 +1119,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val seen = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Annotation, Boolean>())
         fun check(path: List<String>, annotations: List<Annotation>) {
             currentPath = path
+            annotations.firstOrNull()?.let { currentFile = it.pos.file }
             for (a in annotations) if (seen.add(a)) checkAnnotation(a)
             // What they pass on must agree.
             if (annotations.isNotEmpty()) reached(annotations, path, annotations.first().pos)
@@ -1024,6 +1146,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         currentPath = emptyList()
+        currentFile = null
     }
 
     private fun checkAnnotation(a: Annotation) {
@@ -1218,11 +1341,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun annotationType(a: Annotation, path: List<String>): Decl? {
         a.decl?.let { return it }
         val saved = currentPath
+        val savedFile = currentFile
         currentPath = path
+        currentFile = a.pos.file
         try {
             return find(a.name, annotationTypes, null) ?: find(a.name, specs, null)?.takeIf { isEffect(it) }
         } finally {
             currentPath = saved
+            currentFile = savedFile
         }
     }
 
@@ -1471,11 +1597,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val annotation = spec.annotations.firstOrNull { annotationType(it, spec.path)?.name == HANDLED_BY } ?: return null
         val name = (annotation.args.singleOrNull()?.value as? Meta.Ref)?.name ?: return null
         val saved = currentPath
+        val savedFile = currentFile
         currentPath = spec.path
+        currentFile = spec.pos.file
         try {
             return lookupModule(name, null)
         } finally {
             currentPath = saved
+            currentFile = savedFile
         }
     }
 
@@ -1667,6 +1796,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun checkSpecs() {
         for (spec in specs.values) {
             currentPath = spec.path
+            currentFile = spec.pos.file
             checkDistinct(spec.types.map { it.name to it.pos })
             checkDistinct(spec.values.map { it.name to it.pos })
             spec.types.firstOrNull { it.name in BUILTIN_TYPES }?.let { throw CompileError(it.pos, "'${it.name}' is a built-in type") }
@@ -1697,6 +1827,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         specTypes = emptyMap()
         currentPath = emptyList()
+        currentFile = null
         // A functor's parameter's values have their spec's types, its types abstract.
         for (f in parameterMembers) {
             val module = f.path.joinToString(".")
@@ -1725,6 +1856,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         currentPath = emptyList()
+        currentFile = null
     }
 
     /**
@@ -1852,7 +1984,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         collectRefs(decl.body, bound, refs)
         // A name may be plain (`gcd`) or go through modules (`Ratios.make`), seen from the decl's module.
         val saved = currentPath
+        val savedFile = currentFile
         currentPath = decl.path
+        currentFile = decl.pos.file
         try {
             return refs.flatMap { ref ->
                 // A method's name may be any extension of that name.
@@ -1867,6 +2001,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }.distinct()
         } finally {
             currentPath = saved
+            currentFile = savedFile
         }
     }
 
@@ -1998,6 +2133,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val declaredParams = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
         val outside = mutableMapOf<Decl.Function, Type>()
         currentPath = group.decls.first().path
+        currentFile = group.decls.first().pos.file
         val rows = mutableMapOf<Decl.Function, Type>()
         val declaredArgs = mutableMapOf<Decl.Function, List<Type.Con>>()
         for (decl in group.decls) {
@@ -2457,7 +2593,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 return moduleHandler(m, spec)
             }
         }
-        throw CompileError(e.pos, "unknown name '${e.name}'")
+        throw CompileError(e.pos, "unknown name '${e.name}'${importHint(e.name)}")
     }
 
     /**
@@ -2524,8 +2660,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         } else {
             val inHint = hinted?.let { h -> caseDecls.getValue(h).filter { it.name == name } }.orEmpty()
             inHint.singleOrNull() ?: run {
-                // Unqualified, a variant is in scope inside its module; through a module, it's that module's.
-                val candidates = variantsByName[name].orEmpty().filter { (s, _) ->
+                // Unqualified, a variant is in scope inside its module, or where it's imported; through a
+                // module, it's that module's.
+                val viaImport = if (qualifier == null) importedCase(name, pos) else null
+                val candidates = viaImport?.let(::listOf) ?: variantsByName[name].orEmpty().filter { (s, _) ->
                     visible(s) && !abstractHere(s) && if (qualifierModule != null) s.path == qualifierModule.name.split('.') else inside(s.path)
                 }
                 if (candidates.isEmpty()) return if (qualifier == null) resultCase(name) else null
@@ -2544,11 +2682,20 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val region = newRegion(sealeds.getValue(home))
         val fieldTypes = cases(home, args, region).first { it.first.sameCase(case) }.second
         return ConstructorShape(
-            ConstructorRef.Variant(case.origin, case.variant, name),
+            ConstructorRef.Variant(case.origin, case.variant, case.name),
             case.variant.fields.map { it.name },
             fieldTypes,
             Type.Con(home, args, region),
         )
+    }
+
+    /** The case [name] means through the current file's imports, as `Round` does with `import geometry.Shape.Circle as Round`. */
+    private fun importedCase(name: String, pos: Pos): Pair<Decl.Sealed, VariantDef>? {
+        val full = importedName(name, pos) ?: return null
+        val sealed = sealeds[full.substringBeforeLast('.', "")] ?: return null
+        val variant = sealed.variants.firstOrNull { it.name == full.substringAfterLast('.') } ?: return null
+        if (!visible(sealed) || abstractHere(sealed)) return null
+        return sealed to variant
     }
 
     /** `Ok(value)` or `Error(error)`, building a Result. */
@@ -2830,12 +2977,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     /** [d]'s receiver type, with its type parameters as unknowns. */
     private fun receiverType(d: Decl.Function): Type {
         val saved = currentPath to typeParams
+        val savedFile = currentFile
         currentPath = d.path
+        currentFile = d.pos.file
         typeParams = d.typeParams.associateWith { u.fresh() }
         try {
             return resolve(d.params!!.first().type!!)
         } finally {
             currentPath = saved.first
+            currentFile = savedFile
             typeParams = saved.second
         }
     }
@@ -3145,7 +3295,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun inferMonadic(e: Expr.Monadic, scope: Scope): Type {
         val name = dotted(e.module, scope)
         val module = name?.let { lookupModule(it, null) }
-            ?: throw CompileError(e.module.pos, "${name ?: "this"} isn't a module, so $name { ... } has nothing to bind with")
+            ?: throw CompileError(e.module.pos, "${name ?: "this"} isn't a module, so $name { ... } has nothing to bind with${importHint(name)}")
         // A module following a handled effect's spec handles the block instead.
         moduleSpecs[module.name]?.takeIf { isEffect(it) }?.let { spec ->
             e.handles = spec

@@ -34,7 +34,8 @@ tour of the core language, translated section by section.
 | `type S { V(x: X), W }` | `type s = V of { x : x } \| W` | A type with cases, which a value is exactly one of (a sealed sum type). Parentheses make a record, braces make cases. |
 | `type Vowel { Alphabet.A, Alphabet.E }` | `type vowel = [ `Alphabet_A \| `Alphabet_E ]` | A type can take in other types' cases, one at a time (`Alphabet.A`) or all of them (`*Vowel`). A `Vowel` can then be used wherever an `Alphabet` is expected, and `is Vowel` narrows an `Alphabet` to a `Vowel`. When branches give different types, the result is the smallest declared type with all their cases. Types that share cases become polymorphic variants; the rest stay ordinary ones. See `examples/shared-cases.fk`. |
 | `module Ratios { ... }` | `module Ratios = struct ... end` | Groups declarations. Inside, members use each other directly; outside, they're named through the module: `Ratios.make(1, 2)`, `Shapes.Circle(1.0)`, `Shapes.Shape`. Modules can nest. See `examples/modules.fk`. |
-| `ratios.fk` | `module Ratios = struct ... end` | Each file is a module named after it (`shared-cases.fk` is `SharedCases`), with no imports: a name a file uses but doesn't declare brings in the file of that name, from the program's directory or a directory given with `fckt -I dir`. The program is compiled to one `.ml`. |
+| `geometry/Shapes.fk` | `module Geometry = struct module Shapes = struct ... end end` | A folder is a package, under the program's own folder or one given with `fckt -I dir`. A capitalised file is a module, which it must declare, named as the file is: `Shapes.fk` holds `module Shapes { ... }`, with anything else beside it private. A lower-case file holds its package's own declarations, anything at all, except a program's, which has a `main` and keeps its declarations to itself. A file uses its own package's modules and declarations by name, and other packages' through imports or by their full name, `geometry.Shapes.area(...)`. A private declaration in a lower-case file is private to that file. The program is compiled to one `.ml`. |
+| `import geometry.Shapes` | | Brings in the module, and its types and their cases, which then need no prefix: `Shapes.area(Circle(1.0))`. `import geometry.Shapes.area` brings in one declaration, `import geometry.*` all of a package, and `import geometry.Shapes.*` all of a module. `as` renames: `import geometry.Shapes.Shape.Circle as Round`. A name two imports bring in is an error only where it's used, and importing the one meant settles it. |
 | `List<A>.second(): Option<A> = ...` | `let list_second (this : 'a list) : 'a option = ...` | An extension function, called as `xs.second()`. It's chosen by the receiver's type, which must be known, so `List<Int>.sum()` and `List<Float>.sum()` can both exist; the most specific one that fits wins. Inside, the receiver is `this`. Bare names in the receiver, like `A`, are its type parameters. Without parentheses, `String.size: Int = ...`, it's a property: `s.size`. See `examples/extensions.fk`. |
 | `external List<A>.map<B>(f: (A) -> B): List<B> = "List.map f this"` | `List.map f xs` at each call | A function whose body is OCaml: a function applied to the parameters, by name, with `~name` for a labelled argument. It's written out at each use, so it has no OCaml definition of its own, and the compiler trusts its declared types, as OCaml trusts its own `external`. |
 | `private gcd(...)` | left out of the module's `sig` | Visible only inside its module. A public member can't expose a private type. |
@@ -104,17 +105,17 @@ when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` i
 
 ## Standard library
 
-`src/main/resources/std` is written in fckt, and comes into a program as it's used, like any
-other file. Only what a program mentions goes into its OCaml, and a program's own declaration or
-file of the same name takes its place.
+`src/main/resources/std` is written in fckt. The prelude needs no import; the modules are in the
+package `fckt`, imported as any other: `import fckt.Options`. Only what a program uses goes into
+its OCaml, and a program's own declaration of the same name takes the place of the prelude's.
 
 | | |
 | --- | --- |
-| `prelude.fk` | Needs no module's name: `spec Monad`, `spec Applicative`, `type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }`, and the methods and functions on built-in types: lists have Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count` and more. The effects `Console` (with `Terminal`), `Mutating`, `Fail` with `attempt { ... }`, and `Yielding<A>` with `sequence { ... }`, which makes a lazy `Stream<A>`. A program's own effect, or operation, of the same name takes the place of the prelude's. |
-| `Options` | Option as a monad: `Options { x by half(n); x + 1 }`. |
-| `Results` | Result as a monad, for any error type, with `mapError` and `toOption`. |
-| `Validated` | Validation without bind, so `Validated { ... }` keeps every error; `fromResult` and `toResult`. |
-| `Lists` | List as a monad, for every combination: `Lists { x by xs; y by ys; (x, y) }`, with `guard`. |
+| `prelude.fk` | Needs no import: `spec Monad`, `spec Applicative`, `type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }`, and the methods and functions on built-in types: lists have Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count` and more. The effects `Console` (with `Terminal`), `Mutating`, `Fail` with `attempt { ... }`, and `Yielding<A>` with `sequence { ... }`, which makes a lazy `Stream<A>`. A program's own effect, or operation, of the same name takes the place of the prelude's. |
+| `fckt.Options` | Option as a monad: `Options { x by half(n); x + 1 }`. |
+| `fckt.Results` | Result as a monad, for any error type, with `mapError` and `toOption`. |
+| `fckt.Validated` | Validation without bind, so `Validated { ... }` keeps every error; `fromResult` and `toResult`. |
+| `fckt.Lists` | List as a monad, for every combination: `Lists { x by xs; y by ys; (x, y) }`, with `guard`. |
 
 See `examples/stdlib.fk`.
 
@@ -140,7 +141,7 @@ build/install/fckt/bin/fckt examples/orders.fk   # writes examples/orders.ml
 ocaml examples/orders.ml
 ```
 
-`-o out.ml` picks the output file, and `-o -` prints the OCaml instead. `-I dir` adds a directory to look in for the files a program uses. The generated code needs
+`-o out.ml` picks the output file, and `-o -` prints the OCaml instead. `-I dir` adds a directory whose folders are packages, as the program's own directory's are. The generated code needs
 OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the result with `ocaml`
 when it's installed.
 

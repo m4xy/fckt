@@ -170,6 +170,8 @@ sealed interface Decl {
         val params: List<ModuleParam> = emptyList(),
         val application: TypeRef.Named? = null,
         override val annotations: List<Annotation> = emptyList(),
+        /** A package: the declarations of a folder's files, named after the folder. */
+        val isPackage: Boolean = false,
     ) : Decl
 
     /**
@@ -210,7 +212,20 @@ data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>
 /** `Owner.Case` in a type's cases: a case declared by another type. [owner] may be qualified: `Letters.Alphabet`. */
 data class CaseRefDef(val pos: Pos, val owner: String, val case: String)
 
-data class SourceFile(val decls: List<Decl>)
+/**
+ * A program's declarations, with each file's imports, by its path: null for the program's own
+ * file. A file's [Import]s name what it uses from other packages.
+ */
+data class SourceFile(val decls: List<Decl>, val imports: Map<String?, List<Import>> = emptyMap())
+
+/**
+ * `import geometry.Shapes`, `import geometry.Shapes.area as size`, or `import geometry.*`
+ * ([wildcard]): what a file uses from another package, by its full name, [path].
+ */
+data class Import(val pos: Pos, val path: List<String>, val wildcard: Boolean = false, val alias: String? = null) {
+    /** The name it's known by in the file, unless it's a wildcard. */
+    val name get() = alias ?: path.last()
+}
 
 // ---- Annotations ----
 

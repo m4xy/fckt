@@ -6,10 +6,11 @@ import kotlin.system.exitProcess
 
 private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [-o <file.ml>]
 
-Transpiles a fckt program to OCaml. Each file is a module named after it: ratios.fk is Ratios. A
-name the program uses but doesn't declare brings in its file, from the program's directory or a
-directory given with -I. Without -o, writes next to the input with a .ml extension; with -o -,
-writes to standard output."""
+Transpiles a fckt program to OCaml. A folder is a package, under the program's directory or one
+given with -I; a capitalised file is a module, Ratios.fk declaring module Ratios, and a lower-case
+one holds its package's declarations. A file uses its package's by name, and others' by importing
+them: import geometry.Shapes. Without -o, writes next to the input with a .ml extension; with
+-o -, writes to standard output."""
 
 fun main(args: Array<String>) {
     var input: String? = null

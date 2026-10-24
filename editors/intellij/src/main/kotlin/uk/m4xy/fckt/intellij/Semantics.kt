@@ -444,6 +444,11 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
         val prev = code.getOrNull(i - 1)
         val next = code.getOrNull(i + 1)
         fun sameLine(a: Tok, b: Tok) = text.substring(a.end, b.start).none { it == '\n' }
+        // Whether [t] is on a line that starts with `import`.
+        fun importLine(t: Tok): Boolean {
+            val lineStart = text.lastIndexOf('\n', t.start - 1) + 1
+            return text.substring(lineStart, t.start).trimStart().startsWith("import ")
+        }
         val role: Role? = fixed[t.start] ?: when {
             prev?.kind == TokKind.AT -> Role.ANNOTATION
             name[0].isUpperCase() -> {
@@ -463,6 +468,9 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
             }
             // Keywords only in place.
             (name == "spec" || name == "effect") && word(next)?.firstOrNull()?.isUpperCase() == true -> Role.KEYWORD
+            // `import a.b.C as D`, at a line's start.
+            name == "import" && next?.kind == TokKind.IDENT && (prev == null || !sameLine(prev, t)) -> Role.KEYWORD
+            name == "as" && next?.kind == TokKind.IDENT && importLine(t) -> Role.KEYWORD
             (name == "opaque" || name == "annotation") && word(next) == "type" -> Role.KEYWORD
             name == "var" && next?.kind == TokKind.IDENT && sameLine(t, next) -> Role.KEYWORD
             name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN || word(next) == "type") &&

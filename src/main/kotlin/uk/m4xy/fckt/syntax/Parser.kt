@@ -3,14 +3,14 @@ package uk.m4xy.fckt.syntax
 import uk.m4xy.fckt.types.BUILTIN_TYPES
 
 /** Recursive-descent parser for `.fk` source. */
-class Parser(private val tokens: List<Token>) {
+class Parser(private val tokens: List<Token>, private val file: String? = null) {
     private var p = 0
 
     /** The `get` calls written `xs[i]`, which `xs[i] = v` turns into a `set`. */
     private val indexes = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Expr, Boolean>())
 
     companion object {
-        fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize()).file()
+        fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize(), file).file()
     }
 
     /** The prelude's annotation that makes one an effect, which `effect Name` declares one with. */
@@ -52,6 +52,7 @@ class Parser(private val tokens: List<Token>) {
         val decls = mutableListOf<Decl>()
         val errors = mutableListOf<CompileError>()
         skipNewlines()
+        val imports = imports()
         while (!at(T.EOF)) {
             try {
                 decls += decl()
@@ -70,7 +71,37 @@ class Parser(private val tokens: List<Token>) {
             }
         }
         CompileErrors.throwIfAny(errors)
-        return SourceFile(receiverTypeParams(decls, typeNames(decls)))
+        return SourceFile(receiverTypeParams(decls, typeNames(decls)), mapOf(file to imports))
+    }
+
+    /** The `import` lines a file starts with. `import` is a keyword only there, at a line's start. */
+    private fun imports(): List<Import> {
+        val imports = mutableListOf<Import>()
+        while (at(T.IDENT) && peek.text == "import" && peekAt(1).kind == T.IDENT) {
+            val pos = next().pos
+            val path = mutableListOf(ident("a name to import"))
+            var wildcard = false
+            while (accept(T.DOT) != null) {
+                if (accept(T.STAR) != null) {
+                    wildcard = true
+                    break
+                }
+                path += ident("a name to import, or *")
+            }
+            val alias = if (!wildcard && at(T.IDENT) && peek.text == "as") {
+                next()
+                ident("the name to import it as")
+            } else {
+                null
+            }
+            if (path.size < 2 && !wildcard) throw error("import a declaration by its package, as in import geometry.Shapes", pos)
+            imports += Import(pos, path, wildcard, alias)
+            // After `.*`, the lexer takes the line to go on, as it would after a multiplication.
+            val nextLine = peek.pos.line > tokens[p - 1].pos.line
+            if (!at(T.EOF) && !at(T.NEWLINE) && !at(T.SEMI) && !nextLine) throw error("expected end of line after an import but found ${describe(peek)}")
+            skipNewlines()
+        }
+        return imports
     }
 
     private fun decl(): Decl {

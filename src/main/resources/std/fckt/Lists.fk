@@ -1,0 +1,16 @@
+// List as a monad: every combination. Lists { x by [1, 2]; y by ["a", "b"]; (x, y) } is
+// [(1, "a"), (1, "b"), (2, "a"), (2, "b")].
+module Lists {
+  type M<A> = List<A>
+
+  pure<A>(x: A): List<A> = [x]
+
+  bind<A, B>(xs: List<A>, f: (A) -> List<B>): List<B> = xs.flatMap(f)
+
+  map<A, B>(xs: List<A>, f: (A) -> B): List<B> = xs.map(f)
+
+  product<A, B>(xs: List<A>, ys: List<B>): List<(A, B)> = xs.flatMap(x -> ys.map(y -> (x, y)))
+
+  // Lists { x by xs; _ by guard(x > 1); x } keeps the xs over 1.
+  guard(ok: Boolean): List<Unit> = if (ok) [Unit] else []
+}

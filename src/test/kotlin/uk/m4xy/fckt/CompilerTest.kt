@@ -1010,37 +1010,71 @@ class CompilerTest {
     }
 
     @Test
-    fun `files are modules`() {
+    fun `folders are packages, and capitalised files are modules`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
-        val lib = File(dir, "lib").apply { mkdir() }
+        val lib = File(dir.parentFile, dir.name + "-lib").apply { mkdir() }
+        fun write(path: String, text: String, root: File = dir) = File(root, path).apply { parentFile.mkdirs() }.writeText(text)
         try {
-            File(dir, "ratios.fk").writeText(
-                "type Ratio(n: Int, d: Int)\nprivate gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)\n" +
-                    "make(n: Int, d: Int): Ratio = {\n  g = gcd(n, d)\n  Ratio(n / g, d / g)\n}\n",
-            )
-            // Halves uses Ratios, so it comes in after it; list-extras.fk is ListExtras.
-            File(dir, "halves.fk").writeText("half(r: Ratios.Ratio): Ratios.Ratio = Ratios.make(r.n, r.d * 2)\n")
-            File(lib, "list-extras.fk").writeText("sumBy<A>(xs: List<A>, f: (A) -> Int): Int = xs.map(f).sum()\ncheck() = assert(1 == 2)\n")
-            // Not mentioned, so not loaded, though it doesn't compile.
-            File(dir, "unused.fk").writeText("bad(): Int = \"x\"\n")
+            write("Ratios.fk", "module Ratios {\n  type Ratio(n: Int, d: Int)\n  private gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)\n  make(n: Int, d: Int): Ratio = {\n    g = gcd(n, d)\n    Ratio(n / g, d / g)\n  }\n}\n")
+            // Halves uses Ratios, in the same package, so needs no import, and comes in after it.
+            write("Halves.fk", "module Halves {\n  half(r: Ratios.Ratio): Ratios.Ratio = Ratios.make(r.n, r.d * 2)\n}\n")
+            write("geometry/Shapes.fk", "module Shapes {\n  type Shape { Circle(radius: Float), Square(side: Float) }\n  area(s: Shape): Float = when (s) {\n    Circle(r) -> 3.0 * r * r\n    Square(side) -> side * side\n  }\n}\n")
+            // A lower-case file's declarations are its package's.
+            write("geometry/units.fk", "cm(m: Float): Float = m * 100.0\nprivate secret(): Int = 1\n")
+            write("extras/ListExtras.fk", "module ListExtras {\n  sumBy<A>(xs: List<A>, f: (A) -> Int): Int = xs.map(f).sum()\n}\n", lib)
+            // Not used, so never read, though it doesn't compile.
+            write("unused.fk", "bad(): Int = \"x\"\n")
             val main = File(dir, "main.fk")
-            fun compileMain(source: String, dirs: List<File> = listOf(dir, lib)) = main.writeText(source).let { compile(main, dirs) }
+            fun compileMain(source: String) = main.writeText(source).let { compile(main, listOf(dir, lib)) }
+            fun errorIn(source: String) = assertFailsWith<CompileError> { compileMain(source) }.toString()
             val ml = compileMain(
-                "main() = {\n  assertEquals(Ratios.Ratio(1, 4), Halves.half(Ratios.make(2, 4)))\n" +
-                    "  assertEquals(6, ListExtras.sumBy([\"a\", \"bb\", \"ccc\"], s -> s.length))\n}",
+                """
+                import geometry.Shapes
+                import geometry.Shapes.Shape.Circle as Round
+                import geometry.cm
+                import extras.ListExtras
+
+                main() = {
+                  assertEquals(Ratios.Ratio(1, 4), Halves.half(Ratios.make(2, 4)))
+                  assertEquals(12.0, Shapes.area(Circle(2.0)))
+                  assertEquals(3.0, Shapes.area(Round(1.0)))
+                  assertEquals(250.0, cm(2.5))
+                  assertEquals(6, ListExtras.sumBy(["a", "bb", "ccc"], s -> s.length))
+                  // A full name needs no import.
+                  assertEquals(4.0, geometry.Shapes.area(geometry.Shapes.Square(2.0)))
+                }
+                """.trimIndent(),
             )
             assertEquals("", runOcaml(ml))
-            assertContains(ml, "module Ratios : sig")
+            assertContains(ml, "module Geometry = struct")
             assertTrue(ml.indexOf("module Ratios") < ml.indexOf("module Halves"))
-            assertContains(runCatching { runOcaml(compileMain("main() = ListExtras.check()")) }.exceptionOrNull()?.message.orEmpty(), "list-extras.fk line 2: assertion failed")
-            assertContains(assertFailsWith<CompileError> { compileMain("main() = Ratios.gcd(2, 4)") }.toString(), "'gcd' is private to Ratios")
-            assertContains(assertFailsWith<CompileError> { compileMain("main() = ListExtras.check()", listOf(dir)) }.toString(), "unknown name 'ListExtras'")
-            File(lib, "broken.fk").writeText("bad(): Int = \"x\"\n")
-            assertEquals("${File(lib, "broken.fk").path}:1:14: error: type mismatch: expected Int but found String", assertFailsWith<CompileError> { compileMain("main() = Broken.bad()") }.toString())
+            assertContains(errorIn("main() = Ratios.gcd(2, 4)"), "'gcd' is private to Ratios")
+            assertContains(errorIn("main() = Shapes.area(Shapes.Circle(1.0))"), "unknown name 'Shapes'")
+            assertContains(errorIn("import geometry.Nope\nmain() = Unit"), "geometry has no 'Nope'")
+            assertContains(errorIn("import nowhere.Thing\nmain() = Unit"), "import nowhere.Thing names no package")
+            assertContains(errorIn("import geometry.secret\nmain() = assertEquals(1, secret())"), "'secret' is private to")
+            assertContains(errorIn("main() = assertEquals(Some(1), Options.pure(1))"), "unknown name 'Options'; it's in the standard library: import fckt.Options")
+            // .* brings in all of a package, or of a module; as renames; two imports' names clash only where used.
+            write("geometry/Units.fk", "module Units {\n  mm(m: Float): Float = m * 1000.0\n}\n")
+            write("shop/Items.fk", "module Items {\n  type Shape(name: String)\n}\n")
+            assertEquals("", runOcaml(compileMain("import geometry.*\nmain() = assertEquals(4000.0, Units.mm(Shapes.area(Shapes.Square(2.0))))")))
+            assertEquals("", runOcaml(compileMain("import geometry.Shapes.*\nmain() = assertEquals(12.0, area(Circle(2.0)))")))
+            assertEquals("", runOcaml(compileMain("import geometry.Shapes.area as size\nimport geometry.Shapes\nmain() = assertEquals(4.0, size(Square(2.0)))")))
+            assertContains(errorIn("import geometry.Shapes\nimport shop.Items\nf(s: Shape) = 1\nmain() = Unit"), "'Shape' is imported from geometry.Shapes.Shape and shop.Items.Shape; import the one you mean by name")
+            compileMain("import geometry.Shapes\nimport shop.Items\nimport geometry.Shapes.Shape\nf(s: Shape) = 1\nmain() = Unit")
+            assertContains(errorIn("import geometry.Shapes.area\nimport geometry.Units.mm as area\nmain() = Unit"), "'area' is imported already, as geometry.Shapes.area")
+            // A capitalised file is its module, written out; another module in it must be private.
+            write("Loose.fk", "f() = 1\n")
+            assertContains(errorIn("main() = assertEquals(1, Loose.f())"), "Loose.fk must declare module Loose { ... }")
+            write("Two.fk", "module Two { f() = 1 }\nmodule Other { g() = 2 }\n")
+            assertContains(errorIn("main() = assertEquals(1, Two.f())"), "module Other belongs in its own file, Other.fk; or make it private to Two.fk")
+            write("Pair.fk", "module Pair { f() = Helper.g() }\nprivate module Helper { g() = 2 }\n")
+            assertEquals("", runOcaml(compileMain("main() = assertEquals(2, Pair.f())")))
             // A program's own declarations come first: this Ratios is the program's, not the file.
             assertEquals("", runOcaml(compileMain("module Ratios { one() = 1 }\nmain() = assertEquals(1, Ratios.one())")))
         } finally {
             dir.deleteRecursively()
+            lib.deleteRecursively()
         }
     }
 
