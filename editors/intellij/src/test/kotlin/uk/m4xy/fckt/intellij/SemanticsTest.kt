@@ -220,4 +220,21 @@ class SemanticsTest {
             marked("external type Array<A> = \"'a array\""),
         )
     }
+
+    @Test
+    fun `effect is a keyword where it declares one`() {
+        val source = """
+            effect Clock { now(): Int }
+            effect Database
+            effect(x: Int) = x
+        """.trimIndent()
+        assertEquals(
+            """
+            [KEYWORD:effect] [INTERFACE:Clock] { [FUNCTION_DECLARATION:now](): [CLASS:Int] }
+            [KEYWORD:effect] [ANNOTATION:Database]
+            [FUNCTION_DECLARATION:effect]([PARAMETER:x]: [CLASS:Int]) = [PARAMETER:x]
+            """.trimIndent(),
+            marked(source),
+        )
+    }
 }

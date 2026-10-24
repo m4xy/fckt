@@ -84,6 +84,7 @@ private fun rolesOf(text: String): Map<String, Role> {
             val name = word(i + 1)?.takeIf { it[0].isUpperCase() } ?: continue
             when (word(i)) {
                 "spec" -> roles[name] = Role.INTERFACE
+                "effect" -> roles[name] = if (word(i + 2) == "{" || word(i + 2) == "<") Role.INTERFACE else Role.ANNOTATION
                 "module" -> roles[name] = Role.OBJECT
                 "type" -> {
                     // Past any type parameters: what follows says what kind of type it is.
@@ -451,7 +452,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
                     // Where it is says it's a module, whatever else has the name: before a member
                     // (M.M<A>, unless it's a type with cases, whose cases come after a dot too),
                     // or before a block run in it (M { ... }), which a type's declaration isn't.
-                    val declares = prev != null && (word(prev) == "type" || word(prev) == "spec" || prev.kind == TokKind.COLON)
+                    val declares = prev != null && (word(prev) == "type" || word(prev) == "spec" || word(prev) == "effect" || prev.kind == TokKind.COLON)
                     when {
                         next?.kind == TokKind.DOT && role != Role.INTERFACE -> Role.OBJECT
                         next?.kind == TokKind.LBRACE && sameLine(t, next) && !declares -> Role.OBJECT
@@ -460,7 +461,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
                 }
             }
             // Keywords only in place.
-            name == "spec" && word(next)?.firstOrNull()?.isUpperCase() == true -> Role.KEYWORD
+            (name == "spec" || name == "effect") && word(next)?.firstOrNull()?.isUpperCase() == true -> Role.KEYWORD
             (name == "opaque" || name == "annotation") && word(next) == "type" -> Role.KEYWORD
             name == "var" && next?.kind == TokKind.IDENT && sameLine(t, next) -> Role.KEYWORD
             name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN || word(next) == "type") &&

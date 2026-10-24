@@ -1,6 +1,6 @@
 // Effects: what a function does besides work out its result. A function that prints must say so,
-// and so must every function that calls it, so one that says nothing is pure. An effect is an
-// annotation marked @Effect: the prelude declares @Console, which println has, and a program can
+// and so must every function that calls it, so one that says nothing is pure. An effect is
+// declared with `effect Name`: the prelude declares @Console, which println has, and a program can
 // declare its own.
 
 @Console greet(name: String) = println("hello $name")
@@ -23,7 +23,7 @@ type Logger(log: @Console (String) -> Unit)
 greeter(greeting: String): @Console (String) -> Unit = name -> println("$greeting, $name")
 
 // An effect of our own, and the one function that has it directly.
-@Effect annotation type Audit
+effect Audit
 @Audit external audit(entry: String): Unit = "ignore entry"
 
 // A spec says what its functions may do, and a module that follows it must say the same.

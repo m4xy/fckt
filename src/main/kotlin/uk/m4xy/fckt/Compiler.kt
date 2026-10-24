@@ -12,6 +12,7 @@ import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.syntax.Token
 import uk.m4xy.fckt.types.Checker
 import uk.m4xy.fckt.types.EFFECT
+import uk.m4xy.fckt.types.EFFECT
 import uk.m4xy.fckt.types.MUTATING
 import uk.m4xy.kastor.resolve
 import java.io.File
@@ -115,8 +116,9 @@ private fun link(text: String, available: Map<String, Source>): Linked {
         prelude += decl
         pending += uses to declaredNames(listOf(decl))
     }
-    // A var's effect, which assigning one has without naming it; and what xs[i] and xs[i] = v call.
-    pending += (mentioned(text, null) + MUTATING + "get" + "set") to declaredNames(main.decls)
+    // A var's effect, which assigning one has without naming it; what xs[i] and xs[i] = v call; and
+    // what `effect Name` declares one with.
+    pending += (mentioned(text, null) + MUTATING + "get" + "set" + EFFECT) to declaredNames(main.decls)
     while (pending.isNotEmpty()) {
         val (names, declared) = pending.removeFirst()
         for (name in names) {

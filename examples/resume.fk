@@ -25,7 +25,7 @@ parseAll(lines: List<String>): Result<List<(String, String)>, String> = attempt 
 }
 
 // Resumed in turn: pause parks the rest of a task at the back of a queue, and the next one runs.
-@Effect spec Async {
+effect Async {
   pause(): Unit
 }
 

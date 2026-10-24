@@ -19,7 +19,7 @@ greeted(name: String): List<String> = {
 }
 
 // An effect of our own, with a default for main.
-@Effect @HandledBy(FixedClock) spec Clock {
+@HandledBy(FixedClock) effect Clock {
   now(): Int
 }
 
@@ -30,7 +30,7 @@ module FixedClock : Clock {
 @Clock stamped(message: String) = "[${now()}] $message"
 
 // A generic effect: what countdown yields, Ints, is in its annotation.
-@Effect spec Yielding<A> {
+effect Yielding<A> {
   yield(value: A): Unit
 }
 

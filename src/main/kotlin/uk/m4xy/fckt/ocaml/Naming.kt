@@ -1,7 +1,8 @@
 package uk.m4xy.fckt.ocaml
 
+/** OCaml's reserved words, with `effect`, which OCaml 5.3 made one for its effect handlers. */
 private val KEYWORDS = setOf(
-    "and", "as", "assert", "asr", "begin", "class", "constraint", "do", "done", "downto", "else", "end",
+    "and", "as", "assert", "asr", "begin", "class", "constraint", "do", "done", "downto", "effect", "else", "end",
     "exception", "external", "false", "for", "fun", "function", "functor", "if", "in", "include", "inherit",
     "initializer", "land", "lazy", "let", "lor", "lsl", "lsr", "lxor", "match", "method", "mod", "module",
     "mutable", "new", "nonrec", "object", "of", "open", "or", "private", "rec", "sig", "struct", "then", "to",

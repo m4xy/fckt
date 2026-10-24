@@ -13,6 +13,9 @@ class Parser(private val tokens: List<Token>) {
         fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize()).file()
     }
 
+    /** The prelude's annotation that makes one an effect, which `effect Name` declares one with. */
+    private val EFFECT_ANNOTATION = "Effect"
+
     // ---- Token helpers ----
 
     /** Tokens that end something, which a declaration can't start with. */
@@ -147,37 +150,25 @@ class Parser(private val tokens: List<Token>) {
                 val decls = members { decl() }
                 Decl.Module(pos, name, decls, spec = spec, params = params)
             }
+            // `effect Console { println(s: String): Unit }`: an effect with operations, which a handler
+            // answers; `effect Mutating`: one without, only tracked. A keyword only here, as `spec` is.
+            at(T.IDENT) && peek.text == "effect" && peekAt(1).kind == T.IDENT && peekAt(1).text[0].isUpperCase() -> {
+                next()
+                val name = upperIdent("an effect's name")
+                val typeParams = typeParams()
+                val effect = listOf(Annotation(pos, EFFECT_ANNOTATION, emptyList()))
+                if (at(T.LPAREN)) throw error("an effect has no fields: its operations go in braces, as in effect $name { op(x: Int): Unit }")
+                if (accept(T.LBRACE) != null) return annotate(specBody(pos, name, typeParams), effect)
+                if (typeParams.isNotEmpty()) throw error("only an effect with operations takes type parameters, which its operations use")
+                Decl.Record(pos, name, emptyList(), emptyList(), isAnnotation = true, annotations = effect)
+            }
             // `spec` is a keyword only here, so it can still name a value.
             at(T.IDENT) && peek.text == "spec" && peekAt(1).kind == T.IDENT && (peekAt(2).kind == T.LBRACE || peekAt(2).kind == T.LT) -> {
                 next()
                 val name = upperIdent("a spec name")
-                // A handled effect may be generic: @Effect spec Yielding<A> { yield(value: A): Unit }.
                 val specTypeParams = typeParams()
                 expect(T.LBRACE, "'{'")
-                val types = mutableListOf<SpecType>()
-                val values = mutableListOf<SpecValue>()
-                members {
-                    val annotations = annotations()
-                    val memberPos = peek.pos
-                    if (annotations.isNotEmpty() && at(T.TYPE)) throw error("a spec's type takes no annotations")
-                    if (accept(T.TYPE) != null) {
-                        val typeName = upperIdent("a type name")
-                        val typeParams = typeParams()
-                        if (at(T.ASSIGN) || at(T.LPAREN) || at(T.LBRACE)) {
-                            throw error("a spec's types are abstract: write just 'type $typeName', and define it in each module")
-                        }
-                        types += SpecType(memberPos, typeName, typeParams)
-                    } else {
-                        val valueName = ident("a type or a value in the spec")
-                        if (valueName[0].isUpperCase()) throw error("functions and values start with a lower-case letter", memberPos)
-                        val typeParams = typeParams()
-                        val params = if (at(T.LPAREN)) params() else null
-                        params?.firstOrNull { it.type == null }?.let { throw error("a spec's parameters need types: ${it.name}: Type", it.pos) }
-                        expect(T.COLON, if (params == null) "':' and the value's type" else "':' and the result type")
-                        values += SpecValue(memberPos, valueName, typeParams, params, type(), annotations)
-                    }
-                }
-                Decl.Spec(pos, name, types, values, typeParams = specTypeParams)
+                specBody(pos, name, specTypeParams)
             }
             at(T.IDENT) && peek.text == "interface" && peekAt(1).kind == T.IDENT ->
                 throw error("write a type with cases as 'type ${peekAt(1).text} { ... }'")
@@ -353,6 +344,34 @@ class Parser(private val tokens: List<Token>) {
         val token = expect(T.IDENT, what)
         if (!token.text[0].isUpperCase()) throw error("$what must start with an upper-case letter", token.pos)
         return token.text
+    }
+
+    /** A spec's members, after its `{`: abstract types, and values with their types. */
+    private fun specBody(pos: Pos, name: String, typeParams: List<String>): Decl.Spec {
+        val types = mutableListOf<SpecType>()
+        val values = mutableListOf<SpecValue>()
+        members {
+            val annotations = annotations()
+            val memberPos = peek.pos
+            if (annotations.isNotEmpty() && at(T.TYPE)) throw error("a spec's type takes no annotations")
+            if (accept(T.TYPE) != null) {
+                val typeName = upperIdent("a type name")
+                val typeParams = typeParams()
+                if (at(T.ASSIGN) || at(T.LPAREN) || at(T.LBRACE)) {
+                    throw error("a spec's types are abstract: write just 'type $typeName', and define it in each module")
+                }
+                types += SpecType(memberPos, typeName, typeParams)
+            } else {
+                val valueName = ident("a type or a value in the spec")
+                if (valueName[0].isUpperCase()) throw error("functions and values start with a lower-case letter", memberPos)
+                val typeParams = typeParams()
+                val params = if (at(T.LPAREN)) params() else null
+                params?.firstOrNull { it.type == null }?.let { throw error("a spec's parameters need types: ${it.name}: Type", it.pos) }
+                expect(T.COLON, if (params == null) "':' and the value's type" else "':' and the result type")
+                values += SpecValue(memberPos, valueName, typeParams, params, type(), annotations)
+            }
+        }
+        return Decl.Spec(pos, name, types, values, typeParams = typeParams)
     }
 
     /** `<A, B>`; an effect parameter is `@E`, and named `@E` here. */

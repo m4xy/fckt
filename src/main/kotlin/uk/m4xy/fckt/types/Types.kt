@@ -284,7 +284,7 @@ private fun template(head: String, vararg slots: Any): Builtin = Builtin.Templat
 class BuiltinMember(val params: List<Type>, val result: Type, val translation: Builtin, val isProperty: Boolean = false)
 
 /** Names of the assertion built-ins, which lowering translates specially. */
-/** The annotation, declared in the prelude, that makes an annotation type an effect: `@Effect annotation type Console`. */
+/** The annotation, declared in the prelude, that makes an annotation type or spec an effect: what `effect Console` declares one with. */
 const val EFFECT = "Effect"
 
 /** The effect, declared in the prelude, of assigning a `var`: changing a value someone else may see. */

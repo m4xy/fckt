@@ -44,7 +44,7 @@ module Ordering {
 // ---- Ports ----
 
 // Storing and fetching, however it's done.
-@Effect annotation type Persistence
+effect Persistence
 
 // Every function of a @Repository is @Persistence to its callers; what its module does beyond
 // that, Postgres or memory, stays inside the module.

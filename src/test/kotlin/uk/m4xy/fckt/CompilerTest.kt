@@ -376,7 +376,7 @@ class CompilerTest {
         assertContains(program("type H(f: (String) -> Unit)\nh() = H(println)"), "expected (String) -> Unit but found @Console (String) -> Unit")
         assertContains(program("mk(): (String) -> Unit = s -> println(s)"), "this does @Console, but the type of the function it's in says it's pure")
         assertContains(program("f(g: @Console () -> Unit) = g()"), "'f' does @Console")
-        assertContains(program("annotation type Pure\nf(g: @Pure () -> Unit) = 1"), "'Pure' isn't an effect; declare one with @Effect annotation type Pure")
+        assertContains(program("annotation type Pure\nf(g: @Pure () -> Unit) = 1"), "'Pure' isn't an effect; declare one with effect Pure")
         // A spec that says what its functions may do is a promise its modules must keep.
         assertContains(
             program("spec Logger { @Pure log(s: String): Unit }\nmodule L : Logger { @Console log(s: String) = println(s) }"),
@@ -450,7 +450,7 @@ class CompilerTest {
             error(withoutMain.replace("  private total(order: Order)", "  peek(customer: String) = LoyalCustomers.discountFor(customer)\n  private total(order: Order)") + "main() = assert(true)"),
             "'peek' does @Persistence, but it's in Ordering, which may only be pure",
         )
-        val io = "@Effect annotation type Network\n@Console @Network annotation type Io\n"
+        val io = "effect Network\n@Console @Network annotation type Io\n"
         fun program(source: String) = error("$io$source\nmain() = assert(true)")
         compile("$io@Io f() = println(\"x\")\n@Io module M {\n  g() = println(\"y\")\n}\nh(k: @Io () -> Unit) = 1\nmain() = assert(true)")
         // A module with effects is a ceiling: nothing in it can add more, and @Pure allows nothing.
@@ -466,8 +466,30 @@ class CompilerTest {
         compile("$io$a@A(\"Z\") @C @D annotation type Z\nmain() = assert(true)")
         compile("$io" + a.replace("annotation type A", "@Repeatable annotation type A") + "@C @D annotation type Z\nmain() = assert(true)")
         assertContains(program("@D annotation type C\n@C annotation type D"), "annotations can't be annotated in a circle")
-        // @Effect describes Console; it isn't passed on, so @Loud carries Console but isn't an effect itself.
+        // Console is an effect because it's marked @Effect, which isn't passed on: @Loud carries Console but isn't an effect itself.
         compile("$io@Console annotation type Loud\n@Loud f() = println(\"x\")\nmain() = assert(true)")
+    }
+
+    @Test
+    fun `effect declares an effect, with operations or without`() {
+        val source = """
+            effect Clock {
+              now(): Int
+            }
+            effect Database
+            @Database @Console annotation type Repository
+            @Database save(x: Int) = Unit
+            @Clock stamp() = now()
+            // Still a name for anything else.
+            effect(x: Int) = x + 1
+            @Console main() = Clock(now = ~7) { println((stamp() + effect(1)).toString()) }
+        """.trimIndent()
+        assertEquals("9\n", run(source))
+        // What it means, written out, works as before.
+        assertEquals("7\n", run("@Effect spec Clock { now(): Int }\n@Console main() = Clock(now = ~7) { println(now().toString()) }"))
+        assertContains(error("effect Clock(at: Int)\nmain() = Unit"), "an effect has no fields: its operations go in braces, as in effect Clock { op(x: Int): Unit }")
+        assertContains(error("effect Tagged<A>\nmain() = Unit"), "only an effect with operations takes type parameters")
+        assertContains(error("annotation type Route\n@Route f() = 1\ng(h: @Route () -> Unit) = h()\nmain() = Unit"), "'Route' isn't an effect; declare one with effect Route")
     }
 
     @Test
@@ -496,7 +518,7 @@ class CompilerTest {
 
     @Test
     fun `a type can take effects as a parameter`() {
-        val box = "@Effect spec Clock { now(): Int }\ntype Box<@E>(run: @E () -> Unit)\n"
+        val box = "effect Clock { now(): Int }\ntype Box<@E>(run: @E () -> Unit)\n"
         fun program(source: String) = error("$box$source")
         // Given, as several effects, or one with a parameter's; left out, it's whatever's put in.
         val source = box + """
@@ -612,7 +634,7 @@ class CompilerTest {
     @Test
     fun `a handler can resume the rest of the block now, later, or never`() {
         assertEquals("a: started\nb: started\na: finished\nb: finished\n", run(File("examples/resume.fk").readText()))
-        val fail = "@Effect spec Fail { fail(reason: String): Nothing }\n@Effect spec Choose { choose(): Boolean }\n"
+        val fail = "effect Fail { fail(reason: String): Nothing }\neffect Choose { choose(): Boolean }\n"
         fun program(source: String) = error("$fail$source")
         // Nothing can't be answered, or resumed with.
         assertContains(
@@ -633,7 +655,7 @@ class CompilerTest {
         val ml = compile(source)
         assertContains(ml, "| Console_println : string -> unit Effect.t")
         assertContains(ml, "| effect (Clock_now ()), k -> h.now (fun v -> Effect.Deep.continue k v)")
-        val clock = "@Effect spec Clock { now(): Int }\n@Effect spec Yielding<A> { yield(value: A): Unit }\n"
+        val clock = "effect Clock { now(): Int }\neffect Yielding<A> { yield(value: A): Unit }\n"
         fun program(source: String) = error("$clock$source")
         // main must handle what it does, unless the effect has a default.
         assertContains(program("@Clock stamp() = now()\nmain() = println(\"${'$'}{stamp()}\")"), "main does @Clock, but nothing handles it: run it in a handler, like Clock(...) { ... }")
@@ -645,15 +667,15 @@ class CompilerTest {
         assertContains(program("module Gen : Yielding { yield(value: Int) = Unit }\nmain() = assert(true)"), "Gen can't follow Yielding, which takes type parameters")
         // Two effects with an operation of the same name: say which.
         // A program's own operation stands in for the prelude's of the same name, unless both are named.
-        assertContains(program("@Effect spec Log { println(s: String): Unit }\nf() = println(\"x\")\nmain() = assert(true)"), "'f' does @Log")
+        assertContains(program("effect Log { println(s: String): Unit }\nf() = println(\"x\")\nmain() = assert(true)"), "'f' does @Log")
         assertContains(
-            program("@Effect spec Log { println(s: String): Unit }\n@Console f() = Console.println(\"x\")\ng() = println(\"x\")\nmain() = assert(true)"),
+            program("effect Log { println(s: String): Unit }\n@Console f() = Console.println(\"x\")\ng() = println(\"x\")\nmain() = assert(true)"),
             "'println' is an operation of Console and Log; write Console.println",
         )
         assertContains(program("main() = Clock(now = 1) { 1 }"), "expected () -> Int but found Int")
         assertContains(program("main() = {\n  h = 1\n  h { 2 }\n}"), "this isn't a handler")
         // A repository hides what its module does, but not an effect that needs a handler.
-        val repository = "@Effect annotation type Persistence\n@Persistence @Encapsulates annotation type Repository\n@Repository spec Store { load(): Int }\n"
+        val repository = "effect Persistence\n@Persistence @Encapsulates annotation type Repository\n@Repository spec Store { load(): Int }\n"
         assertContains(
             program("${repository}module Timed : Store { @Clock load() = now() }\nmain() = assert(true)"),
             "'load' does @Clock, which needs a handler and has no default, so Store can't hide it: handle it inside Timed, or give Clock a default with @HandledBy",

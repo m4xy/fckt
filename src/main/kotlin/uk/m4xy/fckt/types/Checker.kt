@@ -1297,7 +1297,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         a.decl = decl
         if (decl is Decl.Spec && a.typeArgs.isNotEmpty()) return@flatMap listOf(Type.Con(decl.name, a.typeArgs.map { resolve(it) }))
         effectsOf(listOf(a), currentPath, a.pos).map { Type.Con(it) }.ifEmpty {
-            throw CompileError(a.pos, "'${a.name}' isn't an effect; declare one with @Effect annotation type ${a.name.substringAfterLast('.')}")
+            throw CompileError(a.pos, "'${a.name}' isn't an effect; declare one with effect ${a.name.substringAfterLast('.')}")
         }
     }
 

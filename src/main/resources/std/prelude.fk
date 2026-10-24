@@ -139,16 +139,17 @@ annotation type Meta
 
 // What a function may do besides work out its result. It must say so, and so must every function
 // that calls it: @Console greet(name: String) = println("hello $name"). A module's effects pass to
-// everything in it, which can do no more. @Effect makes an annotation an effect, so a library can
-// declare its own.
+// everything in it, which can do no more. `effect Name` declares one, as a library can: with
+// operations in braces, a handled effect, whose operations a handler answers; without, one that's
+// only tracked. It's an annotation marked @Effect, which is how other annotations see it.
 @Meta annotation type Effect
 
 // The effect nothing has: a module or function that may only be @Pure does nothing.
-@Effect annotation type Pure
+effect Pure
 
 // Reads and writes the console. A handled effect: main uses the terminal, and a test can answer it
 // itself, as Console(print = ..., println = line -> ..., readLine = ~"Ada") { greet() } does.
-@Effect @HandledBy(Terminal) spec Console {
+@HandledBy(Terminal) effect Console {
   print(s: String): Unit
   println(s: String): Unit
   readLine(): String
@@ -166,11 +167,11 @@ module Terminal : Console {
 
 // Changes a var that someone else can see. Changing one that was made in a function and never
 // left it isn't seen, so it doesn't count: a function can use vars inside and still be pure.
-@Effect annotation type Mutating
+effect Mutating
 
 // Stops what it's in: fail("why") never returns, so it fits anywhere, as in
 // if (n < 0) fail("negative"). attempt { ... } turns it into a Result.
-@Effect spec Fail {
+effect Fail {
   fail(reason: String): Nothing
 }
 
@@ -178,7 +179,7 @@ module Terminal : Console {
 attempt<A>(block: @Fail () -> A): Result<A, String> = Fail(fail = (reason, _) -> Error(reason)) { Ok(block()) }
 
 // Hands out values one at a time, each when it's asked for: see sequence.
-@Effect spec Yielding<A> {
+effect Yielding<A> {
   yield(value: A): Unit
 }
 
