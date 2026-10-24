@@ -6,6 +6,7 @@ import uk.m4xy.fckt.syntax.Arg
 import uk.m4xy.fckt.syntax.BinaryRef
 import uk.m4xy.fckt.syntax.CallRef
 import uk.m4xy.fckt.syntax.CompileError
+import uk.m4xy.fckt.syntax.CompileErrors
 import uk.m4xy.fckt.syntax.Copier
 import uk.m4xy.fckt.syntax.ConstructorRef
 import uk.m4xy.fckt.syntax.Decl
@@ -66,6 +67,8 @@ class Program(
     val effects: List<Decl.Spec>,
     /** The handlers `main` runs in: for each effect it does that needs one, its default. */
     val mainHandlers: List<Pair<Decl.Spec, Decl.Module>>,
+    /** The effects each annotation type or effect passes on to what it's used on, by its full name. */
+    val annotationEffects: Map<String, Set<String>> = emptyMap(),
 )
 
 /** A case of a sealed type: [variant], declared by [origin], with [fields] typed in the sealed type's own terms. */
@@ -394,10 +397,25 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         checkModuleSpecs()
         checkArgumentsDefine()
         val groups = dependencyGroups()
-        for (group in groups) checkGroup(group)
-        for (app in applications.keys) checkArgumentTypes(app)
-        checkExposure()
-        checkAnnotations()
+        // Each group is checked whatever the others' errors, so a program's errors come together.
+        val errors = mutableListOf<CompileError>()
+        fun recover(block: () -> Unit) = try {
+            block()
+        } catch (e: CompileError) {
+            errors += e
+        }
+        for (group in groups) {
+            try {
+                checkGroup(group)
+            } catch (e: CompileError) {
+                errors += e
+                failed(group)
+            }
+        }
+        for (app in applications.keys) recover { checkArgumentTypes(app) }
+        recover { checkExposure() }
+        recover { checkAnnotations() }
+        CompileErrors.throwIfAny(errors)
 
         // Copies made by functors share the functor's OCaml labels and constructors.
         val labelCounts = records.values.filter { it.name !in copyOrigins }.flatMap { r -> r.fields.map { snake(it.name) } }.groupingBy { it }.eachCount()
@@ -425,6 +443,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             annotationTypes = annotationTypes.values.toList(),
             effects = specs.values.filter { isEffect(it) && it.values.isNotEmpty() },
             mainHandlers = mainHandlers,
+            annotationEffects = (annotationTypes.values + specs.values.filter { isEffect(it) }).associate { d ->
+                d.name to (runCatching { effectsOf(d.annotations, d.path, d.pos) }.getOrDefault(emptySet()) + listOfNotNull(d.name.takeIf { isEffect(d) }))
+            },
             functionTypes = schemes.mapValues { it.value.type.zonk() },
             outsideTypes = outsideSchemes.filterKeys { it !in parameterMembers }.mapValues { it.value.type.zonk() },
             uses = uses,
@@ -2161,6 +2182,25 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     /** Whether a module that [path] is in has an opaque alias, which its functions' inferred types show as what it stands for. */
     private fun opaqueAround(path: List<String>): Boolean =
         aliases.values.any { it.isOpaque && it.path.isNotEmpty() && path.take(it.path.size) == it.path }
+
+    /**
+     * After an error in [group]: its functions may be anything, so what uses them is checked
+     * without more errors about them, and the checking state is as it was before it.
+     */
+    private fun failed(group: FunctionGroup) {
+        for (decl in group.decls) {
+            provisional.remove(decl)
+            if (decl in schemes) continue
+            // A function of as many parameters, taking and giving anything, and doing anything.
+            val type = decl.params?.let { ps -> Type.Fn(ps.map { u.fresh() }, u.fresh(), u.fresh()) } ?: u.fresh()
+            schemes[decl] = Scheme(type.freeVars().toList(), type)
+        }
+        pendingWhens.clear()
+        effects = u.fresh()
+        included = null
+        arrowEffects = null
+        typeParams = emptyMap()
+    }
 
     private fun globalType(decl: Decl.Function): Type {
         if (!inside(decl.path)) outsideSchemes[decl]?.let { return u.instantiate(it) }

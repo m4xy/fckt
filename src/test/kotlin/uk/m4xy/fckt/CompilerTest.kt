@@ -471,6 +471,30 @@ class CompilerTest {
     }
 
     @Test
+    fun `every error is reported, not just the first`() {
+        val types = """
+            double(x: Int) = x * 2
+            broken(s: String): Int = s
+            usesBroken() = broken("a") + 1
+            alsoBad() = println("x")
+            wrongCall() = double("three")
+            main() = assert(double(3) == 6)
+        """.trimIndent()
+        // usesBroken is fine: broken's error is reported where it is, not again where it's used.
+        assertEquals(
+            "2:26: error: type mismatch: expected Int but found String\n" +
+                "4:1: error: 'alsoBad' does @Console, so it must say so: @Console alsoBad(...)\n" +
+                "5:22: error: type mismatch: expected Int but found String",
+            error(types),
+        )
+        val syntax = "a() = (1 +\nb() = 2\nc( = 3\nd() = {\n  x = )\n}\ne() = 1\nmain() = Unit"
+        assertEquals(
+            "2:5: error: expected ')' but found '='\n3:4: error: expected a parameter name but found '='\n5:7: error: expected an expression but found ')'",
+            error(syntax),
+        )
+    }
+
+    @Test
     fun `a type can take effects as a parameter`() {
         val box = "@Effect spec Clock { now(): Int }\ntype Box<@E>(run: @E () -> Unit)\n"
         fun program(source: String) = error("$box$source")

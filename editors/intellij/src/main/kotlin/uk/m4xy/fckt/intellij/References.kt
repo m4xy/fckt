@@ -70,6 +70,20 @@ object Resolver {
         CachedValueProvider.Result.create(found, file)
     }
 
+    /** What hovering over each name in [file] shows, by its offset. */
+    fun hoversOf(file: FcktFile): Map<Int, String> = CachedValuesManager.getCachedValue(file) {
+        val path = file.virtualFile?.takeIf { it.isInLocalFileSystem }?.path?.let(::File)
+        val found = try {
+            hovers(file.text, path)
+        } catch (e: ProcessCanceledException) {
+            throw e
+        } catch (e: Exception) {
+            LOG.warn("couldn't work out the types in ${file.name}", e)
+            emptyMap()
+        }
+        CachedValueProvider.Result.create(found, file)
+    }
+
     private val LOG = Logger.getInstance(Resolver::class.java)
 
     /** The name element [target] is at: in [from], another file, or the standard library. */

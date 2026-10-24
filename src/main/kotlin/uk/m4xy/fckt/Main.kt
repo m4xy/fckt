@@ -37,7 +37,7 @@ fun main(args: Array<String>) {
         compile(source, listOf(source.absoluteFile.parentFile) + dirs)
     } catch (e: CompileError) {
         // Errors in other files name their file; the program's own don't.
-        System.err.println(if (e.pos?.file == null) "${source.path}:$e" else e.toString())
+        for (error in e.errors) System.err.println(if (error.pos?.file == null) "${source.path}:$error" else error.toString())
         exitProcess(1)
     }
     val target = output ?: (source.path.removeSuffix(".fk") + ".ml")

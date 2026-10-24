@@ -15,6 +15,9 @@ class Parser(private val tokens: List<Token>) {
 
     // ---- Token helpers ----
 
+    /** Tokens that end something, which a declaration can't start with. */
+    private val CLOSERS = setOf(T.RBRACE, T.RPAREN, T.RBRACKET, T.NEWLINE, T.SEMI)
+
     private val peek get() = tokens[p]
     private fun peekAt(offset: Int) = tokens[minOf(p + offset, tokens.size - 1)]
     private fun at(kind: T) = peek.kind == kind
@@ -44,14 +47,26 @@ class Parser(private val tokens: List<Token>) {
 
     fun file(): SourceFile {
         val decls = mutableListOf<Decl>()
+        val errors = mutableListOf<CompileError>()
         skipNewlines()
         while (!at(T.EOF)) {
-            decls += decl()
-            if (!at(T.EOF)) {
-                if (!at(T.NEWLINE) && !at(T.SEMI)) throw error("expected end of line after declaration but found ${describe(peek)}")
-                skipNewlines()
+            try {
+                decls += decl()
+                // A declaration ends its line. After an error, a bracket left open hides the line's
+                // end from the lexer, so a later line is an end too.
+                if (!at(T.EOF)) {
+                    val newLine = errors.isNotEmpty() && peek.pos.line > tokens[p - 1].pos.line
+                    if (!at(T.NEWLINE) && !at(T.SEMI) && !newLine) throw error("expected end of line after declaration but found ${describe(peek)}")
+                    skipNewlines()
+                }
+            } catch (e: CompileError) {
+                // Carry on from the next declaration, the next line that starts at the left edge.
+                errors += e
+                next()
+                while (!at(T.EOF) && !(peek.pos.col == 1 && peek.kind !in CLOSERS)) next()
             }
         }
+        CompileErrors.throwIfAny(errors)
         return SourceFile(receiverTypeParams(decls, typeNames(decls)))
     }
 

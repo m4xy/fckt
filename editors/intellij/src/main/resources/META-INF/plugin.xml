@@ -4,7 +4,8 @@
   <vendor>m4xy</vendor>
   <description><![CDATA[
     Support for fckt, a language with Kotlin's syntax that compiles to OCaml: highlighting that
-    colours each name by what it is, as Kotlin does, and the compiler's errors as you type.
+    colours each name by what it is, as Kotlin does, the compiler's errors as you type, and each
+    name's inferred type and effects on hover.
   ]]></description>
 
   <depends>com.intellij.modules.platform</depends>
@@ -25,6 +26,7 @@
     <lang.formatter language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFormattingModelBuilder"/>
     <langCodeStyleSettingsProvider implementation="uk.m4xy.fckt.intellij.FcktCodeStyleSettingsProvider"/>
     <lang.findUsagesProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFindUsagesProvider"/>
+    <lang.documentationProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktDocumentationProvider"/>
   </extensions>
 
   <!-- Uses only Kotlin's colours, which both of its modes have. -->

@@ -146,4 +146,4 @@ Kastor comes from `../kastor` through a Gradle included build.
 
 ## Editor support
 
-`editors/intellij` is an IntelliJ IDEA plugin: it colours each name by what it is, as IntelliJ does for Kotlin, shows the compiler's errors as you type, goes to declarations and finds usages, and formats code as ktlint formats Kotlin, with two-space indents. `editors/vscode` has a TextMate grammar for VS Code. See each one's README for how to install it.
+`editors/intellij` is an IntelliJ IDEA plugin: it colours each name by what it is, as IntelliJ does for Kotlin, shows every one of the compiler's errors as you type, goes to declarations and finds usages, shows on hover each name's inferred type and what a function does (`twice(f: (Int) -> Int, x: Int): Int`, does what f does) and the effects an annotation passes on, and formats code as ktlint formats Kotlin, with two-space indents. `editors/vscode` has a TextMate grammar for VS Code. See each one's README for how to install it.

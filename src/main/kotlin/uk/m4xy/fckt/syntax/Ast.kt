@@ -7,8 +7,29 @@ data class Pos(val line: Int, val col: Int, val file: String? = null) {
     override fun toString() = (file?.let { "$it:" } ?: "") + "$line:$col"
 }
 
-class CompileError(val pos: Pos?, message: String) : Exception(message) {
+open class CompileError(val pos: Pos?, message: String) : Exception(message) {
+    /** Each error found: this one, or for [CompileErrors], all of them. */
+    open val errors: List<CompileError> get() = listOf(this)
+
     override fun toString() = if (pos == null) "error: $message" else "$pos: error: $message"
+}
+
+/** Several errors, found by carrying on past each: reported in the order they're written. */
+class CompileErrors private constructor(override val errors: List<CompileError>) : CompileError(errors.first().pos, errors.first().message!!) {
+    override fun toString() = errors.joinToString("\n")
+
+    companion object {
+        /** Throws [errors], if there are any: the one, or all of them, in order. */
+        fun throwIfAny(errors: List<CompileError>) {
+            val all = errors.flatMap { it.errors }.distinctBy { it.toString() }
+                .sortedWith(compareBy({ it.pos?.file ?: "" }, { it.pos?.line ?: 0 }, { it.pos?.col ?: 0 }))
+            when (all.size) {
+                0 -> {}
+                1 -> throw all.single()
+                else -> throw CompileErrors(all)
+            }
+        }
+    }
 }
 
 // ---- Type syntax ----

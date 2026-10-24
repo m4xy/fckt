@@ -134,7 +134,7 @@ class FcktAnnotator : Annotator {
     }
 }
 
-/** The compiler's error for the file, if it has one, where it is. Runs in the background as the file changes. */
+/** The compiler's errors for the file, each where it is. Runs in the background as the file changes. */
 class FcktErrorAnnotator : ExternalAnnotator<FcktErrorAnnotator.Input, FcktErrorAnnotator.Found>() {
     class Input(val text: String, val file: File?)
     class Found(val text: String, val error: CompileError)
@@ -156,8 +156,11 @@ class FcktErrorAnnotator : ExternalAnnotator<FcktErrorAnnotator.Input, FcktError
     }
 
     override fun apply(file: PsiFile, found: Found?, holder: AnnotationHolder) {
-        val error = found?.error ?: return
-        if (found.text != file.text) return
+        if (found == null || found.text != file.text) return
+        for (error in found.error.errors) mark(error, found.text, holder)
+    }
+
+    private fun mark(error: CompileError, text: String, holder: AnnotationHolder) {
         val pos = error.pos
         val message = error.message ?: "error"
         if (pos == null || pos.file != null) {
@@ -166,7 +169,6 @@ class FcktErrorAnnotator : ExternalAnnotator<FcktErrorAnnotator.Input, FcktError
             holder.newAnnotation(HighlightSeverity.ERROR, where + message).fileLevel().create()
             return
         }
-        val text = found.text
         val lineStart = text.lineSequence().take(pos.line - 1).sumOf { it.length + 1 }.coerceAtMost(text.length)
         val start = (lineStart + pos.col - 1).coerceIn(0, text.length)
         // The token there, or one character: enough to find it.

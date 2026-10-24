@@ -1,7 +1,7 @@
 # fckt for IntelliJ IDEA
 
-A plugin that highlights fckt (`.fk`) files the way IntelliJ highlights Kotlin, and shows the
-compiler's errors as you type. It uses the compiler itself: its parser says what each name is, and
+A plugin that highlights fckt (`.fk`) files the way IntelliJ highlights Kotlin, shows the
+compiler's errors as you type, and each name's inferred type on hover. It uses the compiler itself: its parser says what each name is, and
 its checker finds the errors.
 
 ## Building and installing
@@ -54,8 +54,19 @@ Highlight Usages in File (Cmd-Shift-F7) works too.
 
 ## Errors
 
-The file is compiled with its directory's other files, as `fckt` would, each time it changes. The
-first error is underlined where it is; one in another file is shown at the top of the editor.
+The file is compiled with its directory's other files, as `fckt` would, each time it changes. Each
+error is underlined where it is; one in another file is shown at the top of the editor. The
+compiler carries on past an error: past a declaration it can't parse, and past a function that
+doesn't check, which what uses it then takes to be whatever it needs, so one mistake is reported
+once.
+
+## Types on hover
+
+Hovering over a name, or Quick Documentation (F1, or Ctrl-J), shows what the checker worked out:
+a function's signature with every type filled in and what it does (`does @Console`, `pure`, or
+`does what f does` for one that does what its function parameter does); a local's, parameter's or
+field's type; and for an annotation, whether it's an effect and which effects it passes on, so
+`@Repository` says it passes on `@Persistence`.
 
 ## Testing
 

@@ -85,4 +85,11 @@ class IdeTest : BasePlatformTestCase() {
         val greet = myFixture.file.findElementAt(text.indexOf("greet(name"))!!.parent as FcktName
         assertTrue(myFixture.findUsages(greet).any { it.element!!.textRange.startOffset == text.indexOf("greet)") })
     }
+
+    fun `test hovering over a name shows its type and what it does`() {
+        myFixture.configureByText("f.fk", "@Console gr<caret>eet(name: String) = println(name)\nmain() = Unit")
+        val leaf = myFixture.file.findElementAt(myFixture.caretOffset)!!
+        val doc = FcktDocumentationProvider().generateHoverDoc(leaf, leaf)!!
+        assertTrue(doc, "greet(name: String): Unit" in doc && "does @Console" in doc)
+    }
 }
