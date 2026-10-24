@@ -361,6 +361,35 @@ class CompilerTest {
     }
 
     @Test
+    fun `a function says what it does besides work out its result`() {
+        assertEquals("hello fckt\nhello Ada\nhello Grace\ntotal: 3\nhi, there\ntransferred 10\n", run(File("examples/effects.fk").readText()))
+        fun program(source: String) = error("$source\nmain() = assert(true)")
+        assertContains(program("greet(n: String) = println(n)"), "'greet' does @Console, so it must say so: @Console greet(...)")
+        assertContains(program("@Console f() = 1"), "'f' is declared @Console, but doesn't do it")
+        assertContains(program("x = println(\"hi\")"), "a top-level value runs when the program starts; make it a function")
+        // Through what a function is given: map does what its function does.
+        assertContains(program("shout(xs: List<String>) = xs.forEach(println)"), "'shout' does @Console")
+        assertContains(program("apply(f: (Int) -> Int, x: Int) = f(x)\nq() = apply(x -> { println(\"a\"); x }, 1)"), "'q' does @Console")
+        compile("apply(f: (Int) -> Int, x: Int) = f(x)\np() = apply(x -> x + 1, 1)\ntwice(f, x) = f(f(x))\nt() = twice(x -> x * 2, 1)\nmain() = assert(true)")
+        // A function type says what calling it may do; unmarked, it's pure.
+        assertContains(program("type H(f: (String) -> Unit)\nh() = H(println)"), "expected (String) -> Unit but found @Console (String) -> Unit")
+        assertContains(program("mk(): (String) -> Unit = s -> println(s)"), "this does @Console, but the type of the function it's in says it's pure")
+        assertContains(program("f(g: @Console () -> Unit) = g()"), "'f' does @Console")
+        assertContains(program("annotation type Pure\nf(g: @Pure () -> Unit) = 1"), "'Pure' isn't an effect; declare one with @Effect annotation type Pure")
+        // A spec says what its functions may do, and its modules must keep to it.
+        assertContains(
+            program("spec Logger { log(s: String): Unit }\nmodule L : Logger { @Console log(s: String) = println(s) }"),
+            "'log' does @Console, but Logger's log doesn't say it can: declare it there, as @Console log(...)",
+        )
+        assertContains(
+            program("spec Logger { @Console log(s: String): Unit }\nmodule F(M: Logger) { run() = M.log(\"x\") }"),
+            "'run' does @Console",
+        )
+        // Calls inside a lambda happen when it's called, not where it's written.
+        compile("f() = { g = (s: String) -> println(s); 1 }\nmain() = assert(true)")
+    }
+
+    @Test
     fun `opaque types are abstract outside their module`() {
         val source = File("examples/specs.fk").readText()
         assertEquals("", run(source))

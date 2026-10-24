@@ -19,8 +19,8 @@ sealed interface TypeRef {
     /** `Name` or `Name<A, B>`. */
     data class Named(override val pos: Pos, val name: String, val args: List<TypeRef>) : TypeRef
 
-    /** `(A, B) -> R`; `() -> R` has no params. */
-    data class Function(override val pos: Pos, val params: List<TypeRef>, val result: TypeRef) : TypeRef
+    /** `(A, B) -> R`; `() -> R` has no params. With [effects], what calling it may do: `@Console (String) -> Unit`. */
+    data class Function(override val pos: Pos, val params: List<TypeRef>, val result: TypeRef, val effects: List<Annotation> = emptyList()) : TypeRef
 
     /** `(A, B)`: a tuple. */
     data class Tuple(override val pos: Pos, val elements: List<TypeRef>) : TypeRef
@@ -165,7 +165,14 @@ data class ModuleParam(val pos: Pos, val name: String, val spec: TypeRef.Named)
 data class SpecType(val pos: Pos, val name: String, val typeParams: List<String>)
 
 /** `name<A>(params): R` or `name: T` in a spec; [params] is null for a value. */
-data class SpecValue(val pos: Pos, val name: String, val typeParams: List<String>, val params: List<Param>?, val type: TypeRef)
+data class SpecValue(
+    val pos: Pos,
+    val name: String,
+    val typeParams: List<String>,
+    val params: List<Param>?,
+    val type: TypeRef,
+    val annotations: List<Annotation> = emptyList(),
+)
 
 data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>, val annotations: List<Annotation> = emptyList())
 

@@ -10,9 +10,15 @@ sealed class Type {
         override fun toString() = render(this, mutableMapOf())
     }
 
-    /** A function; OCaml sees it curried, and `() -> R` as `unit -> r`. */
-    data class Fn(val params: List<Type>, val result: Type) : Type() {
+    /**
+     * A function; OCaml sees it curried, and `() -> R` as `unit -> r`. Its [effects] are what
+     * calling it may do: an [effects] row, or a variable for one. They're checked, then compiled
+     * away, so two functions differing only in them are the same to OCaml, and [equals] ignores them.
+     */
+    class Fn(val params: List<Type>, val result: Type, val effects: Type = effects(emptySet(), null)) : Type() {
         override fun toString() = render(this, mutableMapOf())
+        override fun equals(other: Any?) = other is Fn && params == other.params && result == other.result
+        override fun hashCode() = params.hashCode() * 31 + result.hashCode()
     }
 
     /** Follows bound variables to the representative type. */
@@ -22,7 +28,7 @@ sealed class Type {
     fun zonk(): Type = when (val t = prune()) {
         is Var -> t
         is Con -> Con(t.name, t.args.map { it.zonk() })
-        is Fn -> Fn(t.params.map { it.zonk() }, t.result.zonk())
+        is Fn -> Fn(t.params.map { it.zonk() }, t.result.zonk(), t.effects.zonk())
     }
 
     fun freeVars(into: MutableSet<Var> = linkedSetOf()): Set<Var> {
@@ -32,6 +38,7 @@ sealed class Type {
             is Fn -> {
                 t.params.forEach { it.freeVars(into) }
                 t.result.freeVars(into)
+                t.effects.freeVars(into)
             }
         }
         return into
@@ -70,6 +77,32 @@ sealed class Type {
         /** Before what an annotation's field can refer to: `Type`, `Spec`, `Module`, `Case`, `Field`, or `@` and an annotation. */
         const val META = "meta "
 
+        /**
+         * A row of effects is a [Con] of this name: the effects' full names, each a [Con] of no
+         * arguments, then, if the row is open, a variable for the rest, which unification fills.
+         */
+        const val EFFECTS = "effects "
+
+        /** The row of [labels], and, if open, of what [rest] turns out to be. */
+        fun effects(labels: Set<String>, rest: Type?): Type = Con(EFFECTS, labels.sorted().map { Con(it) } + listOfNotNull(rest))
+
+        /** A row's effects, and the variable for the rest if it's open, following what that's been bound to. */
+        fun row(type: Type): Pair<Set<String>, Var?> {
+            val labels = linkedSetOf<String>()
+            var t = type.prune()
+            while (true) {
+                when (t) {
+                    is Var -> return labels to t
+                    is Con -> {
+                        val rest = t.args.lastOrNull()?.prune()?.takeIf { it !is Con || it.name == EFFECTS }
+                        t.args.filterIsInstance<Con>().filter { it.name != EFFECTS }.forEach { labels += it.name }
+                        t = rest ?: return labels to null
+                    }
+                    is Fn -> return labels to null
+                }
+            }
+        }
+
         /** A type's name in messages and output, without the markers above or a type parameter's `#`. */
         fun displayName(name: String) = name.removePrefix(META).removePrefix(ABSTRACT).removePrefix(SPEC_TYPE).removePrefix("#")
 
@@ -77,7 +110,8 @@ sealed class Type {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }
             is Con -> if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
             else if (t.args.isEmpty()) displayName(t.name) else "${displayName(t.name)}<${t.args.joinToString(", ") { render(it, names) }}>"
-            is Fn -> "(${t.params.joinToString(", ") { render(it, names) }}) -> ${render(t.result, names)}"
+            is Fn -> row(t.effects).first.joinToString("") { "@${displayName(it).substringAfterLast('.')} " } +
+                "(${t.params.joinToString(", ") { render(it, names) }}) -> ${render(t.result, names)}"
         }
     }
 }
@@ -108,7 +142,7 @@ class Unifier {
     fun substitute(type: Type, mapping: Map<Type.Var, Type>): Type = when (val t = type.prune()) {
         is Type.Var -> mapping[t] ?: t
         is Type.Con -> Type.Con(t.name, t.args.map { substitute(it, mapping) })
-        is Type.Fn -> Type.Fn(t.params.map { substitute(it, mapping) }, substitute(t.result, mapping))
+        is Type.Fn -> Type.Fn(t.params.map { substitute(it, mapping) }, substitute(t.result, mapping), substitute(t.effects, mapping))
     }
 
     /** Makes [a] and [b] equal, or returns false (leaving partial bindings, which callers report). */
@@ -117,14 +151,38 @@ class Unifier {
         val y = b.prune()
         return when {
             x === y -> true
+            x is Type.Con && y is Type.Con && (x.name == Type.EFFECTS || y.name == Type.EFFECTS) -> unifyEffects(x, y)
+            x is Type.Var && y is Type.Con && y.name == Type.EFFECTS -> unifyEffects(x, y)
+            y is Type.Var && x is Type.Con && x.name == Type.EFFECTS -> unifyEffects(x, y)
             x is Type.Var -> bind(x, y)
             y is Type.Var -> bind(y, x)
             x is Type.Con && y is Type.Con ->
                 x.name == y.name && x.args.size == y.args.size && x.args.zip(y.args).all { (p, q) -> unify(p, q) }
             x is Type.Fn && y is Type.Fn ->
                 x.params.size == y.params.size &&
-                    x.params.zip(y.params).all { (p, q) -> unify(p, q) } && unify(x.result, y.result)
+                    x.params.zip(y.params).all { (p, q) -> unify(p, q) } && unify(x.result, y.result) && unify(x.effects, y.effects)
             else -> false
+        }
+    }
+
+    /**
+     * Makes two rows of effects the same set: what's in one but not the other must be in the
+     * other's rest, so a closed row (no rest) can't take more. Two open rows share a new rest.
+     */
+    private fun unifyEffects(a: Type, b: Type): Boolean {
+        val (x, restX) = Type.row(a)
+        val (y, restY) = Type.row(b)
+        val onlyX = x - y
+        val onlyY = y - x
+        if (restX != null && restX === restY) return onlyX.isEmpty() && onlyY.isEmpty()
+        return when {
+            restX == null && restY == null -> onlyX.isEmpty() && onlyY.isEmpty()
+            restX == null -> onlyY.isEmpty() && bind(restY!!, Type.effects(onlyX, null))
+            restY == null -> onlyX.isEmpty() && bind(restX, Type.effects(onlyY, null))
+            else -> {
+                val rest = fresh()
+                bind(restX, Type.effects(onlyY, rest)) && bind(restY, Type.effects(onlyX, rest))
+            }
         }
     }
 
@@ -171,6 +229,9 @@ private fun template(head: String, vararg slots: Any): Builtin = Builtin.Templat
 class BuiltinMember(val params: List<Type>, val result: Type, val translation: Builtin, val isProperty: Boolean = false)
 
 /** Names of the assertion built-ins, which lowering translates specially. */
+/** The annotation, declared in the prelude, that makes an annotation type an effect: `@Effect annotation type Console`. */
+const val EFFECT = "Effect"
+
 const val ASSERT = "assert"
 const val ASSERT_EQUALS = "assertEquals"
 
@@ -190,8 +251,8 @@ object Builtins {
         // Kotlin's Unit is both the type and its one value.
         "Unit" -> Type.UNIT to "()"
         // Lowering writes these out itself, to report the failing line.
-        "assert" -> Type.Fn(listOf(Type.BOOLEAN), Type.UNIT) to ASSERT
-        "assertEquals" -> u.fresh().let { a -> Type.Fn(listOf(a, a), Type.UNIT) to ASSERT_EQUALS }
+        "assert" -> Type.Fn(listOf(Type.BOOLEAN), Type.UNIT, u.fresh()) to ASSERT
+        "assertEquals" -> u.fresh().let { a -> Type.Fn(listOf(a, a), Type.UNIT, u.fresh()) to ASSERT_EQUALS }
         else -> null
     }
 }

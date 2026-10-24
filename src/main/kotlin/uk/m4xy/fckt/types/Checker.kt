@@ -126,6 +126,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** Each `when` with a subject in the group being checked, with its subject's type, to check it covers every value. */
     private val pendingWhens = mutableListOf<Pair<Expr.When, Type>>()
+
+    /** What the code being checked may do, a row of effects: each call adds the effects it has. */
+    private var effects: Type = u.fresh()
+
+    /**
+     * While resolving a function's parameters' types, the effects an unannotated function type there
+     * has: the function's own, so that `map(xs, f)` does whatever `f` does. Elsewhere, null: an
+     * unannotated function type is pure.
+     */
+    private var arrowEffects: Type? = null
     private val polymorphic = mutableSetOf<String>()
 
     private val schemes = mutableMapOf<Decl.Function, Scheme>()
@@ -729,7 +739,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** Converts written type syntax to a [Type], with type parameters taken from [typeParams]. */
     private fun resolve(ref: TypeRef): Type = when (ref) {
-        is TypeRef.Function -> Type.Fn(ref.params.map { resolve(it) }, resolve(ref.result))
+        is TypeRef.Function -> Type.Fn(
+            ref.params.map { resolve(it) },
+            resolve(ref.result),
+            if (ref.effects.isEmpty()) arrowEffects ?: Type.effects(emptySet(), null) else Type.effects(effectNames(ref.effects), null),
+        )
         is TypeRef.Tuple -> Type.tuple(ref.elements.map { resolve(it) })
         is TypeRef.Named -> {
             val args = ref.args.map { resolve(it) }
@@ -859,6 +873,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     v.fields.forEach { check(d.path, it.annotations) }
                 }
                 is Decl.Function -> d.params.orEmpty().forEach { check(d.path, it.annotations) }
+                is Decl.Spec -> d.values.forEach { check(d.path, it.annotations) }
                 else -> {}
             }
         }
@@ -997,6 +1012,90 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun hasAnnotationType(m: Decl.Module): Boolean =
         m.decls.any { (it is Decl.Record && it.isAnnotation) || (it is Decl.Module && hasAnnotationType(it)) }
 
+    // ---- Effects ----
+
+    /** Whether [a] names an effect: an annotation type that is itself annotated `@Effect`. */
+    private fun isEffect(a: Annotation): Boolean = find(a.name, annotationTypes, null)?.let(::isEffect) ?: false
+
+    private fun isEffect(d: Decl.Record): Boolean {
+        val saved = currentPath
+        currentPath = d.path
+        try {
+            return d.annotations.any { find(it.name, annotationTypes, null)?.name == EFFECT }
+        } finally {
+            currentPath = saved
+        }
+    }
+
+    /** The full names of the effects [annotations] name, each of which must be one. */
+    private fun effectNames(annotations: List<Annotation>): Set<String> = annotations.map { a ->
+        val decl = find(a.name, annotationTypes, a.pos) ?: throw CompileError(a.pos, "unknown effect '${a.name}'")
+        if (!isEffect(decl)) throw CompileError(a.pos, "'${a.name}' isn't an effect; declare one with @Effect annotation type ${a.name.substringAfterLast('.')}")
+        a.decl = decl
+        decl.name
+    }.toSet()
+
+    /** Effects as they're written: `@Console @FileSystem`. */
+    private fun shown(effects: Set<String>): String = effects.sorted().joinToString(" ") { "@" + it.substringAfterLast('.') }
+
+    private inline fun <R> withArrowEffects(row: Type, block: () -> R): R {
+        val saved = arrowEffects
+        arrowEffects = row
+        try {
+            return block()
+        } finally {
+            arrowEffects = saved
+        }
+    }
+
+    /** Checks [block] as code that does [row], as a function's or a lambda's body does. */
+    private inline fun <R> doing(row: Type, block: () -> R): R {
+        val saved = effects
+        effects = row
+        try {
+            return block()
+        } finally {
+            effects = saved
+        }
+    }
+
+    /**
+     * Adds what a call does, [row], to what the code being checked does. A row with no rest gets
+     * one, so the code can do other things too. It fails only where the code must do no more than
+     * a written type says: a lambda passed where an `@Console (String) -> Unit` is wanted can't
+     * also write files.
+     */
+    private fun perform(row: Type, pos: Pos) {
+        val (labels, rest) = Type.row(row)
+        val open = if (rest == null) Type.effects(labels, u.fresh()) else row
+        if (!u.unify(open, effects)) {
+            val (allowed, _) = Type.row(effects)
+            val extra = labels - allowed
+            val can = if (allowed.isEmpty()) "says it's pure" else "says it can only do ${shown(allowed)}"
+            throw CompileError(pos, "this does ${shown(extra)}, but the type of the function it's in $can")
+        }
+    }
+
+    /**
+     * That [decl] declares what its body does, [row]: no more, no less. `main` may do anything, as
+     * running a program is what it's for; a top-level value can't do anything, as it runs on its own.
+     */
+    private fun checkEffects(decl: Decl.Function, row: Type) {
+        if (decl.name == "main") return
+        val done = Type.row(row).first
+        if (decl.params == null) {
+            if (done.isNotEmpty()) throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(done)}, but a top-level value runs when the program starts; make it a function: ${decl.simpleName}() = ...")
+            return
+        }
+        val declared = effectNames(decl.annotations.filter { isEffect(it) })
+        val undeclared = done - declared
+        if (undeclared.isNotEmpty()) {
+            throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(undeclared)}, so it must say so: ${shown(undeclared)} ${decl.simpleName}(...)")
+        }
+        val unused = declared - done
+        if (unused.isNotEmpty()) throw CompileError(decl.pos, "'${decl.simpleName}' is declared ${shown(unused)}, but doesn't do it")
+    }
+
     // ---- Specs ----
 
     /** Resolves each spec's values' types, with the spec's own types as `@T`. */
@@ -1011,11 +1110,19 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 val vars = v.typeParams.associateWith { u.fresh() }
                 typeParams = vars
                 val result = resolve(v.type)
+                // What it may do: what it declares, and whatever its function parameters do.
+                val rest = u.fresh()
+                val row = Type.effects(effectNames(v.annotations.filter { isEffect(it) }), rest)
                 val type = v.params?.let { params ->
                     checkDistinct(params.map { it.name to it.pos })
-                    Type.Fn(params.map { resolve(it.type!!) }, result)
+                    arrowEffects = row
+                    try {
+                        Type.Fn(params.map { resolve(it.type!!) }, result, row)
+                    } finally {
+                        arrowEffects = null
+                    }
                 } ?: result
-                v.name to Scheme(vars.values.toList(), type)
+                v.name to Scheme(vars.values.toList() + rest, type)
             }
             typeParams = emptyMap()
         }
@@ -1061,12 +1168,23 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val spec = moduleSpecs[module] ?: return
         val wanted = specSchemes.getValue(spec)[decl.simpleName] ?: return
         val names = wanted.vars.zip(spec.values.first { it.name == decl.simpleName }.typeParams)
-        val rigid = names.associate { (v, n) -> v to Type.Con("#$n") as Type }
+        // Its type parameters must work for any type; what else it may do is open, to be checked below.
+        val rest = wanted.vars.drop(names.size).associateWith { u.fresh() as Type }
+        val rigid = names.associate { (v, n) -> v to Type.Con("#$n") as Type } + rest
         val inside = specView(wanted.type, rigid) { name, args -> typeOf(typeDecl("$module.$name")!!, args) }
         val actual = u.instantiate(schemes.getValue(decl))
         val shown = actual.zonk()
         if (!u.unify(actual, inside)) {
             throw CompileError(decl.pos, "'${decl.simpleName}' has type $shown, but ${spec.simpleName} needs ${Type.render(wanted.type, names.toMap().toMutableMap())}, which here is ${inside.zonk()}")
+        }
+        // It can't do more than the spec says, as callers through the spec wouldn't know.
+        val value = spec.values.first { it.name == decl.simpleName }
+        val allowed = effectNames(value.annotations.filter { isEffect(it) })
+        (inside as? Type.Fn)?.let { fn ->
+            val extra = Type.row(fn.effects).first - allowed
+            if (extra.isNotEmpty()) {
+                throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(extra)}, but ${spec.simpleName}'s ${decl.simpleName} doesn't say it can: declare it there, as ${shown(extra)} ${decl.simpleName}(...)")
+            }
         }
         outsideSchemes[decl] = Scheme(wanted.vars, specView(wanted.type, emptyMap()) { name, args -> outsideType(module, name, args) })
     }
@@ -1074,7 +1192,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     /** A spec's [type] with its type variables replaced from [vars], and each of its own types by [own]. */
     private fun specView(type: Type, vars: Map<Type.Var, Type>, own: (String, List<Type>) -> Type): Type = when (val t = type.prune()) {
         is Type.Var -> vars[t] ?: t
-        is Type.Fn -> Type.Fn(t.params.map { specView(it, vars, own) }, specView(t.result, vars, own))
+        is Type.Fn -> Type.Fn(t.params.map { specView(it, vars, own) }, specView(t.result, vars, own), specView(t.effects, vars, own))
         is Type.Con -> t.args.map { specView(it, vars, own) }.let { args ->
             if (t.name.startsWith(Type.SPEC_TYPE)) own(t.name.removePrefix(Type.SPEC_TYPE), args) else Type.Con(t.name, args)
         }
@@ -1253,14 +1371,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val declaredParams = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
         val outside = mutableMapOf<Decl.Function, Type>()
         currentPath = group.decls.first().path
+        val rows = mutableMapOf<Decl.Function, Type>()
         for (decl in group.decls) {
             val vars = decl.typeParams.associateWith { u.fresh() }
             declaredParams[decl] = vars
             typeParams = vars
             val result = decl.returnType?.let { resolve(it) } ?: u.fresh()
+            // What it does: what its body's calls do, which is also what its function parameters may do.
+            val row = u.fresh()
+            rows[decl] = row
             val inside = decl.params?.let { params ->
                 checkDistinct(params.map { it.name to it.pos })
-                Type.Fn(params.map { p -> p.type?.let { resolve(it) } ?: u.fresh() }, result)
+                Type.Fn(withArrowEffects(row) { params.map { p -> p.type?.let { resolve(it) } ?: u.fresh() } }, result, row)
             } ?: result
             provisional[decl] = inside
             // Inside, an opaque type is what it stands for; callers outside see the type as written.
@@ -1269,7 +1391,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 try {
                     val shownResult = decl.returnType?.let { resolve(it) } ?: result
                     outside[decl] = if (inside is Type.Fn) {
-                        Type.Fn(decl.params!!.zip(inside.params).map { (p, t) -> p.type?.let { resolve(it) } ?: t }, shownResult)
+                        val params = withArrowEffects(row) { decl.params!!.zip(inside.params).map { (p, t) -> p.type?.let { resolve(it) } ?: t } }
+                        Type.Fn(params, shownResult, row)
                     } else {
                         shownResult
                     }
@@ -1282,8 +1405,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             typeParams = declaredParams.getValue(decl)
             val type = provisional.getValue(decl)
             val scope = Scope(null)
-            // An external's body is OCaml, trusted to have its declared type.
-            if (decl.external != null) continue
+            val row = rows.getValue(decl)
+            // An external's body is OCaml, trusted to have its declared type and effects.
+            if (decl.external != null) {
+                u.unify(row, Type.effects(effectNames(decl.annotations.filter { isEffect(it) }), u.fresh()))
+                continue
+            }
+            effects = row
             if (type is Type.Fn) {
                 decl.params!!.zip(type.params).forEach { (p, t) -> scope.vars[p.name] = Local(t, snake(p.name)) }
                 check(decl.body, type.result, scope)
@@ -1291,7 +1419,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 check(decl.body, type, scope)
             }
         }
+        effects = u.fresh()
         typeParams = emptyMap()
+        for (decl in group.decls) if (decl.external == null) checkEffects(decl, rows.getValue(decl))
         for (decl in group.decls) {
             // A declared type parameter must stay abstract: `id<T>(x: T): Int = x` is an error.
             val vars = declaredParams.getValue(decl)
@@ -1465,9 +1595,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             x is Type.Fn && y is Type.Fn ->
                 x.params.size == y.params.size &&
-                    y.params.zip(x.params).all { (a, b) -> subtype(a, b) } && subtype(x.result, y.result)
+                    y.params.zip(x.params).all { (a, b) -> subtype(a, b) } && subtype(x.result, y.result) && subEffects(x.effects, y.effects)
             else -> false
         }
+    }
+
+    /** A function that does [x] can be used where one that does [y] is wanted: [x] is within [y]. */
+    private fun subEffects(x: Type, y: Type): Boolean {
+        val (labels, rest) = Type.row(x)
+        return u.unify(if (rest == null) Type.effects(labels, u.fresh()) else x, y)
     }
 
     /** Every case of sealed type [x] is a case of [y], with the same field types. */
@@ -1605,7 +1741,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         constructor(e.name, expected, e.pos, asValue = true)?.let { shape ->
             e.resolved = NameRef.Constructor(shape.ref)
-            return if (shape.fieldTypes.isEmpty()) shape.result else Type.Fn(shape.fieldTypes, shape.result)
+            return if (shape.fieldTypes.isEmpty()) shape.result else Type.Fn(shape.fieldTypes, shape.result, u.fresh())
         }
         Builtins.function(e.name, u)?.let { (type, ocaml) ->
             e.resolved = NameRef.Builtin(ocaml)
@@ -1762,6 +1898,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val order = argOrder(e.args.map { it.name to it.value.pos }, global.params.map { it.name }, e.pos, "'${global.simpleName}'")
             checkArgs(e.args, order, fn.params, scope)
             e.resolved = CallRef.Function(order)
+            perform(fn.effects, e.pos)
             return fn.result
         }
         if (callee is Expr.Name && global == null && scope.lookup(callee.name) == null) {
@@ -1780,7 +1917,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (e.args.any { it.name != null }) throw CompileError(e.pos, "named arguments need a call to a declared function or type")
         val fn = when (val t = infer(callee, null, scope).prune()) {
             is Type.Fn -> t
-            is Type.Var -> Type.Fn(e.args.map { u.fresh() }, u.fresh()).also { u.unify(t, it) }
+            is Type.Var -> Type.Fn(e.args.map { u.fresh() }, u.fresh(), u.fresh()).also { u.unify(t, it) }
             else -> throw CompileError(callee.pos, "a $t is not a function")
         }
         if (fn.params.size != e.args.size) throw CompileError(e.pos, "this function takes ${fn.params.size} arguments, not ${e.args.size}")
@@ -1792,6 +1929,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             checkArgs(e.args, e.args.indices.toList(), fn.params, scope)
         }
         e.resolved = CallRef.Function(e.args.indices.toList())
+        perform(fn.effects, e.pos)
         return fn.result
     }
 
@@ -1840,6 +1978,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             assign(member.target, receiver, fn.params[0])
             checkArgs(e.args, e.args.indices.toList(), fn.params.drop(1), scope)
             e.resolved = CallRef.Extension(decl)
+            perform(fn.effects, e.pos)
             return fn.result
         }
         Builtins.member(receiver, member.name, u)?.let { builtin ->
@@ -1858,6 +1997,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             assign(member.target, receiver, fn.params[0])
             checkArgs(e.args, e.args.indices.toList(), fn.params.drop(1), scope)
             e.resolved = CallRef.Extension(global)
+            perform(fn.effects, e.pos)
             return fn.result
         }
         if (receiver is Type.Var) throw CompileError(member.pos, "can't tell what '${member.name}' is: the receiver's type isn't known here; annotate it")
@@ -1893,7 +2033,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val shape = constructor(e.name, expected, e.pos, asValue = true, qualifier = qualifier)
                 ?: throw CompileError(e.pos, "$qualifier has no '${e.name}'")
             e.resolved = MemberRef.Case(shape.ref)
-            return if (shape.fieldTypes.isEmpty()) shape.result else Type.Fn(shape.fieldTypes, shape.result)
+            return if (shape.fieldTypes.isEmpty()) shape.result else Type.Fn(shape.fieldTypes, shape.result, u.fresh())
         }
         val receiver = infer(e.target, null, scope).prune()
         field(e, receiver, scope)?.let { (ref, type) ->
@@ -1905,6 +2045,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val fn = globalType(decl) as Type.Fn
             assign(e.target, receiver, fn.params[0])
             e.resolved = MemberRef.Extension(decl)
+            perform(fn.effects, e.pos)
             return fn.result
         }
         Builtins.member(receiver, e.name, u)?.let {
@@ -2030,18 +2171,20 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun inferLambda(e: Expr.Lambda, expected: Type?, scope: Scope): Type {
         val expectedFn = expected?.prune() as? Type.Fn
+        // What its body does is what calling it does, not what the code around it does.
+        val row = expectedFn?.effects ?: u.fresh()
         if (e.ignoresArguments) {
             val params = expectedFn?.params ?: emptyList()
             e.paramNames = params.map { "_" }
             val result = expectedFn?.result ?: u.fresh()
-            check(e.body, result, scope)
-            return Type.Fn(params, result)
+            doing(row) { check(e.body, result, scope) }
+            return Type.Fn(params, result, row)
         }
         val hint = expectedFn?.takeIf { it.params.size == e.params.size }
         checkDistinct(e.params.map { it.name to it.pos })
         val inner = Scope(scope)
         val params = e.params.mapIndexed { i, p ->
-            val declared = p.type?.let { resolve(it) }
+            val declared = p.type?.let { withArrowEffects(row) { resolve(it) } }
             val type = declared ?: hint?.params?.get(i) ?: u.fresh()
             if (declared != null && hint != null) expect(hint.params[i], declared, p.pos)
             inner.vars[p.name] = Local(type, snake(p.name))
@@ -2049,8 +2192,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         e.paramNames = e.params.map { snake(it.name) }
         val result = hint?.result ?: u.fresh()
-        check(e.body, result, inner)
-        return Type.Fn(params, result)
+        doing(row) { check(e.body, result, inner) }
+        return Type.Fn(params, result, row)
     }
 
     private fun inferPipe(e: Expr.Pipe, scope: Scope): Type {
@@ -2067,14 +2210,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     checkArgs(f.args, f.args.indices.toList(), fn.params.dropLast(1), scope)
                     assign(e.value, value, fn.params.last())
                     f.resolved = CallRef.Function(f.args.indices.toList())
-                    f.type = Type.Fn(listOf(fn.params.last()), fn.result)
+                    f.type = Type.Fn(listOf(fn.params.last()), fn.result, fn.effects)
                     e.partial = true
+                    perform(fn.effects, e.pos)
                     return fn.result
                 }
             }
         }
         val result = u.fresh()
-        check(f, Type.Fn(listOf(value), result), scope)
+        val row = u.fresh()
+        check(f, Type.Fn(listOf(value), result, row), scope)
+        perform(row, e.pos)
         return result
     }
 
@@ -2274,6 +2420,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun instance(monad: Expr.Monadic, decl: Decl.Function, arity: Int, what: String): Type.Fn {
         val fn = globalType(decl).prune() as? Type.Fn
         if (fn == null || fn.params.size != arity) throw CompileError(monad.module.pos, "${decl.name} should take $what")
+        perform(fn.effects, monad.pos)
         return fn
     }
 
@@ -2326,6 +2473,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (fn == null || fn.params.size != 2 || next == null || next.params.size != 1) {
             throw CompileError(monad.module.pos, "${bind.name} should take a value and a function to go on with, as Monad's bind does")
         }
+        perform(fn.effects, monad.pos)
         return Triple(fn.params[0], next, fn.result)
     }
 
@@ -2429,14 +2577,19 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                         inner.vars[statement.name] = Local(type, statement.ocamlName)
                     } else {
                         checkDistinct(params.map { it.name to it.pos })
-                        val fn = Type.Fn(params.map { p -> p.type?.let { resolve(it) } ?: u.fresh() }, statement.returnType?.let { resolve(it) } ?: u.fresh())
+                        val row = u.fresh()
+                        val fn = Type.Fn(
+                            withArrowEffects(row) { params.map { p -> p.type?.let { resolve(it) } ?: u.fresh() } },
+                            statement.returnType?.let { resolve(it) } ?: u.fresh(),
+                            row,
+                        )
                         inner.vars[statement.name] = Local(fn, statement.ocamlName)
                         val body = Scope(inner)
                         params.zip(fn.params).forEach { (p, t) -> body.vars[p.name] = Local(t, snake(p.name)) }
                         statement.paramNames = params.map { snake(it.name) }
                         val refs = mutableSetOf<String>()
                         collectRefs(statement.value, params.map { it.name }.toSet(), refs)
-                        check(statement.value, fn.result, body)
+                        doing(row) { check(statement.value, fn.result, body) }
                         // Checked, a built-in method of the same name no longer counts as a call to it.
                         collectRefs(statement.value, params.map { it.name }.toSet(), refs.apply { clear() })
                         statement.recursive = statement.name in refs

@@ -100,6 +100,7 @@ class FormatterTest : BasePlatformTestCase() {
             greeting(name: String, n: Int) = "hello  ${'$'}{name}, ${'$'}{ n+1 }:${'$'}n" + ""
             lazyTwo = lazy(~(1 + 1))
             shapes = Some({}) |> map(x -> x)
+            @Route("/a") type Logger(log: @Console (String) -> Unit)
         """.trimIndent()
         val formatted = """
             pair<A, B>(ma: M.M<A>, mb: M.M<List<B>>): M.M<(A, B)> = M {
@@ -113,6 +114,7 @@ class FormatterTest : BasePlatformTestCase() {
             greeting(name: String, n: Int) = "hello  ${'$'}{name}, ${'$'}{ n+1 }:${'$'}n" + ""
             lazyTwo = lazy(~(1 + 1))
             shapes = Some({}) |> map(x -> x)
+            @Route("/a") type Logger(log: @Console (String) -> Unit)
         """.trimIndent()
         assertEquals(formatted, reformat(messy))
     }

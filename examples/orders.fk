@@ -9,8 +9,9 @@ type OrderResult {
   PaymentFailed(errorCode: Int, message: String)
 }
 
+// Charging may write to the console, so a gateway can log what it does; refunding can't.
 type PaymentGateway(
-  charge: (Money) -> OrderResult,
+  charge: @Console (Money) -> OrderResult,
   refund: (String, Money) -> Boolean
 )
 
@@ -44,7 +45,7 @@ describe(result: OrderResult) = when (result) {
   PaymentFailed(code, message) -> "failed ($code): $message"
 }
 
-checkout(order: Order, code: Option<String>, gateway: PaymentGateway) =
+@Console checkout(order: Order, code: Option<String>, gateway: PaymentGateway) =
   calculateTotal(order.items, code) |> gateway.charge
 
 main() = {

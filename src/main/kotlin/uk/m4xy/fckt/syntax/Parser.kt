@@ -137,7 +137,9 @@ class Parser(private val tokens: List<Token>) {
                 val types = mutableListOf<SpecType>()
                 val values = mutableListOf<SpecValue>()
                 members {
+                    val annotations = annotations()
                     val memberPos = peek.pos
+                    if (annotations.isNotEmpty() && at(T.TYPE)) throw error("a spec's type takes no annotations")
                     if (accept(T.TYPE) != null) {
                         val typeName = upperIdent("a type name")
                         val typeParams = typeParams()
@@ -152,7 +154,7 @@ class Parser(private val tokens: List<Token>) {
                         val params = if (at(T.LPAREN)) params() else null
                         params?.firstOrNull { it.type == null }?.let { throw error("a spec's parameters need types: ${it.name}: Type", it.pos) }
                         expect(T.COLON, if (params == null) "':' and the value's type" else "':' and the result type")
-                        values += SpecValue(memberPos, valueName, typeParams, params, type())
+                        values += SpecValue(memberPos, valueName, typeParams, params, type(), annotations)
                     }
                 }
                 Decl.Spec(pos, name, types, values)
@@ -464,6 +466,21 @@ class Parser(private val tokens: List<Token>) {
 
     private fun type(): TypeRef {
         val pos = peek.pos
+        // `@Console (String) -> Unit`: a function that may print. An effect here has no arguments.
+        if (at(T.AT)) {
+            val effects = mutableListOf<Annotation>()
+            while (at(T.AT)) {
+                val at = next().pos
+                var name = ident("an effect's name")
+                while (at(T.DOT) && peekAt(1).kind == T.IDENT) {
+                    next()
+                    name += "." + next().text
+                }
+                effects += Annotation(at, name, emptyList())
+            }
+            val function = type() as? TypeRef.Function ?: throw error("an effect goes before a function type, like @Console (String) -> Unit", pos)
+            return function.copy(pos = pos, effects = effects + function.effects)
+        }
         if (accept(T.LPAREN) != null) {
             val params = mutableListOf<TypeRef>()
             while (!at(T.RPAREN)) {

@@ -228,6 +228,8 @@ class Layout(private val text: String) {
             b.i in typeBrackets -> 0
             a.i in typeBrackets -> if (a.text == "<" || l == TokKind.LPAREN) 0 else 1
             a.i in prefix -> 0
+            // `@Route("/a")` takes arguments, but `@Console (String) -> Unit` is an effect on a function type.
+            l == TokKind.LPAREN && k == TokKind.IDENT && atoms.getOrNull(a.i - 1)?.kind == TokKind.AT -> null
             l == TokKind.LPAREN -> if ((k == TokKind.IDENT && a.text != "by") || a.text == "private" || k == TokKind.RPAREN || k == TokKind.RBRACKET) 0 else 1
             else -> 1
         }

@@ -1,0 +1,54 @@
+// Effects: what a function does besides work out its result. A function that prints must say so,
+// and so must every function that calls it, so one that says nothing is pure. An effect is an
+// annotation marked @Effect: the prelude declares @Console, which println has, and a program can
+// declare its own.
+
+@Console greet(name: String) = println("hello $name")
+
+// Pure: nothing it calls prints.
+shout(s: String) = s + "!"
+
+// map does whatever the function it's given does: here nothing, so loud is pure...
+loud(names: List<String>) = names.map(shout)
+
+// ...and here it prints, so greetAll does too.
+@Console greetAll(names: List<String>) = names.forEach(greet)
+
+// A function type says what calling it may do. A pure function fits too.
+type Logger(log: @Console (String) -> Unit)
+
+@Console report(logger: Logger, total: Int) = logger.log("total: $total")
+
+// Making a function that prints doesn't print, so greeter is pure.
+greeter(greeting: String): @Console (String) -> Unit = name -> println("$greeting, $name")
+
+// An effect of our own, and the one function that has it directly.
+@Effect annotation type Audit
+@Audit external audit(entry: String): Unit = "ignore entry"
+
+// A spec says what its functions may do, and a module that follows it must say the same.
+spec Ledger {
+  @Audit move(amount: Int): Int
+}
+
+module Bank : Ledger {
+  @Audit move(amount: Int) = {
+    audit("moved $amount")
+    amount
+  }
+}
+
+@Audit @Console transfer(amount: Int) = {
+  moved = Bank.move(amount)
+  println("transferred $moved")
+}
+
+main() = {
+  greet("fckt")
+  greetAll(["Ada", "Grace"])
+  assertEquals(["a!", "b!"], loud(["a", "b"]))
+  report(Logger(println), 3)
+  report(Logger(~Unit), 4)
+  greeter("hi")("there")
+  transfer(10)
+}

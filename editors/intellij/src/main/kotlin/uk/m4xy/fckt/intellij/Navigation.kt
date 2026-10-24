@@ -303,6 +303,7 @@ private class Resolutions(
                 ref.args.forEach(::type)
             }
             is TypeRef.Function -> {
+                annotations(ref.effects)
                 ref.params.forEach(::type)
                 type(ref.result)
             }
@@ -352,7 +353,11 @@ private class Resolutions(
             }
             is Decl.Spec -> {
                 annotations(d.annotations)
-                d.values.forEach { v -> v.params.orEmpty().forEach { type(it.type) }; type(v.type) }
+                d.values.forEach { v ->
+                    annotations(v.annotations)
+                    v.params.orEmpty().forEach { type(it.type) }
+                    type(v.type)
+                }
             }
             is Decl.Module -> {
                 annotations(d.annotations)
