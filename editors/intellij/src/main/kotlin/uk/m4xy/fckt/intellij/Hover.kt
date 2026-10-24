@@ -33,7 +33,10 @@ fun hovers(text: String, entry: File?): Map<Int, String> {
     } catch (e: StackOverflowError) {
         return emptyMap()
     }
-    return Hovers(text, checked.program).apply { decls(checked.decls) }.found
+    return Hovers(text, checked.program).apply {
+        decls(checked.decls)
+        imports()
+    }.found
 }
 
 private class Hovers(val text: String, val program: Program) {
@@ -121,6 +124,46 @@ private class Hovers(val text: String, val program: Program) {
             is TypeRef.Tuple -> ref.elements.forEach(::typeRef)
             is TypeRef.Effects -> annotations(ref.effects)
             null -> {}
+        }
+    }
+
+    /** Each name on the import lines: the package, module or declaration that much of the path names. */
+    fun imports() {
+        val byName = mutableMapOf<String, Decl>()
+        fun collect(ds: List<Decl>): Unit = ds.forEach { d ->
+            byName[d.name] = d
+            if (d is Decl.Module) collect(d.decls)
+        }
+        collect(program.root)
+        val imports = try { uk.m4xy.fckt.syntax.Parser.parse(text).imports[null].orEmpty() } catch (e: Exception) { return }
+        val idents = scan(text).filter { it.kind == TokKind.IDENT }
+        for (import in imports) {
+            val start = offsetOf(text, import.pos, "import")
+            val line = idents.filter { it.start > start }.takeWhile { t -> text.substring(start, t.start).none { it == '\n' } }
+            var last: String? = null
+            for ((i, tok) in line.take(import.path.size).withIndex()) {
+                val full = import.path.take(i + 1).joinToString(".")
+                val hover = describe(full, byName) ?: continue
+                found.putIfAbsent(tok.start, hover)
+                last = hover
+            }
+            if (import.alias != null) line.drop(import.path.size).lastOrNull()?.let { tok -> last?.let { found.putIfAbsent(tok.start, it) } }
+        }
+    }
+
+    /** What the declaration of full name [full] is, for an import line. */
+    private fun describe(full: String, byName: Map<String, Decl>): String? {
+        val d = byName[full]
+        if (d == null) {
+            // A case: the name of a type with cases, then its case's.
+            val sealed = byName[full.substringBeforeLast('.', "")] as? Decl.Sealed ?: return null
+            return sealed.variants.firstOrNull { it.name == full.substringAfterLast('.') }?.let { "${it.name}: a case of ${sealed.name}" }
+        }
+        return when (d) {
+            is Decl.Function -> signature(d)
+            is Decl.Module -> if (d.isPackage) "package ${d.name}" else "module ${d.name}"
+            is Decl.Spec -> if (program.annotationEffects[d.name]?.contains(d.name) == true) "effect ${d.name}" else "spec ${d.name}"
+            is Decl.Record, is Decl.Sealed, is Decl.Alias -> "type ${d.name}"
         }
     }
 

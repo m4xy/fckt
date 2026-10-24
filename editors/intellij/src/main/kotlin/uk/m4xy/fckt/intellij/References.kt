@@ -88,6 +88,10 @@ object Resolver {
 
     /** The name element [target] is at: in [from], another file, or the standard library. */
     fun element(from: FcktFile, target: Target): PsiElement? {
+        // A package: its folder.
+        if (target.file != null && !target.file.startsWith("std/") && File(target.file).isDirectory) {
+            return LocalFileSystem.getInstance().findFileByPath(target.file)?.let { PsiManager.getInstance(from.project).findDirectory(it) }
+        }
         val file: PsiFile = when {
             target.file == null -> from
             target.file.startsWith("std/") -> StandardFiles.psi(from.project, target.file) ?: return null

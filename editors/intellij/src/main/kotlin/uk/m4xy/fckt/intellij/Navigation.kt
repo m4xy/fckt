@@ -79,6 +79,9 @@ fun declarations(text: String, entry: File?): Map<Int, List<Target>> {
         }
     }
 
+    // What each name on an import line is: a package's folder, a module's file, or what's in it.
+    for ((offset, target) in importTargets(text, entry)) found[offset] = listOf(target)
+
     // Everything the checker resolved.
     val checked = try { analyse(text, entry, listOfNotNull(entry?.parentFile)) } catch (e: Exception) { null } catch (e: StackOverflowError) { null }
     if (checked != null) Resolutions(text, checked.program, ::put, ::of).decls(checked.decls)
@@ -107,6 +110,81 @@ fun declarations(text: String, entry: File?): Map<Int, List<Target>> {
     }
     return found
 }
+
+/**
+ * Each name on [text]'s import lines, by its offset, with what it names: `import geometry.Shapes.area
+ * as size` goes to geometry's folder, Shapes.fk, area there, and, for size, area too. Found from
+ * the files themselves, so it works in a file that doesn't check.
+ */
+fun importTargets(text: String, entry: File?): Map<Int, Target> {
+    val imports = try { Parser.parse(text).imports[null].orEmpty() } catch (e: Exception) { return emptyMap() }
+    val roots = listOfNotNull(entry?.parentFile)
+    val idents = scan(text).filter { it.kind == TokKind.IDENT }
+    val found = mutableMapOf<Int, Target>()
+    for (import in imports) {
+        val start = offsetOf(text, import.pos, "import")
+        val line = idents.filter { it.start > start }.takeWhile { t -> text.substring(start, t.start).none { it == '\n' } }
+        val segments = line.take(import.path.size)
+        val targets = importPath(import.path, roots)
+        segments.zip(targets).forEach { (tok, target) -> if (target != null) found[tok.start] = target }
+        // The `as` name is what the last name is.
+        if (import.alias != null) line.lastOrNull()?.takeIf { it !in segments }?.let { tok -> targets.lastOrNull()?.let { found[tok.start] = it } }
+    }
+    return found
+}
+
+/** What each name of an import's [path] is, from [roots]: packages' folders, then a module's file and what's in it. */
+private fun importPath(path: List<String>, roots: List<File>): List<Target?> {
+    val targets = mutableListOf<Target?>()
+    var folders = roots
+    var std = false
+    var i = 0
+    // Packages, while the names are folders: `fckt` is the standard library's.
+    while (i < path.size && path[i][0].isLowerCase()) {
+        val name = path[i]
+        val next = folders.map { File(it, name) }.filter { it.isDirectory }
+        if (next.isEmpty() && !(i == 0 && name == uk.m4xy.fckt.STANDARD_PACKAGE)) break
+        if (i == 0 && name == uk.m4xy.fckt.STANDARD_PACKAGE && next.isEmpty()) std = true
+        targets += next.firstOrNull()?.let { Target(it.path, Pos(1, 1), "") }
+        folders = next
+        i++
+    }
+    if (i == path.size) return targets
+    // A module's file, or a declaration of one of the package's lower-case files.
+    val name = path[i]
+    val (file, text) = if (std) {
+        "std/${uk.m4xy.fckt.STANDARD_PACKAGE}/$name.fk".let { it to standardSource(it) }
+    } else {
+        val f = folders.flatMap { it.listFiles().orEmpty().toList() }.firstOrNull { it.isFile && it.name == "$name.fk" }
+            ?: folders.flatMap { it.listFiles().orEmpty().toList() }.filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }
+                .firstOrNull { f -> parseOrNull(f.readText(), f.path)?.any { it.name == name || (it is Decl.Function && it.methodName == name) } == true }
+        (f?.path) to f?.readText()
+    }
+    val decls = text?.let { parseOrNull(it, file) } ?: return targets + List(path.size - i) { null }
+    var scope: List<Decl> = decls
+    while (i < path.size) {
+        val segment = path[i]
+        // Nothing of that name: the rest of the path goes nowhere.
+        val d = scope.firstOrNull { it.name == segment || (it is Decl.Function && it.methodName == segment) } ?: break
+        targets += Target(file, d.pos, (d as? Decl.Function)?.methodName ?: d.simpleName)
+        scope = when (d) {
+            is Decl.Module -> d.decls
+            is Decl.Sealed -> {
+                // What follows a type with cases is one of them.
+                path.getOrNull(i + 1)?.let { case -> d.variants.firstOrNull { it.name == case } }?.let { v ->
+                    targets += Target(file, v.pos, v.name)
+                    i++
+                }
+                emptyList()
+            }
+            else -> emptyList()
+        }
+        i++
+    }
+    return targets + List(maxOf(0, path.size - targets.size)) { null }
+}
+
+private fun parseOrNull(text: String, file: String?): List<Decl>? = try { Parser.parse(text, file).decls } catch (e: Exception) { null }
 
 /**
  * The entry file's declarations, with where each is visible: its module's (or spec's) range. A

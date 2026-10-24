@@ -48,6 +48,11 @@ describes them; it isn't compiled.
 
 ## Find usages
 
+On an import line, each name goes to what it names: a package to its folder, a module to its
+file, and what's in it to its declaration; an `as` name goes where the name it renames does. This
+works from the files themselves, so it works in a file that doesn't check, and hover says what each
+is: `package geometry`, `module geometry.Shapes`, or a function's signature.
+
 Find Usages (Alt-F7), or Cmd-click on a declaration, lists the names that refer to it, worked out
 the same way, so a local's are only its own and an overload's are only the calls that chose it.
 Highlight Usages in File (Cmd-Shift-F7) works too.
