@@ -350,7 +350,7 @@ class Lowering(private val program: Program) {
                 is Decl.Record -> typeDef(snake(decl.simpleName)) {
                     params = decl.typeParams.map(::typeVar)
                     if (forSignature && decl.privateConstructor) isPrivate = true
-                    for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams))
+                    for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams)) { if (field.isVar) isMutable = true }
                 }
                 is Decl.Sealed -> if (decl.name in program.polymorphic) {
                     typeDef(snake(decl.simpleName)) {
@@ -491,7 +491,8 @@ class Lowering(private val program: Program) {
                 ),
             )
             is Expr.Name -> when (val r = e.resolved!!) {
-                is NameRef.Local -> ident(r.ocamlName)
+                // A var is a ref: what it holds is `!x`.
+                is NameRef.Local -> if (r.isVar) apply { ident("!"); ident(r.ocamlName) } else ident(r.ocamlName)
                 is NameRef.Global -> if (r.decl.external != null) gen(externalValue(r.decl)) else ident(ref(r.decl.name, ::snake))
                 is NameRef.Builtin -> {
                     if (r.ocaml == ASSERT || r.ocaml == ASSERT_EQUALS) throw CompileError(e.pos, "${r.ocaml} must be called")
@@ -554,6 +555,16 @@ class Lowering(private val program: Program) {
                 }
             }
             is Expr.Lambda -> lambda(e.paramNames.ifEmpty { listOf("()") }) { expr(e.body) }
+            is Expr.Assign -> when (val target = e.target) {
+                is Expr.Name -> infix(":=") {
+                    ident((target.resolved as NameRef.Local).ocamlName)
+                    expr(e.value)
+                }
+                else -> infix("<-") {
+                    expr(target)
+                    expr(e.value)
+                }
+            }
             is Expr.Pipe -> infix("|>") {
                 expr(e.value)
                 val f = e.function
@@ -940,13 +951,31 @@ class Lowering(private val program: Program) {
             }
         }
         when (val s = e.statements[from]) {
-            is Statement.Binding -> letIn(s.ocamlName) {
-                if (s.params != null) {
-                    params = s.paramNames.ifEmpty { listOf("()") }
-                    rec = s.recursive
+            // Changing a var: `x := value; ...`.
+            is Statement.Binding -> if (s.assigns) {
+                sequence {
+                    infix(":=") {
+                        ident(s.ocamlName)
+                        expr(s.value)
+                    }
+                    block(e, from + 1, monad)
                 }
-                expr(s.value)
-                block(e, from + 1, monad)
+            } else {
+                letIn(s.ocamlName) {
+                    if (s.params != null) {
+                        params = s.paramNames.ifEmpty { listOf("()") }
+                        rec = s.recursive
+                    }
+                    if (s.isVar) {
+                        apply {
+                            ident("ref")
+                            expr(s.value)
+                        }
+                    } else {
+                        expr(s.value)
+                    }
+                    block(e, from + 1, monad)
+                }
             }
             is Statement.Destructure -> letIn(pattern(s.pattern)) {
                 expr(s.value)

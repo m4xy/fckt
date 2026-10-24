@@ -6,8 +6,16 @@ sealed class Type {
         var bound: Type? = null
     }
 
-    data class Con(val name: String, val args: List<Type> = emptyList()) : Type() {
+    /**
+     * A named type applied to [args]. A type whose values can change, a record with a `var` field
+     * or one that holds such a record, has a [region]: a variable standing for where its values
+     * live, so that changing one is changing that region. Regions are only checked, so [equals]
+     * ignores them.
+     */
+    data class Con(val name: String, val args: List<Type> = emptyList(), val region: Type? = null) : Type() {
         override fun toString() = render(this, mutableMapOf())
+        override fun equals(other: Any?) = other is Con && name == other.name && args == other.args
+        override fun hashCode() = name.hashCode() * 31 + args.hashCode()
     }
 
     /**
@@ -27,14 +35,17 @@ sealed class Type {
     /** The type with every bound variable replaced by what it's bound to. */
     fun zonk(): Type = when (val t = prune()) {
         is Var -> t
-        is Con -> Con(t.name, t.args.map { it.zonk() })
+        is Con -> Con(t.name, t.args.map { it.zonk() }, t.region?.zonk())
         is Fn -> Fn(t.params.map { it.zonk() }, t.result.zonk(), t.effects.zonk())
     }
 
     fun freeVars(into: MutableSet<Var> = linkedSetOf()): Set<Var> {
         when (val t = prune()) {
             is Var -> into += t
-            is Con -> t.args.forEach { it.freeVars(into) }
+            is Con -> {
+                t.args.forEach { it.freeVars(into) }
+                t.region?.freeVars(into)
+            }
             is Fn -> {
                 t.params.forEach { it.freeVars(into) }
                 t.result.freeVars(into)
@@ -83,25 +94,45 @@ sealed class Type {
          */
         const val EFFECTS = "effects "
 
-        /** The row of [labels], and, if open, of what [rest] turns out to be. */
-        fun effects(labels: Set<String>, rest: Type?): Type = Con(EFFECTS, labels.sorted().map { Con(it) } + listOfNotNull(rest))
+        /** The row of the effects named [labels], and, if open, of what [rest] turns out to be. */
+        fun effects(labels: Set<String>, rest: Type?): Type = row(labels.sorted().map { Con(it) }, rest)
 
-        /** A row's effects, and the variable for the rest if it's open, following what that's been bound to. */
-        fun row(type: Type): Pair<Set<String>, Var?> {
-            val labels = linkedSetOf<String>()
+        /** The row of [labels], each an effect's name, with a region for `Mutating`, and of what [rest] turns out to be. */
+        fun row(labels: List<Con>, rest: Type?): Type = Con(EFFECTS, labels + listOfNotNull(rest))
+
+        /** Where the program's top-level values live, which outlive every function. */
+        val GLOBAL = Con("global region")
+
+        /**
+         * Two of a row's effects are the same if they have the same name and, for `Mutating`, region.
+         * A written `@Mutating`, as in `@Mutating () -> Int`, doesn't say where, so it's any region.
+         */
+        fun sameEffect(a: Con, b: Con): Boolean {
+            if (a.name != b.name) return false
+            val x = a.args.firstOrNull()?.prune() ?: return true
+            val y = b.args.firstOrNull()?.prune() ?: return true
+            return x === y || (x is Con && y is Con && x.name == y.name)
+        }
+
+        /** A row's effects, once each, and the variable for the rest if it's open, following what that's been bound to. */
+        fun row(type: Type): Pair<List<Con>, Var?> {
+            val labels = mutableListOf<Con>()
             var t = type.prune()
             while (true) {
                 when (t) {
                     is Var -> return labels to t
                     is Con -> {
                         val rest = t.args.lastOrNull()?.prune()?.takeIf { it !is Con || it.name == EFFECTS }
-                        t.args.filterIsInstance<Con>().filter { it.name != EFFECTS }.forEach { labels += it.name }
+                        for (label in t.args.filterIsInstance<Con>()) if (label.name != EFFECTS && labels.none { sameEffect(it, label) }) labels += label
                         t = rest ?: return labels to null
                     }
                     is Fn -> return labels to null
                 }
             }
         }
+
+        /** The names of the effects in a row. */
+        fun effectNames(type: Type): Set<String> = row(type).first.map { it.name }.toSet()
 
         /** A type's name in messages and output, without the markers above or a type parameter's `#`. */
         fun displayName(name: String) = name.removePrefix(META).removePrefix(ABSTRACT).removePrefix(SPEC_TYPE).removePrefix("#")
@@ -110,7 +141,7 @@ sealed class Type {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }
             is Con -> if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
             else if (t.args.isEmpty()) displayName(t.name) else "${displayName(t.name)}<${t.args.joinToString(", ") { render(it, names) }}>"
-            is Fn -> row(t.effects).first.joinToString("") { "@${displayName(it).substringAfterLast('.')} " } +
+            is Fn -> effectNames(t.effects).sorted().joinToString("") { "@${displayName(it).substringAfterLast('.')} " } +
                 "(${t.params.joinToString(", ") { render(it, names) }}) -> ${render(t.result, names)}"
         }
     }
@@ -141,7 +172,7 @@ class Unifier {
 
     fun substitute(type: Type, mapping: Map<Type.Var, Type>): Type = when (val t = type.prune()) {
         is Type.Var -> mapping[t] ?: t
-        is Type.Con -> Type.Con(t.name, t.args.map { substitute(it, mapping) })
+        is Type.Con -> Type.Con(t.name, t.args.map { substitute(it, mapping) }, t.region?.let { substitute(it, mapping) })
         is Type.Fn -> Type.Fn(t.params.map { substitute(it, mapping) }, substitute(t.result, mapping), substitute(t.effects, mapping))
     }
 
@@ -157,7 +188,8 @@ class Unifier {
             x is Type.Var -> bind(x, y)
             y is Type.Var -> bind(y, x)
             x is Type.Con && y is Type.Con ->
-                x.name == y.name && x.args.size == y.args.size && x.args.zip(y.args).all { (p, q) -> unify(p, q) }
+                x.name == y.name && x.args.size == y.args.size && x.args.zip(y.args).all { (p, q) -> unify(p, q) } &&
+                    (x.region == null || y.region == null || unify(x.region, y.region))
             x is Type.Fn && y is Type.Fn ->
                 x.params.size == y.params.size &&
                     x.params.zip(y.params).all { (p, q) -> unify(p, q) } && unify(x.result, y.result) && unify(x.effects, y.effects)
@@ -172,16 +204,16 @@ class Unifier {
     private fun unifyEffects(a: Type, b: Type): Boolean {
         val (x, restX) = Type.row(a)
         val (y, restY) = Type.row(b)
-        val onlyX = x - y
-        val onlyY = y - x
+        val onlyX = x.filter { e -> y.none { Type.sameEffect(it, e) } }
+        val onlyY = y.filter { e -> x.none { Type.sameEffect(it, e) } }
         if (restX != null && restX === restY) return onlyX.isEmpty() && onlyY.isEmpty()
         return when {
             restX == null && restY == null -> onlyX.isEmpty() && onlyY.isEmpty()
-            restX == null -> onlyY.isEmpty() && bind(restY!!, Type.effects(onlyX, null))
-            restY == null -> onlyX.isEmpty() && bind(restX, Type.effects(onlyY, null))
+            restX == null -> onlyY.isEmpty() && bind(restY!!, Type.row(onlyX, null))
+            restY == null -> onlyX.isEmpty() && bind(restX, Type.row(onlyY, null))
             else -> {
                 val rest = fresh()
-                bind(restX, Type.effects(onlyY, rest)) && bind(restY, Type.effects(onlyX, rest))
+                bind(restX, Type.row(onlyY, rest)) && bind(restY, Type.row(onlyX, rest))
             }
         }
     }
@@ -231,6 +263,9 @@ class BuiltinMember(val params: List<Type>, val result: Type, val translation: B
 /** Names of the assertion built-ins, which lowering translates specially. */
 /** The annotation, declared in the prelude, that makes an annotation type an effect: `@Effect annotation type Console`. */
 const val EFFECT = "Effect"
+
+/** The effect, declared in the prelude, of assigning a `var`: changing a value someone else may see. */
+const val MUTATING = "Mutating"
 
 const val ASSERT = "assert"
 const val ASSERT_EQUALS = "assertEquals"

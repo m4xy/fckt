@@ -1,0 +1,53 @@
+// Values that change. A record's field can be `var`, and so can a local; assigning one is
+// @Mutating, which a function must declare, as it would @Console. But changing a value that was
+// made inside a function and never left it is something no one else can see, so it doesn't count:
+// a function can use vars inside and still be pure.
+
+type Account(owner: String, var balance: Int)
+
+// Changes the account it's given, which the caller can see.
+@Mutating deposit(account: Account, amount: Int) = {
+  account.balance += amount
+}
+
+// Pure: the account is made here and never leaves.
+total(amounts: List<Int>): Int = {
+  account = Account("total", 0)
+  amounts.forEach(amount -> deposit(account, amount))
+  account.balance
+}
+
+// Pure: a local var, changed only here.
+count(xs: List<Int>): Int = {
+  var n = 0
+  xs.forEach(x -> { n += 1 })
+  n
+}
+
+// Changes an account it gives back: the change goes with it, so this is @Mutating too.
+@Mutating opened(owner: String, first: Int): Account = {
+  account = Account(owner, 0)
+  deposit(account, first)
+  account
+}
+
+// Pure, but what it makes changes something each time it's called: the function says so.
+counter(): @Mutating () -> Int = {
+  var n = 0
+  ~{
+    n += 1
+    n
+  }
+}
+
+main() = {
+  account = opened("Ada", 50)
+  deposit(account, 25)
+  account.balance = account.balance - 5
+  assertEquals(70, account.balance)
+  assertEquals(6, total([1, 2, 3]))
+  assertEquals(3, count([4, 5, 6]))
+  next = counter()
+  next()
+  assertEquals(2, next())
+}

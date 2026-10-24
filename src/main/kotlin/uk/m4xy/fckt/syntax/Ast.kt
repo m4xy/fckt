@@ -28,7 +28,8 @@ sealed interface TypeRef {
 
 // ---- Declarations ----
 
-data class FieldDef(val pos: Pos, val name: String, val type: TypeRef, val annotations: List<Annotation> = emptyList())
+/** A field; a [isVar] one (`var balance: Int`) can be changed, which is `@Mutating`. */
+data class FieldDef(val pos: Pos, val name: String, val type: TypeRef, val annotations: List<Annotation> = emptyList(), val isVar: Boolean = false)
 
 data class Param(val pos: Pos, val name: String, val type: TypeRef?, val annotations: List<Annotation> = emptyList())
 
@@ -272,6 +273,12 @@ sealed class Expr {
     class Unary(override val pos: Pos, val op: String, val operand: Expr) : Expr()
 
     /**
+     * `target = value`, as a statement: changes a `var` local or a record's `var` field. `x += 1`
+     * is `x = x + 1`.
+     */
+    class Assign(override val pos: Pos, val target: Expr, val value: Expr) : Expr()
+
+    /**
      * `x -> e`, `(a, b) -> e`, or `~e`, which [ignoresArguments]: it takes as many as the expected
      * function type has (`~true` as a `(String, Money) -> Boolean`), or none, making a thunk.
      */
@@ -297,7 +304,12 @@ sealed class Expr {
         var annotateSubject = false
     }
 
-    class Block(override val pos: Pos, val statements: List<Statement>, val result: Expr) : Expr()
+    /**
+     * `{ statements; result }`. A block that ends with `x = value` may be changing a var, which
+     * the parser can't tell from a binding: then [result] is `Unit`, and the checker makes sure
+     * [endsWith] did change one.
+     */
+    class Block(override val pos: Pos, val statements: List<Statement>, val result: Expr, val endsWith: Statement.Binding? = null) : Expr()
 
     /**
      * `Options { x by half(n); x + 1 }`: a block whose `by` lines go through [module]'s `bind`, and
@@ -326,14 +338,21 @@ data class Arg(val name: String?, val value: Expr)
 sealed interface Statement {
     val pos: Pos
 
-    /** `name = value`, or a local function `name(params) = value`. */
+    /**
+     * `name = value`, or a local function `name(params) = value`. With [isVar] (`var name = value`),
+     * a local that can be changed; `name = value` for a `var` already in scope changes it, which the
+     * checker marks as [assigns].
+     */
     data class Binding(
         override val pos: Pos,
         val name: String,
         val params: List<Param>?,
         val returnType: TypeRef?,
         val value: Expr,
+        val isVar: Boolean = false,
     ) : Statement {
+        var assigns = false
+
         /** OCaml names of the binding and its parameters, set by the checker. */
         var ocamlName: String = ""
         var paramNames: List<String> = emptyList()
@@ -400,7 +419,8 @@ sealed interface Pattern {
 // ---- Resolutions, set by the checker and read by lowering ----
 
 sealed interface NameRef {
-    data class Local(val ocamlName: String) : NameRef
+    /** A local or parameter; a [isVar] one is an OCaml `ref`. */
+    data class Local(val ocamlName: String, val isVar: Boolean = false) : NameRef
     data class Global(val decl: Decl.Function) : NameRef
 
     /** A record type or variant used as a value, e.g. as `Money` in `items.map(Money)`. */

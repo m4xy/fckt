@@ -74,7 +74,10 @@ class FunctionGroup(val decls: List<Decl.Function>, var recursive: Boolean)
 /** A constructor's shape once instantiated: field names and types, and the type it builds. */
 class ConstructorShape(val ref: ConstructorRef, val fieldNames: List<String>, val fieldTypes: List<Type>, val result: Type)
 
-private class Local(val type: Type, val ocamlName: String, val cast: Cast? = null)
+/** A local or parameter; a `var` one has a [region] of its own, which assigning it changes. */
+private class Local(val type: Type, val ocamlName: String, val cast: Cast? = null, val region: Type? = null) {
+    val isVar get() = region != null
+}
 
 /**
  * `is Variant` narrowed a variable: [recordVar] is bound to the variant's inline record, or, for a
@@ -108,6 +111,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private val sealeds = linkedMapOf<String, Decl.Sealed>()
     private val aliases = linkedMapOf<String, Decl.Alias>()
     private val specs = linkedMapOf<String, Decl.Spec>()
+
+    /** Types whose values can change: records with a `var` field, and types that hold one. They have regions. */
+    private val regioned = mutableSetOf<String>()
+
+    /** While resolving a type's fields, the region of the value they're in, which the values they hold share. */
+    private var currentRegion: Type? = null
 
     /** `annotation type`s, which aren't types values can have, and what their fields are. */
     private val annotationTypes = linkedMapOf<String, Decl.Record>()
@@ -610,6 +619,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 throw CompileError(it[1].second.pos, "variant '$name' is declared twice in ${it[1].first.name}")
             }
         }
+        findRegioned()
         // Resolve every field type now, so bad references are reported at the declaration.
         for (a in aliases.values.filter { it !in fixedTypes.values }) {
             currentPath = a.path
@@ -703,9 +713,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     /** The cases of sealed type [name] applied to [args], each with its field types. */
-    private fun cases(name: String, args: List<Type>): List<Pair<CaseDecl, List<Type>>> {
+    /** [name]'s cases, with their fields' types for [args], holding values in [region]. */
+    private fun cases(name: String, args: List<Type>, region: Type? = null): List<Pair<CaseDecl, List<Type>>> {
         val s = sealeds.getValue(name)
-        return caseDecls.getValue(name).map { it to fieldTypes(s.typeParams, it.fields, args) }
+        return caseDecls.getValue(name).map { it to fieldTypes(s.typeParams, it.fields, args, region) }
     }
 
     private fun sealedName(type: Type): String? = (type.prune() as? Type.Con)?.name?.takeIf { it in sealeds }
@@ -773,10 +784,50 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     /** The type declaration [d] applied to [args], as seen from the current module. */
-    private fun typeOf(d: Decl, args: List<Type>): Type = when {
-        abstractHere(d) -> outsideType(d.path.joinToString("."), d.simpleName, args)
-        d is Decl.Alias -> expand(d, args)
-        else -> Type.Con(d.name, args)
+    private fun typeOf(d: Decl, args: List<Type>): Type = withRegion(
+        d,
+        when {
+            abstractHere(d) -> outsideType(d.path.joinToString("."), d.simpleName, args)
+            d is Decl.Alias -> expand(d, args)
+            else -> Type.Con(d.name, args)
+        },
+    )
+
+    /** [type], of declaration [d], with a region if its values can change: the one it's in, or its own. */
+    private fun withRegion(d: Decl, type: Type): Type =
+        if (d.name in regioned && type is Type.Con && type.region == null) type.copy(region = currentRegion ?: u.fresh()) else type
+
+    /** A new region for a value of [d] being made, if its values can change. */
+    private fun newRegion(d: Decl): Type? = if (d.name in regioned) u.fresh() else null
+
+    /**
+     * Which types' values can change: a record with a `var` field, then, until there are no more,
+     * the records and types with cases whose fields hold one. Only a record's fields can be `var`.
+     */
+    private fun findRegioned() {
+        for (s in sealeds.values) {
+            s.variants.flatMap { it.fields }.firstOrNull { it.isVar }?.let {
+                throw CompileError(it.pos, "only a record's fields can be var; make ${it.name}'s case hold a record with a var field")
+            }
+        }
+        records.values.filter { r -> r.fields.any { it.isVar } }.forEach { regioned += it.name }
+        fun holds(ref: TypeRef): Boolean = when (ref) {
+            // A function isn't a value that changes, whatever it takes or gives.
+            is TypeRef.Function -> false
+            is TypeRef.Tuple -> ref.elements.any(::holds)
+            is TypeRef.Named -> ref.args.any(::holds) || (lookupRecord(ref.name, null) ?: lookupSealed(ref.name, null))?.name in regioned ||
+                lookupAlias(ref.name, null)?.let { holds(it.target) } == true
+        }
+        do {
+            val before = regioned.size
+            for (d in records.values + sealeds.values) {
+                if (d.name in regioned) continue
+                currentPath = d.path
+                val fields = if (d is Decl.Record) d.fields else (d as Decl.Sealed).variants.flatMap { it.fields }
+                if (fields.any { holds(it.type) }) regioned += d.name
+            }
+        } while (regioned.size != before)
+        currentPath = emptyList()
     }
 
     /** What alias [a] stands for, applied to [args]; its target means what it does where it's written. */
@@ -1014,6 +1065,37 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     // ---- Effects ----
 
+    /** Changing what's in [region]. */
+    private fun mutating(region: Type): Type = Type.row(listOf(Type.Con(MUTATING, listOf(region))), null)
+
+    /** `x = value` or `r.field = value`: changes a var, so it's `@Mutating` on where the var lives. */
+    private fun inferAssign(e: Expr.Assign, scope: Scope): Type {
+        val region = when (val target = e.target) {
+            is Expr.Name -> {
+                val local = scope.lookup(target.name)
+                    ?: throw CompileError(target.pos, if (lookupGlobal(target.name, null) != null) "'${target.name}' is a top-level value, which can't be changed" else "unknown name '${target.name}'")
+                if (!local.isVar) throw CompileError(target.pos, "'${target.name}' can't be changed; declare it with var ${target.name} = ...")
+                infer(target, null, scope)
+                local.region!!
+            }
+            is Expr.Member -> {
+                val receiver = infer(target.target, null, scope).prune()
+                val (ref, _) = field(target, receiver, scope) ?: throw CompileError(target.pos, "$receiver has no field '${target.name}'")
+                target.resolved = ref
+                val record = records.getValue((receiver as Type.Con).name)
+                if (!record.fields.first { it.name == target.name }.isVar) {
+                    throw CompileError(target.pos, "${record.simpleName}'s ${target.name} can't be changed; declare it with var ${target.name}: ...")
+                }
+                infer(target, null, scope)
+                receiver.region!!
+            }
+            else -> throw CompileError(e.pos, "only a var or a var field can be assigned to")
+        }
+        check(e.value, e.target.type!!, scope)
+        perform(mutating(region), e.pos)
+        return Type.UNIT
+    }
+
     /** Whether [a] names an effect: an annotation type that is itself annotated `@Effect`. */
     private fun isEffect(a: Annotation): Boolean = find(a.name, annotationTypes, null)?.let(::isEffect) ?: false
 
@@ -1067,10 +1149,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private fun perform(row: Type, pos: Pos) {
         val (labels, rest) = Type.row(row)
-        val open = if (rest == null) Type.effects(labels, u.fresh()) else row
+        val open = if (rest == null) Type.row(labels, u.fresh()) else row
         if (!u.unify(open, effects)) {
-            val (allowed, _) = Type.row(effects)
-            val extra = labels - allowed
+            val allowed = Type.effectNames(effects)
+            val extra = labels.map { it.name }.toSet() - allowed
             val can = if (allowed.isEmpty()) "says it's pure" else "says it can only do ${shown(allowed)}"
             throw CompileError(pos, "this does ${shown(extra)}, but the type of the function it's in $can")
         }
@@ -1082,7 +1164,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private fun checkEffects(decl: Decl.Function, row: Type) {
         if (decl.name == "main") return
-        val done = Type.row(row).first
+        val done = Type.effectNames(row)
         if (decl.params == null) {
             if (done.isNotEmpty()) throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(done)}, but a top-level value runs when the program starts; make it a function: ${decl.simpleName}() = ...")
             return
@@ -1094,6 +1176,39 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         val unused = declared - done
         if (unused.isNotEmpty()) throw CompileError(decl.pos, "'${decl.simpleName}' is declared ${shown(unused)}, but doesn't do it")
+    }
+
+    /**
+     * [row] without changes to regions [type] doesn't mention: values that were made inside the
+     * function and never left it, which no one else can see change. [row] is the function's own,
+     * which its parameters' function types share, so it doesn't count as mentioning them.
+     */
+    private fun masked(row: Type, type: Type): Type {
+        val (labels, rest) = Type.row(row)
+        val visible = regionsIn(type, row.prune())
+        // A written @Mutating says nothing about where, so it stays.
+        return Type.row(labels.filter { it.name != MUTATING || it.args.firstOrNull()?.prune().let { r -> r !is Type.Var || r in visible } }, rest)
+    }
+
+    /** The regions [type] mentions, in its values' types and in what its functions change, but not in [skip]. */
+    private fun regionsIn(type: Type, skip: Type? = null, into: MutableSet<Type> = mutableSetOf()): Set<Type> {
+        when (val t = type.prune()) {
+            is Type.Var -> {}
+            is Type.Con -> {
+                t.region?.prune()?.let { into += it }
+                if (t.name == Type.EFFECTS) {
+                    Type.row(t).first.forEach { label -> label.args.firstOrNull()?.prune()?.let { into += it } }
+                } else {
+                    t.args.forEach { regionsIn(it, skip, into) }
+                }
+            }
+            is Type.Fn -> {
+                t.params.forEach { regionsIn(it, skip, into) }
+                regionsIn(t.result, skip, into)
+                if (t.effects.prune() !== skip) regionsIn(t.effects, skip, into)
+            }
+        }
+        return into
     }
 
     // ---- Specs ----
@@ -1181,7 +1296,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val value = spec.values.first { it.name == decl.simpleName }
         val allowed = effectNames(value.annotations.filter { isEffect(it) })
         (inside as? Type.Fn)?.let { fn ->
-            val extra = Type.row(fn.effects).first - allowed
+            val extra = Type.effectNames(fn.effects) - allowed
             if (extra.isNotEmpty()) {
                 throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(extra)}, but ${spec.simpleName}'s ${decl.simpleName} doesn't say it can: declare it there, as ${shown(extra)} ${decl.simpleName}(...)")
             }
@@ -1199,13 +1314,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     /** Field types of a type declaration, with its type parameters replaced by [args]. */
-    private fun fieldTypes(params: List<String>, fields: List<uk.m4xy.fckt.syntax.FieldDef>, args: List<Type>): List<Type> {
-        val saved = typeParams
+    /** Field types of a type declaration, with its type parameters replaced by [args], holding values in [region]. */
+    private fun fieldTypes(params: List<String>, fields: List<uk.m4xy.fckt.syntax.FieldDef>, args: List<Type>, region: Type? = null): List<Type> {
+        val saved = typeParams to currentRegion
         typeParams = params.zip(args).toMap()
+        currentRegion = region
         try {
             return fields.map { resolve(it.type) }
         } finally {
-            typeParams = saved
+            typeParams = saved.first
+            currentRegion = saved.second
         }
     }
 
@@ -1290,6 +1408,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 go(e.right)
             }
             is Expr.Unary -> go(e.operand)
+            is Expr.Assign -> {
+                go(e.target)
+                go(e.value)
+            }
             is Expr.Lambda -> go(e.body, bound + e.params.map { it.name })
             is Expr.Pipe -> {
                 go(e.value)
@@ -1421,7 +1543,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         effects = u.fresh()
         typeParams = emptyMap()
-        for (decl in group.decls) if (decl.external == null) checkEffects(decl, rows.getValue(decl))
+        // What each does as callers see it: changing values that never left it doesn't count.
+        val done = rows.mapValues { (decl, row) -> masked(row, provisional.getValue(decl)) }
+        for (decl in group.decls) if (decl.external == null) checkEffects(decl, done.getValue(decl))
         for (decl in group.decls) {
             // A declared type parameter must stay abstract: `id<T>(x: T): Int = x` is an error.
             val vars = declaredParams.getValue(decl)
@@ -1430,10 +1554,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 val t = v.prune()
                 if (t !is Type.Var || !seen.add(t)) throw CompileError(decl.pos, "type parameter $name of '${decl.name}' is always $t here")
             }
-            val type = provisional.remove(decl)!!.zonk()
+            fun seen(t: Type) = (if (t is Type.Fn) Type.Fn(t.params, t.result, done.getValue(decl)) else t).zonk()
+            val type = seen(provisional.remove(decl)!!)
+            // A top-level value lives as long as the program, and so do the values it holds.
+            if (decl.params == null) regionsIn(type).forEach { if (it is Type.Var) u.unify(it, Type.GLOBAL) }
             // Values aren't generalized: OCaml's value restriction wouldn't generalize most of them either.
             schemes[decl] = if (decl.params == null) Scheme.mono(type) else Scheme(type.freeVars().toList(), type)
-            outside[decl]?.zonk()?.let { shown -> outsideSchemes[decl] = if (decl.params == null) Scheme.mono(shown) else Scheme(shown.freeVars().toList(), shown) }
+            outside[decl]?.let(::seen)?.let { shown -> outsideSchemes[decl] = if (decl.params == null) Scheme.mono(shown) else Scheme(shown.freeVars().toList(), shown) }
         }
         for (decl in group.decls) conform(decl)
         // Now its types are known, each `when` must cover every value of its subject's.
@@ -1462,8 +1589,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val t = type.prune() as? Type.Con ?: return null
         val args = t.args
         return when {
-            t.name in sealeds -> cases(t.name, args).map { (case, fields) -> Ctor.Case(case.origin.name, case.name) to fields }
-            t.name in records -> records.getValue(t.name).let { r -> listOf(Ctor.Record(r.name) to fieldTypes(r.typeParams, r.fields, args)) }
+            t.name in sealeds -> cases(t.name, args, t.region).map { (case, fields) -> Ctor.Case(case.origin.name, case.name) to fields }
+            t.name in records -> records.getValue(t.name).let { r -> listOf(Ctor.Record(r.name) to fieldTypes(r.typeParams, r.fields, args, t.region)) }
             t.name == Type.TUPLE -> listOf(Ctor.Tuple(args.size) to args)
             t.name == "List" -> listOf(Ctor.Nil to emptyList(), Ctor.Cons to listOf(args[0], t))
             t.name == "Option" -> listOf(Ctor.Case("", "Some") to listOf(args[0]), Ctor.Case("", "None") to emptyList())
@@ -1575,7 +1702,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val case = caseOf(e) ?: return false
         val target = expected.prune() as? Type.Con ?: return false
         if (target.name !in sealeds || sealedName(e.type ?: return false) == target.name) return false
-        if (cases(target.name, target.args).none { it.first.origin === case.sealed && it.first.variant === case.variant }) return false
+        if (cases(target.name, target.args, target.region).none { it.first.origin === case.sealed && it.first.variant === case.variant }) return false
         e.type = expected
         return true
     }
@@ -1603,13 +1730,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     /** A function that does [x] can be used where one that does [y] is wanted: [x] is within [y]. */
     private fun subEffects(x: Type, y: Type): Boolean {
         val (labels, rest) = Type.row(x)
-        return u.unify(if (rest == null) Type.effects(labels, u.fresh()) else x, y)
+        return u.unify(if (rest == null) Type.row(labels, u.fresh()) else x, y)
     }
 
     /** Every case of sealed type [x] is a case of [y], with the same field types. */
     private fun caseSubset(x: Type.Con, y: Type.Con): Boolean {
-        val ys = cases(y.name, y.args)
-        return cases(x.name, x.args).all { (case, types) ->
+        // The same value, so the same region.
+        if (x.region != null && y.region != null && !u.unify(x.region, y.region)) return false
+        val ys = cases(y.name, y.args, y.region)
+        return cases(x.name, x.args, x.region).all { (case, types) ->
             val match = ys.firstOrNull { it.first.sameCase(case) } ?: return false
             types.zip(match.second).all { (a, b) -> u.unify(a, b) }
         }
@@ -1666,6 +1795,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     private fun inferInner(e: Expr, expected: Type?, scope: Scope): Type = when (e) {
+        is Expr.Assign -> inferAssign(e, scope)
         // An integer literal can stand for a float where one is expected.
         is Expr.IntLit -> if (expected?.prune() == Type.FLOAT) Type.FLOAT else Type.INT
         is Expr.FloatLit -> Type.FLOAT
@@ -1732,7 +1862,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun inferName(e: Expr.Name, expected: Type?, scope: Scope): Type {
         scope.lookup(e.name)?.let {
-            e.resolved = NameRef.Local(it.ocamlName)
+            e.resolved = NameRef.Local(it.ocamlName, it.isVar)
             return it.type
         }
         lookupGlobal(e.name, e.pos)?.let {
@@ -1780,7 +1910,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 throw CompileError(pos, "${record.simpleName}'s constructor is private to ${record.path.joinToString(".")}")
             }
             val args = record.typeParams.map { u.fresh() }
-            return ConstructorShape(ConstructorRef.Record(record), record.fields.map { it.name }, fieldTypes(record.typeParams, record.fields, args), Type.Con(record.name, args))
+            val region = newRegion(record)
+            return ConstructorShape(
+                ConstructorRef.Record(record),
+                record.fields.map { it.name },
+                fieldTypes(record.typeParams, record.fields, args, region),
+                Type.Con(record.name, args, region),
+            )
         }
         // Ok and Error are Result's, unless the program has cases of its own by those names.
         val wantsResult = when (val h = hint?.prune()) {
@@ -1824,12 +1960,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         // The type it builds: the expected sealed type if that has the case, else the one named.
         val home = hinted?.takeIf { h -> caseDecls.getValue(h).any { it.sameCase(case) } } ?: qualifierSealed?.name ?: case.origin.name
         val args = sealeds.getValue(home).typeParams.map { u.fresh() }
-        val fieldTypes = cases(home, args).first { it.first.sameCase(case) }.second
+        val region = newRegion(sealeds.getValue(home))
+        val fieldTypes = cases(home, args, region).first { it.first.sameCase(case) }.second
         return ConstructorShape(
             ConstructorRef.Variant(case.origin, case.variant, name),
             case.variant.fields.map { it.name },
             fieldTypes,
-            Type.Con(home, args),
+            Type.Con(home, args, region),
         )
     }
 
@@ -1957,7 +2094,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 throw CompileError(member.pos, "${record.simpleName}'s constructor is private to ${record.path.joinToString(".")}, so only it can copy one")
             }
             if (e.args.any { it.name == null }) throw CompileError(e.pos, "copy takes named arguments: copy(field = value)")
-            val types = fieldTypes(record.typeParams, record.fields, receiver.args)
+            val types = fieldTypes(record.typeParams, record.fields, receiver.args, receiver.region)
             val seen = mutableSetOf<String>()
             for (arg in e.args) {
                 val index = record.fields.indexOfFirst { it.name == arg.name }
@@ -2020,7 +2157,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val index = record.fields.indexOfFirst { it.name == member.name }
         if (index < 0) return null
         if (abstractHere(record)) abstractError(record, member.pos)
-        val type = fieldTypes(record.typeParams, record.fields, receiver.args)[index]
+        val type = fieldTypes(record.typeParams, record.fields, receiver.args, receiver.region)[index]
         return MemberRef.Field(snake(member.name), receiver.name) to type
     }
 
@@ -2281,7 +2418,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                         throw CompileError(p.pos, "${record.name} has ${record.fields.size} fields, not ${p.elements.size}")
                     }
                     p.record = record
-                    p.elements.zip(fieldTypes(record.typeParams, record.fields, t.args)).forEach { (el, ft) -> checkPattern(el, ft, scope, null, owner) }
+                    p.elements.zip(fieldTypes(record.typeParams, record.fields, t.args, t.region)).forEach { (el, ft) -> checkPattern(el, ft, scope, null, owner) }
                 } else {
                     val elements = p.elements.map { u.fresh() }
                     expect(Type.tuple(elements), type, p.pos)
@@ -2318,7 +2455,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     ?: lookupModule(q, p.pos)?.let { m -> caseDecls.filterKeys { it.substringBeforeLast('.') == m.name }.values.flatten() }
                     ?: throw CompileError(p.pos, "unknown type or module '$q'")
             }
-            val matches = cases(subjectSealed.name, subjectSealed.args).filter { (case, _) ->
+            val matches = cases(subjectSealed.name, subjectSealed.args, subjectSealed.region).filter { (case, _) ->
                 case.name == p.name && (qualifierCases == null || qualifierCases.any { it.sameCase(case) })
             }
             val (case, fieldTypes) = matches.singleOrNull()
@@ -2367,7 +2504,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun narrow(p: Pattern.Constructor, target: Decl.Sealed, subjectType: Type, scope: Scope, subject: Expr?) {
         val subjectSealed = (subjectType as? Type.Con)?.takeIf { it.name in sealeds }
             ?: throw CompileError(p.pos, "'is ${p.name}' needs the subject to be a type with cases, not $subjectType")
-        val narrowed = Type.Con(target.name, target.typeParams.map { u.fresh() })
+        val narrowed = Type.Con(target.name, target.typeParams.map { u.fresh() }, newRegion(target))
         if (!caseSubset(narrowed, subjectSealed)) {
             val missing = caseDecls.getValue(target.name).filter { c -> caseDecls.getValue(subjectSealed.name).none { it.sameCase(c) } }
             throw CompileError(p.pos, "${target.name} isn't part of ${subjectSealed.name}: ${subjectSealed.name} has no ${missing.joinToString { "${it.origin.name}.${it.name}" }}")
@@ -2565,8 +2702,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     rest = next.result
                 }
                 is Statement.Binding -> {
+                    // `x = value` for a var in scope changes it, as in Kotlin.
+                    val existing = inner.lookup(statement.name)
+                    if (!statement.isVar && statement.params == null && statement.returnType == null && existing != null && existing.isVar) {
+                        statement.assigns = true
+                        statement.ocamlName = existing.ocamlName
+                        check(statement.value, existing.type, inner)
+                        perform(mutating(existing.region!!), statement.pos)
+                        continue
+                    }
                     if (inner.vars.containsKey(statement.name)) {
-                        throw CompileError(statement.pos, "'${statement.name}' is already defined in this block")
+                        throw CompileError(statement.pos, "'${statement.name}' is already defined in this block; to change it, declare it with var ${statement.name} = ...")
                     }
                     statement.ocamlName = snake(statement.name)
                     val params = statement.params
@@ -2574,7 +2720,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                         val declared = statement.returnType?.let { resolve(it) }
                         val type = infer(statement.value, declared, inner)
                         declared?.let { assign(statement.value, type, it) }
-                        inner.vars[statement.name] = Local(type, statement.ocamlName)
+                        inner.vars[statement.name] = Local(type, statement.ocamlName, region = if (statement.isVar) u.fresh() else null)
                     } else {
                         checkDistinct(params.map { it.name to it.pos })
                         val row = u.fresh()
@@ -2597,6 +2743,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 }
             }
         }
+        e.endsWith?.let { if (!it.assigns) throw CompileError(it.pos, "a block must end with an expression, not a binding") }
         if (monad == null) return infer(e.result, expected, inner)
         if (independent && steps.isNotEmpty()) {
             bindSteps()

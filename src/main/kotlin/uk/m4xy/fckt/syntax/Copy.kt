@@ -55,6 +55,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
         is Expr.Member -> Expr.Member(e.pos, expr(e.target), e.name)
         is Expr.Binary -> Expr.Binary(e.pos, e.op, expr(e.left), expr(e.right))
         is Expr.Unary -> Expr.Unary(e.pos, e.op, expr(e.operand))
+        is Expr.Assign -> Expr.Assign(e.pos, expr(e.target), expr(e.value))
         is Expr.Lambda -> Expr.Lambda(e.pos, e.params.map(::param), expr(e.body), e.ignoresArguments)
         is Expr.Pipe -> Expr.Pipe(e.pos, expr(e.value), expr(e.function))
         is Expr.If -> Expr.If(e.pos, expr(e.condition), expr(e.then), expr(e.otherwise))
@@ -67,7 +68,10 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
         is Expr.Monadic -> Expr.Monadic(e.pos, expr(e.module), block(e.block))
     }
 
-    private fun block(e: Expr.Block) = Expr.Block(e.pos, e.statements.map(::statement), expr(e.result))
+    private fun block(e: Expr.Block): Expr.Block {
+        val statements = e.statements.map(::statement)
+        return Expr.Block(e.pos, statements, expr(e.result), e.endsWith?.let { statements.last() as Statement.Binding })
+    }
 
     private fun statement(s: Statement): Statement = when (s) {
         is Statement.Binding -> s.copy(params = s.params?.map(::param), returnType = s.returnType?.let(::type), value = expr(s.value))

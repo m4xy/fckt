@@ -62,7 +62,7 @@ class Brackets(val open: Atom, val items: List<Item>, val close: Atom?) : Item {
 }
 
 /** Operators that are a line's last only when the next line continues it, as the lexer has it. */
-private val CONTINUES = setOf("=", "->", ".", ":", "|>", "~", "!", "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">=", "&&", "||")
+private val CONTINUES = setOf("=", "->", ".", ":", "|>", "~", "!", "+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=")
 
 /**
  * A file's tokens, nested by brackets, and the blocks IntelliJ formats them by. A bracket's

@@ -473,6 +473,10 @@ private class Resolutions(
                 expr(e.right)
             }
             is Expr.Unary -> expr(e.operand)
+            is Expr.Assign -> {
+                expr(e.target)
+                expr(e.value)
+            }
             is Expr.Lambda -> {
                 e.params.forEach { type(it.type) }
                 expr(e.body)

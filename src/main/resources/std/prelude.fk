@@ -101,6 +101,10 @@ annotation type Effect
 // Reads or writes the console.
 @Effect annotation type Console
 
+// Changes a var that someone else can see. Changing one that was made in a function and never
+// left it isn't seen, so it doesn't count: a function can use vars inside and still be pure.
+@Effect annotation type Mutating
+
 // ---- Everything else ----
 
 @Console external print(s: String): Unit = "print_string s"

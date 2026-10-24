@@ -335,11 +335,14 @@ class Parser(private val tokens: List<Token>) {
         val fields = mutableListOf<FieldDef>()
         while (!at(T.RPAREN)) {
             val annotations = annotations()
+            // `var balance: Int`: a field that can be changed. `var` is a keyword only here.
+            val isVar = at(T.IDENT) && peek.text == "var" && peekAt(1).kind == T.IDENT && peekAt(2).kind == T.COLON
+            if (isVar) next()
             val pos = peek.pos
             if (at(T.IDENT) && peekAt(1).kind == T.COLON) {
                 val name = next().text
                 next()
-                fields += FieldDef(pos, name, type(), annotations)
+                fields += FieldDef(pos, name, type(), annotations, isVar)
             } else {
                 fields += FieldDef(pos, "", type(), annotations)
             }
@@ -801,6 +804,9 @@ class Parser(private val tokens: List<Token>) {
         }
         expect(T.RBRACE, "'}'")
         val last = statements.removeLastOrNull() ?: throw error("a block needs a result expression", pos)
+        if (last is Statement.Binding && !last.isVar && last.params == null && last.returnType == null) {
+            return Expr.Block(pos, statements + last, Expr.Name(last.pos, "Unit"), endsWith = last)
+        }
         if (last !is Statement.Effect) throw error("a block must end with an expression, not a binding", last.pos)
         return Expr.Block(pos, statements, last.expr)
     }
@@ -814,6 +820,16 @@ class Parser(private val tokens: List<Token>) {
         if (at(T.LPAREN)) destructuring()?.let { pattern ->
             skipNewlines()
             return Statement.Destructure(pos, pattern, expr())
+        }
+        // `var x = 0`: a local that can be changed. `var` is a keyword only here.
+        if (at(T.IDENT) && peek.text == "var" && peekAt(1).kind == T.IDENT && (peekAt(2).kind == T.ASSIGN || peekAt(2).kind == T.COLON)) {
+            next()
+            val namePos = peek.pos
+            val name = next().text
+            val type = if (accept(T.COLON) != null) type() else null
+            expect(T.ASSIGN, "'=' and the variable's first value")
+            skipNewlines()
+            return Statement.Binding(namePos, name, null, type, expr(), isVar = true)
         }
         if (at(T.IDENT) && peekAt(1).kind == T.ASSIGN) {
             val name = next().text
@@ -837,7 +853,16 @@ class Parser(private val tokens: List<Token>) {
             skipNewlines()
             return Statement.Binding(pos, name, params, returnType, expr())
         }
-        return Statement.Effect(pos, expr())
+        val e = expr()
+        // `account.balance = 10`, `x += 1`: changing a var.
+        if (at(T.ASSIGN) || at(T.OP_ASSIGN)) {
+            if (e !is Expr.Name && e !is Expr.Member) throw error("only a var or a var field can be assigned to")
+            val op = next()
+            skipNewlines()
+            val value = expr()
+            return Statement.Effect(pos, Expr.Assign(op.pos, e, if (op.kind == T.ASSIGN) value else Expr.Binary(op.pos, op.text.dropLast(1), e, value)))
+        }
+        return Statement.Effect(pos, e)
     }
 
     /** `x by` at the start of a statement: parses the pattern and the `by`, or returns null having consumed nothing. */

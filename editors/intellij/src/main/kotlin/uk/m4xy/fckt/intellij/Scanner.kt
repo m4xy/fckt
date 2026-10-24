@@ -137,7 +137,7 @@ fun scan(text: CharSequence, from: Int = 0, until: Int = text.length): List<Tok>
                 val two = if (i + 1 < to) text.substring(i, i + 2) else ""
                 val (kind, length) = when (two) {
                     "->" -> TokKind.ARROW to 2
-                    "|>", "==", "!=", "<=", ">=", "&&", "||" -> TokKind.OPERATOR to 2
+                    "|>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=", "%=" -> TokKind.OPERATOR to 2
                     else -> when (c) {
                         '(' -> TokKind.LPAREN to 1
                         ')' -> TokKind.RPAREN to 1

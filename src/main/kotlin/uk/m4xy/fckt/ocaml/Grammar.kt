@@ -83,11 +83,12 @@ interface TypeDef {
     val alias: String
 }
 
-/** `name : type` in a record or inline record. */
+/** `name : type` in a record or inline record; `mutable name : type` if it [isMutable]. */
 @Element("field-decl", function = "fieldDecl")
 interface FieldDecl {
     @Required val name: String
     @Required val type: String
+    val isMutable: Boolean
 }
 
 /** A constructor. With [FieldDecl] children it carries an inline record, or, in a polymorphic variant, a tuple of their types. */

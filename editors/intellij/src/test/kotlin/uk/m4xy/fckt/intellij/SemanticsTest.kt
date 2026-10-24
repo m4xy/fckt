@@ -186,4 +186,27 @@ class SemanticsTest {
             marked(source),
         )
     }
+
+    @Test
+    fun `var is a keyword in place, and changing a var refers to it`() {
+        val source = """
+            type Account(var balance: Int)
+            count() = {
+              var n = 0
+              n = n + 1
+              n
+            }
+        """.trimIndent()
+        assertEquals(
+            """
+            type [DATA_CLASS:Account]([KEYWORD:var] [PROPERTY:balance]: [CLASS:Int])
+            [FUNCTION_DECLARATION:count]() = {
+              [KEYWORD:var] [LOCAL_VARIABLE:n] = 0
+              [LOCAL_VARIABLE:n] = [LOCAL_VARIABLE:n] + 1
+              [LOCAL_VARIABLE:n]
+            }
+            """.trimIndent(),
+            marked(source),
+        )
+    }
 }

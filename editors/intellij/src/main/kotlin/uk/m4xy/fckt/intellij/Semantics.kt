@@ -149,6 +149,10 @@ internal class Scopes {
     private class Scope(val parent: Scope?) {
         val names = mutableMapOf<String, Pair<Role, Pos>>()
         fun lookup(name: String): Pair<Role, Pos>? = names[name] ?: parent?.lookup(name)
+
+        /** Names bound with `var`, which `name = value` changes rather than binds again. */
+        val vars = mutableSetOf<String>()
+        fun isVar(name: String): Boolean = if (name in names) name in vars else parent?.isVar(name) == true
     }
 
     private fun bind(scope: Scope, pos: Pos, name: String, role: Role) {
@@ -204,6 +208,10 @@ internal class Scopes {
                 expr(e.right, scope)
             }
             is Expr.Unary -> expr(e.operand, scope)
+            is Expr.Assign -> {
+                expr(e.target, scope)
+                expr(e.value, scope)
+            }
             is Expr.Lambda -> {
                 val inner = Scope(scope)
                 params(e.params, inner)
@@ -250,7 +258,16 @@ internal class Scopes {
                 expr(st.value, inner)
             } else {
                 expr(st.value, scope)
-                bind(scope, st.pos, st.name, Role.LOCAL_VARIABLE)
+                if (!st.isVar && scope.isVar(st.name)) {
+                    // Changing a var: a use of it, not a new name.
+                    scope.lookup(st.name)?.let { (role, at) ->
+                        found[st.pos] = role
+                        bindings[st.pos] = at
+                    }
+                } else {
+                    bind(scope, st.pos, st.name, Role.LOCAL_VARIABLE)
+                    if (st.isVar) scope.vars += st.name
+                }
             }
             is Statement.Effect -> expr(st.expr, scope)
             is Statement.Destructure -> {
@@ -436,6 +453,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
             // Keywords only in place.
             name == "spec" && word(next)?.firstOrNull()?.isUpperCase() == true -> Role.KEYWORD
             (name == "opaque" || name == "annotation") && word(next) == "type" -> Role.KEYWORD
+            name == "var" && next?.kind == TokKind.IDENT && sameLine(t, next) -> Role.KEYWORD
             name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN) &&
                 (prev == null || !sameLine(prev, t) || word(prev) == "private") -> Role.KEYWORD
             name == "by" && prev != null && sameLine(prev, t) && (prev.kind == TokKind.IDENT || prev.kind == TokKind.RPAREN) &&

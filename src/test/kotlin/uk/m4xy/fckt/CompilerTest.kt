@@ -390,6 +390,34 @@ class CompilerTest {
     }
 
     @Test
+    fun `vars change, and changing one someone else can see is an effect`() {
+        val source = File("examples/mutation.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "mutable balance : int")
+        assertContains(ml, "let n = ref 0 in")
+        val account = "type Account(owner: String, var balance: Int)\n"
+        fun program(source: String) = error("$account$source\nmain() = assert(true)")
+        assertContains(program("f(a: Account) = { a.balance = 1 }"), "'f' does @Mutating, so it must say so: @Mutating f(...)")
+        assertContains(program("f(a: Account) = { a.owner = \"x\" }"), "Account's owner can't be changed; declare it with var owner: ...")
+        assertContains(program("f(n: Int) = { n += 1 }"), "'n' can't be changed; declare it with var n = ...")
+        assertContains(program("f() = { n = 1; n = 2; n }"), "to change it, declare it with var n = ...")
+        assertContains(program("f() = { n = 5 }"), "a block must end with an expression, not a binding")
+        assertContains(program("type Holder { H(var acc: Int) }"), "only a record's fields can be var")
+        // Whatever holds it, it's the same account: in an option, a box, a case, or passed back.
+        assertContains(program("f(o: Option<Account>) = when (o) {\n  Some(a) -> { a.balance = 1 }\n  None -> Unit\n}"), "'f' does @Mutating")
+        assertContains(program("type Box<T>(value: T)\nf(b: Box<Account>) = { b.value.balance = 1 }"), "'f' does @Mutating")
+        assertContains(program("type Holder { H(acc: Account) }\nf(h: Holder) = when (h) {\n  H(acc) -> { acc.balance = 1 }\n}"), "'f' does @Mutating")
+        assertContains(program("g(a: Account) = a\nf(x: Account) = { y = g(x); y.balance = 2 }"), "'f' does @Mutating")
+        // A top-level value lives as long as the program, so changing it is always seen.
+        assertContains(program("bank = Account(\"b\", 0)\nf() = { bank.balance = 1 }"), "'f' does @Mutating")
+        // A function that changes a var can't escape as a pure one.
+        assertContains(program("counter(): () -> Int = { var n = 0; ~{ n += 1; n } }"), "this does @Mutating, but the type of the function it's in says it's pure")
+        // What's made and changed in a function, and doesn't leave it, doesn't count.
+        compile("$account" + "f() = { a = Account(\"x\", 0); b = a; b.balance = 3; a.balance }\ng() = [Account(\"a\", 1)].forEach(a -> { a.balance = 0 })\nh() = { var n = 0; n = 5 }\nmain() = assert(true)")
+    }
+
+    @Test
     fun `opaque types are abstract outside their module`() {
         val source = File("examples/specs.fk").readText()
         assertEquals("", run(source))

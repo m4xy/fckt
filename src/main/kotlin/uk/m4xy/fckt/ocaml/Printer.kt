@@ -30,6 +30,7 @@ object Printer {
         "=", "<>", "<", ">", "<=", ">=", "|>", "==", "!=" -> 55 to false
         "&&" -> 50 to true
         "||" -> 45 to true
+        ":=", "<-" -> 20 to true
         else -> 55 to false
     }
 
@@ -102,7 +103,7 @@ object Printer {
     private fun tupleElement(type: String) = if ("->" in type || " * " in type) "($type)" else type
 
     private fun fields(children: List<ResolvedNode>): String {
-        val parts = children.map { "${it.str("name")} : ${it.str("type")}" }
+        val parts = children.map { (if (it.attributes["isMutable"] == true) "mutable " else "") + "${it.str("name")} : ${it.str("type")}" }
         val oneLine = "{ ${parts.joinToString("; ")} }"
         return if (oneLine.length <= 60) oneLine else "{\n" + parts.joinToString("") { "    $it;\n" } + "  }"
     }
