@@ -471,12 +471,47 @@ class CompilerTest {
     }
 
     @Test
+    fun `arguments run left to right, as in Kotlin`() {
+        val source = """
+            @Console f(s: String): Int = {
+              print(s)
+              1
+            }
+            g(a: Int, b: Int) = a + b
+            @Console main() = {
+              pair = (f("a"), f("b"))
+              sum = f("c") + g(b = f("d"), a = f("e"))
+              items = [f("f"), f("g")]
+              println("${'$'}{f("h")}${'$'}{f("i")} ${'$'}pair ${'$'}sum ${'$'}items")
+            }
+        """.trimIndent()
+        assertEquals("abcdefghi11 (1, 1) 3 [1, 1]\n", run(source))
+    }
+
+    @Test
+    fun `a handler can resume the rest of the block now, later, or never`() {
+        assertEquals("a: started\nb: started\na: finished\nb: finished\n", run(File("examples/resume.fk").readText()))
+        val fail = "@Effect spec Fail { fail(reason: String): Nothing }\n@Effect spec Choose { choose(): Boolean }\n"
+        fun program(source: String) = error("$fail$source")
+        // Nothing can't be answered, or resumed with.
+        assertContains(
+            program("f(): Int = Fail(fail = r -> 0) { fail(\"x\") }\nmain() = assert(true)"),
+            "'fail' gives Nothing, so it can't be answered: take resume and don't call it, as fail = (reason, resume) -> ...",
+        )
+        assertContains(program("f(): Int = Fail(fail = (r, resume) -> resume(0)) { fail(\"x\") }\nmain() = assert(true)"), "expected Nothing but found Int")
+        // What resume gives is what the block gives.
+        assertContains(program("f(): Int = Choose(choose = resume -> resume(true) == 1) { 1 }\nmain() = assert(true)"), "expected Int but found Boolean")
+        // A handler that takes resume can also call it straight away, as one that doesn't would.
+        assertEquals("3\n", run("$fail@Console main() = println(Choose(choose = resume -> resume(false)) { if (choose()) 1 else 3 }.toString())"))
+    }
+
+    @Test
     fun `a handled effect's operations are answered by whatever handles it`() {
         val source = File("examples/handlers.fk").readText()
         assertEquals("from the terminal\n", run(source))
         val ml = compile(source)
         assertContains(ml, "| Console_println : string -> unit Effect.t")
-        assertContains(ml, "| effect (Clock_now ()), k -> Effect.Deep.continue k (h.now ())")
+        assertContains(ml, "| effect (Clock_now ()), k -> h.now (fun v -> Effect.Deep.continue k v)")
         val clock = "@Effect spec Clock { now(): Int }\n@Effect spec Yielding<A> { yield(value: A): Unit }\n"
         fun program(source: String) = error("$clock$source")
         // main must handle what it does, unless the effect has a default.

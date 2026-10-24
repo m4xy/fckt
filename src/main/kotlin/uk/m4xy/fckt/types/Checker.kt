@@ -1297,22 +1297,51 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /**
      * `Console(println = s -> ..., readLine = ~"x")`: a handler made from a function, or value, for
-     * each of [spec]'s operations. Its answers run where it handles, so what they do is its type's
-     * last argument, after the effect's own.
+     * each of [spec]'s operations. An operation's function may take one more parameter, `resume`:
+     * the rest of the handled block, which it calls with the operation's result, later, or never.
+     * What the block gives, and so what `resume` does, is the handler's answer, its type's
+     * second-to-last argument; its answers run where it handles, so what they do is its last.
      */
     private fun makeHandler(e: Expr.Call, spec: Decl.Spec, scope: Scope): Type {
         val args = specTypeVars.getValue(spec).map { u.fresh() as Type }
+        val answer = u.fresh()
         val answers = u.fresh()
-        val types = spec.values.map { v ->
+        val order = argOrder(e.args.map { it.name to it.value.pos }, spec.values.map { it.name }, e.pos, spec.simpleName)
+        val resumes = spec.values.mapIndexed { i, v ->
             val scheme = specSchemes.getValue(spec).getValue(v.name)
             val mapping = scheme.vars.associateWith { u.fresh() as Type } + specTypeVars.getValue(spec).zip(args).toMap()
             val t = u.substitute(scheme.type, mapping)
-            if (t is Type.Fn) Type.Fn(t.params, t.result, answers) else t
+            val arg = e.args[order[i]].value
+            if (t !is Type.Fn) {
+                check(arg, t, scope)
+                return@mapIndexed false
+            }
+            // A function with one more parameter than the operation takes resume. A lambda says by
+            // how many it's written with; anything else, by its type.
+            val given = if (arg is Expr.Lambda) null else infer(arg, null, scope).prune()
+            val resuming = when {
+                arg is Expr.Lambda -> !arg.ignoresArguments && arg.params.size == t.params.size + 1
+                else -> (given as? Type.Fn)?.params?.size == t.params.size + 1
+            }
+            val field = if (resuming) {
+                Type.Fn(t.params + Type.Fn(listOf(t.result), answer, answers), answer, answers)
+            } else {
+                Type.Fn(t.params, t.result, answers)
+            }
+            try {
+                if (given != null) assign(arg, given, field) else check(arg, field, scope)
+            } catch (error: CompileError) {
+                if (resuming || t.result.prune() != Type.NOTHING) throw error
+                throw CompileError(
+                    arg.pos,
+                    "'${v.name}' gives Nothing, so it can't be answered: take resume and don't call it, " +
+                        "as ${v.name} = (${(v.params!!.map { it.name } + "resume").joinToString(", ")}) -> ...",
+                )
+            }
+            resuming
         }
-        val order = argOrder(e.args.map { it.name to it.value.pos }, spec.values.map { it.name }, e.pos, spec.simpleName)
-        checkArgs(e.args, order, types, scope)
-        e.resolved = CallRef.Handler(spec, order)
-        return Type.Con(Type.HANDLER + spec.name, args + answers)
+        e.resolved = CallRef.Handler(spec, order, resumes)
+        return Type.Con(Type.HANDLER + spec.name, args + answer + answers)
     }
 
     /** A module following [spec], as a handler: what its functions do is what its answers do. */
@@ -1322,25 +1351,35 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val f = globals.getValue("${module.name}.${v.name}")
             (globalType(f) as? Type.Fn)?.let { subEffects(it.effects, answers) }
         }
-        return Type.Con(Type.HANDLER + spec.name, listOf(answers))
+        return Type.Con(Type.HANDLER + spec.name, listOf(u.fresh(), answers))
     }
 
     /** `handler { block }`. */
     private fun inferHandle(e: Expr.Handle, expected: Type?, scope: Scope): Type {
-        val handler = infer(e.handler, null, scope).prune() as? Type.Con
+        val type = infer(e.handler, null, scope).prune()
+        // A function, as in `sequence { ... }`, is called with the block as a lambda, as in Kotlin.
+        if (type is Type.Fn && type.params.size == 1) {
+            val call = Expr.Call(e.pos, e.handler, listOf(Arg(null, Expr.Lambda(e.block.pos, emptyList(), e.block))))
+            e.call = call
+            return infer(call, expected, scope)
+        }
+        val handler = type as? Type.Con
         val spec = handler?.name?.takeIf { it.startsWith(Type.HANDLER) }?.let { specs[it.removePrefix(Type.HANDLER)] }
             ?: throw CompileError(e.handler.pos, "this isn't a handler: make one from a handled effect, as Console(println = ...), or use a module that follows one")
         e.handles = spec
-        return handling(spec, handler.args.dropLast(1), handler.args.last(), e.block, expected, scope, e.pos)
+        val n = handler.args.size
+        return handling(spec, handler.args.take(n - 2), handler.args[n - 2], handler.args[n - 1], e.block, expected, scope, e.pos)
     }
 
     /**
      * Runs [block] with [spec]<[args]> handled: inside, it may do the effect; outside, what's left
-     * of what it does is done here, as is what the handler's [answers] do.
+     * of what it does is done here, as is what the handler's [answers] do. The block gives the
+     * handler's [answer], as does every handler that doesn't resume.
      */
-    private fun handling(spec: Decl.Spec, args: List<Type>, answers: Type, block: Expr.Block, expected: Type?, scope: Scope, pos: Pos): Type {
+    private fun handling(spec: Decl.Spec, args: List<Type>, answer: Type, answers: Type, block: Expr.Block, expected: Type?, scope: Scope, pos: Pos): Type {
         val rest = u.fresh()
-        val type = doing(Type.row(listOf(Type.Con(spec.name, args)), rest)) { infer(block, expected, scope) }
+        val type = doing(Type.row(listOf(Type.Con(spec.name, args)), rest)) { infer(block, expected ?: known(answer), scope) }
+        assign(block, type, answer)
         perform(rest, pos)
         perform(answers, pos)
         return type
@@ -2151,7 +2190,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** Infers [e]'s type; [expected], if known, guides lambdas, literals and constructors. */
     private fun infer(e: Expr, expected: Type?, scope: Scope): Type {
-        val type = inferInner(e, expected, scope)
+        var type = inferInner(e, expected, scope)
+        // A call that gives Nothing never returns, so it fits wherever it is.
+        if (e is Expr.Call && type.prune() == Type.NOTHING) {
+            e.absurd = true
+            type = u.fresh()
+        }
         e.type = type
         return type
     }
@@ -2921,7 +2965,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         moduleSpecs[module.name]?.takeIf { isEffect(it) }?.let { spec ->
             e.handles = spec
             e.handler = module
-            return handling(spec, emptyList(), (moduleHandler(module, spec) as Type.Con).args.last(), e.block, null, scope, e.pos)
+            val handler = moduleHandler(module, spec) as Type.Con
+            return handling(spec, emptyList(), handler.args[0], handler.args[1], e.block, null, scope, e.pos)
         }
         fun member(what: String) = globals[module.name + "." + what]?.takeIf { visible(it) }
         val bind = member("bind")

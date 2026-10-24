@@ -64,6 +64,9 @@ sealed class Type {
         val STRING = Con("String")
         val BOOLEAN = Con("Boolean")
         val UNIT = Con("Unit")
+
+        /** The type with no values: what a call that never returns gives. */
+        val NOTHING = Con("Nothing")
         val CHAR = Con("Char")
         fun list(element: Type) = Con("List", listOf(element))
         fun option(element: Type) = Con("Option", listOf(element))
@@ -159,7 +162,7 @@ sealed class Type {
 
 /** `Double` is accepted as another name for `Float`, which is what OCaml calls it. */
 val BUILTIN_TYPES = mapOf(
-    "Int" to 0, "Float" to 0, "Double" to 0, "String" to 0, "Boolean" to 0, "Unit" to 0, "Char" to 0,
+    "Int" to 0, "Float" to 0, "Double" to 0, "String" to 0, "Boolean" to 0, "Unit" to 0, "Char" to 0, "Nothing" to 0,
     "List" to 1, "Option" to 1, "Lazy" to 1, "Result" to 2,
 )
 

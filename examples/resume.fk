@@ -1,0 +1,80 @@
+// Handlers that choose whether to resume. A function answering an operation may take one more
+// parameter, resume: the rest of the handled block, waiting at the call. Calling it carries on
+// with the operation's result, and gives what the block gives; the handler can call it now,
+// later, or never. It can be called at most once.
+
+// Never resumed: an operation that gives Nothing can't be, so code after fail() never runs.
+@Effect spec Fail {
+  fail(reason: String): Nothing
+}
+
+// Nothing fits anywhere, so fail() can be a branch.
+@Fail entry(line: String): (String, String) = when (line.split('=')) {
+  [key, value] -> (key, value)
+  else -> fail("no '=' in '$line'")
+}
+
+// The first fail anywhere below ends the block, with no Results passed up by hand.
+parse(lines: List<String>): Result<List<(String, String)>, String> =
+  Fail(fail = (reason, resume) -> Error(reason)) { Ok(lines.map(entry)) }
+
+// Resumed later: a generator. Each yield hands back a value, and the rest, kept for when it's asked for.
+@Effect spec Yielding<A> {
+  yield(value: A): Unit
+}
+
+type Stream<A> { End, Next(value: A, rest: Lazy<Stream<A>>) }
+
+// As a function taking a function, sequence { ... } calls it with the block, as in Kotlin.
+sequence<A>(block: @Yielding<A> () -> Unit): Stream<A> =
+  Yielding(yield = (a, resume) -> Next(a, lazy(~resume(Unit)))) {
+    block()
+    End
+  }
+
+take<A>(stream: Stream<A>, n: Int): List<A> = when (stream) {
+  End -> []
+  Next(a, rest) -> if (n == 0) [] else [a, *take(rest.value, n - 1)]
+}
+
+// Never ends, but only what's taken is computed.
+@Yielding<Int> naturals(from: Int): Unit = {
+  yield(from)
+  naturals(from + 1)
+}
+
+// Resumed in turn: pause parks the rest of a task at the back of a queue, and the next one runs.
+@Effect spec Async {
+  pause(): Unit
+}
+
+type Queue(var tasks: List<@Mutating @Console () -> Unit>)
+
+@Mutating @Console runQueue(queue: Queue): Unit = when (queue.tasks) {
+  [] -> Unit
+  [task, *rest] -> {
+    queue.tasks = rest
+    task()
+    runQueue(queue)
+  }
+}
+
+// The queue is local, so this only prints.
+@Console roundRobin(tasks: List<@Async @Console () -> Unit>): Unit = {
+  queue = Queue([])
+  queue.tasks = tasks.map(task -> ~Async(pause = resume -> { queue.tasks = queue.tasks + [~resume(Unit)] }) { task() })
+  runQueue(queue)
+}
+
+@Async @Console worker(name: String): Unit = {
+  println("$name: started")
+  pause()
+  println("$name: finished")
+}
+
+@Console main() = {
+  assertEquals(Ok([("a", "1"), ("b", "2")]), parse(["a=1", "b=2"]))
+  assertEquals(Error("no '=' in 'oops'"), parse(["a=1", "oops", "c"]))
+  assertEquals([0, 1, 2, 3, 4], take(sequence { naturals(0) }, 5))
+  roundRobin([~worker("a"), ~worker("b")])
+}

@@ -144,7 +144,8 @@ class SemanticsTest {
         assertEquals(listOf("here:6"), goto("shared-cases", 35, "A"))
         assertEquals(listOf("here:7"), goto("shared-cases", 35, "Zero"))
         // What's built in is described in builtins.fk.
-        assertEquals(listOf("builtins.fk:35"), goto("stdlib", 9, "Ok"))
+        val result = standardSource(BUILTINS)!!.lines().indexOfFirst { "type Result" in it } + 1
+        assertEquals(listOf("builtins.fk:$result"), goto("stdlib", 9, "Ok"))
         assertEquals(listOf("builtins.fk:5"), goto("stdlib", 6, "Int"))
         // A declaration's own name goes nowhere.
         assertEquals(emptyList(), goto("monads", 33, "map"))

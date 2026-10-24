@@ -22,6 +22,10 @@ type Char = Char
 // No information: OCaml's unit. Its one value is Unit.
 type Unit = Unit
 
+// No value at all: what a call that never returns gives, like an operation no handler resumes.
+// Such a call fits wherever it is: `if (bad) fail("why") else 1` is an Int.
+type Nothing = Nothing
+
 // A list: [], [x, y], or [head, *tail] in patterns. OCaml's list.
 type List<A> = List<A>
 

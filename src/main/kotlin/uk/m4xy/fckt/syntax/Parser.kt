@@ -495,7 +495,8 @@ class Parser(private val tokens: List<Token>) {
 
     private fun type(): TypeRef {
         val pos = peek.pos
-        // `@Console (String) -> Unit`: a function that may print. An effect here has no arguments.
+        // `@Console (String) -> Unit`: a function that may print. An effect here has no arguments,
+        // but a generic one has type arguments: `@Yielding<Int> () -> Unit`.
         if (at(T.AT)) {
             val effects = mutableListOf<Annotation>()
             while (at(T.AT)) {
@@ -505,7 +506,15 @@ class Parser(private val tokens: List<Token>) {
                     next()
                     name += "." + next().text
                 }
-                effects += Annotation(at, name, emptyList())
+                val typeArgs = if (accept(T.LT) != null) {
+                    val list = mutableListOf(type())
+                    while (accept(T.COMMA) != null) list += type()
+                    expect(T.GT, "'>'")
+                    list
+                } else {
+                    emptyList()
+                }
+                effects += Annotation(at, name, emptyList(), typeArgs)
             }
             val function = type() as? TypeRef.Function ?: throw error("an effect goes before a function type, like @Console (String) -> Unit", pos)
             return function.copy(pos = pos, effects = effects + function.effects)

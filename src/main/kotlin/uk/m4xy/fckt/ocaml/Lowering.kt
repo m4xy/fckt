@@ -54,6 +54,12 @@ private fun concat(parts: List<Gen>): Gen {
     return if (merged.isEmpty()) Gen.Str("") else merged.reduceRight { part, rest -> Gen.Op("^", part, rest) }
 }
 
+/** OCaml's name for fckt's Nothing, the type with no values. */
+private const val NOTHING = "fk_nothing"
+
+/** The type variable for what a handled block gives: a handler's answer. */
+private const val ANSWER = "'fk_answer"
+
 /** Translates a checked program into the Kastor-built OCaml tree. */
 class Lowering(private val program: Program) {
     private val records = program.records.associateBy { it.name }
@@ -101,7 +107,6 @@ class Lowering(private val program: Program) {
             showBodies[name] = showBody(name)
         }
         currentPath = emptyList()
-        val helperItems = StructureElement.build<Unit> { if (helpers.isNotEmpty()) helperFunctions() }.children
         val main = program.main?.let {
             StructureElement.build<Unit> {
                 let(false) {
@@ -117,7 +122,10 @@ class Lowering(private val program: Program) {
                 }
             }.children
         }.orEmpty()
-        return StructureElement(helperItems + moduleItems(emptyList(), program.root, functionItems) + main)
+        // After the rest, which says which helpers it needs.
+        val items = moduleItems(emptyList(), program.root, functionItems)
+        val helperItems = StructureElement.build<Unit> { if (helpers.isNotEmpty()) helperFunctions() }.children
+        return StructureElement(helperItems + items + main)
     }
 
     // ---- Handled effects ----
@@ -131,12 +139,9 @@ class Lowering(private val program: Program) {
     private fun handlerType(spec: Decl.Spec) = snake(spec.simpleName).removeSuffix("_") + "_handler"
     private fun handleName(spec: Decl.Spec) = "handle_" + snake(spec.simpleName).removeSuffix("_")
 
-    /** The handler record's type, as named from here: `console_handler`, or `_ yielding_handler`. */
-    private fun handlerTypeText(spec: Decl.Spec): String = when (spec.typeParams.size) {
-        0 -> ""
-        1 -> "_ "
-        else -> spec.typeParams.joinToString(", ", "(", ") ") { "_" }
-    } + nextTo(spec, handlerType(spec))
+    /** The handler record's type, as named from here: `_ console_handler`, or `(_, _) yielding_handler`. */
+    private fun handlerTypeText(spec: Decl.Spec): String =
+        (if (spec.typeParams.isEmpty()) "_ " else (spec.typeParams + ANSWER).joinToString(", ", "(", ") ") { "_" }) + nextTo(spec, handlerType(spec))
 
     private fun operationParams(spec: Decl.Spec, op: SpecValue): List<Pair<String, Boolean>> =
         op.params.orEmpty().map { typeText(it.type!!, spec.typeParams + op.typeParams) to compound(it.type!!) }
@@ -145,7 +150,9 @@ class Lowering(private val program: Program) {
 
     /**
      * A handled effect in OCaml 5: an effect constructor for each operation, a record type for its
-     * handlers, with a function for each operation, and a function that runs a block with one.
+     * handlers, and a function that runs a block with one. The record has a function for each
+     * operation, which takes the operation's arguments and then `resume`, and gives what the block
+     * does: its [ANSWER]. One that doesn't take resume in fckt is resumed with what it gives.
      */
     private fun StructureScope<Unit>.handledEffect(spec: Decl.Spec) {
         val generic = spec.typeParams.isNotEmpty()
@@ -158,22 +165,19 @@ class Lowering(private val program: Program) {
         }
         types {
             typeDef(handlerType(spec)) {
-                params = spec.typeParams.map(::typeVar)
+                params = spec.typeParams.map(::typeVar) + ANSWER
                 for (op in spec.values) {
-                    val type = if (op.params == null) operationResult(spec, op) else functionText(operationParams(spec, op), operationResult(spec, op))
+                    val result = operationResult(spec, op)
+                    val type = if (op.params == null) result else (operationParams(spec, op) + ("$result -> $ANSWER" to true)).joinToString(" -> ") { (text, paren) -> if (paren) "($text)" else text } + " -> $ANSWER"
                     fieldDecl(snake(op.name), type)
                 }
             }
         }
         let(false) {
             binding(handleName(spec)) {
-                val vars = when (spec.typeParams.size) {
-                    0 -> ""
-                    1 -> typeVar(spec.typeParams[0]) + " "
-                    else -> spec.typeParams.joinToString(", ", "(", ") ") { typeVar(it) }
-                }
-                params = listOf("(h : $vars${handlerType(spec)})", "(f : unit -> 'r)")
-                returnType = "'r"
+                val vars = (spec.typeParams.map(::typeVar) + ANSWER).let { if (it.size == 1) it[0] + " " else it.joinToString(", ", "(", ") ") }
+                params = listOf("(h : $vars${handlerType(spec)})", "(f : unit -> $ANSWER)")
+                returnType = ANSWER
                 // A generic effect's values are what the checker made sure they are, but OCaml can't see that.
                 fun known(g: Gen) = if (generic) Gen.App(Gen.Id("Obj.magic"), listOf(g)) else g
                 val cases = spec.values.map { op ->
@@ -184,12 +188,13 @@ class Lowering(private val program: Program) {
                         else -> names.joinToString(", ", "(", ")")
                     }
                     val field = Gen.Field(Gen.Id("h"), snake(op.name))
-                    val answer = when {
-                        op.params == null -> field
-                        names.isEmpty() -> Gen.App(field, listOf(Gen.Lit("()")))
-                        else -> Gen.App(field, names.map { known(Gen.Id(it)) })
+                    val answer = if (op.params == null) {
+                        Gen.App(Gen.Id("Effect.Deep.continue"), listOf(Gen.Id("k"), known(field)))
+                    } else {
+                        val resume = Gen.Fun(listOf("v"), Gen.App(Gen.Id("Effect.Deep.continue"), listOf(Gen.Id("k"), known(Gen.Id("v")))))
+                        Gen.App(field, names.map { known(Gen.Id(it)) } + resume)
                     }
-                    "effect (${effectName(spec, op)} $pattern), k" to Gen.App(Gen.Id("Effect.Deep.continue"), listOf(Gen.Id("k"), known(answer)))
+                    "effect (${effectName(spec, op)} $pattern), k" to answer
                 }
                 gen(Gen.Match(Gen.App(Gen.Id("f"), listOf(Gen.Lit("()"))), listOf("v" to Gen.Id("v")) + cases))
             }
@@ -213,9 +218,20 @@ class Lowering(private val program: Program) {
         return Gen.Fun(names.ifEmpty { listOf("()") }, perform(spec, op, names.map { Gen.Id(it) }))
     }
 
-    /** A module following a handled effect's spec, as a handler: a record of its functions. */
+    /** A module following a handled effect's spec, as a handler: a record of its functions, each resumed with what it gives. */
     private fun moduleHandler(module: Decl.Module, spec: Decl.Spec): Gen =
-        Gen.Ann(Gen.Record(spec.values.map { op -> snake(op.name) to Gen.Id(ref("${module.name}.${op.name}", ::snake)) }), handlerTypeText(spec))
+        Gen.Ann(Gen.Record(spec.values.map { op -> snake(op.name) to answering(op, Gen.Id(ref("${module.name}.${op.name}", ::snake)), false) }), handlerTypeText(spec))
+
+    /**
+     * [answer], as [op]'s field of a handler record: as it is if it [resumes], or if [op] is a
+     * value; otherwise a function that resumes with what it gives.
+     */
+    private fun answering(op: SpecValue, answer: Gen, resumes: Boolean): Gen {
+        if (resumes || op.params == null) return answer
+        val names = op.params.indices.map { "x$it" }
+        val given = Gen.App(answer, names.ifEmpty { listOf("()") }.map { Gen.Id(it) })
+        return Gen.Fun(names + "k", Gen.App(Gen.Id("k"), listOf(given)))
+    }
 
     /** Running [block] with [handler] handling [spec]. */
     private fun handle(spec: Decl.Spec, handler: Gen, block: Expr): Gen =
@@ -536,7 +552,7 @@ class Lowering(private val program: Program) {
             }
         }
         val base = when (name) {
-            "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"
+            "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"; "Nothing" -> helper(NOTHING)
             "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"; "Result" -> "result"
             // A spec's own type, inside its module type.
             else -> if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
@@ -571,12 +587,67 @@ class Lowering(private val program: Program) {
         S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
+        bound[e]?.let { return ident(it) }
+        // OCaml runs arguments right to left, and Kotlin left to right: where more than one runs
+        // code, each is bound first, in order, so effects happen in the order they're written.
+        val parts = runInOrder(e).filter { runs(it) && it !in bound }
+        if (parts.size >= 2) return bindInOrder(e, parts, 0)
         // A narrower sealed type used as a wider one: (v :> alphabet).
         val widened = e.coerceTo ?: return exprUnwidened(e)
         annotated(typeText(widened)) {
             coerce = true
             exprUnwidened(e)
         }
+    }
+
+    /** Arguments already computed, in order, by [bindInOrder]: the name each is bound to. */
+    private val bound = java.util.IdentityHashMap<Expr, String>()
+    private var boundCount = 0
+
+    /** `let fk_arg1 = a in let fk_arg2 = b in e`, with [e] using those names for [parts]. */
+    private fun <S> S.bindInOrder(e: Expr, parts: List<Expr>, from: Int) where
+        S : IdentParent<Unit>, S : LiteralParent<Unit>, S : ApplyParent<Unit>, S : InfixParent<Unit>,
+        S : LambdaParent<Unit>, S : LetInParent<Unit>, S : SequenceParent<Unit>, S : IfThenElseParent<Unit>,
+        S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
+        S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
+        if (from == parts.size) {
+            expr(e)
+            parts.forEach { bound.remove(it) }
+            return
+        }
+        val name = "fk_arg${++boundCount}"
+        letIn(name) {
+            expr(parts[from])
+            bound[parts[from]] = name
+            bindInOrder(e, parts, from + 1)
+        }
+    }
+
+    /** The parts of [e] Kotlin computes before it, in the order it does. */
+    private fun runInOrder(e: Expr): List<Expr> = when (e) {
+        is Expr.Call -> when (e.resolved) {
+            is CallRef.Extension, is CallRef.Builtin, is CallRef.Copy -> listOf((e.callee as Expr.Member).target)
+            else -> emptyList()
+        } + e.args.map { it.value }
+        is Expr.Tuple -> e.elements
+        is Expr.ListLit -> e.items.map { if (it is Expr.Spread) it.list else it }
+        is Expr.Binary -> if (e.op == "&&" || e.op == "||") emptyList() else listOf(e.left, e.right)
+        is Expr.StringLit -> e.parts.filterIsInstance<StringPart.Interpolated>().map { it.expr }
+        else -> emptyList()
+    }
+
+    /** Whether computing [e] may run code, which could do something: anything but values and what's made of them. */
+    private fun runs(e: Expr): Boolean = when (e) {
+        is Expr.Name, is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit, is Expr.Lambda -> false
+        is Expr.StringLit -> e.parts.any { it is StringPart.Interpolated && runs(it.expr) }
+        is Expr.Member -> e.resolved !is MemberRef.Field || runs(e.target)
+        is Expr.Call -> e.resolved !is CallRef.Construct || e.args.any { runs(it.value) }
+        is Expr.Tuple -> e.elements.any(::runs)
+        is Expr.ListLit -> e.items.any { runs(if (it is Expr.Spread) it.list else it) }
+        is Expr.Binary -> runs(e.left) || runs(e.right)
+        is Expr.Unary -> runs(e.operand)
+        is Expr.If -> runs(e.condition) || runs(e.then) || runs(e.otherwise)
+        else -> true
     }
 
     private fun <S> S.exprUnwidened(e: Expr) where
@@ -625,7 +696,15 @@ class Lowering(private val program: Program) {
                 }
             }
             is Expr.ListLit -> gen(listExpr(e.items))
-            is Expr.Call -> call(e)
+            // A call that never returns: OCaml is told it gives whatever is wanted.
+            is Expr.Call -> if (e.absurd) {
+                match {
+                    call(e)
+                    case("_") { literal("assert false") }
+                }
+            } else {
+                call(e)
+            }
             is Expr.Member -> when (val r = e.resolved!!) {
                 is MemberRef.Field -> fieldGet(labelPrefix(records.getValue(r.record)) + r.ocamlName) { gen(qualified(Gen.Src(e.target), r)) }
                 is MemberRef.CastField -> fieldGet(r.ocamlName) { ident(r.recordVar) }
@@ -701,7 +780,7 @@ class Lowering(private val program: Program) {
             }
             is Expr.When -> whenExpr(e)
             is Expr.Block -> block(e, 0, null)
-            is Expr.Handle -> gen(handle(e.handles!!, Gen.Src(e.handler), e.block))
+            is Expr.Handle -> gen(e.call?.let { Gen.Src(it) } ?: handle(e.handles!!, Gen.Src(e.handler), e.block))
             is Expr.Monadic -> if (e.handles != null) gen(handle(e.handles!!, moduleHandler(e.handler!!, e.handles!!), e.block)) else {
                 // OCaml's binding operators: let* x = v in rest is bind v (fun x -> rest), and
                 // let+ a = x and+ b = y in rest is map (product x y) (fun (a, b) -> rest).
@@ -747,7 +826,10 @@ class Lowering(private val program: Program) {
         }
         when (val r = e.resolved!!) {
             is CallRef.Handler -> gen(
-                Gen.Ann(Gen.Record(r.spec.values.mapIndexed { i, op -> snake(op.name) to Gen.Src(e.args[r.order[i]].value) }), handlerTypeText(r.spec)),
+                Gen.Ann(
+                    Gen.Record(r.spec.values.mapIndexed { i, op -> snake(op.name) to answering(op, Gen.Src(e.args[r.order[i]].value), r.resumes[i]) }),
+                    handlerTypeText(r.spec),
+                ),
             )
             is CallRef.Function -> apply {
                 expr(e.callee)
@@ -1207,6 +1289,7 @@ class Lowering(private val program: Program) {
         "Boolean" -> Gen.Id("string_of_bool")
         "Char" -> Gen.App(Gen.Id("String.make"), listOf(Gen.Lit("1")))
         "Unit" -> Gen.Fun(listOf("()"), Gen.Str("()"))
+        "Nothing" -> Gen.Fun(listOf("_"), Gen.Lit("assert false"))
         "Float" -> Gen.Id(helper("fk_show_float"))
         "List" -> Gen.App(Gen.Id(helper("fk_show_list")), args)
         "Option" -> Gen.App(Gen.Id(helper("fk_show_option")), args)
@@ -1330,7 +1413,9 @@ class Lowering(private val program: Program) {
     }
 
     private fun StructureScope<Unit>.helperFunctions() {
-        let(false) {
+        // The type with no values.
+        if (NOTHING in helpers) types { typeDef(NOTHING) { alias = "|" } }
+        if (helpers.any { it != NOTHING }) let(false) {
             if ("fk_show_float" in helpers) {
                 // Like Kotlin: the shortest form that reads back as the same number, always with a
                 // decimal point (1.0 where OCaml's string_of_float prints "1.").

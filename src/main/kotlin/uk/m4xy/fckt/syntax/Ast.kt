@@ -263,6 +263,9 @@ sealed class Expr {
     /** `callee(args)`; arguments may be named (`f(x = 1)`). */
     class Call(override val pos: Pos, val callee: Expr, val args: List<Arg>) : Expr() {
         var resolved: CallRef? = null
+
+        /** Gives Nothing: it never returns, so whatever type is wanted where it is. */
+        var absurd = false
     }
 
     /** `target.name`, which may turn out to be a field or, under a [Call], a method. */
@@ -341,6 +344,9 @@ sealed class Expr {
      */
     class Handle(override val pos: Pos, val handler: Expr, val block: Block) : Expr() {
         var handles: Decl.Spec? = null
+
+        /** Set instead when [handler] is a function: `sequence { ... }` is `sequence(~{ ... })`. */
+        var call: Call? = null
     }
 }
 
@@ -473,8 +479,11 @@ sealed interface CallRef {
     /** A built-in method or function, with its translation. */
     data class Builtin(val method: uk.m4xy.fckt.types.Builtin) : CallRef
 
-    /** `Console(println = ..., readLine = ...)`: a handler for [spec], from its operations' answers, in spec order. */
-    data class Handler(val spec: Decl.Spec, val order: List<Int>) : CallRef
+    /**
+     * `Console(println = ..., readLine = ...)`: a handler for [spec], from its operations' answers, in
+     * spec order; each that [resumes] takes `resume`, and the others are resumed with what they give.
+     */
+    data class Handler(val spec: Decl.Spec, val order: List<Int>, val resumes: List<Boolean>) : CallRef
 
     /** `record.copy(field = value, ...)`: a copy with some fields replaced. */
     data class Copy(val record: Decl.Record) : CallRef
