@@ -63,7 +63,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
         is Expr.When -> Expr.When(
             e.pos,
             e.subject?.let(::expr),
-            e.branches.map { Branch(it.pos, it.patterns.map(::pattern), it.condition?.let(::expr), expr(it.body)) },
+            e.branches.map { Branch(it.pos, it.patterns.map(::pattern), it.condition?.let(::expr), expr(it.body), it.guard?.let(::expr)) },
         )
         is Expr.Block -> block(e)
         is Expr.Monadic -> Expr.Monadic(e.pos, expr(e.module), block(e.block))

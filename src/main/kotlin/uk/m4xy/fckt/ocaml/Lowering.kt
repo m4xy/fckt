@@ -1064,7 +1064,13 @@ class Lowering(private val program: Program) {
             if (annotate) annotated(typeText(subject.type!!)) { expr(subject) } else expr(subject)
             for (branch in e.branches) {
                 val pattern = if (branch.patterns.isEmpty()) "_" else branch.patterns.joinToString(" | ") { pattern(it) }
-                case(pattern) { expr(branch.body) }
+                case(pattern) {
+                    branch.guard?.let {
+                        guarded = true
+                        expr(it)
+                    }
+                    expr(branch.body)
+                }
             }
         }
     }

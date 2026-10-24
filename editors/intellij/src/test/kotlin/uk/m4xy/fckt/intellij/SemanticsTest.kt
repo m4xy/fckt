@@ -237,4 +237,23 @@ class SemanticsTest {
             marked(source),
         )
     }
+
+    @Test
+    fun `a guard sees the names its patterns bind`() {
+        val source = """
+            f(x: Option<Int>) = when (x) {
+              Some(n) if n > 0 -> n
+              else -> 0
+            }
+        """.trimIndent()
+        assertEquals(
+            """
+            [FUNCTION_DECLARATION:f]([PARAMETER:x]: [INTERFACE:Option]<[CLASS:Int]>) = when ([PARAMETER:x]) {
+              [DATA_CLASS:Some]([PROPERTY:n]) if [PROPERTY:n] > 0 -> [PROPERTY:n]
+              else -> 0
+            }
+            """.trimIndent(),
+            marked(source),
+        )
+    }
 }

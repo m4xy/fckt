@@ -800,8 +800,11 @@ class Parser(private val tokens: List<Token>) {
         while (!at(T.RBRACE)) {
             val branchPos = peek.pos
             if (accept(T.ELSE) != null) {
+                // `else if ready ->`: whatever's left, if it holds.
+                val guard = guard()
+                if (guard != null && subject == null) throw error("a 'when' without a subject has conditions already: make this one a branch of its own, without 'else if'", guard.pos)
                 expect(T.ARROW, "'->'")
-                branches += Branch(branchPos, emptyList(), null, expr())
+                branches += Branch(branchPos, emptyList(), null, expr(), guard)
             } else if (subject == null) {
                 // Not expr(): a bare `flag -> ...` is a condition here, not a lambda.
                 val condition = pipe()
@@ -810,8 +813,9 @@ class Parser(private val tokens: List<Token>) {
             } else {
                 val patterns = mutableListOf(pattern())
                 while (accept(T.COMMA) != null) patterns += pattern()
+                val guard = guard()
                 expect(T.ARROW, "'->'")
-                branches += Branch(branchPos, patterns, null, expr())
+                branches += Branch(branchPos, patterns, null, expr(), guard)
             }
             if (!at(T.RBRACE)) {
                 if (!at(T.NEWLINE) && !at(T.SEMI)) throw error("expected end of line after a 'when' branch but found ${describe(peek)}")
@@ -821,6 +825,9 @@ class Parser(private val tokens: List<Token>) {
         expect(T.RBRACE, "'}'")
         return Expr.When(pos, subject, branches)
     }
+
+    /** `if n > 0` after a branch's patterns, as Kotlin 2.1 writes a guard. Not expr(): `ready ->` isn't a lambda here. */
+    private fun guard(): Expr? = if (accept(T.IF) != null) pipe() else null
 
     private fun pattern(): Pattern {
         val pos = peek.pos

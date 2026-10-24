@@ -104,6 +104,11 @@ class FormatterTest : BasePlatformTestCase() {
             f(xs: Array<Int>) = Lists { x by [1, 2]; xs[x] += ys[0][1] }
             type Queue<@E>(var tasks: List<@Console @E () -> Unit>)
             run<@E>(q: Queue<@Console  @E>) = Unit
+            g(x: Option<Int>) = when (x) {
+              Some(n)  if n>0 -> n
+              else if  ready -> 1
+              else -> 0
+            }
         """.trimIndent()
         val formatted = """
             pair<A, B>(ma: M.M<A>, mb: M.M<List<B>>): M.M<(A, B)> = M {
@@ -121,6 +126,11 @@ class FormatterTest : BasePlatformTestCase() {
             f(xs: Array<Int>) = Lists { x by [1, 2]; xs[x] += ys[0][1] }
             type Queue<@E>(var tasks: List<@Console @E () -> Unit>)
             run<@E>(q: Queue<@Console @E>) = Unit
+            g(x: Option<Int>) = when (x) {
+              Some(n) if n > 0 -> n
+              else if ready -> 1
+              else -> 0
+            }
         """.trimIndent()
         assertEquals(formatted, reformat(messy))
     }

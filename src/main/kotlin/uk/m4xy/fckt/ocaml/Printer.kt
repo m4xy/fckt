@@ -192,8 +192,9 @@ object Printer {
             val cases = n.children.drop(1)
             "match $subject with" + cases.mapIndexed { i, case ->
                 val bodyCtx = Ctx(open = true, seq = true, match = i == cases.lastIndex && ctx.match)
-                val body = sub(case.children.single(), 0, bodyCtx)
-                val head = "\n| ${case.str("pattern")} ->"
+                val body = sub(case.children.last(), 0, bodyCtx)
+                val guard = if (case.attributes["guarded"] == true) " when " + sub(case.children.first(), 0) else ""
+                val head = "\n| ${case.str("pattern")}$guard ->"
                 if ('\n' !in body && head.length + body.length < WIDTH) "$head $body" else "$head\n${indent(body, 4)}"
             }.joinToString("")
         }

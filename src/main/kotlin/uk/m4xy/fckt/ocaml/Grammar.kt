@@ -214,7 +214,7 @@ interface IfThenElse
 )
 interface Match
 
-/** `| pattern -> body`. One child: the body. */
+/** `| pattern -> body`. One child: the body; or, if [guarded], `| pattern when guard -> body`, the guard and then the body. */
 @Element("case", function = "case")
 @Children(
     Ident::class, Literal::class, Apply::class, Infix::class, Lambda::class, LetIn::class, Sequence::class,
@@ -223,6 +223,7 @@ interface Match
 )
 interface Case {
     @Required val pattern: String
+    val guarded: Boolean
 }
 
 /** `record.field`. One child: the record. */

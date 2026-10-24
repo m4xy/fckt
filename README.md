@@ -78,7 +78,7 @@ tour of the core language, translated section by section.
 | `~e` | `fun () -> e`, `fun _ _ -> e` | A function that ignores its arguments. It takes as many as the expected type has, so `~true` can be a `(String, Money) -> Boolean`. With no expected function type it's a thunk, `() -> T`. |
 | `x \|> f` | `x \|> f` | |
 | `x \|> f(a)` | `x \|> f a` | When `f` takes one more argument than it's given, `x` is passed last. |
-| `when (x) { P -> e ... }` | `match x with P -> e ...` | Patterns: literals, `_`, names, `V(p, q)`, `is V`, `(p, q)`, `[]`, `[h, *t]`, and `A, B` for either. A `when` must cover every value, as Kotlin's must over a sealed type; otherwise it's an error that says what's missing, like `this when doesn't cover Some(Error(_))`. Numbers and strings need an `else`. |
+| `when (x) { P -> e ... }` | `match x with P -> e ...` | Patterns: literals, `_`, names, `V(p, q)`, `is V`, `(p, q)`, `[]`, `[h, *t]`, and `A, B` for either. A guard, as in Kotlin 2.1, adds a condition that may use what the patterns bound: `Some(n) if n > 0 ->` (OCaml's `| Some n when n > 0 ->`), or `else if ready ->`; a guarded branch doesn't count toward covering every value. A `when` must cover every value, as Kotlin's must over a sealed type; otherwise it's an error that says what's missing, like `this when doesn't cover Some(Error(_))`. Numbers and strings need an `else`. |
 | `when (a, b) { ... }` | `match (a, b) with ...` | Matches on several values at once. |
 | `(a, b)`, `(A, B)` | `(a, b)`, `a * b` | A tuple, and its type. |
 | `(x, y) = e` | `let (x, y) = e in` | Destructures a tuple, or a record's fields in declaration order. |

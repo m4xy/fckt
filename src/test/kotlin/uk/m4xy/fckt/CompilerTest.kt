@@ -470,6 +470,40 @@ class CompilerTest {
     }
 
     @Test
+    fun `a when branch can have a guard`() {
+        val source = """
+            type Shape { Circle(radius: Float), Square(side: Float) }
+            describe(x: Option<Int>): String = when (x) {
+              Some(n) if n > 0 -> "positive"
+              Some(n) if n < 0 -> "negative"
+              Some(_) -> "zero"
+              None -> "none"
+            }
+            size(s: Shape): String = when (s) {
+              is Circle if s.radius > 10.0 -> "big circle"
+              Square(side) if side > 10.0 -> "big square"
+              else -> "small"
+            }
+            grade(score: Int): String = when (score) {
+              100 -> "perfect"
+              else if score >= 50 -> "pass"
+              else -> "fail"
+            }
+            main() = {
+              assertEquals(["positive", "negative", "zero", "none"], [Some(3), Some(-1), Some(0), None].map(describe))
+              assertEquals(["big circle", "small", "big square"], [Circle(11.0), Circle(1.0), Square(12.0)].map(size))
+              assertEquals(["perfect", "pass", "fail"], [100, 70, 10].map(grade))
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        assertContains(compile(source), "| Some n when n > 0 -> \"positive\"")
+        // A guarded branch may not match, so it covers nothing for certain.
+        assertContains(error("f(x: Option<Int>): Int = when (x) {\n  Some(n) if n > 0 -> 1\n  None -> 0\n}\nmain() = Unit"), "this when doesn't cover Some(_)")
+        assertContains(error("f(x: Option<Int>): Int = when (x) {\n  Some(n) if n -> 1\n  else -> 0\n}\nmain() = Unit"), "expected Boolean but found Int")
+        assertContains(error("f(x: Int): Int = when {\n  x > 0 -> 1\n  else if x < 0 -> 2\n  else -> 0\n}\nmain() = Unit"), "a 'when' without a subject has conditions already")
+    }
+
+    @Test
     fun `a case's fields can be var`() {
         val tree = "type Tree { Leaf, Node(var left: Tree, value: Int, var right: Tree) }\n"
         fun program(source: String) = error("$tree$source\nmain() = assert(true)")

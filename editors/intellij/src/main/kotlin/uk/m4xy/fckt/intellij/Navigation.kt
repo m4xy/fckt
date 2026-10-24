@@ -502,6 +502,7 @@ private class Resolutions(
                 e.branches.forEach { b ->
                     b.patterns.forEach(::pattern)
                     b.condition?.let(::expr)
+                    b.guard?.let(::expr)
                     expr(b.body)
                 }
             }

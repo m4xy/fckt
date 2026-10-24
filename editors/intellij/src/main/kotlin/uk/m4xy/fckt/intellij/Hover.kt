@@ -199,7 +199,11 @@ private class Hovers(val text: String, val program: Program) {
             is Expr.If -> { expr(e.condition); expr(e.then); expr(e.otherwise) }
             is Expr.When -> {
                 e.subject?.let(::expr)
-                e.branches.forEach { b -> b.condition?.let(::expr); expr(b.body) }
+                e.branches.forEach { b ->
+                    b.condition?.let(::expr)
+                    b.guard?.let(::expr)
+                    expr(b.body)
+                }
             }
             is Expr.Block -> {
                 for (s in e.statements) when (s) {

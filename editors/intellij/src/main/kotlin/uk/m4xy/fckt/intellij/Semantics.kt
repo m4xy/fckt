@@ -243,6 +243,7 @@ internal class Scopes {
                     val inner = Scope(scope)
                     b.patterns.forEach { pattern(it, inner, Role.LOCAL_VARIABLE) }
                     b.condition?.let { expr(it, inner) }
+                    b.guard?.let { expr(it, inner) }
                     expr(b.body, inner)
                 }
             }

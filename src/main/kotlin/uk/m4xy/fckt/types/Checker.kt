@@ -1930,6 +1930,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 e.subject?.let { go(it) }
                 for (branch in e.branches) {
                     branch.condition?.let { go(it) }
+                    branch.guard?.let { go(it, bound + branch.patterns.flatMap { p -> patternNames(p) }) }
                     go(branch.body, bound + branch.patterns.flatMap { patternNames(it) })
                 }
             }
@@ -2105,7 +2106,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** That [e]'s patterns match every value of [subject], as Kotlin requires of a `when` over a sealed type. */
     private fun checkCovers(e: Expr.When, subject: Type) {
-        val patterns = e.branches.flatMap { b -> if (b.patterns.isEmpty()) listOf(Pat.ANY) else b.patterns.flatMap(::coverage) }
+        // A guarded branch may not match what its patterns do, so it covers nothing for certain.
+        val patterns = e.branches.filter { it.guard == null }.flatMap { b -> if (b.patterns.isEmpty()) listOf(Pat.ANY) else b.patterns.flatMap(::coverage) }
         val missing = Coverage(::shapes).missing(patterns, subject.zonk())
         if (missing.isEmpty()) return
         val type = subject.prune()
@@ -2991,11 +2993,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     throw CompileError(branch.pos, "a branch with several patterns can't bind names")
                 }
                 for (pattern in branch.patterns) checkPattern(pattern, subjectType, inner, subject, e)
+                // The guard sees what the patterns bound, and what `is` narrowed.
+                branch.guard?.let { check(it, Type.BOOLEAN, inner) }
                 body(branch, inner)
                 // `is Vowel` rebinds the subject only if the branch uses it.
                 if (subject is Expr.Name) {
                     val refs = mutableSetOf<String>()
                     collectRefs(branch.body, emptySet(), refs)
+                    branch.guard?.let { collectRefs(it, emptySet(), refs) }
                     if (subject.name !in refs) branch.patterns.filterIsInstance<Pattern.Constructor>().forEach { it.narrowVar = null }
                 }
             }

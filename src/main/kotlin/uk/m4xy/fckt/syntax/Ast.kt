@@ -419,7 +419,11 @@ sealed interface Statement {
  * A `when` arm. With a subject, [patterns] are matched against it (several mean "any of");
  * without one, [condition] is tested. `else` has neither.
  */
-data class Branch(val pos: Pos, val patterns: List<Pattern>, val condition: Expr?, val body: Expr)
+/**
+ * A `when` branch: [patterns] the subject may match, or a [condition] in a `when` without one, or
+ * neither for `else`. A [guard], `Some(n) if n > 0 ->`, must hold too, with the patterns' names.
+ */
+data class Branch(val pos: Pos, val patterns: List<Pattern>, val condition: Expr?, val body: Expr, val guard: Expr? = null)
 
 sealed interface Pattern {
     val pos: Pos
