@@ -55,7 +55,12 @@ private fun declaredRoles(decls: List<Decl>, into: MutableMap<String, Role>) {
                 into[d.simpleName] = Role.INTERFACE
                 d.variants.forEach { into[it.name] = Role.DATA_CLASS }
             }
-            is Decl.Record -> into[d.simpleName] = if (d.isAnnotation) Role.ANNOTATION else Role.DATA_CLASS
+            is Decl.Record -> into[d.simpleName] = when {
+                d.isAnnotation -> Role.ANNOTATION
+                // A type OCaml implements is a class, as Kotlin's Array is.
+                d.external != null -> Role.CLASS
+                else -> Role.DATA_CLASS
+            }
             is Decl.Alias -> into[d.simpleName] = Role.TYPE_ALIAS
             is Decl.Module -> {
                 into[d.simpleName] = Role.OBJECT
@@ -454,7 +459,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
             name == "spec" && word(next)?.firstOrNull()?.isUpperCase() == true -> Role.KEYWORD
             (name == "opaque" || name == "annotation") && word(next) == "type" -> Role.KEYWORD
             name == "var" && next?.kind == TokKind.IDENT && sameLine(t, next) -> Role.KEYWORD
-            name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN) &&
+            name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN || word(next) == "type") &&
                 (prev == null || !sameLine(prev, t) || word(prev) == "private") -> Role.KEYWORD
             name == "by" && prev != null && sameLine(prev, t) && (prev.kind == TokKind.IDENT || prev.kind == TokKind.RPAREN) &&
                 next != null && sameLine(t, next) && next.kind !in setOf(TokKind.ASSIGN, TokKind.DOT, TokKind.COMMA, TokKind.RPAREN, TokKind.LPAREN, TokKind.COLON) -> Role.KEYWORD

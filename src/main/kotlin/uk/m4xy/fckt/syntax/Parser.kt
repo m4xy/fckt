@@ -6,6 +6,9 @@ import uk.m4xy.fckt.types.BUILTIN_TYPES
 class Parser(private val tokens: List<Token>) {
     private var p = 0
 
+    /** The `get` calls written `xs[i]`, which `xs[i] = v` turns into a `set`. */
+    private val indexes = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Expr, Boolean>())
+
     companion object {
         fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize()).file()
     }
@@ -174,6 +177,17 @@ class Parser(private val tokens: List<Token>) {
                 val fields = fieldList(pos)
                 expect(T.RPAREN, "')'")
                 Decl.Record(pos, name, typeParams, fields, privateConstructor = privateConstructor)
+            }
+            // `external type Array<A> = "'a array"`: a type OCaml implements.
+            at(T.IDENT) && peek.text == "external" && peekAt(1).kind == T.TYPE -> {
+                next()
+                next()
+                val name = upperIdent("a type name")
+                val typeParams = typeParams()
+                expect(T.ASSIGN, "'=' and the OCaml type, in a string: \"'a array\"")
+                val ocaml = stringLiteral(expect(T.STRING, "the OCaml type, in a string: \"'a array\"")) as Expr.StringLit
+                val text = ocaml.parts.singleOrNull() as? StringPart.Text ?: throw error("an external type is OCaml in a string, without templates", ocaml.pos)
+                Decl.Record(pos, name, typeParams, emptyList(), external = text.text)
             }
             at(T.IDENT) && peek.text == "external" && peekAt(1).kind in setOf(T.IDENT, T.LPAREN) -> {
                 next()
@@ -597,6 +611,14 @@ class Parser(private val tokens: List<Token>) {
                     Expr.Member(name.pos, e, name.text)
                 }
                 at(T.LPAREN) -> Expr.Call(peek.pos, e, args())
+                // `xs[i]` calls `xs.get(i)`, so any type with a get can be indexed. On the same
+                // line only: a `[` that starts one is a list.
+                at(T.LBRACKET) && tokens[p - 1].pos.line == peek.pos.line -> {
+                    val pos = next().pos
+                    val index = expr()
+                    expect(T.RBRACKET, "']'")
+                    Expr.Call(pos, Expr.Member(pos, e, "get"), listOf(Arg(null, index))).also { indexes += it }
+                }
                 // `Options { ... }`: a module's name right before a block runs the block in it.
                 at(T.LBRACE) && isModulePath(e) -> Expr.Monadic(e.pos, e, block() as Expr.Block)
                 else -> return e
@@ -854,13 +876,18 @@ class Parser(private val tokens: List<Token>) {
             return Statement.Binding(pos, name, params, returnType, expr())
         }
         val e = expr()
-        // `account.balance = 10`, `x += 1`: changing a var.
+        // `account.balance = 10`, `x += 1`: changing a var; `xs[i] = v` calls `xs.set(i, v)`.
         if (at(T.ASSIGN) || at(T.OP_ASSIGN)) {
-            if (e !is Expr.Name && e !is Expr.Member) throw error("only a var or a var field can be assigned to")
+            if (e !is Expr.Name && e !is Expr.Member && e !in indexes) throw error("only a var, a var field or an index can be assigned to")
             val op = next()
             skipNewlines()
-            val value = expr()
-            return Statement.Effect(pos, Expr.Assign(op.pos, e, if (op.kind == T.ASSIGN) value else Expr.Binary(op.pos, op.text.dropLast(1), e, value)))
+            val written = expr()
+            val value = if (op.kind == T.ASSIGN) written else Expr.Binary(op.pos, op.text.dropLast(1), e, written)
+            if (e is Expr.Call && e in indexes) {
+                val get = e.callee as Expr.Member
+                return Statement.Effect(pos, Expr.Call(get.pos, Expr.Member(get.pos, get.target, "set"), listOf(e.args.single(), Arg(null, value))))
+            }
+            return Statement.Effect(pos, Expr.Assign(op.pos, e, value))
         }
         return Statement.Effect(pos, e)
     }

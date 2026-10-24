@@ -810,7 +810,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 throw CompileError(it.pos, "only a record's fields can be var; make ${it.name}'s case hold a record with a var field")
             }
         }
-        records.values.filter { r -> r.fields.any { it.isVar } }.forEach { regioned += it.name }
+        // An OCaml type may change too: its own functions say if they do.
+        records.values.filter { r -> r.external != null || r.fields.any { it.isVar } }.forEach { regioned += it.name }
         fun holds(ref: TypeRef): Boolean = when (ref) {
             // A function isn't a value that changes, whatever it takes or gives.
             is TypeRef.Function -> false
@@ -1530,7 +1531,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val row = rows.getValue(decl)
             // An external's body is OCaml, trusted to have its declared type and effects.
             if (decl.external != null) {
-                u.unify(row, Type.effects(effectNames(decl.annotations.filter { isEffect(it) }), u.fresh()))
+                // An external that's @Mutating changes what it's given, so where that was made decides who sees it.
+                val declared = effectNames(decl.annotations.filter { isEffect(it) })
+                val regions = (type as? Type.Fn)?.params.orEmpty().flatMap { regionsIn(it) }.filterIsInstance<Type.Var>().distinct()
+                val changes = if (MUTATING in declared && regions.isNotEmpty()) regions.map { Type.Con(MUTATING, listOf(it)) } else emptyList()
+                val labels = declared.filter { it != MUTATING || changes.isEmpty() }.map { Type.Con(it) } + changes
+                u.unify(row, Type.row(labels, u.fresh()))
                 continue
             }
             effects = row
@@ -1906,6 +1912,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         if (record != null) {
             if (abstractHere(record)) abstractError(record, pos)
+            if (record.external != null) throw CompileError(pos, "${record.simpleName} is an OCaml type, made by its functions, not by ${record.simpleName}(...)")
             if (building && record.privateConstructor && !inside(record.path)) {
                 throw CompileError(pos, "${record.simpleName}'s constructor is private to ${record.path.joinToString(".")}")
             }

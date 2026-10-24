@@ -209,4 +209,12 @@ class SemanticsTest {
             marked(source),
         )
     }
+
+    @Test
+    fun `a type OCaml implements is a class`() {
+        assertEquals(
+            "[KEYWORD:external] type [CLASS:Array]<[TYPE_PARAMETER:A]> = \"'a array\"",
+            marked("external type Array<A> = \"'a array\""),
+        )
+    }
 }

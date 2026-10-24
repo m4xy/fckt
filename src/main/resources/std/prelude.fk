@@ -105,6 +105,21 @@ annotation type Effect
 // left it isn't seen, so it doesn't count: a function can use vars inside and still be pure.
 @Effect annotation type Mutating
 
+// ---- Values that change ----
+
+// One value that can change: counter.value += 1.
+type Mutable<A>(var value: A)
+
+// A fixed number of values, each of which can change: xs[i] = v. Changing one is @Mutating on the
+// array, so an array made and changed inside a function leaves it pure.
+external type Array<A> = "'a array"
+external arrayOf<A>(size: Int, value: A): Array<A> = "Array.make size value"
+external List<A>.toArray(): Array<A> = "Array.of_list this"
+external Array<A>.size: Int = "Array.length this"
+external Array<A>.get(index: Int): A = "Array.get this index"
+@Mutating external Array<A>.set(index: Int, value: A): Unit = "Array.set this index value"
+external Array<A>.toList(): List<A> = "Array.to_list this"
+
 // ---- Everything else ----
 
 @Console external print(s: String): Unit = "print_string s"

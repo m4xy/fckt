@@ -261,7 +261,8 @@ class Lowering(private val program: Program) {
     private fun specTypeRefs(spec: Decl.Spec): List<String> =
         spec.values.flatMap { v -> typeRefNames(v.type) + v.params.orEmpty().flatMap { p -> p.type?.let(::typeRefNames).orEmpty() } }
 
-    private fun isType(d: Decl) = d is Decl.Record || d is Decl.Sealed || d is Decl.Alias
+    /** A type declaration to write out: an external type is OCaml's already. */
+    private fun isType(d: Decl) = (d is Decl.Record && d.external == null) || d is Decl.Sealed || d is Decl.Alias
 
     private fun modulesIn(m: Decl.Module): List<Decl.Module> = listOf(m) + m.decls.filterIsInstance<Decl.Module>().flatMap { modulesIn(it) }
 
@@ -421,6 +422,12 @@ class Lowering(private val program: Program) {
     }
 
     private fun applied(name: String, args: List<Pair<String, Boolean>>): String {
+        // An external type is its OCaml, with each type parameter P, written 'p, replaced.
+        records[name]?.external?.let { ocaml ->
+            return records.getValue(name).typeParams.zip(args).fold(ocaml) { text, (param, arg) ->
+                text.replace(Regex("'${Regex.escape(param.lowercase())}\\b"), Regex.escapeReplacement(if (arg.second) "(${arg.first})" else arg.first))
+            }
+        }
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"
             "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"; "Result" -> "result"
@@ -1084,7 +1091,7 @@ class Lowering(private val program: Program) {
         "List" -> Gen.App(Gen.Id(helper("fk_show_list")), args)
         "Option" -> Gen.App(Gen.Id(helper("fk_show_option")), args)
         "Result" -> Gen.App(Gen.Id(helper("fk_show_result")), args)
-        else -> {
+        else -> records[name]?.takeIf { it.external != null }?.let { Gen.Fun(listOf("_"), Gen.Str("<${it.simpleName}>")) } ?: run {
             // A type's show function lives in the type's module. A module a functor made has the
             // functor's; a functor's parameter has what its spec lists.
             val module = name.substringBeforeLast('.', "")

@@ -231,6 +231,8 @@ class Layout(private val text: String) {
             // `@Route("/a")` takes arguments, but `@Console (String) -> Unit` is an effect on a function type.
             l == TokKind.LPAREN && k == TokKind.IDENT && atoms.getOrNull(a.i - 1)?.kind == TokKind.AT -> null
             l == TokKind.LPAREN -> if ((k == TokKind.IDENT && a.text != "by") || a.text == "private" || k == TokKind.RPAREN || k == TokKind.RBRACKET) 0 else 1
+            // `xs[i]` indexes, written up against what it indexes; `by [1, 2]` is a list.
+            l == TokKind.LBRACKET && (k == TokKind.IDENT || k == TokKind.RPAREN || k == TokKind.RBRACKET) && a.tok.end == b.tok.start -> 0
             else -> 1
         }
     }

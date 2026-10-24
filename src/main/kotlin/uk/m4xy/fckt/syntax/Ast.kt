@@ -58,7 +58,9 @@ sealed interface Decl {
      * `type Name<T>(a: A, b: B)`, or `type Name(A)`, whose one field is called `value`. With
      * [privateConstructor] (`type Name private(...)`), only its module can build one. An
      * [isAnnotation] one (`annotation type Name(...)`) is written `@Name(...)` on declarations,
-     * and exists only while checking: no value has its type.
+     * and exists only while checking: no value has its type. An [external] one (`external type
+     * Array<A> = "'a array"`) is a type OCaml implements, written in OCaml with each type parameter
+     * `P` as `'p`; it has no fields, and only its functions make one.
      */
     data class Record(
         override val pos: Pos,
@@ -70,6 +72,7 @@ sealed interface Decl {
         override val isOpaque: Boolean = false,
         override val annotations: List<Annotation> = emptyList(),
         val isAnnotation: Boolean = false,
+        val external: String? = null,
     ) : Decl
 
     /**

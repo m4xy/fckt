@@ -418,6 +418,22 @@ class CompilerTest {
     }
 
     @Test
+    fun `arrays, and types OCaml implements, indexed with get and set`() {
+        val source = File("examples/arrays.fk").readText()
+        assertEquals("", run(source))
+        val ml = compile(source)
+        assertContains(ml, "Array.set xs 0 (Array.get xs 0 * 2)")
+        assertContains(ml, "Buffer.add_string b word")
+        fun program(source: String) = error("$source\nmain() = assert(true)")
+        assertContains(program("f(xs: Array<Int>) = { xs[0] = 1 }"), "'f' does @Mutating, so it must say so")
+        assertContains(program("f() = Array(1)"), "Array is an OCaml type, made by its functions, not by Array(...)")
+        assertContains(program("type Box(n: Int)\nf(b: Box) = { b[0] = 1 }"), "Box has no method 'set'")
+        assertContains(program("f() = { 1 + 1 = 2; 3 }"), "only a var, a var field or an index can be assigned to")
+        // A type of OCaml's own, with its type parameters in place.
+        assertContains(compile("external type Table<K, V> = \"('k, 'v) Hashtbl.t\"\nexternal table<K, V>(): Table<K, V> = \"Hashtbl.create 8\"\nt: Table<String, List<Int>> = table()\nmain() = assert(true)"), "(string, int list) Hashtbl.t")
+    }
+
+    @Test
     fun `opaque types are abstract outside their module`() {
         val source = File("examples/specs.fk").readText()
         assertEquals("", run(source))

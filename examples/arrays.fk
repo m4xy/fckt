@@ -1,0 +1,50 @@
+// Arrays, and other types that OCaml implements. `xs[i]` calls `xs.get(i)` and `xs[i] = v` calls
+// `xs.set(i, v)`, so any type with a get and a set can be indexed. Array's set is @Mutating on the
+// array, so an array made and changed inside a function leaves it pure.
+
+// Pure: the array is made and changed here, and only a list leaves.
+squares(n: Int): List<Int> = {
+  xs = arrayOf(n, 0)
+  var i = 0
+  repeat(n, ~{
+    xs[i] = i * i
+    i += 1
+  })
+  xs.toList()
+}
+
+// Runs f n times.
+repeat(n: Int, f: () -> Unit): Unit = if (n <= 0) Unit else {
+  f()
+  repeat(n - 1, f)
+}
+
+// Changes the array it's given.
+@Mutating double(xs: Array<Int>) = {
+  xs[0] *= 2
+}
+
+// A type of OCaml's own, declared here: each type parameter P would be written 'p.
+external type Buffer = "Buffer.t"
+external buffer(size: Int): Buffer = "Buffer.create size"
+@Mutating external Buffer.add(s: String): Unit = "Buffer.add_string this s"
+external Buffer.contents: String = "Buffer.contents this"
+
+// Pure: the buffer never leaves.
+joined(words: List<String>): String = {
+  b = buffer(16)
+  words.forEach(word -> b.add(word))
+  b.contents
+}
+
+main() = {
+  assertEquals([0, 1, 4], squares(3))
+  ys = [1, 2].toArray()
+  double(ys)
+  assertEquals(2, ys[0])
+  assertEquals(2, ys.size)
+  counter = Mutable(0)
+  counter.value += 5
+  assertEquals(5, counter.value)
+  assertEquals("abc", joined(["a", "b", "c"]))
+}
