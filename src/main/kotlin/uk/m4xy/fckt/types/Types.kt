@@ -85,6 +85,9 @@ sealed class Type {
         /** Before a spec's own type, while the spec says what a module must define. */
         const val SPEC_TYPE = "@"
 
+        /** Before a handled effect's full name: a handler for it, `handler Console`, with the effect's type arguments and then what its answers do. */
+        const val HANDLER = "handler "
+
         /** Before what an annotation's field can refer to: `Type`, `Spec`, `Module`, `Case`, `Field`, or `@` and an annotation. */
         const val META = "meta "
 
@@ -104,15 +107,21 @@ sealed class Type {
         val GLOBAL = Con("global region")
 
         /**
-         * Two of a row's effects are the same if they have the same name and, for `Mutating`, region.
-         * A written `@Mutating`, as in `@Mutating () -> Int`, doesn't say where, so it's any region.
+         * Two of a row's effects are the same if they have the same name: a row has one of each, so a
+         * generic effect's type arguments, `Yielding<Int>`, are one choice for the row. `Mutating` is
+         * the exception: one for each region, as a function may change several values. A written
+         * `@Mutating`, as in `@Mutating () -> Int`, doesn't say where, so it's any region.
          */
         fun sameEffect(a: Con, b: Con): Boolean {
             if (a.name != b.name) return false
+            if (a.name != MUTATING_NAME) return true
             val x = a.args.firstOrNull()?.prune() ?: return true
             val y = b.args.firstOrNull()?.prune() ?: return true
             return x === y || (x is Con && y is Con && x.name == y.name)
         }
+
+        /** [MUTATING], here where [sameEffect] can see it. */
+        private const val MUTATING_NAME = "Mutating"
 
         /** A row's effects, once each, and the variable for the rest if it's open, following what that's been bound to. */
         fun row(type: Type): Pair<List<Con>, Var?> {
@@ -139,7 +148,8 @@ sealed class Type {
 
         fun render(type: Type, names: MutableMap<Var, String>): String = when (val t = type.prune()) {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }
-            is Con -> if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
+            is Con -> if (t.name.startsWith(HANDLER)) "a handler for @${t.name.removePrefix(HANDLER).substringAfterLast('.')}"
+            else if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
             else if (t.args.isEmpty()) displayName(t.name) else "${displayName(t.name)}<${t.args.joinToString(", ") { render(it, names) }}>"
             is Fn -> effectNames(t.effects).sorted().joinToString("") { "@${displayName(it).substringAfterLast('.')} " } +
                 "(${t.params.joinToString(", ") { render(it, names) }}) -> ${render(t.result, names)}"
@@ -206,6 +216,12 @@ class Unifier {
         val (y, restY) = Type.row(b)
         val onlyX = x.filter { e -> y.none { Type.sameEffect(it, e) } }
         val onlyY = y.filter { e -> x.none { Type.sameEffect(it, e) } }
+        // The same generic effect in both: the same type arguments.
+        for (e in x) {
+            if (e.name == MUTATING || e.args.isEmpty()) continue
+            val other = y.firstOrNull { it.name == e.name && it.args.size == e.args.size } ?: continue
+            if (!e.args.zip(other.args).all { (p, q) -> unify(p, q) }) return false
+        }
         if (restX != null && restX === restY) return onlyX.isEmpty() && onlyY.isEmpty()
         return when {
             restX == null && restY == null -> onlyX.isEmpty() && onlyY.isEmpty()
@@ -273,6 +289,9 @@ const val REPEATABLE = "Repeatable"
 
 /** On an annotation for specs, as `@Persistence @Encapsulates annotation type Repository`: what a module following such a spec does beyond what it says stays inside it. */
 const val ENCAPSULATES = "Encapsulates"
+
+/** On a handled effect: the module `main` uses to handle it when nothing else does, as `@HandledBy(Terminal) spec Console`. */
+const val HANDLED_BY = "HandledBy"
 
 /** The effect no operation has: a module or function that may only do it does nothing. */
 const val PURE = "Pure"

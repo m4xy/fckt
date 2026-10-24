@@ -18,6 +18,7 @@ import uk.m4xy.fckt.syntax.NameRef
 import uk.m4xy.fckt.syntax.Pattern
 import uk.m4xy.fckt.syntax.Pos
 import uk.m4xy.fckt.syntax.SourceFile
+import uk.m4xy.fckt.syntax.SpecValue
 import uk.m4xy.fckt.syntax.Statement
 import uk.m4xy.fckt.syntax.StringPart
 import uk.m4xy.fckt.syntax.TypeRef
@@ -61,6 +62,10 @@ class Program(
     val fixedTypes: Map<String, Decl.Alias>,
     /** The `annotation type`s, which [root] leaves out, as they're only checked. */
     val annotationTypes: List<Decl.Record>,
+    /** The handled effects: specs marked `@Effect`, whose operations OCaml performs. */
+    val effects: List<Decl.Spec>,
+    /** The handlers `main` runs in: for each effect it does that needs one, its default. */
+    val mainHandlers: List<Pair<Decl.Spec, Decl.Module>>,
 )
 
 /** A case of a sealed type: [variant], declared by [origin], with [fields] typed in the sealed type's own terms. */
@@ -117,6 +122,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** While resolving a type's fields, the region of the value they're in, which the values they hold share. */
     private var currentRegion: Type? = null
+
+    /** Handled effects' operations, by the full name they're called by: several where names clash. */
+    private val operations = mutableMapOf<String, MutableList<Pair<Decl.Spec, SpecValue>>>()
+
+    /** Each handled effect's type parameters, as its operations' schemes have them first. */
+    private val specTypeVars = mutableMapOf<Decl.Spec, List<Type.Var>>()
+
+    /** What `main` does that needs a handler, and each one's default, which lowering puts around it. */
+    private var mainHandlers: List<Pair<Decl.Spec, Decl.Module>> = emptyList()
 
     /** `annotation type`s, which aren't types values can have, and what their fields are. */
     private val annotationTypes = linkedMapOf<String, Decl.Record>()
@@ -409,6 +423,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             // Annotations are only checked: their types aren't compiled.
             root = withoutAnnotationTypes(root),
             annotationTypes = annotationTypes.values.toList(),
+            effects = specs.values.filter { isEffect(it) && it.values.isNotEmpty() },
+            mainHandlers = mainHandlers,
             functionTypes = schemes.mapValues { it.value.type.zonk() },
             outsideTypes = outsideSchemes.filterKeys { it !in parameterMembers }.mapValues { it.value.type.zonk() },
             uses = uses,
@@ -609,6 +625,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (ref.args.isNotEmpty() && m.name !in parameterModules) {
                 throw CompileError(ref.args.first().pos, "${m.simpleName} says what its types are in its body, so write just : ${spec.simpleName}; type arguments are for a functor's parameters, like F(M: ${spec.simpleName}<...>)")
             }
+            if (spec.typeParams.isNotEmpty()) {
+                throw CompileError(ref.pos, "${m.simpleName} can't follow ${spec.simpleName}, which takes type parameters; handle it with a value instead: ${spec.simpleName}(...) { ... }")
+            }
             moduleSpecs[m.name] = spec
         }
         currentPath = emptyList()
@@ -754,7 +773,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> Type.Fn(
             ref.params.map { resolve(it) },
             resolve(ref.result),
-            if (ref.effects.isEmpty()) arrowEffects ?: Type.effects(emptySet(), null) else Type.effects(effectNames(ref.effects), null),
+            if (ref.effects.isEmpty()) arrowEffects ?: Type.effects(emptySet(), null) else Type.row(effectLabels(ref.effects), null),
         )
         is TypeRef.Tuple -> Type.tuple(ref.elements.map { resolve(it) })
         is TypeRef.Named -> {
@@ -944,6 +963,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     private fun checkAnnotation(a: Annotation) {
+        // A handled effect, as @Console or @Yielding<Int>: no arguments, and its type arguments, if any.
+        if (find(a.name, annotationTypes, null) == null) {
+            find(a.name, specs, null)?.takeIf { isEffect(it) }?.let { spec ->
+                a.decl = spec
+                if (a.args.isNotEmpty()) throw CompileError(a.pos, "an effect takes no arguments")
+                if (a.typeArgs.isNotEmpty() && a.typeArgs.size != spec.typeParams.size) {
+                    throw CompileError(a.pos, "${spec.simpleName} takes ${spec.typeParams.size} type argument${if (spec.typeParams.size == 1) "" else "s"}, not ${a.typeArgs.size}")
+                }
+                return
+            }
+        }
+        if (a.typeArgs.isNotEmpty()) throw CompileError(a.pos, "only a generic effect takes type arguments, as @Yielding<Int> does")
         val decl = find(a.name, annotationTypes, a.pos) ?: throw CompileError(
             a.pos,
             if (find(a.name, records, null) != null || find(a.name, sealeds, null) != null) {
@@ -1108,26 +1139,29 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return Type.UNIT
     }
 
-    /** The annotation type [a], written in [path], names; null if it names none, which checking it reports. */
-    private fun annotationType(a: Annotation, path: List<String>): Decl.Record? {
+    /**
+     * What [a], written in [path], names: an annotation type, or a handled effect's spec, as
+     * `@Console` does; null if it names neither, which checking it reports.
+     */
+    private fun annotationType(a: Annotation, path: List<String>): Decl? {
         a.decl?.let { return it }
         val saved = currentPath
         currentPath = path
         try {
-            return find(a.name, annotationTypes, null)
+            return find(a.name, annotationTypes, null) ?: find(a.name, specs, null)?.takeIf { isEffect(it) }
         } finally {
             currentPath = saved
         }
     }
 
-    /** Whether annotation type [d] is annotated with the prelude's [name], as `@Meta annotation type Effect` is with Meta. */
-    private fun marked(d: Decl.Record, name: String): Boolean = d.annotations.any { annotationType(it, d.path)?.name == name }
+    /** Whether [d] is annotated with the prelude's [name], as `@Meta annotation type Effect` is with Meta. */
+    private fun marked(d: Decl, name: String): Boolean = d.annotations.any { annotationType(it, d.path)?.name == name }
 
-    /** An effect: an annotation type annotated `@Effect`. */
-    private fun isEffect(d: Decl.Record): Boolean = marked(d, EFFECT)
+    /** An effect: an annotation type or a spec annotated `@Effect`. */
+    private fun isEffect(d: Decl): Boolean = marked(d, EFFECT)
 
-    /** An annotation as it reaches what it's on: its type, as written, and the annotation types it came through. */
-    private class Reached(val type: Decl.Record, val annotation: Annotation, val via: List<Decl.Record>)
+    /** An annotation as it reaches what it's on: what it names, as written, and the annotation types it came through. */
+    private class Reached(val type: Decl, val annotation: Annotation, val via: List<Decl>)
 
     /**
      * [annotations], written in [path], with every annotation they pass on: an annotation type's own
@@ -1138,7 +1172,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private fun reached(annotations: List<Annotation>, path: List<String>, pos: Pos): List<Reached> {
         val all = mutableListOf<Reached>()
-        fun walk(list: List<Annotation>, at: List<String>, via: List<Decl.Record>) {
+        fun walk(list: List<Annotation>, at: List<String>, via: List<Decl>) {
             for (a in list) {
                 val type = annotationType(a, at) ?: continue
                 if (type in via) {
@@ -1186,14 +1220,158 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun effectsOf(annotations: List<Annotation>, path: List<String>, pos: Pos): Set<String> =
         reached(annotations, path, pos).filter { isEffect(it.type) }.map { it.type.name }.toSet()
 
-    /** The effects a function type's [annotations] say it has, `@Io (String) -> Unit`: each must be or carry one. */
-    private fun effectNames(annotations: List<Annotation>): Set<String> = annotations.flatMap { a ->
-        val decl = find(a.name, annotationTypes, a.pos) ?: throw CompileError(a.pos, "unknown effect '${a.name}'")
+    /**
+     * The effects a function type's [annotations] say it has, `@Io (String) -> Unit`: each must be
+     * or carry one. A generic effect has its type arguments: `@Yielding<Int> () -> Unit`.
+     */
+    private fun effectLabels(annotations: List<Annotation>): List<Type.Con> = annotations.flatMap { a ->
+        val decl = annotationType(a, currentPath) ?: throw CompileError(a.pos, "unknown effect '${a.name}'")
         a.decl = decl
-        effectsOf(listOf(a), currentPath, a.pos).ifEmpty {
+        if (decl is Decl.Spec && a.typeArgs.isNotEmpty()) return@flatMap listOf(Type.Con(decl.name, a.typeArgs.map { resolve(it) }))
+        effectsOf(listOf(a), currentPath, a.pos).map { Type.Con(it) }.ifEmpty {
             throw CompileError(a.pos, "'${a.name}' isn't an effect; declare one with @Effect annotation type ${a.name.substringAfterLast('.')}")
         }
-    }.toSet()
+    }
+
+    /** The generic effects [annotations], written in [path], give type arguments: `@Yielding<Int>`. */
+    private fun declaredLabels(annotations: List<Annotation>, path: List<String>): List<Type.Con> = annotations.mapNotNull { a ->
+        val spec = annotationType(a, path) as? Decl.Spec ?: return@mapNotNull null
+        if (a.typeArgs.isEmpty()) null else Type.Con(spec.name, a.typeArgs.map { resolve(it) })
+    }
+
+    // ---- Handled effects ----
+
+    /** The operation [name] calls from here, if it's one: unqualified, it must be the only one of that name. */
+    private fun operation(name: String, pos: Pos): Pair<Decl.Spec, SpecValue>? {
+        for (n in currentPath.size downTo 0) {
+            val found = operations[(currentPath.take(n) + name).joinToString(".")]?.filter { visible(it.first) }.orEmpty()
+            if (found.isEmpty()) continue
+            if (found.size > 1) {
+                throw CompileError(pos, "'$name' is an operation of ${found.joinToString(" and ") { it.first.simpleName }}; write ${found.first().first.simpleName}.$name")
+            }
+            return found.single()
+        }
+        return null
+    }
+
+    /** `Console.println`: an operation named through its effect. */
+    private fun qualifiedOperation(member: Expr.Member, scope: Scope): Pair<Decl.Spec, SpecValue>? {
+        val spec = dotted(member.target, scope)?.let { find(it, specs, null) }?.takeIf { isEffect(it) } ?: return null
+        val op = spec.values.firstOrNull { it.name == member.name } ?: throw CompileError(member.pos, "${spec.simpleName} has no operation '${member.name}'")
+        return spec to op
+    }
+
+    /** A fresh instance of [op]'s type, and the effect using it does: [spec] with the type arguments it's used with. */
+    private fun operationType(spec: Decl.Spec, op: SpecValue): Pair<Type, Type.Con> {
+        val scheme = specSchemes.getValue(spec).getValue(op.name)
+        val mapping = scheme.vars.associateWith { u.fresh() as Type }
+        return u.substitute(scheme.type, mapping) to Type.Con(spec.name, specTypeVars.getValue(spec).map { mapping.getValue(it) })
+    }
+
+    /** `println("hi")`: performs Console's println, so the code it's in does @Console. */
+    private fun callOperation(e: Expr.Call, spec: Decl.Spec, op: SpecValue, scope: Scope): Type {
+        val (type, label) = operationType(spec, op)
+        val fn = type as? Type.Fn ?: throw CompileError(e.pos, "'${op.name}' is a value of ${spec.simpleName}, not a function; write it without ()")
+        when (val callee = e.callee) {
+            is Expr.Name -> callee.resolved = NameRef.Operation(spec, op)
+            is Expr.Member -> callee.resolved = MemberRef.Operation(spec, op)
+            else -> {}
+        }
+        e.callee.type = fn
+        val order = argOrder(e.args.map { it.name to it.value.pos }, op.params!!.map { it.name }, e.pos, "'${op.name}'")
+        checkArgs(e.args, order, fn.params, scope)
+        e.resolved = CallRef.Function(order)
+        perform(Type.row(listOf(label), null), e.pos)
+        return fn.result
+    }
+
+    /** An operation used as a value, as in `xs.forEach(println)`: a function that performs it when called. */
+    private fun operationValue(spec: Decl.Spec, op: SpecValue, pos: Pos): Type {
+        val (type, label) = operationType(spec, op)
+        if (type !is Type.Fn) {
+            perform(Type.row(listOf(label), null), pos)
+            return type
+        }
+        return Type.Fn(type.params, type.result, Type.row(listOf(label), u.fresh()))
+    }
+
+    /**
+     * `Console(println = s -> ..., readLine = ~"x")`: a handler made from a function, or value, for
+     * each of [spec]'s operations. Its answers run where it handles, so what they do is its type's
+     * last argument, after the effect's own.
+     */
+    private fun makeHandler(e: Expr.Call, spec: Decl.Spec, scope: Scope): Type {
+        val args = specTypeVars.getValue(spec).map { u.fresh() as Type }
+        val answers = u.fresh()
+        val types = spec.values.map { v ->
+            val scheme = specSchemes.getValue(spec).getValue(v.name)
+            val mapping = scheme.vars.associateWith { u.fresh() as Type } + specTypeVars.getValue(spec).zip(args).toMap()
+            val t = u.substitute(scheme.type, mapping)
+            if (t is Type.Fn) Type.Fn(t.params, t.result, answers) else t
+        }
+        val order = argOrder(e.args.map { it.name to it.value.pos }, spec.values.map { it.name }, e.pos, spec.simpleName)
+        checkArgs(e.args, order, types, scope)
+        e.resolved = CallRef.Handler(spec, order)
+        return Type.Con(Type.HANDLER + spec.name, args + answers)
+    }
+
+    /** A module following [spec], as a handler: what its functions do is what its answers do. */
+    private fun moduleHandler(module: Decl.Module, spec: Decl.Spec): Type {
+        val answers = u.fresh()
+        for (v in spec.values) {
+            val f = globals.getValue("${module.name}.${v.name}")
+            (globalType(f) as? Type.Fn)?.let { subEffects(it.effects, answers) }
+        }
+        return Type.Con(Type.HANDLER + spec.name, listOf(answers))
+    }
+
+    /** `handler { block }`. */
+    private fun inferHandle(e: Expr.Handle, expected: Type?, scope: Scope): Type {
+        val handler = infer(e.handler, null, scope).prune() as? Type.Con
+        val spec = handler?.name?.takeIf { it.startsWith(Type.HANDLER) }?.let { specs[it.removePrefix(Type.HANDLER)] }
+            ?: throw CompileError(e.handler.pos, "this isn't a handler: make one from a handled effect, as Console(println = ...), or use a module that follows one")
+        e.handles = spec
+        return handling(spec, handler.args.dropLast(1), handler.args.last(), e.block, expected, scope, e.pos)
+    }
+
+    /**
+     * Runs [block] with [spec]<[args]> handled: inside, it may do the effect; outside, what's left
+     * of what it does is done here, as is what the handler's [answers] do.
+     */
+    private fun handling(spec: Decl.Spec, args: List<Type>, answers: Type, block: Expr.Block, expected: Type?, scope: Scope, pos: Pos): Type {
+        val rest = u.fresh()
+        val type = doing(Type.row(listOf(Type.Con(spec.name, args)), rest)) { infer(block, expected, scope) }
+        perform(rest, pos)
+        perform(answers, pos)
+        return type
+    }
+
+    /** The module `@HandledBy` names as [spec]'s default, which `main` uses if it doesn't handle it. */
+    private fun defaultHandler(spec: Decl.Spec): Decl.Module? {
+        val annotation = spec.annotations.firstOrNull { annotationType(it, spec.path)?.name == HANDLED_BY } ?: return null
+        val name = (annotation.args.singleOrNull()?.value as? Meta.Ref)?.name ?: return null
+        val saved = currentPath
+        currentPath = spec.path
+        try {
+            return lookupModule(name, null)
+        } finally {
+            currentPath = saved
+        }
+    }
+
+    /**
+     * The handlers `main` runs in: every handled effect's default, as code a spec hides may do one
+     * where nothing can see it. What `main` does that has no default is an error.
+     */
+    private fun mainDefaults(main: Decl.Function, row: Type): List<Pair<Decl.Spec, Decl.Module>> {
+        for (label in Type.row(row).first) {
+            val spec = specs[label.name]?.takeIf { isEffect(it) && it.values.isNotEmpty() } ?: continue
+            if (defaultHandler(spec) == null) {
+                throw CompileError(main.pos, "main does @${spec.simpleName}, but nothing handles it: run it in a handler, like ${spec.simpleName}(...) { ... }")
+            }
+        }
+        return specs.values.filter { isEffect(it) && it.values.isNotEmpty() }.mapNotNull { spec -> defaultHandler(spec)?.let { spec to it } }
+    }
 
     /**
      * The module around [path] that says what may be done in it, with what: the innermost one with
@@ -1332,9 +1510,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             checkDistinct(spec.values.map { it.name to it.pos })
             spec.types.firstOrNull { it.name in BUILTIN_TYPES }?.let { throw CompileError(it.pos, "'${it.name}' is a built-in type") }
             specTypes = spec.types.associate { it.name to it.typeParams.size }
+            val specVars = spec.typeParams.associateWith { u.fresh() }
+            specTypeVars[spec] = specVars.values.toList()
             specSchemes[spec] = spec.values.associate { v ->
                 val vars = v.typeParams.associateWith { u.fresh() }
-                typeParams = vars
+                typeParams = specVars + vars
                 val result = resolve(v.type)
                 // What it may do: what it declares, and whatever its function parameters do.
                 val rest = u.fresh()
@@ -1348,9 +1528,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                         arrowEffects = null
                     }
                 } ?: result
-                v.name to Scheme(vars.values.toList() + rest, type)
+                v.name to Scheme(specVars.values.toList() + vars.values.toList() + rest, type)
             }
             typeParams = emptyMap()
+            // A handled effect's operations are called by name wherever it can be seen.
+            if (isEffect(spec)) for (v in spec.values) operations.getOrPut((spec.path + v.name).joinToString(".")) { mutableListOf() } += spec to v
         }
         specTypes = emptyMap()
         currentPath = emptyList()
@@ -1411,6 +1593,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val extra = done - declared
         if (extra.isNotEmpty() && declared.isNotEmpty() && !hides) {
             throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(extra)}, but ${spec.simpleName}'s ${decl.simpleName} doesn't say it can: declare it there, as ${shown(extra)} ${decl.simpleName}(...)")
+        }
+        // An effect with operations needs a handler, which callers can't give if they can't see it:
+        // so it can be hidden only if it has a default, which main always puts around everything.
+        if (hides) {
+            extra.firstOrNull { name -> specs[name]?.let { isEffect(it) && it.values.isNotEmpty() && defaultHandler(it) == null } == true }?.let {
+                val effect = it.substringAfterLast('.')
+                throw CompileError(
+                    decl.pos,
+                    "'${decl.simpleName}' does ${shown(setOf(it))}, which needs a handler and has no default, so ${spec.simpleName} can't hide it: " +
+                        "handle it inside ${module.substringAfterLast('.')}, or give $effect a default with @HandledBy",
+                )
+            }
         }
         // Callers outside see the spec's view: with what the spec says it does, or, where the spec
         // says nothing, what this one does.
@@ -1501,6 +1695,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         try {
             return refs.flatMap { ref ->
                 // A method's name may be any extension of that name.
+                // A module used as a handler: its functions.
+                lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) } == true }
+                    ?.let { m -> globals.values.filter { it.path == m.name.split('.') } }.orEmpty() +
                 extensions[ref].orEmpty().filter { visible(it) } + listOfNotNull(
                     lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
                         lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
@@ -1553,6 +1750,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Expr.Assign -> {
                 go(e.target)
                 go(e.value)
+            }
+            is Expr.Handle -> {
+                go(e.handler)
+                go(e.block)
             }
             is Expr.Lambda -> go(e.body, bound + e.params.map { it.name })
             is Expr.Pipe -> {
@@ -1636,6 +1837,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val outside = mutableMapOf<Decl.Function, Type>()
         currentPath = group.decls.first().path
         val rows = mutableMapOf<Decl.Function, Type>()
+        val declaredArgs = mutableMapOf<Decl.Function, List<Type.Con>>()
         for (decl in group.decls) {
             val vars = decl.typeParams.associateWith { u.fresh() }
             declaredParams[decl] = vars
@@ -1644,6 +1846,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             // What it does: what its body's calls do, which is also what its function parameters may do.
             val row = u.fresh()
             rows[decl] = row
+            declaredArgs[decl] = declaredLabels(decl.annotations, decl.path)
             val inside = decl.params?.let { params ->
                 checkDistinct(params.map { it.name to it.pos })
                 Type.Fn(withArrowEffects(row) { params.map { p -> p.type?.let { resolve(it) } ?: u.fresh() } }, result, row)
@@ -1694,6 +1897,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         typeParams = emptyMap()
         // What each does as callers see it: changing values that never left it doesn't count.
         val done = rows.mapValues { (decl, row) -> masked(row, provisional.getValue(decl)) }
+        // A generic effect's declared type arguments are what it does: @Yielding<Int> yields Ints.
+        for ((decl, labels) in declaredArgs) {
+            for (label in labels) {
+                val did = Type.row(done.getValue(decl)).first.firstOrNull { it.name == label.name } ?: continue
+                if (!did.args.zip(label.args).all { (p, q) -> u.unify(p, q) }) {
+                    throw CompileError(decl.pos, "'${decl.simpleName}' does @${Type.displayName(label.name).substringAfterLast('.')}<${did.args.joinToString { it.zonk().toString() }}>, but says <${label.args.joinToString { it.zonk().toString() }}>")
+                }
+            }
+        }
+        group.decls.firstOrNull { it.name == "main" }?.let { mainHandlers = mainDefaults(it, done.getValue(it)) }
         for (decl in group.decls) if (decl.external == null) checkEffects(decl, done.getValue(decl))
         for (decl in group.decls) {
             // A declared type parameter must stay abstract: `id<T>(x: T): Int = x` is an error.
@@ -1945,6 +2158,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun inferInner(e: Expr, expected: Type?, scope: Scope): Type = when (e) {
         is Expr.Assign -> inferAssign(e, scope)
+        is Expr.Handle -> inferHandle(e, expected, scope)
         // An integer literal can stand for a float where one is expected.
         is Expr.IntLit -> if (expected?.prune() == Type.FLOAT) Type.FLOAT else Type.INT
         is Expr.FloatLit -> Type.FLOAT
@@ -2018,6 +2232,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             e.resolved = NameRef.Global(it)
             return globalType(it)
         }
+        operation(e.name, e.pos)?.let { (spec, op) ->
+            e.resolved = NameRef.Operation(spec, op)
+            return operationValue(spec, op, e.pos)
+        }
         constructor(e.name, expected, e.pos, asValue = true)?.let { shape ->
             e.resolved = NameRef.Constructor(shape.ref)
             return if (shape.fieldTypes.isEmpty()) shape.result else Type.Fn(shape.fieldTypes, shape.result, u.fresh())
@@ -2025,6 +2243,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         Builtins.function(e.name, u)?.let { (type, ocaml) ->
             e.resolved = NameRef.Builtin(ocaml)
             return type
+        }
+        // A module following a handled effect's spec is a handler.
+        lookupModule(e.name, null)?.let { m ->
+            moduleSpecs[m.name]?.takeIf { isEffect(it) }?.let { spec ->
+                e.resolved = NameRef.Handler(m, spec)
+                return moduleHandler(m, spec)
+            }
         }
         throw CompileError(e.pos, "unknown name '${e.name}'")
     }
@@ -2187,6 +2412,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             e.resolved = CallRef.Function(order)
             perform(fn.effects, e.pos)
             return fn.result
+        }
+        if (global == null) {
+            val op = when (callee) {
+                is Expr.Name -> if (scope.lookup(callee.name) == null) operation(callee.name, callee.pos) else null
+                is Expr.Member -> qualifiedOperation(callee, scope)
+                else -> null
+            }
+            if (op != null) return callOperation(e, op.first, op.second, scope)
+            // A handled effect's spec, made into a handler from a function for each operation.
+            if (callee is Expr.Name && scope.lookup(callee.name) == null) {
+                find(callee.name, specs, null)?.takeIf { isEffect(it) }?.let { return makeHandler(e, it, scope) }
+            }
         }
         if (callee is Expr.Name && global == null && scope.lookup(callee.name) == null) {
             constructor(callee.name, expected, callee.pos)?.let { return construct(e, it, callee.name, expected, scope) }
@@ -2680,6 +2917,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val name = dotted(e.module, scope)
         val module = name?.let { lookupModule(it, null) }
             ?: throw CompileError(e.module.pos, "${name ?: "this"} isn't a module, so $name { ... } has nothing to bind with")
+        // A module following a handled effect's spec handles the block instead.
+        moduleSpecs[module.name]?.takeIf { isEffect(it) }?.let { spec ->
+            e.handles = spec
+            e.handler = module
+            return handling(spec, emptyList(), (moduleHandler(module, spec) as Type.Con).args.last(), e.block, null, scope, e.pos)
+        }
         fun member(what: String) = globals[module.name + "." + what]?.takeIf { visible(it) }
         val bind = member("bind")
         val pure = member("pure")

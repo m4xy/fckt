@@ -11,7 +11,7 @@ import uk.m4xy.kastor.Required
 
 /** A compilation unit (`.ml` file): type groups, let definitions and modules, in order. */
 @Element("structure", function = "structure")
-@Children(TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class, ModuleType::class)
+@Children(TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class, ModuleType::class, Effects::class)
 interface Structure
 
 /**
@@ -20,7 +20,7 @@ interface Structure
  * `(M : Ordered)`; a functor's application has no children, and [applies] is like `SortedSet (IntOrder)`.
  */
 @Element("module", function = "moduleDef")
-@Children(Signature::class, TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class, ModuleType::class)
+@Children(Signature::class, TypeGroup::class, LetGroup::class, Comment::class, ModuleDef::class, ModuleType::class, Effects::class)
 interface ModuleDef {
     @Required val name: String
     val spec: String
@@ -53,6 +53,12 @@ interface SigValue {
 interface SigModule {
     @Required val name: String
     val spec: String
+}
+
+/** `type _ Effect.t += C : a -> r Effect.t | ...`: a handled effect's operations, as OCaml 5's effects. */
+@Element("effects", function = "effects")
+interface Effects {
+    val constructors: List<String>
 }
 
 /** `(* text *)` */

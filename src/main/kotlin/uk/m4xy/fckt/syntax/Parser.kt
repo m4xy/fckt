@@ -133,9 +133,11 @@ class Parser(private val tokens: List<Token>) {
                 Decl.Module(pos, name, decls, spec = spec, params = params)
             }
             // `spec` is a keyword only here, so it can still name a value.
-            at(T.IDENT) && peek.text == "spec" && peekAt(1).kind == T.IDENT && peekAt(2).kind == T.LBRACE -> {
+            at(T.IDENT) && peek.text == "spec" && peekAt(1).kind == T.IDENT && (peekAt(2).kind == T.LBRACE || peekAt(2).kind == T.LT) -> {
                 next()
                 val name = upperIdent("a spec name")
+                // A handled effect may be generic: @Effect spec Yielding<A> { yield(value: A): Unit }.
+                val specTypeParams = typeParams()
                 expect(T.LBRACE, "'{'")
                 val types = mutableListOf<SpecType>()
                 val values = mutableListOf<SpecValue>()
@@ -160,7 +162,7 @@ class Parser(private val tokens: List<Token>) {
                         values += SpecValue(memberPos, valueName, typeParams, params, type(), annotations)
                     }
                 }
-                Decl.Spec(pos, name, types, values)
+                Decl.Spec(pos, name, types, values, typeParams = specTypeParams)
             }
             at(T.IDENT) && peek.text == "interface" && peekAt(1).kind == T.IDENT ->
                 throw error("write a type with cases as 'type ${peekAt(1).text} { ... }'")
@@ -408,7 +410,17 @@ class Parser(private val tokens: List<Token>) {
                 next()
                 name += "." + next().text
             }
-            annotations += Annotation(pos, name, if (at(T.LPAREN)) metaArgs() else emptyList())
+            // `@Yielding<Int>`: a generic effect's type arguments.
+            val typeArgs = if (at(T.LT) && tokens[p - 1].pos.line == peek.pos.line) {
+                next()
+                val list = mutableListOf(type())
+                while (accept(T.COMMA) != null) list += type()
+                expect(T.GT, "'>'")
+                list
+            } else {
+                emptyList()
+            }
+            annotations += Annotation(pos, name, if (at(T.LPAREN)) metaArgs() else emptyList(), typeArgs)
             skipNewlines()
         }
         return annotations
@@ -621,6 +633,9 @@ class Parser(private val tokens: List<Token>) {
                 }
                 // `Options { ... }`: a module's name right before a block runs the block in it.
                 at(T.LBRACE) && isModulePath(e) -> Expr.Monadic(e.pos, e, block() as Expr.Block)
+                // `Console(println = ...) { ... }`, `handler { ... }`: a handler value runs the block, on the same line.
+                at(T.LBRACE) && (e is Expr.Call || (e is Expr.Name && e.name[0].isLowerCase())) && tokens[p - 1].pos.line == peek.pos.line ->
+                    Expr.Handle(e.pos, e, block() as Expr.Block)
                 else -> return e
             }
         }

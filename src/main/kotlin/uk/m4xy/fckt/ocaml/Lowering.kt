@@ -10,6 +10,7 @@ import uk.m4xy.fckt.syntax.NameRef
 import uk.m4xy.fckt.syntax.Param
 import uk.m4xy.fckt.syntax.Pattern
 import uk.m4xy.fckt.syntax.Statement
+import uk.m4xy.fckt.syntax.SpecValue
 import uk.m4xy.fckt.syntax.StringPart
 import uk.m4xy.fckt.syntax.TypeRef
 import uk.m4xy.fckt.syntax.VariantDef
@@ -105,18 +106,120 @@ class Lowering(private val program: Program) {
             StructureElement.build<Unit> {
                 let(false) {
                     binding("()") {
-                        apply {
-                            ident("main")
-                            // The command-line arguments, without the program name.
-                            if (it.params!!.isEmpty()) literal("()")
-                            else apply { ident("List.tl"); apply { ident("Array.to_list"); ident("Sys.argv") } }
+                        // The command-line arguments, without the program name.
+                        val args = if (it.params!!.isEmpty()) Gen.Lit("()") else Gen.App(Gen.Id("List.tl"), listOf(Gen.App(Gen.Id("Array.to_list"), listOf(Gen.Id("Sys.argv")))))
+                        // In the default handler of each effect it does that needs one.
+                        val run = program.mainHandlers.fold<Pair<Decl.Spec, Decl.Module>, Gen>(Gen.App(Gen.Id("main"), listOf(args))) { inner, (spec, module) ->
+                            Gen.App(Gen.Id(nextTo(spec, handleName(spec))), listOf(moduleHandler(module, spec), Gen.Fun(listOf("()"), inner)))
                         }
+                        gen(run)
                     }
                 }
             }.children
         }.orEmpty()
         return StructureElement(helperItems + moduleItems(emptyList(), program.root, functionItems) + main)
     }
+
+    // ---- Handled effects ----
+
+    /** An operation's OCaml effect constructor: `Console_println`. */
+    private fun effectName(spec: Decl.Spec, op: SpecValue) = "${spec.simpleName}_${op.name}"
+
+    /** [local], declared next to [spec], as named from here. */
+    private fun nextTo(spec: Decl.Spec, local: String) = ref((spec.path + local).joinToString("."), { it })
+
+    private fun handlerType(spec: Decl.Spec) = snake(spec.simpleName).removeSuffix("_") + "_handler"
+    private fun handleName(spec: Decl.Spec) = "handle_" + snake(spec.simpleName).removeSuffix("_")
+
+    /** The handler record's type, as named from here: `console_handler`, or `_ yielding_handler`. */
+    private fun handlerTypeText(spec: Decl.Spec): String = when (spec.typeParams.size) {
+        0 -> ""
+        1 -> "_ "
+        else -> spec.typeParams.joinToString(", ", "(", ") ") { "_" }
+    } + nextTo(spec, handlerType(spec))
+
+    private fun operationParams(spec: Decl.Spec, op: SpecValue): List<Pair<String, Boolean>> =
+        op.params.orEmpty().map { typeText(it.type!!, spec.typeParams + op.typeParams) to compound(it.type!!) }
+
+    private fun operationResult(spec: Decl.Spec, op: SpecValue) = typeText(op.type, spec.typeParams + op.typeParams)
+
+    /**
+     * A handled effect in OCaml 5: an effect constructor for each operation, a record type for its
+     * handlers, with a function for each operation, and a function that runs a block with one.
+     */
+    private fun StructureScope<Unit>.handledEffect(spec: Decl.Spec) {
+        val generic = spec.typeParams.isNotEmpty()
+        effects {
+            constructors = spec.values.map { op ->
+                val params = operationParams(spec, op)
+                val result = operationResult(spec, op).let { if (compound(op.type)) "($it)" else it }
+                "${effectName(spec, op)} : ${if (params.isEmpty()) "unit" else tupleText(params)} -> $result Effect.t"
+            }
+        }
+        types {
+            typeDef(handlerType(spec)) {
+                params = spec.typeParams.map(::typeVar)
+                for (op in spec.values) {
+                    val type = if (op.params == null) operationResult(spec, op) else functionText(operationParams(spec, op), operationResult(spec, op))
+                    fieldDecl(snake(op.name), type)
+                }
+            }
+        }
+        let(false) {
+            binding(handleName(spec)) {
+                val vars = when (spec.typeParams.size) {
+                    0 -> ""
+                    1 -> typeVar(spec.typeParams[0]) + " "
+                    else -> spec.typeParams.joinToString(", ", "(", ") ") { typeVar(it) }
+                }
+                params = listOf("(h : $vars${handlerType(spec)})", "(f : unit -> 'r)")
+                returnType = "'r"
+                // A generic effect's values are what the checker made sure they are, but OCaml can't see that.
+                fun known(g: Gen) = if (generic) Gen.App(Gen.Id("Obj.magic"), listOf(g)) else g
+                val cases = spec.values.map { op ->
+                    val names = op.params.orEmpty().indices.map { "x$it" }
+                    val pattern = when (names.size) {
+                        0 -> "()"
+                        1 -> names[0]
+                        else -> names.joinToString(", ", "(", ")")
+                    }
+                    val field = Gen.Field(Gen.Id("h"), snake(op.name))
+                    val answer = when {
+                        op.params == null -> field
+                        names.isEmpty() -> Gen.App(field, listOf(Gen.Lit("()")))
+                        else -> Gen.App(field, names.map { known(Gen.Id(it)) })
+                    }
+                    "effect (${effectName(spec, op)} $pattern), k" to Gen.App(Gen.Id("Effect.Deep.continue"), listOf(Gen.Id("k"), known(answer)))
+                }
+                gen(Gen.Match(Gen.App(Gen.Id("f"), listOf(Gen.Lit("()"))), listOf("v" to Gen.Id("v")) + cases))
+            }
+        }
+    }
+
+    /** Performing [op] with [args]: whatever handles its effect answers. */
+    private fun perform(spec: Decl.Spec, op: SpecValue, args: List<Gen>): Gen {
+        val arg = when (args.size) {
+            0 -> Gen.Lit("()")
+            1 -> args[0]
+            else -> Gen.Tuple(args)
+        }
+        return Gen.App(Gen.Id("Effect.perform"), listOf(Gen.Ctor(nextTo(spec, effectName(spec, op)), arg)))
+    }
+
+    /** An operation as a value: a function that performs it, or, for one that isn't a function, performing it. */
+    private fun operationValue(spec: Decl.Spec, op: SpecValue): Gen {
+        val params = op.params ?: return perform(spec, op, emptyList())
+        val names = params.indices.map { "x$it" }
+        return Gen.Fun(names.ifEmpty { listOf("()") }, perform(spec, op, names.map { Gen.Id(it) }))
+    }
+
+    /** A module following a handled effect's spec, as a handler: a record of its functions. */
+    private fun moduleHandler(module: Decl.Module, spec: Decl.Spec): Gen =
+        Gen.Ann(Gen.Record(spec.values.map { op -> snake(op.name) to Gen.Id(ref("${module.name}.${op.name}", ::snake)) }), handlerTypeText(spec))
+
+    /** Running [block] with [handler] handling [spec]. */
+    private fun handle(spec: Decl.Spec, handler: Gen, block: Expr): Gen =
+        Gen.App(Gen.Id(nextTo(spec, handleName(spec))), listOf(handler, Gen.Fun(listOf("()"), Gen.Src(block))))
 
     // ---- Modules ----
 
@@ -180,7 +283,10 @@ class Lowering(private val program: Program) {
             currentPath = path
             when (node) {
                 is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems)))
-                is Decl.Spec -> StructureElement.build<Unit> { moduleType(node.simpleName) { specItems(node) } }.children
+                is Decl.Spec -> StructureElement.build<Unit> {
+                    moduleType(node.simpleName) { specItems(node) }
+                    if (node in program.effects) handledEffect(node)
+                }.children
                 is uk.m4xy.fckt.types.FunctionGroup -> listOf(functionItems.getValue(node))
                 else -> {
                     @Suppress("UNCHECKED_CAST")
@@ -210,6 +316,7 @@ class Lowering(private val program: Program) {
                 is StructureChild.Comment -> ModuleDefChild.Comment(child.element)
                 is StructureChild.ModuleDef -> ModuleDefChild.ModuleDef(child.element)
                 is StructureChild.ModuleType -> ModuleDefChild.ModuleType(child.element)
+                is StructureChild.Effects -> ModuleDefChild.Effects(child.element)
             }
         }
         // A module with private members or opaque types states what it shows; otherwise OCaml
@@ -500,6 +607,8 @@ class Lowering(private val program: Program) {
             is Expr.Name -> when (val r = e.resolved!!) {
                 // A var is a ref: what it holds is `!x`.
                 is NameRef.Local -> if (r.isVar) apply { ident("!"); ident(r.ocamlName) } else ident(r.ocamlName)
+                is NameRef.Operation -> gen(operationValue(r.spec, r.operation))
+                is NameRef.Handler -> gen(moduleHandler(r.module, r.spec))
                 is NameRef.Global -> if (r.decl.external != null) gen(externalValue(r.decl)) else ident(ref(r.decl.name, ::snake))
                 is NameRef.Builtin -> {
                     if (r.ocaml == ASSERT || r.ocaml == ASSERT_EQUALS) throw CompileError(e.pos, "${r.ocaml} must be called")
@@ -521,6 +630,7 @@ class Lowering(private val program: Program) {
                 is MemberRef.Field -> fieldGet(labelPrefix(records.getValue(r.record)) + r.ocamlName) { gen(qualified(Gen.Src(e.target), r)) }
                 is MemberRef.CastField -> fieldGet(r.ocamlName) { ident(r.recordVar) }
                 is MemberRef.CastTagField -> ident(r.variable)
+                is MemberRef.Operation -> gen(operationValue(r.spec, r.operation))
                 is MemberRef.Global -> if (r.decl.external != null) gen(externalValue(r.decl)) else ident(ref(r.decl.name, ::snake))
                 is MemberRef.Extension -> {
                     if (r.decl.external != null) gen(external(r.decl, listOf(Gen.Src(e.target))))
@@ -591,7 +701,8 @@ class Lowering(private val program: Program) {
             }
             is Expr.When -> whenExpr(e)
             is Expr.Block -> block(e, 0, null)
-            is Expr.Monadic -> {
+            is Expr.Handle -> gen(handle(e.handles!!, Gen.Src(e.handler), e.block))
+            is Expr.Monadic -> if (e.handles != null) gen(handle(e.handles!!, moduleHandler(e.handler!!, e.handles!!), e.block)) else {
                 // OCaml's binding operators: let* x = v in rest is bind v (fun x -> rest), and
                 // let+ a = x and+ b = y in rest is map (product x y) (fun (a, b) -> rest).
                 val steps = e.block.statements.count { it is Statement.Bind }
@@ -628,7 +739,16 @@ class Lowering(private val program: Program) {
         if (global?.external != null) {
             return gen(external(global, (e.resolved as CallRef.Function).order.map { Gen.Src(e.args[it].value) }))
         }
+        // An operation of a handled effect: performed, for whatever handles it to answer.
+        val operation = ((e.callee as? Expr.Name)?.resolved as? NameRef.Operation)?.let { it.spec to it.operation }
+            ?: ((e.callee as? Expr.Member)?.resolved as? MemberRef.Operation)?.let { it.spec to it.operation }
+        if (operation != null) {
+            return gen(perform(operation.first, operation.second, (e.resolved as CallRef.Function).order.map { Gen.Src(e.args[it].value) }))
+        }
         when (val r = e.resolved!!) {
+            is CallRef.Handler -> gen(
+                Gen.Ann(Gen.Record(r.spec.values.mapIndexed { i, op -> snake(op.name) to Gen.Src(e.args[r.order[i]].value) }), handlerTypeText(r.spec)),
+            )
             is CallRef.Function -> apply {
                 expr(e.callee)
                 if (r.order.isEmpty()) literal("()")

@@ -471,6 +471,36 @@ class CompilerTest {
     }
 
     @Test
+    fun `a handled effect's operations are answered by whatever handles it`() {
+        val source = File("examples/handlers.fk").readText()
+        assertEquals("from the terminal\n", run(source))
+        val ml = compile(source)
+        assertContains(ml, "| Console_println : string -> unit Effect.t")
+        assertContains(ml, "| effect (Clock_now ()), k -> Effect.Deep.continue k (h.now ())")
+        val clock = "@Effect spec Clock { now(): Int }\n@Effect spec Yielding<A> { yield(value: A): Unit }\n"
+        fun program(source: String) = error("$clock$source")
+        // main must handle what it does, unless the effect has a default.
+        assertContains(program("@Clock stamp() = now()\nmain() = println(\"${'$'}{stamp()}\")"), "main does @Clock, but nothing handles it: run it in a handler, like Clock(...) { ... }")
+        compile("$clock@Clock stamp() = now()\nmain() = Clock(now = ~42) { println(\"${'$'}{stamp()}\") }")
+        // Handling takes the effect away: a fake console makes a pure function.
+        compile("$clock@Console greet() = println(\"hi\")\nquiet(): Int = { Console(print = s -> Unit, println = s -> Unit, readLine = ~\"\") { greet() }; 1 }\nmain() = assert(true)")
+        // A generic effect's type arguments are what it does.
+        assertContains(program("@Yielding<String> bad() = yield(1)\nmain() = assert(true)"), "'bad' does @Yielding<Int>, but says <String>")
+        assertContains(program("module Gen : Yielding { yield(value: Int) = Unit }\nmain() = assert(true)"), "Gen can't follow Yielding, which takes type parameters")
+        // Two effects with an operation of the same name: say which.
+        assertContains(program("@Effect spec Log { println(s: String): Unit }\nf() = println(\"x\")\nmain() = assert(true)"), "'println' is an operation of Console and Log; write Console.println")
+        assertContains(program("main() = Clock(now = 1) { 1 }"), "expected () -> Int but found Int")
+        assertContains(program("main() = {\n  h = 1\n  h { 2 }\n}"), "this isn't a handler")
+        // A repository hides what its module does, but not an effect that needs a handler.
+        val repository = "@Effect annotation type Persistence\n@Persistence @Encapsulates annotation type Repository\n@Repository spec Store { load(): Int }\n"
+        assertContains(
+            program("${repository}module Timed : Store { @Clock load() = now() }\nmain() = assert(true)"),
+            "'load' does @Clock, which needs a handler and has no default, so Store can't hide it: handle it inside Timed, or give Clock a default with @HandledBy",
+        )
+        compile("$clock${repository}module Timed : Store { load() = Clock(now = ~1) { now() } }\nmain() = assert(true)")
+    }
+
+    @Test
     fun `opaque types are abstract outside their module`() {
         val source = File("examples/specs.fk").readText()
         assertEquals("", run(source))

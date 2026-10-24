@@ -440,6 +440,8 @@ private class Resolutions(
             is Expr.Name -> when (val r = e.resolved) {
                 is NameRef.Global -> put(at(e.pos, e.name), of(r.decl))
                 is NameRef.Constructor -> constructor(r.ref)?.let { put(at(e.pos, e.name), it) }
+                is NameRef.Operation -> put(at(e.pos, e.name), Target(r.operation.pos.file ?: r.spec.pos.file, r.operation.pos, r.operation.name))
+                is NameRef.Handler -> put(at(e.pos, e.name), of(r.module))
                 else -> {}
             }
             is Expr.Call -> {
@@ -476,6 +478,10 @@ private class Resolutions(
             is Expr.Assign -> {
                 expr(e.target)
                 expr(e.value)
+            }
+            is Expr.Handle -> {
+                expr(e.handler)
+                block(e.block)
             }
             is Expr.Lambda -> {
                 e.params.forEach { type(it.type) }

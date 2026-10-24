@@ -54,6 +54,7 @@ object Printer {
                 " = struct\n" + items.joinToString("\n\n") { indent(item(it)) } + "\nend"
         }
         "comment" -> "(* ${n.str("text")} *)"
+        "effects" -> "type _ Effect.t +=\n" + n.list("constructors").joinToString("\n") { "  | $it" }
         "module-type" -> "module type ${n.str("name")} = " + signature(n.children)
         "types" -> "type " + n.children.joinToString("\n\nand ") { typeDef(it) }
         "let" -> (if (n.attributes["rec"] == true) "let rec " else "let ") + n.children.joinToString("\n\nand ") { binding(it) }

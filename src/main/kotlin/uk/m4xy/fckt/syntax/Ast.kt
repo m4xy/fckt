@@ -159,6 +159,7 @@ sealed interface Decl {
         val values: List<SpecValue>,
         override val isPrivate: Boolean = false,
         override val annotations: List<Annotation> = emptyList(),
+        val typeParams: List<String> = emptyList(),
     ) : Decl
 }
 
@@ -192,9 +193,9 @@ data class SourceFile(val decls: List<Decl>)
  * constants and references, never calculations, so a tool can read them without running anything;
  * the checker resolves each against the annotation's declaration, and then it's compiled away.
  */
-class Annotation(val pos: Pos, val name: String, val args: List<MetaArg>) {
-    /** Its declaration, set by the checker. */
-    var decl: Decl.Record? = null
+class Annotation(val pos: Pos, val name: String, val args: List<MetaArg>, val typeArgs: List<TypeRef> = emptyList()) {
+    /** Its declaration, set by the checker: an annotation type, or a handled effect's spec. */
+    var decl: Decl? = null
 }
 
 /** An annotation's argument, by position or by [name]. */
@@ -328,6 +329,18 @@ sealed class Expr {
         var pure: Decl.Function? = null
         var map: Decl.Function? = null
         var product: Decl.Function? = null
+
+        /** Set instead when [module] follows a handled effect's spec: the block runs with it handling that effect. */
+        var handles: Decl.Spec? = null
+        var handler: Decl.Module? = null
+    }
+
+    /**
+     * `handler { block }`: runs [block] with [handler], a value made from a handled effect's spec,
+     * as `Console(println = ...)`, answering that effect's operations.
+     */
+    class Handle(override val pos: Pos, val handler: Expr, val block: Block) : Expr() {
+        var handles: Decl.Spec? = null
     }
 }
 
@@ -426,6 +439,12 @@ sealed interface NameRef {
     data class Local(val ocamlName: String, val isVar: Boolean = false) : NameRef
     data class Global(val decl: Decl.Function) : NameRef
 
+    /** An operation of the handled effect [spec], as `println` is of Console: calling it performs the effect. */
+    data class Operation(val spec: Decl.Spec, val operation: SpecValue) : NameRef
+
+    /** A module following a handled effect's spec, used as a value: a handler. */
+    data class Handler(val module: Decl.Module, val spec: Decl.Spec) : NameRef
+
     /** A record type or variant used as a value, e.g. as `Money` in `items.map(Money)`. */
     data class Constructor(val ref: ConstructorRef) : NameRef
     data class Builtin(val ocaml: String) : NameRef
@@ -454,6 +473,9 @@ sealed interface CallRef {
     /** A built-in method or function, with its translation. */
     data class Builtin(val method: uk.m4xy.fckt.types.Builtin) : CallRef
 
+    /** `Console(println = ..., readLine = ...)`: a handler for [spec], from its operations' answers, in spec order. */
+    data class Handler(val spec: Decl.Spec, val order: List<Int>) : CallRef
+
     /** `record.copy(field = value, ...)`: a copy with some fields replaced. */
     data class Copy(val record: Decl.Record) : CallRef
 }
@@ -473,6 +495,9 @@ sealed interface MemberRef {
 
     /** `Ratios.make`: a function or value named through its module. */
     data class Global(val decl: Decl.Function) : MemberRef
+
+    /** `Console.println`: an operation named through its effect. */
+    data class Operation(val spec: Decl.Spec, val operation: SpecValue) : MemberRef
 
     /** `Alphabet.A`: a case named through its sealed type. */
     data class Case(val ref: ConstructorRef) : MemberRef

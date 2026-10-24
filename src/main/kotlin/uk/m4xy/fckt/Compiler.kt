@@ -11,6 +11,7 @@ import uk.m4xy.fckt.syntax.SourceFile
 import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.syntax.Token
 import uk.m4xy.fckt.types.Checker
+import uk.m4xy.fckt.types.EFFECT
 import uk.m4xy.fckt.types.MUTATING
 import uk.m4xy.kastor.resolve
 import java.io.File
@@ -109,6 +110,8 @@ private fun link(text: String, available: Map<String, Source>): Linked {
     // Names to look up, each with the names declared where it's used.
     val pending = ArrayDeque<Pair<Set<String>, Set<String>>>()
     fun include(decl: Decl, uses: Set<String>) {
+        // A declaration can be reached by several names: a handled effect by its own and its operations'.
+        if (prelude.any { it === decl }) return
         prelude += decl
         pending += uses to declaredNames(listOf(decl))
     }
@@ -133,7 +136,10 @@ private fun link(text: String, available: Map<String, Source>): Linked {
                 pending += mentioned(code, source.path) to declaredNames(parsed.decls)
                 continue
             }
-            preludeDecls.firstOrNull { (d, _) -> d.name == name && !(d is Decl.Function && d.extension) }?.let { (d, uses) -> include(d, uses) }
+            // A declaration of that name, or the handled effect with an operation of that name.
+            preludeDecls.firstOrNull { (d, _) ->
+                (d.name == name && !(d is Decl.Function && d.extension)) || (d is Decl.Spec && d.annotations.any { it.name == EFFECT } && d.values.any { it.name == name })
+            }?.let { (d, uses) -> include(d, uses) }
         }
     }
     return Linked(SourceFile(prelude + modules + main.decls), main.decls)

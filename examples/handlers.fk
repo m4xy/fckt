@@ -1,0 +1,71 @@
+// Handled effects: an effect with operations. Declaring one makes its operations callable by
+// name, and calling one does the effect, as calling println does @Console. Whatever handles the
+// effect around the call answers it: a module that follows the effect's spec, or a handler made
+// from a function for each operation. Handling an effect takes it away, so a test that answers
+// Console itself is pure. main handles what it does with each effect's default, @HandledBy.
+
+@Console greet() = {
+  name = readLine()
+  println("hello $name")
+}
+
+// Pure: Console is answered here, and what was printed is a local var.
+greeted(name: String): List<String> = {
+  var printed = []
+  Console(print = s -> Unit, println = line -> { printed = printed + [line] }, readLine = ~name) {
+    greet()
+  }
+  printed
+}
+
+// An effect of our own, with a default for main.
+@Effect @HandledBy(FixedClock) spec Clock {
+  now(): Int
+}
+
+module FixedClock : Clock {
+  now() = 1700000000
+}
+
+@Clock stamped(message: String) = "[${now()}] $message"
+
+// A generic effect: what countdown yields, Ints, is in its annotation.
+@Effect spec Yielding<A> {
+  yield(value: A): Unit
+}
+
+@Yielding<Int> countdown(n: Int): Unit = if (n == 0) Unit else {
+  yield(n)
+  countdown(n - 1)
+}
+
+// Pure: everything countdown yields is collected here.
+collected(): List<Int> = {
+  var seen = []
+  Yielding(yield = n -> { seen = seen + [n] }) {
+    countdown(3)
+  }
+  seen
+}
+
+// A handler that does the effect itself reaches the handler around it: here, prefixing each line.
+@Console shouted() = Console(print = print, println = line -> println("> $line"), readLine = readLine) {
+  greet()
+}
+
+// Prints nothing.
+module Silent : Console {
+  print(s: String) = Unit
+  println(s: String) = Unit
+  readLine() = ""
+}
+
+main(args: List<String>) = {
+  assertEquals(["hello Ada"], greeted("Ada"))
+  assertEquals("[1700000000] ready", stamped("ready"))
+  assertEquals("[5] ready", Clock(now = ~5) { stamped("ready") })
+  assertEquals([3, 2, 1], collected())
+  // A module that follows Console is a handler too, chosen like any value.
+  console = if (args.contains("--quiet")) Silent else Terminal
+  console { println("from the terminal") }
+}

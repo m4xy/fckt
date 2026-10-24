@@ -217,6 +217,10 @@ internal class Scopes {
                 expr(e.target, scope)
                 expr(e.value, scope)
             }
+            is Expr.Handle -> {
+                expr(e.handler, scope)
+                expr(e.block, scope)
+            }
             is Expr.Lambda -> {
                 val inner = Scope(scope)
                 params(e.params, inner)
