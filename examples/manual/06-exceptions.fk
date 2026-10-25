@@ -22,7 +22,7 @@ firstNamedValue<T>(values: List<T>, names: List<(T, String)>): String = when (va
 
 assocMayMap<A, B, K>(f: (A) -> Option<B>, x: K, l: List<(K, A)>): Option<B> = l.lookup(x).flatMap(f)
 
-flatAssocOpt<K, V>(x: K, l: List<(K, Option<V>)>): Option<V> = l.lookup(x).flatMap(v -> v)
+flatAssocOpt<K, V>(x: K, l: List<(K, Option<V>)>): Option<V> = l.lookup(x).flatMap { it }
 
 // fixpoint: the loop and its local exception become recursion.
 fixpoint<T>(f: (T) -> T, x: T): T = {

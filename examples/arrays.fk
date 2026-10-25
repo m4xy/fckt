@@ -37,7 +37,7 @@ external Buffer.contents: String = "Buffer.contents this"
 // Pure: the buffer never leaves.
 joined(words: List<String>): String = {
   b = buffer(16)
-  words.forEach(word -> b.add(word))
+  words.forEach { word -> b.add(word) }
   b.contents
 }
 

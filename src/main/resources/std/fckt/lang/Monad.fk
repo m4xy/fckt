@@ -5,7 +5,7 @@ spec Monad : Applicative {
   pure<A>(x: A): M<A>
   bind<A, B>(m: M<A>, f: (A) -> M<B>): M<B>
 
-  map<A, B>(m: M<A>, f: (A) -> B): M<B> = bind(m, x -> pure(f(x)))
+  map<A, B>(m: M<A>, f: (A) -> B): M<B> = bind(m) { pure(f(it)) }
 
-  product<A, B>(ma: M<A>, mb: M<B>): M<(A, B)> = bind(ma, a -> bind(mb, b -> pure((a, b))))
+  product<A, B>(ma: M<A>, mb: M<B>): M<(A, B)> = bind(ma) { a -> bind(mb) { pure((a, it)) } }
 }

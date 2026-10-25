@@ -21,10 +21,10 @@ module Maps {
 
   // A map with nothing in it; with the entries in the list, the last of any with the same key.
   emptyMap<K, V>(): Map<K, V> = MapTip
-  mapOf<K, V>(entries: List<(K, V)>): Map<K, V> = entries.fold(emptyMap(), (m, entry) -> {
+  mapOf<K, V>(entries: List<(K, V)>): Map<K, V> = entries.fold(emptyMap()) { m, entry ->
     (k, v) = entry
     m.put(k, v)
-  })
+  }
   List<(K, V)>.toMap(): Map<K, V> = mapOf(this)
 
   // How many entries it has.
@@ -47,7 +47,7 @@ module Maps {
     Some(v) -> v
     None -> default()
   }
-  Map<K, V>.getOrDefault(key: K, default: V): V = this.getOrElse(key, () -> default)
+  Map<K, V>.getOrDefault(key: K, default: V): V = this.getOrElse(key) { default }
   Map<K, V>.containsKey(key: K): Boolean = this.get(key) != None
 
   // It with key's value value, in place of any it had.
@@ -74,10 +74,10 @@ module Maps {
     }
   }
   // It with each of other's entries put in.
-  Map<K, V>.putAll(other: Map<K, V>): Map<K, V> = other.entries.fold(this, (m, entry) -> {
+  Map<K, V>.putAll(other: Map<K, V>): Map<K, V> = other.entries.fold(this) { m, entry ->
     (k, v) = entry
     m.put(k, v)
-  })
+  }
   // It without key, and its value.
   Map<K, V>.remove(key: K): Map<K, V> = when (this) {
     MapTip -> this
@@ -96,9 +96,9 @@ module Maps {
   }
 
   // Its entries, keys and values, in the keys' order.
-  Map<K, V>.entries: List<(K, V)> = this.foldRight([], (k, v, rest) -> [(k, v), *rest])
-  Map<K, V>.keys: List<K> = this.foldRight([], (k, _, rest) -> [k, *rest])
-  Map<K, V>.values: List<V> = this.foldRight([], (_, v, rest) -> [v, *rest])
+  Map<K, V>.entries: List<(K, V)> = this.foldRight([]) { k, v, rest -> [(k, v), *rest] }
+  Map<K, V>.keys: List<K> = this.foldRight([]) { k, _, rest -> [k, *rest] }
+  Map<K, V>.values: List<V> = this.foldRight([]) { _, v, rest -> [v, *rest] }
   Map<K, V>.toList(): List<(K, V)> = this.entries
 
   private Map<K, V>.foldRight<R>(initial: R, f: (K, V, R) -> R): R = when (this) {
@@ -107,32 +107,32 @@ module Maps {
   }
 
   // Of its entries, in the keys' order.
-  Map<K, V>.forEach(f: (K, V) -> Unit): Unit = this.entries.forEach((k, v) -> f(k, v))
-  Map<K, V>.any(f: (K, V) -> Boolean): Boolean = this.entries.any((k, v) -> f(k, v))
-  Map<K, V>.all(f: (K, V) -> Boolean): Boolean = !this.any((k, v) -> !f(k, v))
+  Map<K, V>.forEach(f: (K, V) -> Unit): Unit = this.entries.forEach { k, v -> f(k, v) }
+  Map<K, V>.any(f: (K, V) -> Boolean): Boolean = this.entries.any { k, v -> f(k, v) }
+  Map<K, V>.all(f: (K, V) -> Boolean): Boolean = !this.any { k, v -> !f(k, v) }
   Map<K, V>.count(f: (K, V) -> Boolean): Int = this.filter(f).size
-  Map<K, V>.filter(f: (K, V) -> Boolean): Map<K, V> = this.entries.filter((k, v) -> f(k, v)).toMap()
-  Map<K, V>.filterKeys(f: (K) -> Boolean): Map<K, V> = this.filter((k, _) -> f(k))
-  Map<K, V>.filterValues(f: (V) -> Boolean): Map<K, V> = this.filter((_, v) -> f(v))
+  Map<K, V>.filter(f: (K, V) -> Boolean): Map<K, V> = this.entries.filter { k, v -> f(k, v) }.toMap()
+  Map<K, V>.filterKeys(f: (K) -> Boolean): Map<K, V> = this.filter { k, _ -> f(k) }
+  Map<K, V>.filterValues(f: (V) -> Boolean): Map<K, V> = this.filter { _, v -> f(v) }
   // Each value made into another, for the same key.
   Map<K, V>.mapValues<W>(f: (K, V) -> W): Map<K, W> = when (this) {
     MapTip -> MapTip
     MapNode(l, k, v, r, n, p) -> MapNode(l.mapValues(f), k, f(k, v), r.mapValues(f), n, p)
   }
   // Each key made into another; of keys that become the same, the last's value.
-  Map<K, V>.mapKeys<J>(f: (K, V) -> J): Map<J, V> = this.entries.map((k, v) -> (f(k, v), v)).toMap()
+  Map<K, V>.mapKeys<J>(f: (K, V) -> J): Map<J, V> = this.entries.map { k, v -> (f(k, v), v) }.toMap()
   // What f makes of each entry, in the keys' order.
-  Map<K, V>.map<R>(f: (K, V) -> R): List<R> = this.entries.map((k, v) -> f(k, v))
+  Map<K, V>.map<R>(f: (K, V) -> R): List<R> = this.entries.map { k, v -> f(k, v) }
 
   // As Kotlin shows a map: {a=1, b=2}.
   Map<K, V>.toString(showKey: (K) -> String, showValue: (V) -> String): String =
-    "{" + this.map((k, v) -> showKey(k) + "=" + showValue(v)).joinToString(", ") + "}"
+    "{" + this.map { k, v -> showKey(k) + "=" + showValue(v) }.joinToString(", ") + "}"
 
   // The items by key, each key's in order.
   List<A>.groupBy<K>(key: (A) -> K): Map<K, List<A>> =
-    this.reversed().fold(emptyMap(), (m, a) -> m.put(key(a), [a, *m.getOrElse(key(a), () -> [])]))
+    this.reversed().fold(emptyMap()) { m, a -> m.put(key(a), [a, *m.getOrElse(key(a)) { [] }]) }
   // Each item by its key, or with its value; of items with the same key, the last.
-  List<A>.associateBy<K>(key: (A) -> K): Map<K, A> = this.map(a -> (key(a), a)).toMap()
-  List<A>.associateWith<V>(value: (A) -> V): Map<A, V> = this.map(a -> (a, value(a))).toMap()
+  List<A>.associateBy<K>(key: (A) -> K): Map<K, A> = this.map { (key(it), it) }.toMap()
+  List<A>.associateWith<V>(value: (A) -> V): Map<A, V> = this.map { (it, value(it)) }.toMap()
   List<A>.associate<K, V>(entry: (A) -> (K, V)): Map<K, V> = this.map(entry).toMap()
 }

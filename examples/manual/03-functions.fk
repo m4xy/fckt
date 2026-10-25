@@ -20,6 +20,6 @@ map<A, B>(f: (A) -> B, l: List<A>): List<B> = when (l) {
 main() = {
   assertEquals(-1.0000000001396114, sinPrime(pi))
   assertEquals(1.0, cos2(0.0))
-  assertEquals([1, 3, 5, 7, 9], [0, 1, 2, 3, 4].map(n -> n * 2 + 1))
+  assertEquals([1, 3, 5, 7, 9], [0, 1, 2, 3, 4].map { it * 2 + 1 })
   assertEquals([1, 3, 5, 7, 9], map(n -> n * 2 + 1, [0, 1, 2, 3, 4]))
 }

@@ -89,7 +89,7 @@ main() = {
   assertEquals(Float(126.14159), addNum(Int(123), Float(3.14159)))
   assertEquals(Some(1.4142135623730951), safeSquareRoot(2.0))
   assertEquals(None, safeSquareRoot(-1.0))
-  tree = [5, 3, 8, 1].fold(Empty, (t, x) -> insert(x, t))
+  tree = [5, 3, 8, 1].fold(Empty) { t, x -> insert(x, t) }
   assert(member(3, tree))
   assert(!member(4, tree))
 }

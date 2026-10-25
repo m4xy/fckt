@@ -942,7 +942,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 is Expr.When -> listOfNotNull(x.subject) + x.branches.flatMap { listOfNotNull(it.condition, it.guard, it.body) }
                 is Expr.Block -> x.statements.flatMap { statement(it) } + x.result
                 is Expr.Monadic -> listOf(x.module, x.block)
-                is Expr.Handle -> listOf(x.handler, x.block)
+                is Expr.Handle -> x.call?.let { listOf(it) } ?: listOf(x.handler, x.block)
                 else -> emptyList()
             }
             inner.forEach { go(it) }
@@ -2413,9 +2413,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 go(e.target)
                 go(e.value)
             }
-            is Expr.Handle -> {
+            // Once checked, a function given a trailing block is the call it was made.
+            is Expr.Handle -> e.call?.let { go(it) } ?: run {
                 go(e.handler)
-                go(e.block)
+                go(e.block, bound + e.params.orEmpty().map { it.name } + listOfNotNull("it".takeIf { e.params == null }))
             }
             is Expr.Lambda -> go(e.body, bound + e.params.map { it.name })
             is Expr.Pipe -> {

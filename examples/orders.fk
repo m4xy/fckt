@@ -16,7 +16,7 @@ type PaymentGateway(
 )
 
 calculateTotal(items: List<Money>, code: Option<String>) = {
-  subtotal = items.map(m -> m.value).sum()
+  subtotal = items.map { it.value }.sum()
   discount = when (code) {
     Some("X") -> (subtotal * 0.1).toInt()
     None -> 0

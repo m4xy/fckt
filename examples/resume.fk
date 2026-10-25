@@ -51,7 +51,7 @@ type Queue<@E>(var tasks: List<@E () -> Unit>)
 // The queue is local, so this does only what the tasks do, besides pausing.
 roundRobin<@E>(tasks: List<@Async @E () -> Unit>): Unit = {
   queue = Queue([])
-  queue.tasks = tasks.map(task -> ~Async(pause = resume -> { queue.tasks = queue.tasks + [~resume(Unit)] }) { task() })
+  queue.tasks = tasks.map { task -> ~Async(pause = resume -> { queue.tasks = queue.tasks + [~resume(Unit)] }) { task() } }
   runQueue(queue)
 }
 

@@ -581,7 +581,8 @@ private class Resolutions(
                 expr(e.target)
                 expr(e.value)
             }
-            is Expr.Handle -> {
+            // A function given a trailing block: the call it was made, which holds the handler's callee and arguments.
+            is Expr.Handle -> e.call?.let { expr(it) } ?: run {
                 expr(e.handler)
                 block(e.block)
             }

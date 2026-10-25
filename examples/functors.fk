@@ -16,7 +16,7 @@ module SortedSet(M: Ordered) {
 
   insert(s: Set, x: M.T): Set = Set(insertInto(s.items, x))
 
-  contains(s: Set, x: M.T): Boolean = s.items.any(y -> M.compare(y, x) == 0)
+  contains(s: Set, x: M.T): Boolean = s.items.any { M.compare(it, x) == 0 }
 
   toList(s: Set) = s.items
 

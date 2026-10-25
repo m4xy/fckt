@@ -21,7 +21,7 @@ main() = {
   fact(n: Int): Int = if (n <= 1) 1 else n * fact(n - 1)
   ratio: Float = 2.5e3 / 4
   label = "fact=${fact(5)} nested=${ { 1 }.toString()} escaped=\$ \t"
-  xs = [1, 2, 3].map((x: Int) -> x * 2).filter(x -> x > 2)
+  xs = [1, 2, 3].map((x: Int) -> x * 2).filter { it > 2 }
   ignore: (String, Int) -> Boolean = ~false
   println("${xs.size |> twice(x -> x + 1)} ${ignore("a", 1)} $ratio $label")
   println(Box(3).toString())

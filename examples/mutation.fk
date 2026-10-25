@@ -13,14 +13,14 @@ type Account(owner: String, var balance: Int)
 // Pure: the account is made here and never leaves.
 total(amounts: List<Int>): Int = {
   account = Account("total", 0)
-  amounts.forEach(amount -> deposit(account, amount))
+  amounts.forEach { deposit(account, it) }
   account.balance
 }
 
 // Pure: a local var, changed only here.
 count(xs: List<Int>): Int = {
   var n = 0
-  xs.forEach(x -> { n += 1 })
+  xs.forEach { x -> n += 1 }
   n
 }
 
@@ -63,7 +63,7 @@ toList(tree: Tree): List<Int> = when (tree) {
 // The tree is made and changed here, and never leaves: pure.
 sorted(xs: List<Int>): List<Int> = {
   var tree = Leaf
-  xs.forEach(x -> { tree = insert(tree, x) })
+  xs.forEach { x -> tree = insert(tree, x) }
   toList(tree)
 }
 

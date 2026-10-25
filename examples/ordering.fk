@@ -41,7 +41,7 @@ module Ordering {
     else -> Ok((order.copy(status = Placed), OrderPlaced(order.id, total(order) * (100 - discount) / 100)))
   }
 
-  private total(order: Order) = order.lines.map(line -> line.quantity * line.price).sum()
+  private total(order: Order) = order.lines.map { it.quantity * it.price }.sum()
 }
 
 // ---- Ports ----
@@ -92,19 +92,19 @@ module PostgresOrders : OrderRepository {
   rows: Mutable<List<Ordering.Order>> = Mutable([])
   @Console @Mutating find(id: Ordering.OrderId) = {
     println("SELECT * FROM orders WHERE id = '$id'")
-    rows.value.filter(order -> order.id == id).firstOrNull()
+    rows.value.filter { it.id == id }.firstOrNull()
   }
   @Console @Mutating save(order: Ordering.Order) = {
     println("UPSERT INTO orders ...")
-    rows.value = [order, *rows.value.filter(o -> o.id != order.id)]
+    rows.value = [order, *rows.value.filter { it.id != order.id }]
   }
 }
 
 module InMemoryOrders : OrderRepository {
   rows: Mutable<List<Ordering.Order>> = Mutable([])
-  @Mutating find(id: Ordering.OrderId) = rows.value.filter(order -> order.id == id).firstOrNull()
+  @Mutating find(id: Ordering.OrderId) = rows.value.filter { it.id == id }.firstOrNull()
   @Mutating save(order: Ordering.Order) = {
-    rows.value = [order, *rows.value.filter(o -> o.id != order.id)]
+    rows.value = [order, *rows.value.filter { it.id != order.id }]
   }
 }
 
@@ -141,7 +141,7 @@ main() = {
     Ok(placed) -> assertEquals(27, placed.total)
     Error(reason) -> println(reason)
   }
-  assertEquals(Error("this order is already placed"), Testing.run("order-1").map(placed -> placed.total))
-  assertEquals(Error("no order order-2"), Testing.run("order-2").map(placed -> placed.total))
-  assertEquals(Ok(27), Live.run("order-1").map(placed -> placed.total))
+  assertEquals(Error("this order is already placed"), Testing.run("order-1").map { it.total })
+  assertEquals(Error("no order order-2"), Testing.run("order-2").map { it.total })
+  assertEquals(Ok(27), Live.run("order-1").map { it.total })
 }

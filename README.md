@@ -13,7 +13,7 @@ type OrderResult {                     // a type with cases: these are its only 
 }
 
 calculateTotal(items: List<Money>, code: Option<String>) = {
-  subtotal = items.map(m -> m.value).sum()   // no `val`: every binding is immutable
+  subtotal = items.map { it.value }.sum()   // no `val`: every binding is immutable
   discount = when (code) {
     Some("X") -> (subtotal * 0.1).toInt()
     else -> 0

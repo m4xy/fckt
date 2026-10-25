@@ -25,7 +25,7 @@ module Lists {
   List<A>.lastOrNull(): Option<A> = this.reversed().firstOrNull()
   List<A>.getOrNull(index: Int): Option<A> = if (index < 0) None else this.drop(index).firstOrNull()
   List<A>.count(f: (A) -> Boolean): Int = this.filter(f).size
-  List<A>.withIndex(): List<(Int, A)> = this.mapIndexed((i, a) -> (i, a))
+  List<A>.withIndex(): List<(Int, A)> = this.mapIndexed { i, a -> (i, a) }
 
   // The items before the first that doesn't pass, and those from it on.
   List<A>.takeWhile(f: (A) -> Boolean): List<A> = when (this) {
@@ -53,11 +53,11 @@ module Lists {
   }
 
   // Each item once, where it first appears.
-  List<A>.distinct(): List<A> = this.fold([], (seen, a) -> if (seen.contains(a)) seen else [a, *seen]).reversed()
+  List<A>.distinct(): List<A> = this.fold([]) { seen, a -> if (seen.contains(a)) seen else [a, *seen] }.reversed()
 
   // Smallest first, by OCaml's ordering of values: numbers, then strings, then fields in order.
   List<A>.sorted(): List<A> = this.sortedWith(compareValues)
-  List<A>.sortedBy<K>(key: (A) -> K): List<A> = this.sortedWith((a, b) -> compareValues(key(a), key(b)))
+  List<A>.sortedBy<K>(key: (A) -> K): List<A> = this.sortedWith { a, b -> compareValues(key(a), key(b)) }
   List<A>.sortedDescending(): List<A> = this.sorted().reversed()
 
   // Below 0 if a comes first, 0 if they're equal, above 0 if b does.
@@ -66,13 +66,15 @@ module Lists {
   List<A>.isNotEmpty(): Boolean = !this.isEmpty()
   // Whether no item passes.
   List<A>.none(f: (A) -> Boolean): Boolean = !this.any(f)
-  List<A>.filterNot(f: (A) -> Boolean): List<A> = this.filter(a -> !f(a))
+  List<A>.filterNot(f: (A) -> Boolean): List<A> = this.filter { !f(it) }
   // What f gives for each item, where it gives something.
-  List<A>.mapNotNull<B>(f: (A) -> Option<B>): List<B> = this.flatMap(a -> when (f(a)) {
-    Some(b) -> [b]
-    None -> []
-  })
-  List<List<A>>.flatten(): List<A> = this.flatMap(items -> items)
+  List<A>.mapNotNull<B>(f: (A) -> Option<B>): List<B> = this.flatMap { a ->
+    when (f(a)) {
+      Some(b) -> [b]
+      None -> []
+    }
+  }
+  List<List<A>>.flatten(): List<A> = this.flatMap { it }
   external List<A>.forEachIndexed(f: (Int, A) -> Unit): Unit = "List.iteri f this"
   List<A>.sumOf(f: (A) -> Int): Int = this.map(f).sum()
 
@@ -104,10 +106,10 @@ module Lists {
   // The smallest or largest item, or the one with the smallest or largest key, if there are any;
   // the first, of those that tie.
   List<A>.minOrNull(): Option<A> = this.sorted().firstOrNull()
-  List<A>.maxOrNull(): Option<A> = this.sortedWith((a, b) -> compareValues(b, a)).firstOrNull()
+  List<A>.maxOrNull(): Option<A> = this.sortedWith { a, b -> compareValues(b, a) }.firstOrNull()
   List<A>.minByOrNull<K>(key: (A) -> K): Option<A> = this.sortedBy(key).firstOrNull()
   List<A>.maxByOrNull<K>(key: (A) -> K): Option<A> = this.sortedByDescending(key).firstOrNull()
-  List<A>.sortedByDescending<K>(key: (A) -> K): List<A> = this.sortedWith((a, b) -> compareValues(key(b), key(a)))
+  List<A>.sortedByDescending<K>(key: (A) -> K): List<A> = this.sortedWith { a, b -> compareValues(key(b), key(a)) }
 
   // [(key, value), ...].lookup(key): the value of the first pair with that key.
   external List<(K, V)>.lookup(key: K): Option<V> = "List.assoc_opt key this"

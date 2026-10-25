@@ -33,7 +33,7 @@ module Files {
   // Copies the folder and everything in it to target, which it makes; or the file, as copyTo.
   @FileSystem Path.copyRecursively(target: Path): Unit = if (this.isDirectory()) {
     target.makeDirs()
-    this.listFiles().forEach(child -> child.copyRecursively(target.resolve(child.name)))
+    this.listFiles().forEach { it.copyRecursively(target.resolve(it.name)) }
   } else {
     this.copyTo(target)
   }
@@ -60,7 +60,7 @@ module Files {
     tryCopy(source: Path, target: Path) = copy(source.value, target.value)
     exists(path: Path) = fileExists(path.value)
     isDirectory(path: Path) = directory(path.value)
-    tryListFiles(path: Path) = list(path.value).map(names -> names.map(name -> path.resolve(name)))
+    tryListFiles(path: Path) = list(path.value).map { names -> names.map { path.resolve(it) } }
     tryMakeDirs(path: Path) = mkdirs(path.value)
     tryDelete(path: Path) = remove(path.value)
     tryOpenForReading(path: Path) = openIn(path.value)

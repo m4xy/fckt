@@ -21,7 +21,7 @@ module Paths {
   Path.isAbsolute: Boolean = this.value.startsWith("/")
 
   // Its names in order: [src, main.fk] for src/main.fk; none for / or ".".
-  Path.names: List<String> = this.value.split("/").filter(name -> !name.isEmpty() && name != ".")
+  Path.names: List<String> = this.value.split("/").filter { !it.isEmpty() && it != "." }
 
   // The last of its names, main.fk for src/main.fk, or "" if it has none.
   Path.name: String = this.names.lastOrNull().getOrElse("")

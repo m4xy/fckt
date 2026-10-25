@@ -18,8 +18,8 @@ Ratio.size: Int = this.n + this.d
   (b, a)
 }
 
-List<Int>.total(): Int = this.fold(0, (a, b) -> a + b)
-List<Float>.total(): Float = this.fold(0.0, (a, b) -> a + b)
+List<Int>.total(): Int = this.fold(0) { a, b -> a + b }
+List<Float>.total(): Float = this.fold(0.0) { a, b -> a + b }
 
 external String.has(c: Char): Boolean = "(fun s c -> String.contains s (Char.chr c)) this c"
 external String.startsAt(prefix: String): Boolean = "String.starts_with ~prefix this"
@@ -29,7 +29,7 @@ external cube(x: Float): Float = "Float.pow x 3."
 external halve(x: Int): Int = "( / ) x 2"
 
 // The standard library's own: List.map, String.split and the rest are externals too.
-words(s: String): List<String> = s.split(" ").filter(w -> !w.isEmpty())
+words(s: String): List<String> = s.split(" ").filter { !it.isEmpty() }
 
 main() = {
   assertEquals(["a", "b"], words(" a  b"))
@@ -43,7 +43,7 @@ main() = {
   assertEquals(1.5, [1.0, 0.5].total())
   assert("hello".has('e'))
   assert("hello".startsAt("he"))
-  assertEquals([2, 4], [1, 2].pick(x -> x * 2))
+  assertEquals([2, 4], [1, 2].pick { it * 2 })
   assertEquals(3, [1, 2, 3].count)
   assertEquals(8.0, cube(2.0))
   assertEquals([1.0, 8.0], [1.0, 2.0].map(cube))
