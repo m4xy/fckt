@@ -1271,6 +1271,10 @@ class CompilerTest {
                 runOcaml(ml),
             )
             assertEquals("files.fk\nprices.fk\n  passed sums\n0 failed\n", runOcaml(ml, listOf("sums")))
+            // The runner's own tests use it.
+            write("test/runner.fk", "import check.Test\nimport runs.Runner\n@Test passedIsntFailed() = assert(Runner.Passed != Runner.Failed)\n")
+            assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), runnerTests = true), listOf("passedIsntFailed")), "  passed passedIsntFailed")
+            File(test, "runner.fk").delete()
             write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
             write("test/unmarked.fk", "@Test d() = Unit\n")
             write("test/sneaky.fk", "import check.Test\nimport runs.Runner\n@Test e() = Unit\n")

@@ -56,7 +56,7 @@ fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, impo
  * The tests in [dir], to one program: each function in its lower-case files marked with [marker],
  * an annotation, as `uk.m4xy.fktests.Test`, run by [runner], a module, from a main made for them.
  * What tests are written with and what runs them are apart: fckt knows neither, and a test can't
- * use the runner, whose package only the main sees. [runner] has, as fk-tests-runner's
+ * use the runner, whose package only the main sees, unless they're [runnerTests], the runner's own. [runner] has, as fk-tests-runner's
  * `uk.m4xy.fktestsrunner.Testing` has,
  *
  * - `section(args: List<String>, file: String, names: List<String>): Unit`, called before a file's tests;
@@ -66,17 +66,17 @@ fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, impo
  *
  * With [separate], it's compiled as [compileSeparately] compiles a program.
  */
-fun compileTests(dir: File, marker: String, runner: String, dirs: List<File>, libraries: List<File>, imports: List<String> = emptyList(), separate: Boolean = false): String {
+fun compileTests(dir: File, marker: String, runner: String, dirs: List<File>, libraries: List<File>, imports: List<String> = emptyList(), separate: Boolean = false, runnerTests: Boolean = false): String {
     val entry = File(dir, "<tests>")
     val packages = if (separate || libraries.isNotEmpty()) Packages(listOf(dir) + dirs, entry, libraries.map(::Library), STANDARD_UNIT) else packages(listOf(dir) + dirs, entry, libraries)
-    return compile(link(testsMain(dir, marker, runner), packages, imports).file)
+    return compile(link(testsMain(dir, marker, runner, runnerTests), packages, imports).file)
 }
 
 /**
  * The main that runs [dir]'s tests: for each file with any, its name, then each test, checked by
  * [runner], so that one that fails doesn't stop the others; then how they went.
  */
-internal fun testsMain(dir: File, marker: String, runner: String): String {
+internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: Boolean = false): String {
     fun split(name: String, what: String, example: String): Pair<String, String> {
         val pkg = name.substringBeforeLast('.', "")
         val simple = name.substringAfterLast('.')
@@ -95,7 +95,7 @@ internal fun testsMain(dir: File, marker: String, runner: String): String {
         val fileImports = parsed.imports[file.path].orEmpty()
         for (i in fileImports) {
             val path = i.path.joinToString(".")
-            if (path == runnerPackage || path.startsWith("$runnerPackage.")) {
+            if (!runnerTests && (path == runnerPackage || path.startsWith("$runnerPackage."))) {
                 errors += CompileError(i.pos, "$runnerPackage runs the tests, so they can't use it: a test uses what it's written with, as $marker")
             }
         }
