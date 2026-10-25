@@ -776,7 +776,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
             T.TRUE -> Expr.BoolLit(pos, true).also { next() }
             T.FALSE -> Expr.BoolLit(pos, false).also { next() }
             T.STRING -> stringLiteral(next())
-            T.CHAR -> Expr.CharLit(pos, next().text.single())
+            T.CHAR -> Expr.CharLit(pos, next().text.codePointAt(0))
             T.IDENT -> Expr.Name(pos, next().text)
             T.LPAREN -> {
                 next()

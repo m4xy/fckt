@@ -302,7 +302,11 @@ sealed class Expr {
     class FloatLit(override val pos: Pos, val value: Double) : Expr()
     class BoolLit(override val pos: Pos, val value: Boolean) : Expr()
     class StringLit(override val pos: Pos, val parts: List<StringPart>) : Expr()
-    class CharLit(override val pos: Pos, val value: Char) : Expr()
+    /** `'a'`: one character, a Unicode code point, [value]. */
+    class CharLit(override val pos: Pos, val value: Int) : Expr() {
+        /** The character as text. */
+        val text: String get() = String(Character.toChars(value))
+    }
     class Tuple(override val pos: Pos, val elements: List<Expr>) : Expr()
 
     /** `*xs` inside a list literal: all of the list `xs`. */

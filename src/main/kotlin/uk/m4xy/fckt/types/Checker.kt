@@ -1471,7 +1471,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Expr.IntLit -> e.value.toString()
             is Expr.FloatLit -> e.value.toString()
             is Expr.BoolLit -> e.value.toString()
-            is Expr.CharLit -> "'${e.value}'"
+            is Expr.CharLit -> "'${e.text}'"
             is Expr.Unary -> "-" + text(Meta.Literal(e.operand))
             else -> "?"
         }
@@ -2411,7 +2411,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is Expr.BoolLit -> Pat(Ctor.Bool(e.value))
         is Expr.IntLit -> Pat(Ctor.Literal(e.value.toString()))
         is Expr.FloatLit -> Pat(Ctor.Literal(e.value.toString()))
-        is Expr.CharLit -> Pat(Ctor.Literal("'${e.value}'"))
+        is Expr.CharLit -> Pat(Ctor.Literal("'${e.text}'"))
         is Expr.StringLit -> Pat(Ctor.Literal("\"" + e.parts.joinToString("") { (it as? StringPart.Text)?.text ?: "\$" } + "\""))
         is Expr.Unary -> Pat(Ctor.Literal(e.op + ((literal(e.operand).ctor as? Ctor.Literal)?.text ?: "")))
         else -> Pat(Ctor.Literal(e.toString()))

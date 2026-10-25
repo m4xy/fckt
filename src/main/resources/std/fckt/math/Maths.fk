@@ -1,5 +1,9 @@
 // Numbers. Imported into every file.
 module Maths {
+  // The byte with the number's low eight bits: 0 to 255, so 256.toByte() is 0 and -1.toByte() is 255.
+  external Int.toByte(): Byte = "(fun n -> Char.unsafe_chr (n land 255)) this"
+  // The byte as a number, 0 to 255.
+  external Byte.toInt(): Int = "Char.code this"
   external Int.toFloat(): Float = "float_of_int this"
   external Int.toDouble(): Float = "float_of_int this"
   external Int.coerceAtLeast(minimumValue: Int): Int = "max this minimumValue"

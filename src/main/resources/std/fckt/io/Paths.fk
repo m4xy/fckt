@@ -4,7 +4,7 @@ module Paths {
   path(text: String): Path = {
     absolute = text.startsWith("/")
     // The names so far, last first: .. takes one off, unless there's none to take.
-    names = text.split('/').fold([], (kept: List<String>, name: String) ->
+    names = text.split("/").fold([], (kept: List<String>, name: String) ->
       if (name.isEmpty() || name == ".") kept
       else if (name == "..") when (kept) {
         [last, *rest] -> if (last == "..") [name, *kept] else rest
@@ -21,20 +21,20 @@ module Paths {
   Path.isAbsolute: Boolean = this.value.startsWith("/")
 
   // Its names in order: [src, main.fk] for src/main.fk; none for / or ".".
-  Path.names: List<String> = this.value.split('/').filter(name -> !name.isEmpty() && name != ".")
+  Path.names: List<String> = this.value.split("/").filter(name -> !name.isEmpty() && name != ".")
 
   // The last of its names, main.fk for src/main.fk, or "" if it has none.
   Path.name: String = this.names.lastOrNull().getOrElse("")
 
   // What its name ends with after the last dot, fk for main.fk; "" for Makefile or .gitignore.
   Path.extension: String = {
-    i = this.name.lastIndexOf('.')
+    i = this.name.lastIndexOf(".")
     if (i <= 0) "" else this.name.drop(i + 1)
   }
 
   // Its name without the extension: main for main.fk.
   Path.nameWithoutExtension: String = {
-    i = this.name.lastIndexOf('.')
+    i = this.name.lastIndexOf(".")
     if (i <= 0) this.name else this.name.take(i)
   }
 

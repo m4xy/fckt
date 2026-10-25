@@ -16,8 +16,11 @@ type String = String
 // true or false: OCaml's bool.
 type Boolean = Boolean
 
-// One character, like 'a': OCaml's char. `.code` is its number.
+// One character, like 'a' or '\u{1F600}': a Unicode code point, OCaml's int. `.code` is its number.
 type Char = Char
+
+// A byte, 0 to 255: OCaml's char. 65.toByte() makes one, and b.toInt() reads it.
+type Byte = Byte
 
 // No information: OCaml's unit. Its one value is Unit.
 type Unit = Unit

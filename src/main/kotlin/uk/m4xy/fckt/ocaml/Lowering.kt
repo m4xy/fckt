@@ -436,9 +436,12 @@ class Lowering(private val program: Program) {
         return names
     }
 
-    /** Whether package [m] has nothing in OCaml: only annotations, and effects without operations. */
-    private fun isEmpty(m: Decl.Module): Boolean = m.isPackage && m.decls.all {
-        (it is Decl.Record && it.isAnnotation) || (it is Decl.Module && isEmpty(it))
+    /**
+     * Whether [m] has nothing in OCaml: only annotations, effects without operations and externals,
+     * which are written where they're used. One that follows a spec, or is or takes a functor, has its own name.
+     */
+    private fun isEmpty(m: Decl.Module): Boolean = m.spec == null && m.params.isEmpty() && m.application == null && m.decls.all {
+        (it is Decl.Record && (it.isAnnotation || it.external != null)) || (it is Decl.Function && it.external != null) || (it is Decl.Module && isEmpty(it))
     }
 
     private fun modulesIn(m: Decl.Module): List<Decl.Module> = listOf(m) + m.decls.filterIsInstance<Decl.Module>().flatMap { modulesIn(it) }
@@ -626,7 +629,7 @@ class Lowering(private val program: Program) {
         }
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"; "Nothing" -> helper(NOTHING)
-            "Char" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"; "Result" -> "result"
+            "Char" -> "int"; "Byte" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"; "Result" -> "result"
             // A spec's own type, inside its module type.
             else -> if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
         }
@@ -968,14 +971,8 @@ class Lowering(private val program: Program) {
         return result!!
     }
 
-    private fun charText(c: Char) = when (c) {
-        '\'' -> "'\\''"
-        '\\' -> "'\\\\'"
-        '\n' -> "'\\n'"
-        '\t' -> "'\\t'"
-        '\r' -> "'\\r'"
-        else -> if (c.code < 0x20) "'\\%03d'".format(c.code) else "'$c'"
-    }
+    /** A character, a code point, as OCaml's int: `0x61` for 'a'. */
+    private fun charText(code: Int) = "0x%x".format(code)
 
     /**
      * An external's OCaml, [decl]'s template with its parameters replaced by [args]: `List.map f
@@ -1036,6 +1033,13 @@ class Lowering(private val program: Program) {
             }
         }
         if (atoms.isEmpty()) throw CompileError(decl.pos, "an external needs some OCaml")
+        // A parameter is replaced only where it stands alone, so one inside parentheses would be left as written.
+        val params = decl.params.orEmpty().map { it.name }
+        for (atom in atoms.filter { it.startsWith("(") && !it.startsWith("(fun ") && !it.startsWith("(let ") }) {
+            params.firstOrNull { Regex("\\b${Regex.escape(it)}\\b").containsMatchIn(atom) }?.let {
+                throw CompileError(decl.pos, "an external's parameters are replaced only outside parentheses, so '$it' in $atom isn't; write a function applied to it, as (fun x -> ...) $it")
+            }
+        }
         return atoms
     }
 
@@ -1366,7 +1370,8 @@ class Lowering(private val program: Program) {
         "String" -> Gen.Id("Fun.id")
         "Int" -> Gen.Id("string_of_int")
         "Boolean" -> Gen.Id("string_of_bool")
-        "Char" -> Gen.App(Gen.Id("String.make"), listOf(Gen.Lit("1")))
+        "Char" -> Gen.Id(helper("fk_show_char"))
+        "Byte" -> Gen.Fun(listOf("b"), Gen.App(Gen.Id("string_of_int"), listOf(Gen.App(Gen.Id("Char.code"), listOf(Gen.Id("b"))))))
         "Unit" -> Gen.Fun(listOf("()"), Gen.Str("()"))
         "Nothing" -> Gen.Fun(listOf("_"), Gen.Lit("assert false"))
         "Float" -> Gen.Id(helper("fk_show_float"))
@@ -1528,6 +1533,13 @@ class Lowering(private val program: Program) {
                             }
                         }
                     }
+                }
+            }
+            if ("fk_show_char" in helpers) {
+                // A character as text: its UTF-8.
+                binding("fk_show_char") {
+                    params = listOf("c")
+                    literal("let b = Buffer.create 4 in Buffer.add_utf_8_uchar b (Uchar.of_int c); Buffer.contents b")
                 }
             }
             if ("fk_assert_equals" in helpers) {

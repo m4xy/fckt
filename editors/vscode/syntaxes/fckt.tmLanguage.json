@@ -159,7 +159,7 @@
     },
     "chars": {
       "name": "string.quoted.single.fckt",
-      "match": "'(?:[^'\\\\]|\\\\[ntr\\\\\\\"'$])'"
+      "match": "'(?:[^'\\\\]|\\\\[ntr\\\\\\\"'$]|\\\\u[0-9a-fA-F]{4}|\\\\u\\{[0-9a-fA-F]+\\})'"
     },
     "strings": {
       "name": "string.quoted.double.fckt",
@@ -178,7 +178,7 @@
       "patterns": [
         {
           "name": "constant.character.escape.fckt",
-          "match": "\\\\[ntr\\\\\"$]"
+          "match": "\\\\[ntr\\\\\"$]|\\\\u[0-9a-fA-F]{4}|\\\\u\\{[0-9a-fA-F]+\\}"
         },
         {
           "name": "invalid.illegal.escape.fckt",
@@ -575,7 +575,7 @@
     },
     "builtin-types": {
       "name": "entity.name.type.builtin.fckt",
-      "match": "\\b(Int|Float|Double|String|Boolean|Unit|Char|List|Option)\\b"
+      "match": "\\b(Int|Float|Double|String|Boolean|Unit|Char|Byte|Nothing|List|Option|Result|Lazy)\\b"
     },
     "option": {
       "name": "entity.name.type.variant.fckt",

@@ -11,7 +11,7 @@ import fckt.values.Mutable
 // sequence are made this way.
 
 // Never resumed: fail gives Nothing, so no handler can resume it, and it fits anywhere, as a branch.
-@Fail entry(line: String): (String, String) = when (line.split('=')) {
+@Fail entry(line: String): (String, String) = when (line.split("=")) {
   [key, value] -> (key, value)
   else -> fail("no '=' in '$line'")
 }

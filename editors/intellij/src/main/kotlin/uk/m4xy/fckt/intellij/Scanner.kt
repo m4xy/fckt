@@ -128,10 +128,26 @@ fun scan(text: CharSequence, from: Int = 0, until: Int = text.length): List<Tok>
             }
             c == '\'' -> {
                 i++
-                if (i < to && text[i] == '\\') i++
-                if (i < to && text[i] != '\n') i++
+                if (i < to && text[i] == '\\') {
+                    i++
+                    // \u00e9, or \u{1F600}.
+                    if (i < to && text[i] == 'u') {
+                        i++
+                        if (i < to && text[i] == '{') {
+                            while (i < to && text[i] != '}' && text[i] != '\'' && text[i] != '\n') i++
+                            if (i < to && text[i] == '}') i++
+                        } else {
+                            repeat(4) { if (i < to && text[i].isLetterOrDigit()) i++ }
+                        }
+                    } else if (i < to) {
+                        i++
+                    }
+                } else if (i < to && text[i] != '\n') {
+                    // One code point, which may be two of Kotlin's chars.
+                    i += Character.charCount(Character.codePointAt(text, i))
+                }
                 if (i < to && text[i] == '\'') i++
-                add(TokKind.CHAR, start, i)
+                add(TokKind.CHAR, minOf(start, to), minOf(i, to))
             }
             else -> {
                 val two = if (i + 1 < to) text.substring(i, i + 2) else ""

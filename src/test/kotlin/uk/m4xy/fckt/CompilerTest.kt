@@ -1089,7 +1089,7 @@ class CompilerTest {
                   println("${'$'}{p.value} ${'$'}{p.name} ${'$'}{p.extension} ${'$'}{p.parent.map(f -> f.value).getOrElse("-")} ${'$'}{p.withExtension("ml").value}")
                   println("${'$'}{path("/x/../..").value} ${'$'}{path("../a/..").value} ${'$'}{path("").value} ${'$'}{path("src/a/b.fk").relativeTo(path("src")).map(f -> f.value).getOrElse("-")}")
                   // Bytes, and text as UTF-8.
-                  println("${'$'}{bytesOf([104, 105]).decodeToString()} ${'$'}{"ü".encodeToBytes().size} ${'$'}{bytesOf([255]).decodeUtf8().isOk()}")
+                  println("${'$'}{bytesOf([104.toByte(), 105.toByte()]).decodeToString()} ${'$'}{"ü".encodeToBytes().size} ${'$'}{bytesOf([255.toByte()]).decodeUtf8().isOk()}")
                 }
             """.trimIndent()
             assertEquals(
@@ -1101,6 +1101,46 @@ class CompilerTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun `characters are code points, strings count them, and bytes are 0 to 255`() {
+        val source = """
+            import fckt.text.Encodings.*
+
+            main() = {
+              s = "héllo wörld 😀"
+              assertEquals(13, s.length)
+              assertEquals('é', s[1])
+              assertEquals('😀', s[12])
+              assertEquals("héllo", s.take(5))
+              assertEquals("wörld 😀", s.drop(6))
+              assertEquals(6, s.indexOf("w"))
+              assertEquals(9, s.lastIndexOf("l"))
+              assertEquals("éll", s.substring(1, 4))
+              assertEquals([104, 233], s.take(2).toList().map(c -> c.code))
+              assertEquals(128512, '\u{1F600}'.code)
+              assertEquals('é', '\u00e9')
+              assertEquals('A', 'a'.uppercase())
+              assert('9'.isDigit() && 'é'.isLetter() && ' '.isWhitespace())
+              assertEquals(["a", "b", "", "c"], "a,b,,c".split(","))
+              assertEquals("x", when ('x') {
+                'a' -> "a"
+                'x' -> "x"
+                else -> "?"
+              })
+              assertEquals("ü 😀", "${'$'}{'ü'} ${'$'}{'😀'}")
+              // A byte is 0 to 255: an Int's low eight bits.
+              assertEquals(44, 300.toByte().toInt())
+              assertEquals(255, (-1).toByte().toInt())
+              assertEquals("195", "${'$'}{"é".encodeToBytes()[0]}")
+              assertEquals(2, "é".encodeToBytes().size)
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        assertContains(error("main() = println('ab')"), "a character literal holds one character")
+        assertContains(error("main() = println(\"\\u12\")"), "\\u takes four hex digits")
+        assertContains(error("external f(x: Int): Int = \"g (x + 1)\"\nmain() = assertEquals(1, f(1))"), "an external's parameters are replaced only outside parentheses, so 'x' in (x + 1) isn't")
     }
 
     @Test

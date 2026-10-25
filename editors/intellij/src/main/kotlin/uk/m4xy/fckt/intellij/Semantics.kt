@@ -37,7 +37,7 @@ data class Span(val start: Int, val end: Int, val role: Role)
 
 private val BUILTIN = mapOf(
     "Int" to Role.CLASS, "Float" to Role.CLASS, "Double" to Role.CLASS, "String" to Role.CLASS,
-    "Boolean" to Role.CLASS, "Char" to Role.CLASS, "Unit" to Role.CLASS, "List" to Role.CLASS, "Lazy" to Role.CLASS,
+    "Boolean" to Role.CLASS, "Char" to Role.CLASS, "Byte" to Role.CLASS, "Unit" to Role.CLASS, "List" to Role.CLASS, "Lazy" to Role.CLASS,
     // Types with cases, like any other.
     "Option" to Role.INTERFACE, "Result" to Role.INTERFACE,
     "Some" to Role.DATA_CLASS, "None" to Role.DATA_CLASS, "Ok" to Role.DATA_CLASS, "Error" to Role.DATA_CLASS,

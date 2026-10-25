@@ -1,38 +1,70 @@
-// Kotlin's methods on strings and characters. Imported into every file.
+// Kotlin's methods on strings and characters. Imported into every file. A String is UTF-8, and its
+// length, indices and characters count characters, Unicode code points, not bytes: "ü".length is 1.
+// Counting them reads the string from the start, so s[i] takes longer the further in i is.
 module Strings {
-  external String.length: Int = "String.length this"
+  // How many characters it has.
+  external String.length: Int =
+    "(fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) this"
   external String.isEmpty(): Boolean = "String.equal \"\" this"
   String.isBlank(): Boolean = this.trim().isEmpty()
+  // Upper or lower case, of the letters A to Z.
   external String.uppercase(): String = "String.uppercase_ascii this"
   external String.lowercase(): String = "String.lowercase_ascii this"
   external String.trim(): String = "String.trim this"
   external String.startsWith(prefix: String): Boolean = "String.starts_with ~prefix this"
   external String.endsWith(suffix: String): Boolean = "String.ends_with ~suffix this"
-  external String.contains(c: Char): Boolean = "String.contains this c"
-  external String.split(separator: Char): List<String> = "String.split_on_char separator this"
-  // The characters from start up to, not including, endIndex.
-  external String.substring(start: Int, endIndex: Int): String = "(fun s a b -> String.sub s a (b - a)) this start endIndex"
-  // Where c first or last is, or -1 if it isn't.
-  external String.indexOf(c: Char): Int = "(fun s c -> match String.index_opt s c with Some i -> i | None -> -1) this c"
-  external String.lastIndexOf(c: Char): Int = "(fun s c -> match String.rindex_opt s c with Some i -> i | None -> -1) this c"
-  // The first n characters, or all of them if there are fewer; and the rest.
-  external String.take(n: Int): String = "(fun s n -> String.sub s 0 (max 0 (min n (String.length s)))) this n"
-  external String.drop(n: Int): String = "(fun s n -> let n = max 0 (min n (String.length s)) in String.sub s n (String.length s - n)) this n"
-  String.dropLast(n: Int): String = this.take(this.length - n)
-  String.removePrefix(prefix: String): String = if (this.startsWith(prefix)) this.drop(prefix.length) else this
-  String.removeSuffix(suffix: String): String = if (this.endsWith(suffix)) this.dropLast(suffix.length) else this
-  // What's before or after the last delimiter, or all of it if there's none.
-  String.substringBeforeLast(delimiter: Char): String = {
-    i = this.lastIndexOf(delimiter)
-    if (i < 0) this else this.take(i)
-  }
-  String.substringAfterLast(delimiter: Char): String = {
-    i = this.lastIndexOf(delimiter)
-    if (i < 0) this else this.drop(i + 1)
-  }
   external String.toInt(): Int = "int_of_string this"
   external String.toIntOrNone(): Option<Int> = "int_of_string_opt this"
   external String.toFloat(): Float = "float_of_string this"
   external String.toDouble(): Float = "float_of_string this"
-  external Char.code: Int = "Char.code this"
+
+  // Its characters, in order.
+  external String.toList(): List<Char> =
+    "(fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) this"
+  // The character at index: s[i].
+  external String.get(index: Int): Char =
+    "(fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in if n < 0 || i >= String.length s then invalid_arg (Printf.sprintf \"index %d is outside the string\" n) else Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s i))) this index"
+  // The characters from start up to, not including, endIndex.
+  String.substring(start: Int, endIndex: Int): String = this.drop(start).take(endIndex - start)
+  // The first n characters, or all of them if there are fewer; and the rest.
+  external String.take(n: Int): String =
+    "(fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in String.sub s 0 (at 0 n)) this n"
+  external String.drop(n: Int): String =
+    "(fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in String.sub s i (String.length s - i)) this n"
+  String.dropLast(n: Int): String = this.take(this.length - n)
+  String.removePrefix(prefix: String): String = if (this.startsWith(prefix)) this.drop(prefix.length) else this
+  String.removeSuffix(suffix: String): String = if (this.endsWith(suffix)) this.dropLast(suffix.length) else this
+
+  // Where text first or last is, as a character's index, or -1 if it isn't.
+  external String.indexOf(text: String): Int =
+    "(fun s t -> let n = String.length s and m = String.length t in let rec find i = if i + m > n then -1 else if String.sub s i m = t then i else find (i + 1) in let rec count i k = if i >= k then 0 else 1 + count (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) k in let i = find 0 in if i < 0 then -1 else count 0 i) this text"
+  external String.lastIndexOf(text: String): Int =
+    "(fun s t -> let n = String.length s and m = String.length t in let rec find i = if i < 0 then -1 else if String.sub s i m = t then i else find (i - 1) in let rec count i k = if i >= k then 0 else 1 + count (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) k in let i = find (n - m) in if i < 0 then -1 else count 0 i) this text"
+  String.contains(text: String): Boolean = this.indexOf(text) >= 0
+  // The pieces between each separator.
+  external String.split(separator: String): List<String> =
+    "(fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) this separator"
+  // What's before or after the last delimiter, or all of it if there's none.
+  String.substringBeforeLast(delimiter: String): String = {
+    i = this.lastIndexOf(delimiter)
+    if (i < 0) this else this.take(i)
+  }
+  String.substringAfterLast(delimiter: String): String = {
+    i = this.lastIndexOf(delimiter)
+    if (i < 0) this else this.drop(i + delimiter.length)
+  }
+
+  // The character's code point: 'a'.code is 97.
+  external Char.code: Int = "Fun.id this"
+  // The character with that code point.
+  external Int.toChar(): Char = "(fun n -> Uchar.to_int (Uchar.of_int n)) this"
+  Char.isDigit(): Boolean = this >= '0' && this <= '9'
+  // Whether it's a letter: A to Z, a to z, or any character past U+007F that isn't a space or
+  // punctuation of Latin-1.
+  Char.isLetter(): Boolean = (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z') || (this.code > 191 && this.code != 215 && this.code != 247)
+  Char.isLetterOrDigit(): Boolean = this.isLetter() || this.isDigit()
+  Char.isWhitespace(): Boolean = this == ' ' || this == '\t' || this == '\n' || this == '\r' || this.code == 160 || this.code == 8232 || this.code == 8233
+  // Upper or lower case, of the letters A to Z.
+  Char.uppercase(): Char = if (this >= 'a' && this <= 'z') (this.code - 32).toChar() else this
+  Char.lowercase(): Char = if (this >= 'A' && this <= 'Z') (this.code + 32).toChar() else this
 }

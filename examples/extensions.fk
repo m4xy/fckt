@@ -21,7 +21,7 @@ Ratio.size: Int = this.n + this.d
 List<Int>.total(): Int = this.fold(0, (a, b) -> a + b)
 List<Float>.total(): Float = this.fold(0.0, (a, b) -> a + b)
 
-external String.has(c: Char): Boolean = "String.contains this c"
+external String.has(c: Char): Boolean = "(fun s c -> String.contains s (Char.chr c)) this c"
 external String.startsAt(prefix: String): Boolean = "String.starts_with ~prefix this"
 external List<A>.pick<B>(f: (A) -> B): List<B> = "List.map f this"
 external List<A>.count: Int = "List.length this"
@@ -29,7 +29,7 @@ external cube(x: Float): Float = "Float.pow x 3."
 external halve(x: Int): Int = "( / ) x 2"
 
 // The standard library's own: List.map, String.split and the rest are externals too.
-words(s: String): List<String> = s.split(' ').filter(w -> !w.isEmpty())
+words(s: String): List<String> = s.split(" ").filter(w -> !w.isEmpty())
 
 main() = {
   assertEquals(["a", "b"], words(" a  b"))

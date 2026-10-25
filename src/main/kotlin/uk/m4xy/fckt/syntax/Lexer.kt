@@ -128,11 +128,27 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
         add(Token(if (float) T.FLOAT else T.INT, src.substring(start, i).replace("_", ""), pos))
     }
 
-    private fun escape(pos: Pos): Char {
+    /** The character after a backslash, as text: one character, or two for a code point past U+FFFF. */
+    private fun escape(pos: Pos): String {
         val e = src.getOrNull(i) ?: throw CompileError(pos, "unterminated literal")
         advance()
         return when (e) {
-            'n' -> '\n'; 't' -> '\t'; 'r' -> '\r'; '\\' -> '\\'; '"' -> '"'; '\'' -> '\''; '$' -> '$'
+            'n' -> "\n"; 't' -> "\t"; 'r' -> "\r"; '\\' -> "\\"; '"' -> "\""; '\'' -> "'"; '$' -> "$"
+            // \u0041 as in Kotlin, or \u{1F600} for any code point.
+            'u' -> {
+                val braced = src.getOrNull(i) == '{'
+                if (braced) advance()
+                val start = i
+                while (i < src.length && src[i].isLetterOrDigit() && (braced || i - start < 4)) advance()
+                val hex = src.substring(start, i)
+                if (braced) {
+                    if (src.getOrNull(i) != '}') throw CompileError(pos, "\\u{...} needs its closing }")
+                    advance()
+                }
+                val code = hex.toIntOrNull(16)?.takeIf { (braced || hex.length == 4) && it in 0..0x10FFFF && it !in 0xD800..0xDFFF }
+                    ?: throw CompileError(pos, "\\u takes four hex digits, as \\u00e9, or a code point in braces, as \\u{1F600}")
+                String(Character.toChars(code))
+            }
             else -> throw CompileError(Pos(line, col - 1, origin.file), "unknown escape \\$e")
         }
     }
@@ -145,11 +161,16 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
                 advance()
                 escape(pos)
             }
-            else -> src[i].also { advance() }
+            else -> {
+                // One code point, which past U+FFFF is two of Kotlin's chars.
+                val code = src.codePointAt(i)
+                repeat(Character.charCount(code)) { advance() }
+                String(Character.toChars(code))
+            }
         }
         if (src.getOrNull(i) != '\'') throw CompileError(pos, "a character literal holds one character")
         advance()
-        add(Token(T.CHAR, c.toString(), pos))
+        add(Token(T.CHAR, c, pos))
     }
 
     /** `\"\"\"text\"\"\"`: no escapes and may span lines, but `$name` and `${expr}` still interpolate, as in Kotlin. */

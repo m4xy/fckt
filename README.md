@@ -87,7 +87,9 @@ tour of the core language, translated section by section.
 | `(x, y) = e` | `let (x, y) = e in` | Destructures a tuple, or a record's fields in declaration order. |
 | `[x, *xs]`, `xs + ys` | `x :: xs`, `xs @ ys` | `*` spreads a list into a list literal, like Kotlin's spread operator. |
 | `r.copy(a = x)` | `{ r with a = x }` | |
-| `'a'`, `"""raw"""` | `'a'`, a string | Raw strings have no escapes, but still interpolate. |
+| `'a'`, `'\u00e9'`, `'\u{1F600}'` | `0x61`, an `int` | A `Char` is one Unicode character, a code point, as OCaml's `int`, so `'😀'` is one. `\uXXXX` and `\u{...}` work in strings too. A `String` is UTF-8, and its `length`, `s[i]`, `take`, `drop`, `substring` and `indexOf` count characters, not bytes: `"ü".length` is 1. |
+| `"""raw"""` | a string | Raw strings have no escapes, but still interpolate. |
+| `65.toByte()` | `Char.unsafe_chr 65` | A `Byte` is 0 to 255, OCaml's `char`: an `Int`'s low eight bits, so `-1.toByte()` is 255; `b.toInt()` reads it. `fckt.text.Bytes` is a run of them. |
 | `lazy(~e)`, `l.value` | `Lazy.from_fun`, `Lazy.force` | |
 | `is V -> x.field` | `V x__v -> x__v.field` | `is` narrows a variable, so the branch can read the variant's fields. |
 | `when { c -> e; else -> e }` | `if c then e else ...` | |
@@ -96,7 +98,7 @@ tour of the core language, translated section by section.
 | `main(args: List<String>)` | `let () = main ...` | `main` may take the command-line arguments. |
 | `"$x and ${f(y)}"` | `"" ^ show x ^ ...` | Values print like Kotlin's `toString()`, e.g. `Money(value=3)`. |
 
-`Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `List<T>`, `Option<T>`,
+`Int`, `Float` (or `Double`), `String`, `Boolean`, `Unit`, `Char`, `Byte`, `List<T>`, `Option<T>`,
 `Result<A, E>` and `Lazy<T>` are built in. `Result` is OCaml's `('a, 'e) result`, built with `Ok(x)` and
 `Error(e)`, with the value first as in OCaml. `assert(condition)` and `assertEquals(expected, actual)` stop the program
 when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` is a list literal, `Some(x)` and `None` build options, and `Unit`, as in Kotlin, is also the one value of its type. Arithmetic on an
@@ -119,13 +121,13 @@ take the place of what it imports.
 | `fckt.lang` | Imported into every file: the annotations the language gives meaning to (`Meta`, `Repeatable`, `Encapsulates`, `HandledBy`, `Effect`), the effects it tracks (`Mutating`, `Pure`), `spec Monad` and `spec Applicative`, and `Functions` (`identity`, `error`). |
 | `fckt.io.Console`, `fckt.io.Terminal` | Imported into every file: the effect `Console` (`print`, `println`, `readLine`), and `Terminal`, the module `main` handles it with. |
 | `fckt.effects.Fail`, `fckt.effects.Failure` | Imported into every file: `fail(reason)`, `attempt { ... }`, and `Failure.Crash`, which stops `main` with the reason. |
-| `fckt.collections.Lists`, `fckt.text.Strings`, `fckt.math.Maths`, `fckt.Options`, `fckt.Results` | Imported into every file: the methods on lists, Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count` and more; on strings and characters, with `substring`, `indexOf`, `lastIndexOf`, `take`, `drop`, `removePrefix`, `removeSuffix` and `substringAfterLast`; numbers' `max`, `sqrt`, `sin` and conversions; and on `Option` and `Result`. |
+| `fckt.collections.Lists`, `fckt.text.Strings`, `fckt.math.Maths`, `fckt.Options`, `fckt.Results` | Imported into every file: the methods on lists, Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count` and more; on strings and characters, with `substring`, `indexOf`, `lastIndexOf`, `split`, `contains`, `take`, `drop`, `removePrefix`, `removeSuffix` and `substringAfterLast`, which take text (`split(",")`), and `toList()`, `code`, `toChar()`, `isDigit()`, `isLetter()` and `isWhitespace()`; `toByte()` and `toInt()` for bytes; numbers' `max`, `sqrt`, `sin` and conversions; and on `Option` and `Result`. |
 | `fckt.effects.Yielding`, `fckt.effects.Generators` | `Yielding<A>`, and `sequence { ... }`, which makes a lazy `fckt.collections.Stream<A>`, read with `fckt.collections.Streams`' `take`. |
 | `fckt.collections.Array`, `fckt.collections.Arrays` | OCaml's arrays: `arrayOf(size, value)`, `xs[i]`, `xs[i] = v`. |
 | `fckt.values.Mutable`, `fckt.values.Lazies` | `Mutable<A>(var value: A)`; `lazy(~e)` and `.value`. |
 | `fckt.monads` | The monads, each a module to run blocks in: `Options { x by half(n); x + 1 }`; `Results`, for any error type; `Lists`, for every combination, with `guard`; and `Validated`, with `Validation<A, E> { Valid, Invalid }`, which keeps every error. |
 | `fckt.io` | Files, folders and other programs, as the effects `FileSystem` and `Process`, which `main` does for real and a test can answer itself. A `Path` says where: `path("src/main.fk")` or `"src".toPath()`, always tidied, so `a//b/./c/..` is `a/b`. `Paths` takes one apart without looking at the disk: `name`, `extension`, `nameWithoutExtension`, `parent`, `names`, `resolve("x")`, `withExtension("ml")`, `relativeTo(base)`. A path says nothing of whether anything's there; `Files` asks and acts: `path.exists()`, `isDirectory()`, `readText()`, `readBytes()`, `readLines()`, `writeText(text)`, `appendText(text)`, `writeBytes(bytes)`, `listFiles()`, `makeDirs()`, `delete()` and `copyTo(target)`; what can't be done fails with why. `path.reading { ... }`, `writing { ... }` and `appending { ... }` open a file around a block, which reads it with `nextLine()`, `nextBytes(n)`, or `Channels`' `forEachLine { ... }`, `remainingLines()` and `remainingText()`, or writes with `write`, `writeLine` and `writeBytes`, and close it after, even if the block fails; only the block can use it, so nothing uses it once it's closed. `Processes.streaming(command, args) { forEachLine(...) }` runs a program and reads what it prints as it prints it, giving an `Exit(code, value)`; `run(command, args)` gives everything it printed; `env(name)` reads the environment. Each effect's real handler is its module's `Local`, as `Files.Local`. A program using `Process` needs OCaml's `unix` library, which `fckt` says when it writes one. |
-| `fckt.text.Bytes`, `fckt.text.Encodings` | Raw data, as files hold it: OCaml's immutable `string`, which is bytes, kept apart from text. `bytes.size`, `bytes[i]` (0 to 255), `toList()`, `bytesOf([104, 105])`; `text.encodeToBytes()`, and `bytes.decodeToString()`, which replaces what isn't UTF-8 with U+FFFD as Kotlin's does, or `decodeUtf8()`, an `Error` if it isn't. |
+| `fckt.text.Bytes`, `fckt.text.Encodings` | Raw data, as files hold it: OCaml's immutable `string`, which is bytes, kept apart from text. `bytes.size`, `bytes[i]`, a `Byte`, `toList()`, `bytesOf([104.toByte(), 105.toByte()])`; `text.encodeToBytes()`, and `bytes.decodeToString()`, which replaces what isn't UTF-8 with U+FFFD as Kotlin's does, or `decodeUtf8()`, an `Error` if it isn't. |
 
 See `examples/stdlib.fk`.
 
