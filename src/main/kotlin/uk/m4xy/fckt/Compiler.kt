@@ -58,6 +58,10 @@ const val STANDARD_PACKAGE = "fckt"
 val STANDARD_FILES = listOf(
     "Options",
     "Results",
+    "build/Building",
+    "build/Builds",
+    "build/Project",
+    "build/Task",
     "collections/Array",
     "collections/Arrays",
     "collections/Lists",

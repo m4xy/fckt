@@ -125,8 +125,9 @@ take the place of what it imports.
 | `fckt.effects.Yielding`, `fckt.effects.Generators` | `Yielding<A>`, and `sequence { ... }`, which makes a lazy `fckt.collections.Stream<A>`, read with `fckt.collections.Streams`' `take`. |
 | `fckt.collections.Array`, `fckt.collections.Arrays` | OCaml's arrays: `arrayOf(size, value)`, `xs[i]`, `xs[i] = v`. |
 | `fckt.values.Mutable`, `fckt.values.Lazies` | `Mutable<A>(var value: A)`; `lazy(~e)` and `.value`. |
-| `fckt.monads` | The monads, each a module to run blocks in: `Options { x by half(n); x + 1 }`; `Results`, for any error type; `Lists`, for every combination, with `guard`; and `Validated`, with `Validation<A, E> { Valid, Invalid }`, which keeps every error. |
+| `fckt.monads` | The monads, each a module to run blocks in: `Options { x by half(n); x + 1 }`, which, as `Lists` does, follows `Monad`; `Results`, for any error type; `Lists`, for every combination, with `guard`; and `Validated`, with `Validation<A, E> { Valid, Invalid }`, which keeps every error. |
 | `fckt.io` | Files, folders and other programs, as the effects `FileSystem` and `Process`, which `main` does for real and a test can answer itself. A `Path` says where: `path("src/main.fk")` or `"src".toPath()`, always tidied, so `a//b/./c/..` is `a/b`. `Paths` takes one apart without looking at the disk: `name`, `extension`, `nameWithoutExtension`, `parent`, `names`, `resolve("x")`, `withExtension("ml")`, `relativeTo(base)`. A path says nothing of whether anything's there; `Files` asks and acts: `path.exists()`, `isDirectory()`, `readText()`, `readBytes()`, `readLines()`, `writeText(text)`, `appendText(text)`, `writeBytes(bytes)`, `listFiles()`, `makeDirs()`, `delete()` and `copyTo(target)`; what can't be done fails with why. `path.reading { ... }`, `writing { ... }` and `appending { ... }` open a file around a block, which reads it with `nextLine()`, `nextBytes(n)`, or `Channels`' `forEachLine { ... }`, `remainingLines()` and `remainingText()`, or writes with `write`, `writeLine` and `writeBytes`, and close it after, even if the block fails; only the block can use it, so nothing uses it once it's closed. `Processes.streaming(command, args) { forEachLine(...) }` runs a program and reads what it prints as it prints it, giving an `Exit(code, value)`; `run(command, args)` gives everything it printed; `env(name)` reads the environment. Each effect's real handler is its module's `Local`, as `Files.Local`. A program using `Process` needs OCaml's `unix` library, which `fckt` says when it writes one. |
+| `fckt.build` | Building a project from its `build.fk`: `Project`, `Task`, `@Building`, and `Builds`' `standardTasks` and `runBuild`. See [Building a project](#building-a-project). |
 | `fckt.text.Bytes`, `fckt.text.Encodings` | Raw data, as files hold it: OCaml's immutable `string`, which is bytes, kept apart from text. `bytes.size`, `bytes[i]`, a `Byte`, `toList()`, `bytesOf([104.toByte(), 105.toByte()])`; `text.encodeToBytes()`, and `bytes.decodeToString()`, which replaces what isn't UTF-8 with U+FFFD as Kotlin's does, or `decodeUtf8()`, an `Error` if it isn't. |
 
 See `examples/stdlib.fk`.
@@ -159,6 +160,44 @@ OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the res
 when it's installed.
 
 Kastor comes from `../kastor` through a Gradle included build.
+
+## Building a project
+
+A project is a folder with a `build.fk`, which says what the project is, in fckt:
+
+```kotlin
+import fckt.build.*
+
+project = Project(name = "shop")
+```
+
+`fckt build`, run in that folder, compiles `src/main.fk` and the packages in `src` to
+`build/bin/shop`, then compiles and runs each program in `test`, any of which failing fails the
+build. `fckt run -- args` runs the program, `fckt test` only tests, `fckt clean` deletes `build`,
+and `fckt tasks` lists the tasks. Several run in turn, each once and after the tasks it depends
+on: `fckt clean build`.
+
+`Project`'s other fields have defaults: `version = "0.1.0"`, `main = path("src/main.fk")`,
+`sources = [path("src")]`, `tests = path("test")` and `output = path("build")`. A task is a
+`Task(name, description, dependsOn, action)`, whose action is fckt that may print, use files and
+run programs (`@Building`); a build script adds its own by declaring `tasks`:
+
+```kotlin
+import fckt.build.*
+import fckt.build.Builds.*
+import fckt.io.Files.*
+
+project = Project(name = "shop", version = "1.2.0")
+
+tasks = standardTasks + [
+  Task("stamp", "Writes the version", dependsOn = ["compile"], action = p -> p.output.resolve("VERSION").writeText(p.version)),
+]
+```
+
+`fckt` compiles the script, with a `main` that runs the tasks named on the command line, to
+`.fckt/build.ml`, again only when it changes, and runs it with `ocaml`. The tasks call `fckt` and
+`ocamlopt`, so a project needs OCaml installed; `build` and `.fckt` are what to leave out of
+version control.
 
 ## Editor support
 

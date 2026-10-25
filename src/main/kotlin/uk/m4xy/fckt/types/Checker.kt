@@ -2091,6 +2091,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         currentFile = decl.pos.file
         try {
             return refs.flatMap { ref ->
+                // After a dot, only an extension of that name.
+                if (ref.startsWith(".")) return@flatMap extensions[ref.drop(1)].orEmpty().filter { visible(it) } + defaultsUsed(ref.drop(1))
                 // A method's name may be any extension of that name.
                 // A module used as a handler: its functions.
                 lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) } == true }
@@ -2141,7 +2143,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 go(e.target)
                 (e.resolved as? MemberRef.Extension)?.let { into += it.decl.name }
                 val known = e.resolved is MemberRef.Builtin || e.resolved is MemberRef.Field || e.resolved is MemberRef.Extension
-                if (e.name !in bound && !known) into += e.name // possibly an extension call
+                // Possibly an extension call or property: written `.name`, as only an extension can be reached so.
+                if (!known) into += ".${e.name}"
                 dotted(e, null)?.takeIf { it.substringBefore('.') !in bound }?.let { into += it } // possibly Module.member
             }
             is Expr.Binary -> {

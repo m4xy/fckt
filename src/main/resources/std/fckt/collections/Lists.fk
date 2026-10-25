@@ -27,6 +27,25 @@ module Lists {
   List<A>.count(f: (A) -> Boolean): Int = this.filter(f).size
   List<A>.withIndex(): List<(Int, A)> = this.mapIndexed((i, a) -> (i, a))
 
+  // The items before the first that doesn't pass, and those from it on.
+  List<A>.takeWhile(f: (A) -> Boolean): List<A> = when (this) {
+    [a, *rest] -> if (f(a)) [a, *rest.takeWhile(f)] else []
+    [] -> []
+  }
+  List<A>.dropWhile(f: (A) -> Boolean): List<A> = when (this) {
+    [a, *rest] -> if (f(a)) rest.dropWhile(f) else this
+    [] -> []
+  }
+
+  // Where x first is, or -1 if it isn't.
+  List<A>.indexOf(x: A): Int = when (this) {
+    [a, *rest] -> if (a == x) 0 else {
+      i = rest.indexOf(x)
+      if (i < 0) -1 else i + 1
+    }
+    [] -> -1
+  }
+
   // Pairs of items in the same place, as long as the shorter list.
   List<A>.zip<B>(other: List<B>): List<(A, B)> = when (this, other) {
     ([a, *xs], [b, *ys]) -> [(a, b), *xs.zip(ys)]

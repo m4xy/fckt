@@ -1,5 +1,7 @@
 .gradle/
 build/
+# The standard library's package fckt.build, which is source.
+!src/main/resources/std/fckt/build/
 .kotlin/
 .idea/
 *.iml

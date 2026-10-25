@@ -1,5 +1,5 @@
 // Option as a monad: Options { x by half(n); y by half(x); y } stops at the first None.
-module Options {
+module Options : Monad {
   type M<A> = Option<A>
 
   pure<A>(x: A): Option<A> = Some(x)

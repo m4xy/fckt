@@ -1,6 +1,6 @@
 // List as a monad: every combination. Lists { x by [1, 2]; y by ["a", "b"]; (x, y) } is
 // [(1, "a"), (1, "b"), (2, "a"), (2, "b")].
-module Lists {
+module Lists : Monad {
   type M<A> = List<A>
 
   pure<A>(x: A): List<A> = [x]

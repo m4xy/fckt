@@ -1,0 +1,5 @@
+import fckt.io.FileSystem
+import fckt.io.Process
+
+// What a task may do: print, read and write files, and run programs.
+@Console @FileSystem @Process annotation type Building

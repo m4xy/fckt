@@ -1,0 +1,3 @@
+// Something a build does, as compiling or testing, by name: fckt compile runs the task compile,
+// after those it depends on, each once.
+type Task(name: String, description: String, dependsOn: List<String> = [], action: @Building (Project) -> Unit)

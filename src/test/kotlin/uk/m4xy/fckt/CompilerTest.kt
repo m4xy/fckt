@@ -22,13 +22,13 @@ class CompilerTest {
     private fun run(source: String, args: List<String> = emptyList(), dir: File? = null): String = runOcaml(compile(source), args, dir)
 
     /** Runs [ml] with the OCaml toplevel, in [dir] if given, and returns its standard output. */
-    private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null): String {
+    private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null, env: Map<String, String> = emptyMap()): String {
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
         try {
             val libraries = ocamlLibraries(ml).flatMap { listOf("-I", "+$it", "$it.cma") }
             val process = ProcessBuilder(listOf(ocaml, "-w", "+a-4-9-27-40-41-42-44-45-70", "-warn-error", "+8") + libraries + file.path + args)
-                .directory(dir).redirectErrorStream(true).start()
+                .directory(dir).redirectErrorStream(true).apply { environment().putAll(env) }.start()
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)
             assertEquals(0, process.exitValue(), "OCaml failed:\n$output\n--- generated ---\n$ml")
@@ -1141,6 +1141,45 @@ class CompilerTest {
         assertContains(error("main() = println('ab')"), "a character literal holds one character")
         assertContains(error("main() = println(\"\\u12\")"), "\\u takes four hex digits")
         assertContains(error("external f(x: Int): Int = \"g (x + 1)\"\nmain() = assertEquals(1, f(1))"), "an external's parameters are replaced only outside parentheses, so 'x' in (x + 1) isn't")
+    }
+
+    @Test
+    fun `a build script builds, tests and runs its project`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-build").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
+        try {
+            write("src/pricing/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = items.sum()\n}\n")
+            write("src/main.fk", "import pricing.Prices\n\nmain(args: List<String>) = println(\"total ${'$'}{Prices.total([1, 2, 3])} for ${'$'}{args.joinToString(\" \")}\")\n")
+            write("test/prices.fk", "import pricing.Prices\n\nmain() = assertEquals(6, Prices.total([1, 2, 3]))\n")
+            // What fckt makes of build.fk: a main that runs the tasks it's given.
+            val script = """
+                import fckt.build.*
+                import fckt.build.Builds.*
+                import fckt.io.Files.*
+
+                project = Project(name = "shop", version = "1.2.0")
+
+                tasks = standardTasks + [
+                  Task("stamp", "Writes the version", dependsOn = ["compile"], action = p -> p.output.resolve("VERSION").writeText(p.version)),
+                ]
+
+                main(args: List<String>) = fckt.build.Builds.runBuild(project, args, tasks)
+            """.trimIndent()
+            val ml = compile(script)
+            assertContains(runOcaml(ml, listOf("tasks"), dir), "  stamp - Writes the version")
+            // Building runs the compiler, as fckt build does.
+            val fckt = File("build/install/fckt/bin/fckt").absoluteFile
+            assumeTrue(fckt.canExecute(), "fckt isn't installed: ./gradlew installDist")
+            val env = mapOf("FCKT_COMPILER" to fckt.path)
+            assertEquals(
+                "> Task :compile\n> Task :test\n  passed prices.fk\n> Task :build\nBUILD SUCCESSFUL\n",
+                runOcaml(ml, listOf("build"), dir, env),
+            )
+            assertEquals("> Task :compile\n> Task :run\ntotal 6 for a b\n> Task :stamp\nBUILD SUCCESSFUL\n", runOcaml(ml, listOf("run", "stamp", "--", "a", "b"), dir, env))
+            assertEquals("1.2.0", File(dir, "build/VERSION").readText())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test
