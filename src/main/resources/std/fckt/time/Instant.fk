@@ -1,0 +1,2 @@
+// A moment: milliseconds since the start of 1970, UTC. Clock's now() says which it is.
+type Instant(millis: Int)

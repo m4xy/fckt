@@ -1,0 +1,12 @@
+// Instants and durations, together: how long from one instant to another, and an instant or
+// duration plus another duration.
+module Times {
+  // How long from this until later; negative if later is before it.
+  Instant.until(later: Instant): Duration = Duration(later.millis - this.millis)
+
+  // The instant d after this.
+  Instant.plus(d: Duration): Instant = Instant(this.millis + d.millis)
+
+  // The two durations together.
+  Duration.plus(other: Duration): Duration = Duration(this.millis + other.millis)
+}

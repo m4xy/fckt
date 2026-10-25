@@ -241,6 +241,11 @@ val STANDARD_FILES = listOf(
     "text/Bytes",
     "text/Encodings",
     "text/Strings",
+    "time/Clock",
+    "time/Duration",
+    "time/Instant",
+    "time/SystemClock",
+    "time/Times",
     "values/Lazies",
     "values/Mutable",
 ).map { "$STANDARD_PACKAGE/$it.fk" }

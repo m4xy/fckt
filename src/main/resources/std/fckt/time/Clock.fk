@@ -1,0 +1,5 @@
+// What time it is. A handled effect: main asks the system, with SystemClock, and a test can say
+// it itself, as Clock(now = ~Instant(0)) { stamped() } does.
+@HandledBy(SystemClock) effect Clock {
+  now(): Instant
+}

@@ -1,0 +1,2 @@
+// How long something takes, in milliseconds: from one Instant until another.
+type Duration(millis: Int)

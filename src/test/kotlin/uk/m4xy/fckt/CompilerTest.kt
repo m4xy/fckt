@@ -1304,6 +1304,35 @@ class CompilerTest {
     }
 
     @Test
+    fun `the time is an effect, which main asks the system and a test can answer`() {
+        val output = run(
+            """
+            import fckt.time.*
+            import fckt.time.Times.*
+
+            @Clock elapsed(): Duration = {
+              started = now()
+              started.until(now())
+            }
+
+            main() = {
+              var time = 0
+              took = Clock(now = () -> {
+                time = time + 7
+                Instant(time)
+              }) { elapsed() }
+              assertEquals(Duration(7), took)
+              assertEquals(Instant(10), Instant(3).plus(Duration(7)))
+              // main asks the system: after 2023, an Int's milliseconds.
+              assert(now().millis > 1700000000000)
+              println("ok")
+            }
+            """.trimIndent(),
+        )
+        assertEquals("ok\n", output)
+    }
+
+    @Test
     fun `folders are packages, and capitalised files are modules`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         val lib = File(dir.parentFile, dir.name + "-lib").apply { mkdir() }
