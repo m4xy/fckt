@@ -85,7 +85,8 @@ fun declarations(text: String, entry: File?): Map<Int, List<Target>> {
     for ((offset, target) in importTargets(text, entry)) found[offset] = listOf(target)
 
     // Everything the checker resolved.
-    val checked = try { analyse(text, entry, listOfNotNull(entry?.parentFile)) } catch (e: Exception) { null } catch (e: StackOverflowError) { null }
+    val paths = pathsOf(entry)
+    val checked = try { analyse(text, entry, paths.roots, paths.libraries) } catch (e: Exception) { null } catch (e: StackOverflowError) { null }
     if (checked != null) Resolutions(text, checked.program, ::put, ::of).decls(checked.decls)
 
     // What's left, by name, in the scopes the compiler would look in.
@@ -120,7 +121,7 @@ fun declarations(text: String, entry: File?): Map<Int, List<Target>> {
  */
 fun importTargets(text: String, entry: File?): Map<Int, Target> {
     val imports = try { Parser.parse(text).imports[null].orEmpty() } catch (e: Exception) { return emptyMap() }
-    val roots = listOfNotNull(entry?.parentFile)
+    val roots = pathsOf(entry).let { it.roots + it.libraries }
     val idents = scan(text).filter { it.kind == TokKind.IDENT }
     val found = mutableMapOf<Int, Target>()
     for (import in imports) {
@@ -168,8 +169,9 @@ private fun importPath(path: List<String>, roots: List<File>): List<Target?> {
                 .firstOrNull { f -> parseOrNull(standardSource("std/$f").orEmpty(), "std/$f")?.any { it.name == name || (it is Decl.Function && it.methodName == name) } == true }
         found?.let { "std/$it" }.let { it to it?.let(::standardSource) }
     } else {
-        val f = folders.flatMap { it.listFiles().orEmpty().toList() }.firstOrNull { it.isFile && it.name == "$name.fk" }
-            ?: folders.flatMap { it.listFiles().orEmpty().toList() }.filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }
+        // A program's file, or a library's interface's.
+        val f = folders.flatMap { it.listFiles().orEmpty().toList() }.firstOrNull { it.isFile && (it.name == "$name.fk" || it.name == "$name.fki") }
+            ?: folders.flatMap { it.listFiles().orEmpty().toList() }.filter { it.isFile && (it.extension == "fk" || it.extension == "fki") && it.name[0].isLowerCase() }
                 .firstOrNull { f -> parseOrNull(f.readText(), f.path)?.any { it.name == name || (it is Decl.Function && it.methodName == name) } == true }
         (f?.path) to f?.readText()
     }
@@ -197,7 +199,11 @@ private fun importPath(path: List<String>, roots: List<File>): List<Target?> {
     return targets + List(maxOf(0, path.size - targets.size)) { null }
 }
 
-private fun parseOrNull(text: String, file: String?): List<Decl>? = try { Parser.parse(text, file).decls } catch (e: Exception) { null }
+private fun parseOrNull(text: String, file: String?): List<Decl>? = try {
+    (if (file?.endsWith(".fki") == true) Parser.parseInterface(text, file) else Parser.parse(text, file)).decls
+} catch (e: Exception) {
+    null
+}
 
 /**
  * The entry file's declarations, with where each is visible: its module's (or spec's) range. A

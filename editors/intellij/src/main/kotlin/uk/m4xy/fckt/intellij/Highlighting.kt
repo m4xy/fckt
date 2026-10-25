@@ -143,8 +143,11 @@ class FcktErrorAnnotator : ExternalAnnotator<FcktErrorAnnotator.Input, FcktError
 
     override fun doAnnotate(input: Input): Found? {
         val entry = input.file ?: return null
+        // A library's interface has no code to check.
+        if (entry.extension == "fki") return null
         return try {
-            compile(input.text, entry, listOfNotNull(entry.parentFile))
+            val paths = pathsOf(entry)
+            compile(input.text, entry, paths.roots, libraries = paths.libraries)
             null
         } catch (e: CompileError) {
             Found(input.text, e)

@@ -14,7 +14,7 @@
 
   <extensions defaultExtensionNs="com.intellij">
     <fileType name="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFileType" fieldName="INSTANCE"
-              language="fckt" extensions="fk"/>
+              language="fckt" extensions="fk;fki"/>
     <lang.parserDefinition language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktParserDefinition"/>
     <lang.syntaxHighlighterFactory language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktSyntaxHighlighterFactory"/>
     <annotator language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktAnnotator"/>

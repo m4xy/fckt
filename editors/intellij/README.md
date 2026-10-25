@@ -46,6 +46,14 @@ inside out from where they're used, with `Ratios.make` looked up in `Ratios`.
 Names that are built in, like `Int`, `Option`, `Some` and `Ok`, go to `builtins.fk`, which
 describes them; it isn't compiled.
 
+## Projects and libraries
+
+A file's packages are its own folder's and, in a [kiln](https://github.com/m4xy/kiln) project,
+those of the project's source folders; its libraries are seen through their interfaces, `.fki`
+files, which go-to opens and hover describes. kiln writes where they are to the project's
+`.kiln/paths` each time it compiles or tests it, so after the first `kiln build` the editor checks
+a file as kiln does. Interfaces are coloured as fckt is, and aren't checked themselves.
+
 ## Find usages
 
 On an import line, each name goes to what it names: a package to its folder, a module to its

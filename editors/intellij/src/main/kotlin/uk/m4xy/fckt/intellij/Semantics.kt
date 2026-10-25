@@ -358,7 +358,8 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
     roles += BUILTIN
     roles += STANDARD_ROLES
     roles += neighbours
-    val parsed = try { Parser.parse(text).decls } catch (e: Exception) { null }
+    // A program's, or a library's interface, whose declarations have no code.
+    val parsed = try { Parser.parse(text).decls } catch (e: Exception) { try { Parser.parseInterface(text).decls } catch (e: Exception) { null } }
     roles += parsed?.let { mutableMapOf<String, Role>().also { m -> declaredRoles(it, m) } } ?: rolesOf(text)
 
     // Where names are declared, by the offset of their first character.

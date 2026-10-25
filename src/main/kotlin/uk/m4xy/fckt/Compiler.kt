@@ -33,10 +33,15 @@ fun compile(entry: File, dirs: List<File>, imports: List<String> = emptyList()):
 /**
  * [text] as the contents of [entry], which an editor may not have saved yet, and the files it uses.
  * [imports] are imported into each of the program's files, but the standard library's, beside what
- * every file imports: `kiln.*` into a build script.
+ * every file imports: `kiln.*` into a build script. With [libraries], interfaces, it's compiled
+ * separately, as [compileSeparately] is.
  */
-fun compile(text: String, entry: File, dirs: List<File>, imports: List<String> = emptyList()): String =
-    compile(link(text, Packages(dirs, entry), imports).file)
+fun compile(text: String, entry: File, dirs: List<File>, imports: List<String> = emptyList(), libraries: List<File> = emptyList()): String =
+    compile(link(text, packages(dirs, entry, libraries), imports).file)
+
+/** Where packages are, from [dirs] and [libraries]: with any library, the standard library is compiled on its own too. */
+private fun packages(dirs: List<File>, entry: File?, libraries: List<File>) =
+    if (libraries.isEmpty()) Packages(dirs, entry) else Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT)
 
 /**
  * [entry] and the files it uses, to OCaml that's linked with what's compiled already: the
@@ -104,10 +109,10 @@ class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
 /**
  * [text], as [entry], checked with the files it uses, for tools: what each name in it refers to.
  * Each declaration's position names its file: null for [entry], a path, or `std/...` for the
- * standard library. Throws [uk.m4xy.fckt.syntax.CompileError].
+ * standard library, and with [libraries], their interfaces' declarations. Throws [uk.m4xy.fckt.syntax.CompileError].
  */
-fun analyse(text: String, entry: File?, dirs: List<File>): Analysis {
-    val linked = link(text, Packages(dirs, entry))
+fun analyse(text: String, entry: File?, dirs: List<File>, libraries: List<File> = emptyList()): Analysis {
+    val linked = link(text, packages(dirs, entry, libraries))
     // A when that misses some cases is still clear about what its names refer to.
     return Analysis(linked.main, Checker(linked.file, coverage = false).check())
 }

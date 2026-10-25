@@ -22,7 +22,8 @@
           "fckt"
         ],
         "extensions": [
-          ".fk"
+          ".fk",
+          ".fki"
         ],
         "configuration": "./language-configuration.json"
       }
