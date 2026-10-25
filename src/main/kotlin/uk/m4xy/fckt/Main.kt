@@ -43,6 +43,11 @@ fun main(args: Array<String>) {
     }
     val target = output ?: (source.path.removeSuffix(".fk") + ".ml")
     if (target == "-") print(ocaml) else File(target).writeText(ocaml)
+    val libraries = ocamlLibraries(ocaml)
+    if (libraries.isNotEmpty() && target != "-") {
+        System.err.println("fckt: $target uses the OCaml librar${if (libraries.size == 1) "y" else "ies"} ${libraries.joinToString(", ")}: " +
+            "ocaml ${libraries.joinToString(" ") { "-I +$it $it.cma" }} $target")
+    }
 }
 
 private fun usage(): Nothing {

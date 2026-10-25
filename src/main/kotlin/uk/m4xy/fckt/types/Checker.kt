@@ -701,11 +701,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for (d in decls) known[d.name] = d
         for (m in modules.values) known[m.name] = m
         val cases = decls.filterIsInstance<Decl.Sealed>().flatMap { s -> s.variants.map { "${s.name}.${it.name}" to s } }.toMap()
+        // A handled effect's operations, which come with it, by the names they're called by.
+        fun operationsOf(full: String): List<Pair<String, String>> {
+            val spec = known[full] as? Decl.Spec ?: return emptyList()
+            if (spec.annotations.none { it.name == EFFECT }) return emptyList()
+            val prefix = full.substringBeforeLast('.', "").let { if (it.isEmpty()) "" else "$it." }
+            return spec.values.map { it.name to "$prefix${it.name}" }
+        }
         fun members(of: String): List<Pair<String, String>> {
             val inside = known.values.filter { it.name.substringBeforeLast('.', "") == of }.map { it.simpleName to it.name }
             val itsCases = decls.filterIsInstance<Decl.Sealed>().filter { it.name.substringBeforeLast('.', "") == of }
                 .flatMap { s -> s.variants.map { it.name to "${s.name}.${it.name}" } }
-            return inside + itsCases
+            return inside + itsCases + inside.flatMap { (_, full) -> operationsOf(full) }
         }
         fun types(of: String): List<Pair<String, String>> = members(of).filter { (_, full) ->
             val d = known[full]
@@ -726,6 +733,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 named[i.name] = full
                 // A module brings its types, and their cases, with it.
                 if (known[full] is Decl.Module) types(full).forEach { (name, target) -> implied.getOrPut(name) { linkedSetOf() } += target }
+                operationsOf(full).forEach { (name, target) -> implied.getOrPut(name) { linkedSetOf() } += target }
             }
             imported[file] = implied.filterValues { it.size == 1 }.mapValues { it.value.single() } + named
             ambiguousImports[file] = implied.filter { (name, targets) -> targets.size > 1 && name !in named }.mapValues { it.value.toList() }
@@ -1501,7 +1509,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             return found.single()
         }
-        return null
+        // An imported effect's: import io.* or io.FileSystem brings in FileSystem's operations.
+        val found = importedNames(name).flatMap { operations[it].orEmpty() }.filter { visible(it.first) }.distinct()
+        if (found.size > 1) {
+            throw CompileError(pos, "'$name' is an operation of ${found.joinToString(" and ") { it.first.simpleName }}; write ${found.joinToString(" or ") { "${it.first.simpleName}.$name" }}")
+        }
+        return found.singleOrNull()
     }
 
     /** `Console.println`: an operation named through its effect. */
@@ -1612,6 +1625,19 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val h = e.handler
         val makesHandler = h is Expr.Call && h.callee is Expr.Name && scope.lookup(h.callee.name) == null &&
             lookupGlobal(h.callee.name, h.callee.pos) == null && find(h.callee.name, specs, null)?.let { isEffect(it) } == true
+        // A declared function's last parameter, by name, so those before it can be left to their defaults.
+        val (callee, given) = when {
+            h is Expr.Call && !makesHandler -> h.callee to h.args
+            h is Expr.Name -> h to emptyList()
+            else -> null to emptyList()
+        }
+        val declared = (callee as? Expr.Name)?.takeIf { scope.lookup(it.name) == null }?.let { lookupGlobal(it.name, null) }
+        val last = declared?.params?.lastOrNull()?.name
+        if (callee != null && last != null && declared.params!!.size > given.size + 1 && given.none { it.name == last } &&
+            declared.params.dropLast(1).drop(given.takeWhile { it.name == null }.size).all { p -> p.default != null || given.any { it.name == p.name } }
+        ) {
+            return infer(Expr.Call(e.pos, callee, given + block.copy(name = last)).also { e.call = it }, expected, scope)
+        }
         if (h is Expr.Call && !makesHandler) {
             val callee = infer(h.callee, null, scope).prune()
             if (callee is Type.Fn && callee.params.size == h.args.size + 1) {

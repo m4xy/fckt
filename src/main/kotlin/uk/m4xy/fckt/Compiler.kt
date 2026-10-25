@@ -54,8 +54,14 @@ fun standardLibrary(name: String): String? =
 /** The package the standard library's modules are in: `import fckt.Options`. */
 const val STANDARD_PACKAGE = "fckt"
 
+/** The standard library's files under `std/`: modules, and the declarations of packages, as `fckt/io/io.fk`. */
+val STANDARD_FILES = listOf("Options.fk", "Results.fk", "Validated.fk", "Lists.fk", "io/io.fk").map { "$STANDARD_PACKAGE/$it" }
+
 /** The standard library's modules, as their files are named under `std/`. */
-val STANDARD_MODULES = listOf("Options", "Results", "Validated", "Lists").map { "$STANDARD_PACKAGE/$it" }
+val STANDARD_MODULES = STANDARD_FILES.filter { it.substringAfterLast('/')[0].isUpperCase() }.map { it.removeSuffix(".fk") }
+
+/** The OCaml libraries beyond the standard one that compiled [ocaml] needs: `unix`, for fckt.io's processes. */
+fun ocamlLibraries(ocaml: String): List<String> = listOfNotNull("unix".takeIf { "Unix." in ocaml })
 
 /** A file to read if it's used: one of the program's, or the standard library's. */
 class Source(val path: String, val read: () -> String)
@@ -94,26 +100,39 @@ private class Packages(private val roots: List<File>, private val entry: File?) 
         }
     }
 
-    /** Whether [pkg] is a package: a folder, named as a value is, or the standard library's. */
-    fun isPackage(pkg: List<String>): Boolean = pkg == listOf(STANDARD_PACKAGE) ||
-        pkg.isNotEmpty() && pkg.all { IDENTIFIER.matches(it) } && roots.any { File(it, pkg.joinToString("/")).isDirectory }
+    /** Whether [pkg] is the standard library or in it, which no folder of the program's can be. */
+    private fun standard(pkg: List<String>) = pkg.firstOrNull() == STANDARD_PACKAGE
+
+    /** The standard library's files directly in [pkg], by their names. */
+    private fun standardFiles(pkg: List<String>): List<String> =
+        STANDARD_FILES.filter { it.substringBeforeLast('/') == pkg.joinToString("/") }.map { it.substringAfterLast('/') }
+
+    /** Whether [pkg] is a package: a folder, named as a value is, or one of the standard library's. */
+    fun isPackage(pkg: List<String>): Boolean =
+        if (standard(pkg)) STANDARD_FILES.any { it.startsWith(pkg.joinToString("/", postfix = "/")) }
+        else pkg.isNotEmpty() && pkg.all { IDENTIFIER.matches(it) } && roots.any { File(it, pkg.joinToString("/")).isDirectory }
 
     /** The module [name] in [pkg]: its file, `Name.fk`. */
     fun module(pkg: List<String>, name: String): Source? {
         if (!name[0].isUpperCase()) return null
-        if (pkg == listOf(STANDARD_PACKAGE)) return "$STANDARD_PACKAGE/$name".takeIf { it in STANDARD_MODULES }?.let { Source("std/$it.fk") { resource("std/$it.fk") } }
+        if (standard(pkg)) return "$name.fk".takeIf { it in standardFiles(pkg) }?.let { standardSource(pkg, it) }
         return files(pkg).firstOrNull { it.isFile && it.name == "$name.fk" }?.let { f -> Source(f.path) { f.readText() } }
     }
 
     /** The names of [pkg]'s modules. */
     fun modules(pkg: List<String>): List<String> =
-        if (pkg == listOf(STANDARD_PACKAGE)) STANDARD_MODULES.map { it.substringAfter('/') }
+        if (standard(pkg)) standardFiles(pkg).filter { it[0].isUpperCase() }.map { it.removeSuffix(".fk") }
         else files(pkg).filter { it.isFile && it.extension == "fk" && it.name[0].isUpperCase() }.map { it.nameWithoutExtension }
 
     /** [pkg]'s lower-case files, whose declarations are the package's own. */
     fun declarationFiles(pkg: List<String>): List<Source> =
-        if (pkg == listOf(STANDARD_PACKAGE)) emptyList()
+        if (standard(pkg)) standardFiles(pkg).filter { it[0].isLowerCase() }.map { standardSource(pkg, it) }
         else files(pkg).filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }.map { f -> Source(f.path) { f.readText() } }
+
+    private fun standardSource(pkg: List<String>, file: String): Source {
+        val path = "std/${pkg.joinToString("/")}/$file"
+        return Source(path) { resource(path) }
+    }
 
     companion object {
         val IDENTIFIER = Regex("[a-z_][A-Za-z0-9_]*")
@@ -140,8 +159,9 @@ private fun link(text: String, packages: Packages): Linked {
     val seenMethods = mutableSetOf<String>()
     // Each package's lower-case files' declarations, once read.
     val packageDecls = mutableMapOf<List<String>, List<Triple<Decl, Set<String>, Source>>>()
-    // Names to look up: where they're used, which names are declared there, and the names.
-    class Use(val pkg: List<String>, val declared: Set<String>, val names: Set<String>)
+    // Names to look up: where they're used, which names are declared there, and the names; and the
+    // file they're in, whose private declarations they can use.
+    class Use(val pkg: List<String>, val declared: Set<String>, val names: Set<String>, val file: String? = null)
     val pending = ArrayDeque<Use>()
     // Imports of the files brought in, still to bring in what they name.
     val pendingImports = ArrayDeque<Import>()
@@ -191,7 +211,7 @@ private fun link(text: String, packages: Packages): Linked {
     fun includeDecl(pkg: List<String>, decl: Decl, uses: Set<String>, source: Source) {
         if (!included.add(decl)) return
         packageContents(pkg) += decl
-        pending += Use(pkg, declaredNames(listOf(decl)), uses)
+        pending += Use(pkg, declaredNames(listOf(decl)), uses, source.path)
         // The imports of the file it's in, for what it uses through them.
         if (loaded.add(source.path)) pendingImports += imports[source.path].orEmpty()
     }
@@ -239,7 +259,7 @@ private fun link(text: String, packages: Packages): Linked {
             if (name in use.declared || (use.pkg.isEmpty() && name in own)) continue
             // A module of the package it's used in, or a declaration of one of its lower-case files.
             packages.module(use.pkg, name)?.let { loadModule(use.pkg, name, it) }
-            val siblings = declsOf(use.pkg).filter { (d, _, _) -> !d.isPrivate && (d.name == name || (d is Decl.Function && d.extension && d.methodName == name)) }
+            val siblings = declsOf(use.pkg).filter { (d, _, s) -> (!d.isPrivate || s.path == use.file) && (d.name == name || (d is Decl.Function && d.extension && d.methodName == name)) }
             siblings.forEach { (d, uses, source) -> includeDecl(use.pkg, d, uses, source) }
             // A package, named in full, as geometry is in geometry.Shapes.area: the modules after it.
             if (packages.isPackage(listOf(name))) {

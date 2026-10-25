@@ -37,7 +37,7 @@ interface ModuleType {
 
 /** `sig ... end`: what a module shows outside it. */
 @Element("sig", function = "signature")
-@Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class)
+@Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class, Effects::class)
 interface Signature
 
 /** `val name : type` in a signature. */
@@ -49,7 +49,7 @@ interface SigValue {
 
 /** `module Name : sig ... end` inside a signature, or with [spec], `module Name : Spec`. */
 @Element("sig-module", function = "sigModule")
-@Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class)
+@Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class, Effects::class)
 interface SigModule {
     @Required val name: String
     val spec: String

@@ -170,9 +170,16 @@ module Terminal : Console {
 effect Mutating
 
 // Stops what it's in: fail("why") never returns, so it fits anywhere, as in
-// if (n < 0) fail("negative"). attempt { ... } turns it into a Result.
-effect Fail {
+// if (n < 0) fail("negative"). attempt { ... } turns it into a Result. Where main fails, the
+// program stops, with the reason on standard error and exit code 1.
+@HandledBy(Crash) effect Fail {
   fail(reason: String): Nothing
+}
+
+// How main handles @Fail: stops the program, with the reason on standard error.
+module Crash : Fail {
+  private external stop(reason: String): Nothing = "(fun r -> prerr_endline r; exit 1) reason"
+  fail(reason: String) = stop(reason)
 }
 
 // Ok with what block gives, or Error with why it failed.

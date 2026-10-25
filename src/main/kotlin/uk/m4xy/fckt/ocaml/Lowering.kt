@@ -159,27 +159,10 @@ class Lowering(private val program: Program) {
      */
     private fun StructureScope<Unit>.handledEffect(spec: Decl.Spec) {
         val generic = spec.typeParams.isNotEmpty()
-        effects {
-            constructors = spec.values.map { op ->
-                val params = operationParams(spec, op)
-                val result = operationResult(spec, op).let { if (compound(op.type)) "($it)" else it }
-                "${effectName(spec, op)} : ${if (params.isEmpty()) "unit" else tupleText(params)} -> $result Effect.t"
-            }
-        }
-        types {
-            typeDef(handlerType(spec)) {
-                params = spec.typeParams.map(::typeVar) + ANSWER
-                for (op in spec.values) {
-                    val result = operationResult(spec, op)
-                    val type = if (op.params == null) result else (operationParams(spec, op) + ("$result -> $ANSWER" to true)).joinToString(" -> ") { (text, paren) -> if (paren) "($text)" else text } + " -> $ANSWER"
-                    fieldDecl(snake(op.name), type)
-                }
-            }
-        }
+        effectDeclarations(spec)
         let(false) {
             binding(handleName(spec)) {
-                val vars = (spec.typeParams.map(::typeVar) + ANSWER).let { if (it.size == 1) it[0] + " " else it.joinToString(", ", "(", ") ") }
-                params = listOf("(h : $vars${handlerType(spec)})", "(f : unit -> $ANSWER)")
+                params = listOf("(h : ${handlerVars(spec)}${handlerType(spec)})", "(f : unit -> $ANSWER)")
                 returnType = ANSWER
                 // A generic effect's values are what the checker made sure they are, but OCaml can't see that.
                 fun known(g: Gen) = if (generic) Gen.App(Gen.Id("Obj.magic"), listOf(g)) else g
@@ -203,6 +186,33 @@ class Lowering(private val program: Program) {
             }
         }
     }
+
+    /** A handled effect's operations, as effect constructors, and the type of its handlers' records: in a module, or what it shows outside. */
+    private fun <S> S.effectDeclarations(spec: Decl.Spec) where S : EffectsParent<Unit>, S : TypeGroupParent<Unit> {
+        effects {
+            constructors = spec.values.map { op ->
+                val params = operationParams(spec, op)
+                val result = operationResult(spec, op).let { if (compound(op.type)) "($it)" else it }
+                "${effectName(spec, op)} : ${if (params.isEmpty()) "unit" else tupleText(params)} -> $result Effect.t"
+            }
+        }
+        types {
+            typeDef(handlerType(spec)) {
+                params = spec.typeParams.map(::typeVar) + ANSWER
+                for (op in spec.values) {
+                    val result = operationResult(spec, op)
+                    val type = if (op.params == null) result else (operationParams(spec, op) + ("$result -> $ANSWER" to true)).joinToString(" -> ") { (text, paren) -> if (paren) "($text)" else text } + " -> $ANSWER"
+                    fieldDecl(snake(op.name), type)
+                }
+            }
+        }
+    }
+
+    private fun isHandled(spec: Decl.Spec) = spec in program.effects
+
+    /** The type variables of [spec]'s handler records: `'fk_answer `, or `('a, 'fk_answer) `. */
+    private fun handlerVars(spec: Decl.Spec) =
+        (spec.typeParams.map(::typeVar) + ANSWER).let { if (it.size == 1) it[0] + " " else it.joinToString(", ", "(", ") ") }
 
     /** Performing [op] with [args]: whatever handles its effect answers. */
     private fun perform(spec: Decl.Spec, op: SpecValue, args: List<Gen>): Gen {
@@ -422,12 +432,19 @@ class Lowering(private val program: Program) {
 
     /** What module [m] shows outside: its public types, nested modules, show functions and values. */
     private fun <S> S.signatureItems(m: Decl.Module) where
-        S : TypeGroupParent<Unit>, S : SigValueParent<Unit>, S : SigModuleParent<Unit>, S : ModuleTypeParent<Unit> {
+        S : TypeGroupParent<Unit>, S : SigValueParent<Unit>, S : SigModuleParent<Unit>, S : ModuleTypeParent<Unit>, S : EffectsParent<Unit> {
         val path = m.name.split('.')
         currentPath = path
         val types = m.decls.filter { isType(it) && !it.isPrivate }
         for (group in typeGroups(types)) types { typeDefinitions(group, forSignature = true) }
-        for (spec in m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }) moduleType(spec.simpleName) { specItems(spec) }
+        for (spec in m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }) {
+            moduleType(spec.simpleName) { specItems(spec) }
+            // A handled effect's operations, handlers and how to run one, for handling it outside.
+            if (isHandled(spec)) {
+                effectDeclarations(spec)
+                sigValue(handleName(spec), "${handlerVars(spec)}${handlerType(spec)} -> (unit -> $ANSWER) -> $ANSWER")
+            }
+        }
         for (inner in m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate }) {
             sigModule(moduleName(inner.simpleName)) { signatureItems(inner) }
             currentPath = path

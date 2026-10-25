@@ -69,6 +69,7 @@ object Printer {
         "sig-value" -> "val ${n.str("name")} : ${n.str("type")}"
         "sig-module" -> "module ${n.str("name")} : " + ((n.attributes["spec"] as String?) ?: signature(n.children))
         "module-type" -> "module type ${n.str("name")} = " + signature(n.children)
+        "effects" -> "type _ Effect.t +=\n" + n.list("constructors").joinToString("\n") { "  | $it" }
         else -> error("unexpected ${n.name} in a signature")
     }
 

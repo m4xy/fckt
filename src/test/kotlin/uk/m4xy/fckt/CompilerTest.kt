@@ -19,15 +19,16 @@ class CompilerTest {
         ?: File("/opt/homebrew/bin/ocaml").takeIf { it.canExecute() }?.path
 
     /** Compiles [source], runs the OCaml with the toplevel, and returns its standard output. */
-    private fun run(source: String, args: List<String> = emptyList()): String = runOcaml(compile(source), args)
+    private fun run(source: String, args: List<String> = emptyList(), dir: File? = null): String = runOcaml(compile(source), args, dir)
 
-    /** Runs [ml] with the OCaml toplevel, and returns its standard output. */
-    private fun runOcaml(ml: String, args: List<String> = emptyList()): String {
+    /** Runs [ml] with the OCaml toplevel, in [dir] if given, and returns its standard output. */
+    private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null): String {
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
         try {
-            val process = ProcessBuilder(listOf(ocaml, "-w", "+a-4-9-27-40-41-42-44-45-70", "-warn-error", "+8", file.path) + args)
-                .redirectErrorStream(true).start()
+            val libraries = ocamlLibraries(ml).flatMap { listOf("-I", "+$it", "$it.cma") }
+            val process = ProcessBuilder(listOf(ocaml, "-w", "+a-4-9-27-40-41-42-44-45-70", "-warn-error", "+8") + libraries + file.path + args)
+                .directory(dir).redirectErrorStream(true).start()
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)
             assertEquals(0, process.exitValue(), "OCaml failed:\n$output\n--- generated ---\n$ml")
@@ -1038,6 +1039,98 @@ class CompilerTest {
         assertContains(error("external f(x: Int): Int = x"), "an external's body is OCaml in a string")
         // A program's own extension takes the place of the prelude's.
         assertEquals("", run("List<A>.size: Int = 7\nmain() = assertEquals(7, [1].size)"))
+    }
+
+    @Test
+    fun `fckt io reads and writes files, and runs programs`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-io").toFile()
+        try {
+            val source = """
+                import fckt.io.*
+
+                shown(result: Result<String, String>): String = when (result) {
+                  Ok(value) -> "ok ${'$'}value"
+                  Error(reason) -> "failed: ${'$'}reason"
+                }
+
+                @Console @FileSystem @Process main() = {
+                  makeDirs("out/a")
+                  writeFile("out/a/x.txt", "one\ntwo\n")
+                  appendFile("out/a/x.txt", "three\n")
+                  println(readLines("out/a/x.txt").joinToString(","))
+                  writing("out/y.txt") {
+                    writeLine("hello")
+                    write("world")
+                  }
+                  println(reading("out/y.txt") { [nextChars(2), nextLine().getOrElse("?"), nextChars(-1)] }.joinToString("|"))
+                  println(listFiles("out").joinToString(",") + " " + isDirectory("out/a").toString() + " " + exists("out/z").toString())
+                  exit = streaming("sh", ["-c", "echo first; echo second >&2; exit 3"]) {
+                    forEachLine(line -> println("> ${'$'}line"))
+                  }
+                  println("exit ${'$'}{exit.code}: ${'$'}{run("echo", ["a b", "c"]).value.trim()}")
+                  println(shown(attempt { readFile("out/missing") }))
+                  println(shown(attempt { reading("out/y.txt") { line = nextLine().getOrElse(""); if (line == "hello") fail("stopped at ${'$'}line") else line } }))
+                  delete("out")
+                  println(exists("out").toString())
+                }
+            """.trimIndent()
+            assertEquals(
+                "one,two,three\nhe|llo|world\na,y.txt true false\n> first\n> second\nexit 3: a b c\n" +
+                    "failed: out/missing: No such file or directory\nfailed: stopped at hello\nfalse\n",
+                run(source, dir = dir),
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `main fails with the reason, and file system operations can be answered`() {
+        val ml = compile("main() = {\n  println(\"a\")\n  fail(\"boom\")\n}")
+        assumeTrue(ocaml != null, "ocaml isn't installed")
+        val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
+        try {
+            val process = ProcessBuilder(ocaml, file.path).redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor(30, TimeUnit.SECONDS)
+            assertEquals(1, process.exitValue(), output)
+            assertEquals("a\nboom\n", output)
+        } finally {
+            file.delete()
+        }
+        // A test can answer FileSystem itself: only what it says is there is.
+        val fake = """
+            import fckt.io.*
+            import fckt.io.FileSystem
+
+            @FileSystem config(): String = if (exists("build.conf")) readFile("build.conf") else "default"
+
+            main() = {
+              files = ["build.conf"]
+              found = attempt {
+                FileSystem(
+                  tryReadFile = path -> if (files.contains(path)) Ok("from ${'$'}path") else Error("no ${'$'}path"),
+                  tryWriteFile = (path, text, append) -> Error("read only"),
+                  exists = path -> files.contains(path),
+                  isDirectory = path -> false,
+                  tryListFiles = path -> Ok(files),
+                  tryMakeDirs = path -> Error("read only"),
+                  tryDelete = path -> Error("read only"),
+                  tryOpenForReading = path -> Error("not here"),
+                  tryOpenForWriting = (path, append) -> Error("not here"),
+                  readLineFrom = input -> None,
+                  readFrom = (input, count) -> "",
+                  writeTo = (output, text) -> Unit,
+                  closeInput = input -> Unit,
+                  closeOutput = output -> Unit
+                ) { config() }
+              }
+              println(found.toString())
+            }
+        """.trimIndent()
+        assertEquals("Ok(from build.conf)\n", run(fake))
+        // A trailing block is the last parameter, so those with defaults before it can be left out.
+        assertEquals("hi\nhi\n", run("@Console repeat(times: Int = 2, f: @Console () -> Unit): Unit = if (times > 0) {\n  f()\n  repeat(times - 1, f)\n}\nmain() = repeat { println(\"hi\") }"))
     }
 
     @Test

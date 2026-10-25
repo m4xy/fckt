@@ -1,5 +1,6 @@
 package uk.m4xy.fckt.intellij
 
+import uk.m4xy.fckt.STANDARD_FILES
 import uk.m4xy.fckt.STANDARD_MODULES
 import uk.m4xy.fckt.analyse
 import uk.m4xy.fckt.moduleName
@@ -137,23 +138,34 @@ fun importTargets(text: String, entry: File?): Map<Int, Target> {
 private fun importPath(path: List<String>, roots: List<File>): List<Target?> {
     val targets = mutableListOf<Target?>()
     var folders = roots
-    var std = false
+    // The standard library's package so far, `fckt` or `fckt/io`, which has no folders.
+    var std: String? = null
     var i = 0
     // Packages, while the names are folders: `fckt` is the standard library's.
     while (i < path.size && path[i][0].isLowerCase()) {
         val name = path[i]
+        val stdNext = (if (i == 0) name else std?.let { "$it/$name" })?.takeIf { pkg -> STANDARD_FILES.any { it.startsWith("$pkg/") } }
+        if (stdNext != null) {
+            std = stdNext
+            targets += null
+            i++
+            continue
+        }
         val next = folders.map { File(it, name) }.filter { it.isDirectory }
-        if (next.isEmpty() && !(i == 0 && name == uk.m4xy.fckt.STANDARD_PACKAGE)) break
-        if (i == 0 && name == uk.m4xy.fckt.STANDARD_PACKAGE && next.isEmpty()) std = true
-        targets += next.firstOrNull()?.let { Target(it.path, Pos(1, 1), "") }
+        if (next.isEmpty() || std != null) break
+        targets += Target(next.first().path, Pos(1, 1), "")
         folders = next
         i++
     }
     if (i == path.size) return targets
     // A module's file, or a declaration of one of the package's lower-case files.
     val name = path[i]
-    val (file, text) = if (std) {
-        "std/${uk.m4xy.fckt.STANDARD_PACKAGE}/$name.fk".let { it to standardSource(it) }
+    val (file, text) = if (std != null) {
+        val inPackage = STANDARD_FILES.filter { it.substringBeforeLast('/') == std }
+        val found = inPackage.firstOrNull { it == "$std/$name.fk" }
+            ?: inPackage.filter { it.substringAfterLast('/')[0].isLowerCase() }
+                .firstOrNull { f -> parseOrNull(standardSource("std/$f").orEmpty(), "std/$f")?.any { it.name == name || (it is Decl.Function && it.methodName == name) } == true }
+        found?.let { "std/$it" }.let { it to it?.let(::standardSource) }
     } else {
         val f = folders.flatMap { it.listFiles().orEmpty().toList() }.firstOrNull { it.isFile && it.name == "$name.fk" }
             ?: folders.flatMap { it.listFiles().orEmpty().toList() }.filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }
