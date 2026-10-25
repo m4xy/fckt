@@ -306,6 +306,7 @@ const val MUTATING_NAME = "Mutating"
 
 /** Annotations of annotations: one that describes an annotation type, and isn't passed on to what that's used on; one that may be given more than once. */
 const val META_ANNOTATION = "$LANG.Meta"
+const val PROPAGATES = "$LANG.Propagates"
 const val REPEATABLE = "$LANG.Repeatable"
 
 /** On an annotation for specs, as `@Persistence @Encapsulates annotation type Repository`: what a module following such a spec does beyond what it says stays inside it. */

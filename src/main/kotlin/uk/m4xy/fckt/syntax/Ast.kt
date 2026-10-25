@@ -316,6 +316,7 @@ sealed interface MetaRef {
     data class Type(val type: uk.m4xy.fckt.types.Type) : MetaRef
     data class Spec(val spec: Decl.Spec) : MetaRef
     data class Module(val module: Decl.Module) : MetaRef
+    data class Function(val function: Decl.Function) : MetaRef
     data class Case(val sealed: Decl.Sealed, val variant: VariantDef) : MetaRef
     data class Field(val record: Decl.Record, val field: FieldDef) : MetaRef
     data class Annotation(val annotation: uk.m4xy.fckt.syntax.Annotation) : MetaRef

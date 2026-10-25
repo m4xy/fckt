@@ -15,7 +15,11 @@ import uk.m4xy.fckt.syntax.SourceFile
 import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.syntax.Token
 import uk.m4xy.fckt.syntax.TypeRef
+import uk.m4xy.fckt.syntax.Meta
+import uk.m4xy.fckt.syntax.MetaRef
 import uk.m4xy.fckt.types.Checker
+import uk.m4xy.fckt.types.Program
+import uk.m4xy.fckt.types.effectiveAnnotations
 import uk.m4xy.fckt.types.EFFECT_NAME
 import uk.m4xy.fckt.types.MUTATING_NAME
 import uk.m4xy.kastor.resolve
@@ -53,29 +57,53 @@ fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, impo
     compile(link(entry.readText(), Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT), imports).file)
 
 /**
- * The tests in [dir], to one program: each function in its lower-case files marked with [marker],
- * an annotation, as `uk.m4xy.fktests.api.Test`, run by [runner], a module, from a main made for them.
- * What tests are written with and what runs them are apart: fckt knows neither, and a test can't
- * use the runner, whose package only the main sees, unless they're [runnerTests], the runner's own.
- * The main gives the runner the tests as a plan, which the runner makes, of its own types, with:
+ * The tests in [dir], to one program: each function in its lower-case files, or in modules in
+ * them, its sections, marked with [marker], an annotation, as `uk.m4xy.fktests.api.Test`, run by
+ * [runner], a module, from a main made for them. What tests are written with and what runs them are
+ * apart: fckt knows neither, and a test can't use the runner, whose package only the main sees,
+ * unless they're [runnerTests], the runner's own. The main gives the runner the tests as a plan,
+ * which the runner makes, of its own types, with:
  *
- * - `test<@E>(file: String, name: String, line: Int, body: @Fail @E () -> Unit)`, a test;
+ * - `test<@E>(file: String, sections: List<String>, name: String, line: Int, body: @Fail @E () -> Unit)`,
+ *   a test, in the modules [sections] names, outermost first;
  * - `suite<@E>(file: String, tests: List<...>)`, a file's tests;
  * - `plan<@E>(suites: List<...>)`, a suite for each file with any;
  *
  * and runs them with `main<@E>(args: List<String>, plan: ...): Unit`, as the program's arguments
  * say. fk-tests-runner's `uk.m4xy.fktests.runner.Runner` is one.
  *
+ * With [fixtures], an annotation whose one field lists functions, as `uk.m4xy.fktests.api.Fixtures`,
+ * a test's body runs inside the functions it lists, each given the rest, the first outermost: those
+ * of its sections, if the annotation `@Propagates`, then its own. A fixture is a function of one
+ * parameter, what it runs, as `withDatabase<A>(test: @Database () -> A): A`, which can handle what
+ * the test does.
+ *
  * With [separate], it's compiled as [compileSeparately] compiles a program.
  */
-fun compileTests(dir: File, marker: String, runner: String, dirs: List<File>, libraries: List<File>, imports: List<String> = emptyList(), separate: Boolean = false, runnerTests: Boolean = false): String {
+fun compileTests(
+    dir: File,
+    marker: String,
+    runner: String,
+    dirs: List<File>,
+    libraries: List<File>,
+    imports: List<String> = emptyList(),
+    separate: Boolean = false,
+    runnerTests: Boolean = false,
+    fixtures: String? = null,
+): String {
     val entry = File(dir, "<tests>")
-    val packages = if (separate || libraries.isNotEmpty()) Packages(listOf(dir) + dirs, entry, libraries.map(::Library), STANDARD_UNIT) else packages(listOf(dir) + dirs, entry, libraries)
-    return compile(link(testsMain(dir, marker, runner, runnerTests), packages, imports).file)
+    val packages = { if (separate || libraries.isNotEmpty()) Packages(listOf(dir) + dirs, entry, libraries.map(::Library), STANDARD_UNIT) else packages(listOf(dir) + dirs, entry, libraries) }
+    val main = testsMain(dir, marker, runner, runnerTests, fixtures) { stub -> Checker(link(stub, packages(), imports).file).check() }
+    return compile(link(main, packages(), imports).file)
 }
 
-/** The main that runs [dir]'s tests: the plan of them, which it gives [runner]. */
-internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: Boolean = false): String {
+/**
+ * The main that runs [dir]'s tests: the plan of them, which it gives [runner]. What's written is
+ * looked at first, for what a test can't be; then [check] checks the tests with a main that does
+ * nothing, so what marks a test, and what its fixtures are, is what the names mean where they're
+ * written.
+ */
+internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: Boolean = false, fixtures: String? = null, check: (String) -> Program): String {
     fun split(name: String, what: String, example: String): Pair<String, String> {
         val pkg = name.substringBeforeLast('.', "")
         val simple = name.substringAfterLast('.')
@@ -84,13 +112,15 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
     }
     val (markerPackage, markerName) = split(marker, "what marks a test", "uk.m4xy.fktests.api.Test")
     val (runnerPackage, module) = split(runner, "a test runner", "uk.m4xy.fktests.runner.Runner")
+    fixtures?.let { split(it, "what lists a test's fixtures", "uk.m4xy.fktests.api.Fixtures") }
     val errors = mutableListOf<CompileError>()
     val files = dir.listFiles().orEmpty().filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }.sortedBy { it.name }
-    val sections = files.mapNotNull { file ->
+    // Each test by name, through its sections, as the main calls it.
+    val named = mutableListOf<String>()
+    for (file in files) {
         val parsed = Parser.parse(file.readText(), file.path)
-        val decls = parsed.decls
         // A file with a main is a program of its own, as it is in a package.
-        if (decls.any { it is Decl.Function && it.name == "main" }) return@mapNotNull null
+        if (parsed.decls.any { it is Decl.Function && it.name == "main" }) continue
         val fileImports = parsed.imports[file.path].orEmpty()
         for (i in fileImports) {
             val path = i.path.joinToString(".")
@@ -98,27 +128,77 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
                 errors += CompileError(i.pos, "$runnerPackage runs the tests, so they can't use it: a test uses what it's written with, as $marker")
             }
         }
-        val tests = decls.filterIsInstance<Decl.Function>().filter { f -> f.annotations.any { it.name == markerName } }
         val marks = fileImports.any { i -> i.alias == null && i.path.joinToString(".") == if (i.wildcard) markerPackage else marker }
-        for (t in tests) when {
-            !marks -> errors += CompileError(t.pos, "a test is marked with $marker: import $marker")
-            t.params == null -> errors += CompileError(t.pos, "a test is a function, run as ${t.name}(): write ${t.name}() = ...")
-            t.extension || t.params.isNotEmpty() || t.typeParams.isNotEmpty() -> errors += CompileError(t.pos, "a test takes no parameters, as it's run as ${t.name}()")
-            t.isPrivate -> errors += CompileError(t.pos, "a test is run from outside its file, so it can't be private")
+        fun walk(decls: List<Decl>, sections: List<String>) {
+            for (d in decls) when (d) {
+                is Decl.Module -> {
+                    if (d.isPrivate && hasTests(d.decls, markerName)) errors += CompileError(d.pos, "a section is run from outside its file, so it can't be private")
+                    walk(d.decls, sections + d.name)
+                }
+                is Decl.Function -> if (d.annotations.any { it.name == markerName }) {
+                    named += (sections + d.name).joinToString(".")
+                    when {
+                        !marks -> errors += CompileError(d.pos, "a test is marked with $marker: import $marker")
+                        d.params == null -> errors += CompileError(d.pos, "a test is a function, run as ${d.name}(): write ${d.name}() = ...")
+                        d.extension || d.params.isNotEmpty() || d.typeParams.isNotEmpty() -> errors += CompileError(d.pos, "a test takes no parameters, as it's run as ${d.name}()")
+                        d.isPrivate -> errors += CompileError(d.pos, "a test is run from outside its file, so it can't be private")
+                    }
+                }
+                else -> {}
+            }
         }
-        tests.takeIf { it.isNotEmpty() }?.let { file.name to it.map { t -> t.name to t.pos.line } }
+        walk(parsed.decls, emptyList())
     }
     CompileErrors.throwIfAny(errors)
-    if (sections.isEmpty()) throw CompileError(Pos(1, 1, dir.path), "no tests here: a test is a function marked @$markerName, as in @$markerName sums() = assert(1 + 1 == 2)")
+    if (named.isEmpty()) throw CompileError(Pos(1, 1, dir.path), "no tests here: a test is a function marked @$markerName, as in @$markerName sums() = assert(1 + 1 == 2)")
+
+    // What's marked, as the names mean once checked: with a main that names the tests, so their
+    // files are brought in, as the main that runs them does, but runs nothing.
+    val program = check("main(args: List<String>) = {\n  named = () -> {\n${named.joinToString("") { "    $it()\n" }}  }\n  Unit\n}\n")
+    class Found(val sections: List<String>, val decl: Decl.Function, val fixtures: List<Decl.Function>)
+    val found = linkedMapOf<String, MutableList<Found>>()
+    fun walk(decls: List<Decl>, enclosing: List<Decl.Module>) {
+        for (d in decls) when (d) {
+            is Decl.Module -> if (!d.isPackage) walk(d.decls, enclosing + d)
+            is Decl.Function -> {
+                val file = d.pos.file?.let(::File)?.takeIf { it.parentFile == dir } ?: continue
+                val annotations = effectiveAnnotations(d, enclosing)
+                if (annotations.none { it.decl?.name == marker }) continue
+                val around = annotations.filter { fixtures != null && it.decl?.name == fixtures }.flatMap { a ->
+                    a.args.flatMap { arg -> (arg.value as? Meta.ListOf)?.items ?: listOf(arg.value) }.map { m ->
+                        val f = (m.resolved as? MetaRef.Function)?.function ?: throw CompileError(m.pos, "a fixture is a function, by name")
+                        when {
+                            f.isPrivate -> errors += CompileError(m.pos, "${f.simpleName} runs a test from outside its file, so it can't be private")
+                            f.extension || f.params?.size != 1 -> errors += CompileError(m.pos, "a fixture takes what it runs, as its one parameter: ${f.simpleName}<A>(test: () -> A): A")
+                        }
+                        f
+                    }
+                }
+                found.getOrPut(file.name) { mutableListOf() } += Found(enclosing.map { it.simpleName }, d, around)
+            }
+            else -> {}
+        }
+    }
+    walk(program.root, emptyList())
+    CompileErrors.throwIfAny(errors)
     fun string(text: String) = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$") + "\""
     val out = StringBuilder("import $runner\n\nmain(args: List<String>) = $module.main(args, $module.plan([\n")
-    for ((file, tests) in sections) {
+    for ((file, tests) in found.toSortedMap()) {
         out.append("  $module.suite(${string(file)}, [\n")
-        for ((name, line) in tests) out.append("    $module.test(${string(file)}, ${string(name)}, $line, () -> $name()),\n")
+        for (t in tests.sortedBy { it.decl.pos.line }) {
+            // Each fixture runs the rest: the first, the second, ..., the test.
+            val body = t.fixtures.foldRight("${t.decl.name}()") { f, inner -> "${f.name}(() -> $inner)" }
+            out.append("    $module.test(${string(file)}, [${t.sections.joinToString(", ") { string(it) }}], ${string(t.decl.simpleName)}, ${t.decl.pos.line}, () -> $body),\n")
+        }
         out.append("  ]),\n")
     }
     out.append("]))\n")
     return out.toString()
+}
+
+/** Whether [decls], or modules in them, have a function marked [marker]. */
+private fun hasTests(decls: List<Decl>, marker: String): Boolean = decls.any { d ->
+    (d is Decl.Function && d.annotations.any { it.name == marker }) || (d is Decl.Module && hasTests(d.decls, marker))
 }
 
 /**
@@ -231,6 +311,7 @@ val STANDARD_FILES = listOf(
     "lang/Monad",
     "lang/Mutating",
     "lang/Pure",
+    "lang/Propagates",
     "lang/Repeatable",
     "math/Maths",
     "monads/Lists",

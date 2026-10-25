@@ -1352,7 +1352,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /**
      * An annotation's field's type: an ordinary type, or a reference only the checker knows:
-     * `Type`, `Spec`, `Module` or `Module<Spec>`, `Case<T>`, `Field<R, T>` (`_` for any T), another
+     * `Type`, `Spec`, `Function`, `Module` or `Module<Spec>`, `Case<T>`, `Field<R, T>` (`_` for any T), another
      * annotation, or lists and tuples of them. Those are [Type.Con]s named with [Type.META].
      */
     private fun resolveMeta(ref: TypeRef): Type {
@@ -1362,7 +1362,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (ref.args.size != n) throw CompileError(ref.pos, "'${ref.name}' takes $n type argument${if (n == 1) "" else "s"}, not ${ref.args.size}")
         }
         return when (ref.name) {
-            "Type", "Spec" -> Type.Con(Type.META + ref.name).also { arity(0) }
+            "Type", "Spec", "Function" -> Type.Con(Type.META + ref.name).also { arity(0) }
             "Module" -> {
                 if (ref.args.size > 1) arity(1)
                 val spec = ref.args.singleOrNull()?.let { arg ->
@@ -1397,6 +1397,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return when (t.name.removePrefix(Type.META).takeIf { t.name.startsWith(Type.META) }) {
             "Type" -> "a type, like List<User>"
             "Spec" -> "a spec, by name"
+            "Function" -> "a function, by name"
             "Module" -> t.args.singleOrNull()?.let { "a module that follows ${Type.displayName((it as Type.Con).name)}" } ?: "a module, by name"
             "Case" -> "a case of ${t.args[0]}"
             "Field" -> "a field of ${t.args[0]}, like ${t.args[0]}.name"
@@ -1490,6 +1491,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             Type.META + "Type" -> MetaRef.Type(resolve(typeRefOf(m) ?: wrong()))
             Type.META + "Spec" -> MetaRef.Spec(find(name(), specs, m.pos) ?: throw CompileError(m.pos, "unknown spec '${name()}'"))
+            // A function as declared, whatever its type: what reads the annotation says what it must be.
+            Type.META + "Function" -> {
+                val function = lookupGlobal(name(), m.pos) ?: throw CompileError(m.pos, "unknown function '${name()}'")
+                if (function.params == null) throw CompileError(m.pos, "${function.simpleName} is a value, not a function")
+                MetaRef.Function(function)
+            }
             Type.META + "Module" -> {
                 val module = lookupModule(name(), m.pos) ?: throw CompileError(m.pos, "unknown module '${name()}'")
                 if (module.params.isNotEmpty()) throw CompileError(m.pos, "${module.simpleName} is a functor; pass a module it makes, module Name = ${module.simpleName}(...)")

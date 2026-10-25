@@ -4,6 +4,11 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 import uk.m4xy.fckt.syntax.CompileError
+import uk.m4xy.fckt.syntax.Decl
+import uk.m4xy.fckt.syntax.Expr
+import uk.m4xy.fckt.syntax.Meta
+import uk.m4xy.fckt.syntax.StringPart
+import uk.m4xy.fckt.types.effectiveAnnotations
 import java.io.File
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -1227,7 +1232,7 @@ class CompilerTest {
               assertEquals(128512, '\u{1F600}'.code)
               assertEquals('é', '\u00e9')
               assertEquals('A', 'a'.uppercase())
-              assert('9'.isDigit() && 'é'.isLetter() && ' '.isWhitespace())
+              assert('9'.isDigit() && 'é'.isLetter() && ' '.isWhitespace() && 'A'.isUpperCase() && !'a'.isUpperCase() && 'a'.isLowerCase())
               assertEquals(["a", "b", "", "c"], "a,b,,c".split(","))
               assertEquals("x", when ('x') {
                 'a' -> "a"
@@ -1309,33 +1314,7 @@ class CompilerTest {
             // What tests are written with, and, apart, what runs them, with what fckt --test calls.
             write("lib/check/Test.fk", "annotation type Test\n")
             // Its types are its own, as it likes them: fckt makes them only through the runner.
-            write("lib/runs/plan/Case.fk", "type Case<@E>(file: String, name: String, line: Int, body: @Fail @E () -> Unit)\n")
-            write(
-                "lib/runs/Runner.fk",
-                """
-                import runs.plan.Case
-
-                module Runner {
-                  type Outcome { Passed, Failed }
-                  test<@E>(file: String, name: String, line: Int, body: @Fail @E () -> Unit): Case<@E> = Case(file, name, line, body)
-                  suite<@E>(file: String, tests: List<Case<@E>>): List<Case<@E>> = tests
-                  plan<@E>(suites: List<List<Case<@E>>>): List<List<Case<@E>>> = suites
-                  @Console main<@E>(args: List<String>, plan: List<List<Case<@E>>>): Unit = {
-                    outcomes = plan.flatMap(suite -> {
-                      suite.firstOrNone().map(c -> println(c.file)).getOrElse(Unit)
-                      suite.filter(c -> args.isEmpty() || args.contains(c.name)).map(c -> check(c))
-                    })
-                    println("${'$'}{outcomes.filter(o -> o == Failed).size} failed")
-                  }
-                  @Console check<@E>(c: Case<@E>): Outcome = when (attempt { caught(c.body).map(reason -> fail(reason)).getOrElse(Unit) }) {
-                    Ok(_) -> { println("  passed ${'$'}{c.name} at line ${'$'}{c.line}"); Passed }
-                    Error(reason) -> { println("  FAILED ${'$'}{c.name}: ${'$'}reason"); Failed }
-                  }
-                  private external caught(body: () -> Unit): Option<String> =
-                    "(fun f -> try f (); None with Failure m -> Some m | e -> Some (Printexc.to_string e)) body"
-                }
-                """.trimIndent(),
-            )
+            writeRunner(::write)
             val test = File(dir, "test")
             write(
                 "test/prices.fk",
@@ -1357,7 +1336,7 @@ class CompilerTest {
             )
             assertEquals("files.fk\nprices.fk\n  passed sums at line 4\n0 failed\n", runOcaml(ml, listOf("sums")))
             // The runner's own tests use it.
-            write("test/runner.fk", "import check.Test\nimport runs.plan.Case\n@Test casesAreValues() = assert(Case(\"a.fk\", \"b\", 1, () -> Unit).line == 1)\n")
+            write("test/runner.fk", "import check.Test\nimport runs.plan.Case\n@Test casesAreValues() = assert(Case(\"a.fk\", [], \"b\", 1, () -> Unit).line == 1)\n")
             assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), runnerTests = true), listOf("casesAreValues")), "  passed casesAreValues")
             File(test, "runner.fk").delete()
             write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
@@ -1376,6 +1355,144 @@ class CompilerTest {
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    /** A runner, runs.Runner, in lib, as fckt --test calls one, which prints how each test went. */
+    private fun writeRunner(write: (String, String) -> Unit) {
+        // Its types are its own, as it likes them: fckt makes them only through the runner.
+        write("lib/runs/plan/Case.fk", "type Case<@E>(file: String, sections: List<String>, name: String, line: Int, body: @Fail @E () -> Unit)\n")
+        write(
+            "lib/runs/Runner.fk",
+            """
+            import runs.plan.Case
+
+            module Runner {
+              type Outcome { Passed, Failed }
+              test<@E>(file: String, sections: List<String>, name: String, line: Int, body: @Fail @E () -> Unit): Case<@E> = Case(file, sections, name, line, body)
+              suite<@E>(file: String, tests: List<Case<@E>>): List<Case<@E>> = tests
+              plan<@E>(suites: List<List<Case<@E>>>): List<List<Case<@E>>> = suites
+              @Console main<@E>(args: List<String>, plan: List<List<Case<@E>>>): Unit = {
+                outcomes = plan.flatMap(suite -> {
+                  suite.firstOrNone().map(c -> println(c.file)).getOrElse(Unit)
+                  suite.filter(c -> args.isEmpty() || args.contains(c.name)).map(c -> check(c))
+                })
+                println("${'$'}{outcomes.filter(o -> o == Failed).size} failed")
+              }
+              @Console check<@E>(c: Case<@E>): Outcome = {
+                name = (c.sections + [c.name]).joinToString(".")
+                when (attempt { caught(c.body).map(reason -> fail(reason)).getOrElse(Unit) }) {
+                  Ok(_) -> { println("  passed ${'$'}name at line ${'$'}{c.line}"); Passed }
+                  Error(reason) -> { println("  FAILED ${'$'}name: ${'$'}reason"); Failed }
+                }
+              }
+              private external caught(body: () -> Unit): Option<String> =
+                "(fun f -> try f (); None with Failure m -> Some m | e -> Some (Printexc.to_string e)) body"
+            }
+            """.trimIndent(),
+        )
+    }
+
+    @Test
+    fun `a test runs in its sections, and inside the fixtures they and it list`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-fixtures").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
+        try {
+            write("lib/check/Test.fk", "annotation type Test\n")
+            write("lib/check/Fixtures.fk", "@Propagates @Repeatable annotation type Fixtures(fixtures: List<Function>)\n")
+            writeRunner(::write)
+            write(
+                "test/counts.fk",
+                """
+                import check.*
+
+                effect Tally {
+                  count(): Int
+                }
+
+                // A fixture: it runs a test, handling what it does.
+                counting<A>(test: @Tally () -> A): A = {
+                  var n = 0
+                  Tally(count = () -> {
+                    n = n + 1
+                    n
+                  }) { test() }
+                }
+
+                @Console noisy<A>(test: () -> A): A = {
+                  println("  (noisy)")
+                  test()
+                }
+
+                @Test plain() = assert(true)
+
+                @Fixtures([counting])
+                module Counting {
+                  @Test @Tally once() = assertEquals(1, count())
+
+                  @Test @Fixtures([noisy]) @Tally twice() = {
+                    count()
+                    assertEquals(2, count())
+                  }
+
+                  module Deeper {
+                    @Test @Tally deep() = assertEquals(1, count())
+                  }
+                }
+                """.trimIndent(),
+            )
+            val test = File(dir, "test")
+            val roots = listOf(File(dir, "lib"))
+            fun tests() = compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), fixtures = "check.Fixtures")
+            assertEquals(
+                "counts.fk\n  passed plain at line 21\n  passed Counting.once at line 25\n  (noisy)\n  passed Counting.twice at line 27\n  passed Counting.Deeper.deep at line 33\n0 failed\n",
+                runOcaml(tests()),
+            )
+            // Each fixture runs the rest, the section's outermost.
+            assertContains(tests(), "counting (fun () -> noisy (fun () -> Counting.twice ()))")
+            fun errors() = assertFailsWith<CompileError> { tests() }.errors.joinToString("\n") { it.message.orEmpty() }
+            val counts = File(test, "counts.fk").readText()
+            // A fixture runs the test: it takes it, and is seen from outside its file.
+            File(test, "counts.fk").writeText(counts.replace("@Fixtures([noisy])", "@Fixtures([plain])"))
+            assertContains(errors(), "a fixture takes what it runs, as its one parameter: plain<A>(test: () -> A): A")
+            File(test, "counts.fk").writeText(counts.replace("@Console noisy", "private @Console noisy"))
+            assertContains(errors(), "noisy runs a test from outside its file, so it can't be private")
+            File(test, "counts.fk").writeText(counts.replace("@Fixtures([noisy])", "@Fixtures([nothing])"))
+            assertContains(errors(), "unknown function 'nothing'")
+            File(test, "counts.fk").writeText(counts.replace("module Counting {", "private module Counting {"))
+            assertContains(errors(), "a section is run from outside its file, so it can't be private")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `an annotation that propagates is on what's in the modules it's on`() {
+        val analysis = analyse(
+            """
+            @Propagates annotation type Tag(name: String)
+            @Propagates @Repeatable annotation type Tags(name: String)
+            annotation type Plain(name: String)
+
+            @Tag("outer") @Tags("outer") @Plain("outer")
+            module Outer {
+              @Tag("inner") @Tags("inner")
+              module Inner {
+                f() = 1
+                @Tag("own") g() = 2
+              }
+            }
+            """.trimIndent(),
+            null,
+            emptyList(),
+        )
+        val outer = analysis.decls.filterIsInstance<Decl.Module>().single()
+        val inner = outer.decls.filterIsInstance<Decl.Module>().single()
+        fun on(name: String) = effectiveAnnotations(inner.decls.first { it.name.endsWith(name) }, listOf(outer, inner)).joinToString(", ") { a ->
+            a.name + "(" + ((a.args.single().value as Meta.Literal).expr as Expr.StringLit).parts.joinToString("") { (it as StringPart.Text).text } + ")"
+        }
+        // A repeatable one from each, outermost first; another, the nearest's; one that doesn't propagate, nowhere.
+        assertEquals("Tags(outer), Tag(inner), Tags(inner)", on("f"))
+        assertEquals("Tags(outer), Tags(inner), Tag(own)", on("g"))
     }
 
     @Test

@@ -491,6 +491,7 @@ private class Resolutions(
                     is MetaRef.Type -> metaType(m, r.type)
                     is MetaRef.Spec -> put(at(m.pos, last), of(r.spec))
                     is MetaRef.Module -> put(at(m.pos, last), of(r.module))
+                    is MetaRef.Function -> put(at(m.pos, last), of(r.function))
                     is MetaRef.Case -> {
                         put(at(m.pos, last), Target(r.variant.pos.file ?: r.sealed.pos.file, r.variant.pos, r.variant.name))
                         ownedBy(r.sealed)

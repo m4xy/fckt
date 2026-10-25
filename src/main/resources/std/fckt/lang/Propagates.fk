@@ -1,0 +1,4 @@
+// On an annotation: on a module, it's on everything declared in the module too, and in the modules
+// in it. Of one that's @Repeatable, a declaration has each module's and its own, outermost first; of
+// another, the nearest's, as a module in another, or the declaration itself, chooses.
+@Meta annotation type Propagates

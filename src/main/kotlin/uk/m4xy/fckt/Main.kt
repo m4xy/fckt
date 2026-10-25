@@ -7,7 +7,7 @@ import kotlin.system.exitProcess
 
 private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [-L <interface>]... [--separate] [--import <name>]... [-o <file.ml>]
        fckt --library <interface> -o <file.ml> [-I <dir>]... [-L <interface>]... <package>...
-       fckt --test <dir> --marker <annotation> --runner <module> [--runner-tests] [-I <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
+       fckt --test <dir> --marker <annotation> --runner <module> [--fixtures <annotation>] [--runner-tests] [-I <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
        fckt --standard -o <file.ml>
        fckt --version
 
@@ -25,8 +25,10 @@ compiles packages as a library, to the OCaml module -o names, and writes the int
 programs using it are checked against to <interface>; a library's public functions say their
 types. fckt --test compiles the tests in a folder, its functions marked with --marker's annotation,
 uk.m4xy.fktests.api.Test for fk-tests's, to one program that runs each with --runner's module,
-uk.m4xy.fktests.runner.Runner for fk-tests-runner's. Tests can't use the runner, unless they're
-its own: --runner-tests. Building projects is kiln's job."""
+uk.m4xy.fktests.runner.Runner for fk-tests-runner's; in modules, they're in sections. With
+--fixtures, a test runs inside the functions that annotation lists on it, and on its sections:
+uk.m4xy.fktests.api.Fixtures for fk-tests's. Tests can't use the runner, unless they're its own:
+--runner-tests. Building projects is kiln's job."""
 
 fun main(args: Array<String>) {
     var input: String? = null
@@ -38,6 +40,7 @@ fun main(args: Array<String>) {
     var runner: String? = null
     var marker: String? = null
     var runnerTests = false
+    var fixtures: String? = null
     val dirs = mutableListOf<File>()
     val libraries = mutableListOf<File>()
     val imports = mutableListOf<String>()
@@ -62,6 +65,7 @@ fun main(args: Array<String>) {
             "--runner" -> runner = args.getOrNull(i++) ?: usage()
             "--marker" -> marker = args.getOrNull(i++) ?: usage()
             "--runner-tests" -> runnerTests = true
+            "--fixtures" -> fixtures = args.getOrNull(i++) ?: usage()
             "--standard" -> standard = true
             "--separate" -> separate = true
             else -> when {
@@ -85,7 +89,7 @@ fun main(args: Array<String>) {
                 System.err.println("fckt: no such folder: $test")
                 exitProcess(2)
             }
-            write(output ?: File(dir, "tests.ml").path, dir.path) { compileTests(dir.absoluteFile, marker ?: usage(), runner ?: usage(), dirs, libraries, imports, separate, runnerTests) }
+            write(output ?: File(dir, "tests.ml").path, dir.path) { compileTests(dir.absoluteFile, marker ?: usage(), runner ?: usage(), dirs, libraries, imports, separate, runnerTests, fixtures) }
         }
         library != null -> {
             val target = output ?: usage()

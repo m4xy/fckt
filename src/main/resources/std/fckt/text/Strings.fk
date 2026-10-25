@@ -67,4 +67,7 @@ module Strings {
   // Upper or lower case, of the letters A to Z.
   Char.uppercase(): Char = if (this >= 'a' && this <= 'z') (this.code - 32).toChar() else this
   Char.lowercase(): Char = if (this >= 'A' && this <= 'Z') (this.code + 32).toChar() else this
+  // Whether it's one of the letters A to Z, or a to z.
+  Char.isUpperCase(): Boolean = this >= 'A' && this <= 'Z'
+  Char.isLowerCase(): Boolean = this >= 'a' && this <= 'z'
 }
