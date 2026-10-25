@@ -808,6 +808,23 @@ class CompilerTest {
     }
 
     @Test
+    fun `an opaque type's field is its extension of that name outside its module`() {
+        val wallets = """
+            module Wallets {
+              opaque type Wallet(cash: Int, cards: Int)
+              empty = Wallet(150, 2)
+              // Inside, the field; outside, this.
+              Wallet.cash: String = "${'$'}{this.cash / 100}.${'$'}{this.cash % 100}"
+              Wallet.total(): Int = this.cash + this.cards
+            }
+
+        """.trimIndent()
+        assertEquals("1.50 152\n", run(wallets + "main() = println(\"${'$'}{Wallets.empty.cash} ${'$'}{Wallets.empty.total()}\")"))
+        // A field without an extension of its name is still hidden.
+        assertContains(error(wallets + "x = Wallets.empty.cards"), "Wallet is opaque outside Wallets")
+    }
+
+    @Test
     fun `opaque types are abstract outside their module`() {
         val source = File("examples/specs.fk").readText()
         assertEquals("", run(source))

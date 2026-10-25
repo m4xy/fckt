@@ -3084,7 +3084,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val record = records[receiver.name] ?: return null
         val index = record.fields.indexOfFirst { it.name == member.name }
         if (index < 0) return null
-        if (abstractHere(record)) abstractError(record, member.pos)
+        if (abstractHere(record)) {
+            // A field that can't be seen here isn't what the name means, when an extension of that name is.
+            if (extension(member, receiver) != null) return null
+            abstractError(record, member.pos)
+        }
         val type = fieldTypes(record.typeParams, record.fields, receiver.args, receiver.region)[index]
         return MemberRef.Field(snake(member.name), receiver.name) to type
     }
