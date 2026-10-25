@@ -22,7 +22,7 @@ class CompilerTest {
     private fun run(source: String, args: List<String> = emptyList(), dir: File? = null): String = runOcaml(compile(source), args, dir)
 
     /** Runs [ml] with the OCaml toplevel, in [dir] if given, and returns its standard output. */
-    private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null, env: Map<String, String> = emptyMap()): String {
+    private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null, env: Map<String, String> = emptyMap(), code: Int = 0): String {
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
         try {
@@ -31,7 +31,7 @@ class CompilerTest {
                 .directory(dir).redirectErrorStream(true).apply { environment().putAll(env) }.start()
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)
-            assertEquals(0, process.exitValue(), "OCaml failed:\n$output\n${excerpt(output, ml)}")
+            assertEquals(code, process.exitValue(), "OCaml failed:\n$output\n${excerpt(output, ml)}")
             assertNoWarnings(output, ml)
             return output
         } finally {
@@ -1223,6 +1223,67 @@ class CompilerTest {
         compile("import fckt.io.Files.*\nimport fckt.io.Paths.*\nimport fckt.io.Channels.*\nimport fckt.io.FileSystem\nwrite(a: Int, b: Int, c: Int): Int = a\n@FileSystem main() = path(\"x\").writing { writeLine(\"y\") }")
         // A trailing block is the last parameter, so those with defaults before it can be left out.
         assertEquals("hi\nhi\n", run("@Console repeat(times: Int = 2, f: @Console () -> Unit): Unit = if (times > 0) {\n  f()\n  repeat(times - 1, f)\n}\nmain() = repeat { println(\"hi\") }"))
+    }
+
+    @Test
+    fun `a folder's tests are run each on its own, by the runner given`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-tests").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
+        try {
+            write("src/pricing/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = items.fold(0, (a, b) -> a + b)\n}\n")
+            // A test library's runner, as fk-tests's is, with what fckt --test calls.
+            write("lib/check/Test.fk", "annotation type Test\n")
+            write(
+                "lib/check/Runner.fk",
+                """
+                module Runner {
+                  type Outcome { Passed, Failed, Skipped }
+                  @Console section(args: List<String>, file: String, names: List<String>): Unit = println(file)
+                  @Console check(args: List<String>, file: String, name: String, body: @Fail () -> Unit): Outcome =
+                    if (!args.isEmpty() && !args.contains(name)) Skipped
+                    else when (attempt { caught(body).map(reason -> fail(reason)).getOrElse(Unit) }) {
+                      Ok(_) -> { println("  passed ${'$'}name"); Passed }
+                      Error(reason) -> { println("  FAILED ${'$'}name: ${'$'}reason"); Failed }
+                    }
+                  @Console finish(outcomes: List<Outcome>): Unit = println("${'$'}{outcomes.filter(o -> o == Failed).size} failed")
+                  private external caught(body: () -> Unit): Option<String> =
+                    "(fun f -> try f (); None with Failure m -> Some m | e -> Some (Printexc.to_string e)) body"
+                }
+                """.trimIndent(),
+            )
+            val test = File(dir, "test")
+            write(
+                "test/prices.fk",
+                "import check.Test\nimport pricing.Prices\n\n@Test sums() = assert(Prices.total([1, 2]) == 3)\n" +
+                    "@Test empty() = assertEquals(1, Prices.total([]))\n@Test divides() = assert(1 / Prices.total([]) == 0)\n" +
+                    "@Test @Fail fails() = fail(\"on purpose\")\n",
+            )
+            // Effects a test performs are main's, handled as main's are.
+            write("test/files.fk", "import check.*\nimport fckt.io.FileSystem\nimport fckt.io.Paths.*\nimport fckt.io.Files.*\n\n@Test @FileSystem missing() = assert(!path(\"/nonexistent/x\").exists())\n")
+            // What the tests share, and a test that's a program of its own, aren't run.
+            write("test/support.fk", "two(): Int = 2\n")
+            write("test/own.fk", "main() = println(\"own\")\n")
+            val roots = listOf(File(dir, "src"), File(dir, "lib"))
+            val ml = compileTests(test, "check.Runner", roots, emptyList())
+            assertEquals(
+                "files.fk\n  passed missing\nprices.fk\n  passed sums\n  FAILED empty: prices.fk line 5: expected:<1> but was:<0>\n" +
+                    "  FAILED divides: Division_by_zero\n  FAILED fails: on purpose\n3 failed\n",
+                runOcaml(ml),
+            )
+            assertEquals("files.fk\nprices.fk\n  passed sums\n0 failed\n", runOcaml(ml, listOf("sums")))
+            write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
+            write("test/unmarked.fk", "@Test d() = Unit\n")
+            val errors = assertFailsWith<CompileError> { compileTests(test, "check.Runner", roots, emptyList()) }.errors.map { it.message }
+            assertEquals(
+                listOf(
+                    "a test is run from outside its file, so it can't be private", "a test takes no parameters, as it's run as b()",
+                    "a test is a function, run as c(): write c() = ...", "a test is marked with the runner's Test: import check.Test",
+                ),
+                errors,
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test

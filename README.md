@@ -185,6 +185,26 @@ linked with another's. [kiln](https://github.com/m4xy/kiln) does all of this for
 
 Kastor comes from `../kastor` through a Gradle included build.
 
+### Tests
+
+fckt has no test library of its own: what only tests use stays out of programs.
+[fk-tests](https://github.com/m4xy/fk-tests) is one, whose tests are functions marked `@Test`:
+
+```kotlin
+import uk.m4xy.fktests.Test
+import pricing.Prices
+
+@Test sumsItems() = assert(Prices.total([1, 2, 3]) == 6)
+@Test emptyIsZero() = assertEquals(0, Prices.total([]))
+```
+
+`fckt --test test --runner uk.m4xy.fktests.Testing -I src -o tests.ml` compiles the functions in a
+folder's files marked with the runner's package's `Test` to one program, whose main gives each to
+the runner, a module with `section`, `check` and `finish` (see `compileTests`). A test takes no
+parameters, and its effects are main's, handled as main's are; the folder's other files are what
+the tests share, and a file with a `main` is a program of its own. kiln does this for a project's
+tests, with its test dependencies.
+
 ## Building a project
 
 Building projects, their tests and their dependencies, and publishing libraries, is

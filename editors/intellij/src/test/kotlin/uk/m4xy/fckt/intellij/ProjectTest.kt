@@ -45,6 +45,18 @@ class ProjectTest {
     }
 
     @Test
+    fun `only the tests see what only they use`() {
+        write("cache/checks/interface/unit", "Uk_m4xy_checks")
+        write("shop/build.fk", "project = Project(name = \"shop\")")
+        write("shop/.kiln/paths", "source src")
+        write("shop/test/prices.fk", "import uk.m4xy.checks.Test")
+        write("shop/.kiln/test-paths", "tests test\nlibrary ${File(dir, "cache/checks/interface").path}")
+        val checks = File(dir, "cache/checks/interface").canonicalPath
+        assertEquals(listOf(checks), pathsOf(File(dir, "shop/test/prices.fk")).libraries.map { it.canonicalPath })
+        assertEquals(emptyList(), pathsOf(File(dir, "shop/src/main.fk")).libraries)
+    }
+
+    @Test
     fun `without kiln's paths, a file sees its own folder`() {
         write("shop/build.fk", "project = Project(name = \"shop\")")
         val file = File(dir, "shop/src/main.fk").apply { parentFile.mkdirs(); writeText(main) }

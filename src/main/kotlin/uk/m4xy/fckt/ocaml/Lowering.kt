@@ -421,7 +421,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         return uk.m4xy.fckt.types.stronglyConnected(modules) { uses.getValue(it) }.flatten()
     }
 
-    /** The full names of the user types that what's in [m] uses: in its types, specs and functions' types. */
+    /** The full names of the user types and effects that what's in [m] uses: in its types, specs and functions' types. */
     private fun typeNamesIn(m: Decl.Module): Set<String> {
         val names = mutableSetOf<String>()
         fun walk(t: Type) {
@@ -433,6 +433,8 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 is Type.Fn -> {
                     p.params.forEach(::walk)
                     walk(p.result)
+                    // An effect it performs, whose operations are declared where the effect is.
+                    names += Type.effectNames(p.effects)
                 }
                 else -> {}
             }

@@ -53,6 +53,70 @@ fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, impo
     compile(link(entry.readText(), Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT), imports).file)
 
 /**
+ * The tests in [dir], to one program: each function in its lower-case files marked with [runner]'s
+ * package's `Test`, run by [runner], a module, from a main made for them. fckt knows no test library:
+ * [runner] is one that has, as fk-tests's uk.m4xy.fktests.Testing has,
+ *
+ * - `section(args: List<String>, file: String, names: List<String>): Unit`, called before a file's tests;
+ * - `check(args: List<String>, file: String, name: String, body: @Fail () -> Unit): Outcome`, which
+ *   runs a test, as args choose, and says how it went;
+ * - `finish(outcomes: List<Outcome>): Unit`, called with how each went.
+ *
+ * With [separate], it's compiled as [compileSeparately] compiles a program.
+ */
+fun compileTests(dir: File, runner: String, dirs: List<File>, libraries: List<File>, imports: List<String> = emptyList(), separate: Boolean = false): String {
+    val entry = File(dir, "<tests>")
+    val packages = if (separate || libraries.isNotEmpty()) Packages(listOf(dir) + dirs, entry, libraries.map(::Library), STANDARD_UNIT) else packages(listOf(dir) + dirs, entry, libraries)
+    return compile(link(testsMain(dir, runner), packages, imports).file)
+}
+
+/**
+ * The main that runs [dir]'s tests: for each file with any, its name, then each test, checked by
+ * [runner], so that one that fails doesn't stop the others; then how they went.
+ */
+internal fun testsMain(dir: File, runner: String): String {
+    val pkg = runner.substringBeforeLast('.', "")
+    val module = runner.substringAfterLast('.')
+    if (pkg.isEmpty() || !module[0].isUpperCase()) throw CompileError(null, "a test runner is a module, named with its package: uk.m4xy.fktests.Testing")
+    val marker = "$pkg.$TEST_ANNOTATION"
+    val errors = mutableListOf<CompileError>()
+    val files = dir.listFiles().orEmpty().filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }.sortedBy { it.name }
+    val sections = files.mapNotNull { file ->
+        val parsed = Parser.parse(file.readText(), file.path)
+        val decls = parsed.decls
+        // A file with a main is a program of its own, as it is in a package.
+        if (decls.any { it is Decl.Function && it.name == "main" }) return@mapNotNull null
+        val tests = decls.filterIsInstance<Decl.Function>().filter { f -> f.annotations.any { it.name == TEST_ANNOTATION } }
+        val marks = parsed.imports[file.path].orEmpty().any { i -> i.alias == null && i.path.joinToString(".") == if (i.wildcard) pkg else marker }
+        for (t in tests) when {
+            !marks -> errors += CompileError(t.pos, "a test is marked with the runner's Test: import $marker")
+            t.params == null -> errors += CompileError(t.pos, "a test is a function, run as ${t.name}(): write ${t.name}() = ...")
+            t.extension || t.params.isNotEmpty() || t.typeParams.isNotEmpty() -> errors += CompileError(t.pos, "a test takes no parameters, as it's run as ${t.name}()")
+            t.isPrivate -> errors += CompileError(t.pos, "a test is run from outside its file, so it can't be private")
+        }
+        tests.takeIf { it.isNotEmpty() }?.let { file.name to it.map { t -> t.name } }
+    }
+    CompileErrors.throwIfAny(errors)
+    if (sections.isEmpty()) throw CompileError(Pos(1, 1, dir.path), "no tests here: a test is a function marked @Test, as in @Test sums() = assert(1 + 1 == 2)")
+    var n = 0
+    val out = StringBuilder("import $runner\n\nmain(args: List<String>) = {\n")
+    val outcomes = mutableListOf<String>()
+    for ((file, names) in sections) {
+        out.append("  $module.section(args, \"$file\", ${names.joinToString(", ", "[", "]") { "\"$it\"" }})\n")
+        for (name in names) {
+            val outcome = "outcome${n++}"
+            outcomes += outcome
+            out.append("  $outcome = $module.check(args, \"$file\", \"$name\", () -> $name())\n")
+        }
+    }
+    out.append("  $module.finish(${outcomes.joinToString(", ", "[", "]")})\n}\n")
+    return out.toString()
+}
+
+/** What marks a test: the runner's package's Test, as uk.m4xy.fktests.Test. */
+const val TEST_ANNOTATION = "Test"
+
+/**
  * A library: [packages], from [dirs], to OCaml, which is the OCaml module [unit], with the library's
  * interface written to [interfaceDir], for programs that use it to be checked against. It uses
  * [libraries] and the standard library compiled already, as a program does.
