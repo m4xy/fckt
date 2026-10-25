@@ -1,0 +1,2 @@
+// Something open to read a line or some characters at a time, as a file or a program's output.
+external type InputHandle = "in_channel"

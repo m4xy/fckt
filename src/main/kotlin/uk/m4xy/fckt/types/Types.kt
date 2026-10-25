@@ -117,14 +117,12 @@ sealed class Type {
          */
         fun sameEffect(a: Con, b: Con): Boolean {
             if (a.name != b.name) return false
-            if (a.name != MUTATING_NAME) return true
+            if (a.name != MUTATING) return true
             val x = a.args.firstOrNull()?.prune() ?: return true
             val y = b.args.firstOrNull()?.prune() ?: return true
             return x === y || (x is Con && y is Con && x.name == y.name)
         }
 
-        /** [MUTATING], here where [sameEffect] can see it. */
-        private const val MUTATING_NAME = "Mutating"
 
         /** A row's effects, once each, and the variable for the rest if it's open, following what that's been bound to. */
         fun row(type: Type): Pair<List<Con>, Var?> {
@@ -284,24 +282,33 @@ private fun template(head: String, vararg slots: Any): Builtin = Builtin.Templat
 class BuiltinMember(val params: List<Type>, val result: Type, val translation: Builtin, val isProperty: Boolean = false)
 
 /** Names of the assertion built-ins, which lowering translates specially. */
-/** The annotation, declared in the prelude, that makes an annotation type or spec an effect: what `effect Console` declares one with. */
-const val EFFECT = "Effect"
+/** Where the annotations and effects the language gives meaning to are: fckt.lang, imported into every file. */
+private const val LANG = "fckt.lang"
 
-/** The effect, declared in the prelude, of assigning a `var`: changing a value someone else may see. */
-const val MUTATING = "Mutating"
+/** The annotation that makes an annotation type or spec an effect: what `effect Console` declares one with. */
+const val EFFECT = "$LANG.Effect"
 
-/** Prelude annotations: one that describes an annotation type, and isn't passed on to what that's used on; one that may be given more than once. */
-const val META_ANNOTATION = "Meta"
-const val REPEATABLE = "Repeatable"
+/** [EFFECT] as written, by `effect`, and as every file can name it. */
+const val EFFECT_NAME = "Effect"
+
+/** The effect of assigning a `var`: changing a value someone else may see. */
+const val MUTATING = "$LANG.Mutating"
+
+/** [MUTATING] as written. */
+const val MUTATING_NAME = "Mutating"
+
+/** Annotations of annotations: one that describes an annotation type, and isn't passed on to what that's used on; one that may be given more than once. */
+const val META_ANNOTATION = "$LANG.Meta"
+const val REPEATABLE = "$LANG.Repeatable"
 
 /** On an annotation for specs, as `@Persistence @Encapsulates annotation type Repository`: what a module following such a spec does beyond what it says stays inside it. */
-const val ENCAPSULATES = "Encapsulates"
+const val ENCAPSULATES = "$LANG.Encapsulates"
 
-/** On a handled effect: the module `main` uses to handle it when nothing else does, as `@HandledBy(Terminal) spec Console`. */
-const val HANDLED_BY = "HandledBy"
+/** On a handled effect: the module `main` uses to handle it when nothing else does, as `@HandledBy(Local) effect Console`. */
+const val HANDLED_BY = "$LANG.HandledBy"
 
 /** The effect no operation has: a module or function that may only do it does nothing. */
-const val PURE = "Pure"
+const val PURE = "$LANG.Pure"
 
 const val ASSERT = "assert"
 const val ASSERT_EQUALS = "assertEquals"

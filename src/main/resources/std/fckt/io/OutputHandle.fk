@@ -1,0 +1,2 @@
+// Something open to write to, as a file.
+external type OutputHandle = "out_channel"

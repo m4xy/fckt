@@ -1,0 +1,3 @@
+// Changes a var that someone else can see. Changing one that was made in a function and never left
+// it isn't seen, so it doesn't count: a function can use vars inside and still be pure.
+effect Mutating

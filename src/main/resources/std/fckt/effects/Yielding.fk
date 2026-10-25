@@ -1,0 +1,4 @@
+// Hands out values one at a time, each when it's asked for: see Generators.sequence.
+effect Yielding<A> {
+  yield(value: A): Unit
+}

@@ -1,0 +1,3 @@
+// A list worked out as it's read, so it can go on forever: fckt.effects.Generators makes one, and
+// fckt.collections.Streams reads one.
+type Stream<A> { End, Next(value: A, rest: Lazy<Stream<A>>) }

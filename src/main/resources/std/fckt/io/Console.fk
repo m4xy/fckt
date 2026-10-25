@@ -1,0 +1,7 @@
+// Reads and writes the console. A handled effect: main uses the terminal, and a test can answer
+// it itself, as Console(print = ..., println = line -> ..., readLine = ~"Ada") { greet() } does.
+@HandledBy(Terminal) effect Console {
+  print(s: String): Unit
+  println(s: String): Unit
+  readLine(): String
+}

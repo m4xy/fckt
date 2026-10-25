@@ -1,0 +1,2 @@
+// One value that can change: counter.value += 1.
+type Mutable<A>(var value: A)

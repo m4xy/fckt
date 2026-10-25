@@ -1,0 +1,24 @@
+// Numbers. Imported into every file.
+module Maths {
+  external Int.toFloat(): Float = "float_of_int this"
+  external Int.toDouble(): Float = "float_of_int this"
+  external Int.coerceAtLeast(minimumValue: Int): Int = "max this minimumValue"
+  external Int.coerceAtMost(maximumValue: Int): Int = "min this maximumValue"
+  external Float.toInt(): Int = "int_of_float this"
+
+  external max<A>(a: A, b: A): A = "max a b"
+  external min<A>(a: A, b: A): A = "min a b"
+  external abs(x: Int): Int = "abs x"
+  external sin(x: Float): Float = "sin x"
+  external cos(x: Float): Float = "cos x"
+  external tan(x: Float): Float = "tan x"
+  external asin(x: Float): Float = "asin x"
+  external acos(x: Float): Float = "acos x"
+  external atan(x: Float): Float = "atan x"
+  external atan2(y: Float, x: Float): Float = "atan2 y x"
+  external sqrt(x: Float): Float = "sqrt x"
+  external exp(x: Float): Float = "exp x"
+  external log(x: Float): Float = "log x"
+  external floor(x: Float): Float = "floor x"
+  external ceil(x: Float): Float = "ceil x"
+}

@@ -1,3 +1,7 @@
+import fckt.collections.Array
+import fckt.collections.Arrays.*
+import fckt.values.Mutable
+
 // Arrays, and other types that OCaml implements. `xs[i]` calls `xs.get(i)` and `xs[i] = v` calls
 // `xs.set(i, v)`, so any type with a get and a set can be indexed. Array's set is @Mutating on the
 // array, so an array made and changed inside a function leaves it pure.

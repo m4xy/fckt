@@ -1,0 +1,5 @@
+// What a block reads from, a line or some characters at a time.
+effect Reader {
+  nextLine(): Option<String>
+  nextChars(count: Int): String
+}

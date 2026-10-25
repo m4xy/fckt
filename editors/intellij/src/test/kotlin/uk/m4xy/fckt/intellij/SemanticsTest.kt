@@ -124,9 +124,9 @@ class SemanticsTest {
         // The checker's choice: total for a list of Ints, and for one of Floats.
         assertEquals(listOf("here:21"), goto("extensions", 42, "total"))
         assertEquals(listOf("here:22"), goto("extensions", 43, "total"))
-        // The prelude's externals.
-        val fold = standardLibrary("prelude")!!.lines().indexOfFirst { "List<A>.fold" in it } + 1
-        assertEquals(listOf("prelude.fk:$fold"), goto("extensions", 21, "fold"))
+        // The standard library's externals, which every file imports.
+        val fold = standardLibrary("fckt/collections/Lists")!!.lines().indexOfFirst { "List<A>.fold" in it } + 1
+        assertEquals(listOf("Lists.fk:$fold"), goto("extensions", 21, "fold"))
         // Through modules, each segment to its own: Shapes.Units.twice
         assertEquals(listOf("here:19"), goto("modules", 47, "Shapes", 1))
         assertEquals(listOf("here:27"), goto("modules", 47, "Units"))
@@ -145,8 +145,8 @@ class SemanticsTest {
         assertEquals(listOf("here:7"), goto("shared-cases", 35, "Zero"))
         // What's built in is described in builtins.fk.
         val result = standardSource(BUILTINS)!!.lines().indexOfFirst { "type Result" in it } + 1
-        assertEquals(listOf("builtins.fk:$result"), goto("stdlib", 15, "Ok"))
-        assertEquals(listOf("builtins.fk:5"), goto("stdlib", 12, "Int"))
+        assertEquals(listOf("builtins.fk:$result"), goto("stdlib", 16, "Ok"))
+        assertEquals(listOf("builtins.fk:5"), goto("stdlib", 13, "Int"))
         // A declaration's own name goes nowhere.
         assertEquals(emptyList(), goto("monads", 33, "map"))
     }
@@ -165,7 +165,7 @@ class SemanticsTest {
             declarations(text, file)
         }
         // The standard library's files, which a search goes through too, and the built-ins'.
-        for (name in uk.m4xy.fckt.STANDARD_MODULES + "prelude" + "builtins") {
+        for (name in uk.m4xy.fckt.STANDARD_MODULES + "builtins") {
             val text = standardSource("std/$name.fk")!!
             assertEquals(text.length, scan(text).sumOf { it.end - it.start }, name)
             semantics(text)

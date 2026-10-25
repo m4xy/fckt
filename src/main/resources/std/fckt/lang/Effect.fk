@@ -1,0 +1,6 @@
+// What a function may do besides work out its result. It must say so, and so must every function
+// that calls it: @Console greet(name: String) = println("hello $name"). A module's effects pass to
+// everything in it, which can do no more. `effect Name` declares one, as a library can: with
+// operations in braces, a handled effect, whose operations a handler answers; without, one that's
+// only tracked. It's an annotation marked @Effect, which is how other annotations see it.
+@Meta annotation type Effect

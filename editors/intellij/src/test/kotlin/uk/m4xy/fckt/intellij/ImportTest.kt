@@ -20,7 +20,7 @@ class ImportTest {
         import geometry.Shapes.Shape.Circle as Round
         import fckt.Options
         import fckt.io.FileSystem
-        import fckt.io.readLines
+        import fckt.io.Files.readLines
 
         main() = assertEquals(3.0, size(Round(1.0)))
     """.trimIndent()
@@ -53,9 +53,10 @@ class ImportTest {
         assertEquals(listOf("Shapes.fk:2"), goto(3, "Circle"))
         assertEquals(listOf("Options.fk:2"), goto(4, "Options"))
         // A package of the standard library's, and what's in its lower-case file.
-        val io = uk.m4xy.fckt.standardLibrary("fckt/io/io")!!.lines()
-        assertEquals(listOf("io.fk:${io.indexOfFirst { "effect FileSystem" in it } + 1}"), goto(5, "FileSystem"))
-        assertEquals(listOf("io.fk:${io.indexOfFirst { " readLines(" in it } + 1}"), goto(6, "readLines"))
+        val fileSystem = uk.m4xy.fckt.standardLibrary("fckt/io/FileSystem")!!.lines()
+        val files = uk.m4xy.fckt.standardLibrary("fckt/io/Files")!!.lines()
+        assertEquals(listOf("FileSystem.fk:${fileSystem.indexOfFirst { "effect FileSystem" in it } + 1}"), goto(5, "FileSystem"))
+        assertEquals(listOf("Files.fk:${files.indexOfFirst { " readLines(" in it } + 1}"), goto(6, "readLines"))
     }
 
     @Test
@@ -70,6 +71,6 @@ class ImportTest {
         assertEquals("Circle: a case of geometry.Shapes.Shape", hovers[at(3, "Circle")])
         assertEquals("module fckt.Options", hovers[at(4, "Options")])
         assertEquals("effect fckt.io.FileSystem", hovers[at(5, "FileSystem")])
-        assertEquals("fckt.io.readLines(path: String): List<String>\ndoes @FileSystem, @Fail", hovers[at(6, "readLines")])
+        assertEquals("fckt.io.Files.readLines(path: String): List<String>\ndoes @FileSystem, @Fail, @Channel", hovers[at(6, "readLines")])
     }
 }

@@ -1,0 +1,8 @@
+// Runs other programs, and reads the environment. What they print is read through @Channel.
+@Fail @Channel @HandledBy(Processes.Local) effect Process {
+  // Starts command with args, without a shell, with what it prints, and its errors, to read.
+  tryStart(command: String, args: List<String>): Result<InputHandle, String>
+  // Waits for the program started with output to end, and gives its exit code.
+  waitFor(output: InputHandle): Int
+  env(name: String): Option<String>
+}

@@ -428,8 +428,8 @@ class CompilerTest {
         assertContains(ml, "Array.set xs 0 (Array.get xs 0 * 2)")
         assertContains(ml, "Buffer.add_string b word")
         fun program(source: String) = error("$source\nmain() = assert(true)")
-        assertContains(program("f(xs: Array<Int>) = { xs[0] = 1 }"), "'f' does @Mutating, so it must say so")
-        assertContains(program("f() = Array(1)"), "Array is an OCaml type, made by its functions, not by Array(...)")
+        assertContains(program("import fckt.collections.Array\nimport fckt.collections.Arrays.*\nf(xs: Array<Int>) = { xs[0] = 1 }"), "'f' does @Mutating, so it must say so")
+        assertContains(program("import fckt.collections.Array\nf() = Array(1)"), "Array is an OCaml type, made by its functions, not by Array(...)")
         assertContains(program("type Box(n: Int)\nf(b: Box) = { b[0] = 1 }"), "Box has no method 'set'")
         assertContains(program("f() = { 1 + 1 = 2; 3 }"), "only a var, a var field or an index can be assigned to")
         // A type of OCaml's own, with its type parameters in place.
@@ -450,12 +450,12 @@ class CompilerTest {
             error(withoutMain.replace("  private total(order: Order)", "  peek(customer: String) = LoyalCustomers.discountFor(customer)\n  private total(order: Order)") + "main() = assert(true)"),
             "'peek' does @Persistence, but it's in Ordering, which may only be pure",
         )
-        val io = "effect Network\n@Console @Network annotation type Io\n"
+        val io = "import fckt.values.Mutable\neffect Network\n@Console @Network annotation type Io\n"
         fun program(source: String) = error("$io$source\nmain() = assert(true)")
         compile("$io@Io f() = println(\"x\")\n@Io module M {\n  g() = println(\"y\")\n}\nh(k: @Io () -> Unit) = 1\nmain() = assert(true)")
         // A module with effects is a ceiling: nothing in it can add more, and @Pure allows nothing.
         assertContains(program("@Pure module D {\n  f() = println(\"x\")\n}"), "'f' does @Console, but it's in D, which may only be pure")
-        assertContains(program("@Io module M {\n  @Mutating f(a: Mutable<Int>) = { a.value = 1 }\n}"), "'f' is in M, which may only do @Console @Network, so it can't be @Mutating")
+        assertContains(program("@Io module M {\n  @Mutating f(a: Mutable<Int>) = { a.value = 1 }\n}"), "'f' is in M, which may only do @Network @Console, so it can't be @Mutating")
         assertContains(program("@Pure module Outer {\n  @Console module Inner {\n    f() = 1\n  }\n}"), "Inner is in Outer, which may only be pure, so it can't be @Console")
         // The same annotation by two ways with different values must be chosen between.
         val a = "annotation type A(v: String)\n@A(\"X\") annotation type C\n@A(\"Y\") annotation type D\n"
@@ -679,6 +679,10 @@ class CompilerTest {
     @Test
     fun `the prelude's Fail and sequence pass on what their blocks do`() {
         val source = """
+            import fckt.effects.Generators.*
+            import fckt.effects.Yielding
+            import fckt.collections.Streams.*
+
             @Console main() = {
               tried = attempt {
                 println("trying")
@@ -778,7 +782,7 @@ class CompilerTest {
         assertContains(program("effect Log { println(s: String): Unit }\nf() = println(\"x\")\nmain() = assert(true)"), "'f' does @Log")
         assertContains(
             program("effect Log { println(s: String): Unit }\n@Console f() = Console.println(\"x\")\ng() = println(\"x\")\nmain() = assert(true)"),
-            "'println' is an operation of Console and Log; write Console.println or Log.println",
+            "'g' does @Log",
         )
         assertContains(program("main() = Clock(now = 1) { 1 }"), "expected () -> Int but found Int")
         assertContains(program("main() = {\n  h = 1\n  h { 2 }\n}"), "this isn't a handler")
@@ -1007,7 +1011,7 @@ class CompilerTest {
         // Only what's used: no Applicative, and nothing at all for a program that uses none of it.
         assertTrue("Applicative" !in ml)
         assertTrue("module" !in compile("main() = assertEquals(1, 1)"))
-        assertTrue("module type" !in compile("v(): Validation<Int, String> = Valid(1)\nmain() = assert(v() == Valid(1))"))
+        assertTrue("module type" !in compile("import fckt.monads.Validation\nv(): Validation<Int, String> = Valid(1)\nmain() = assert(v() == Valid(1))"))
         // The program's own declarations take the place of the library's.
         assertEquals("", run("module Options { one() = 1 }\nmain() = assertEquals(1, Options.one())"))
         assertEquals("", run("type Validation { Valid }\nmain() = assert(Valid == Valid)"))
@@ -1047,6 +1051,9 @@ class CompilerTest {
         try {
             val source = """
                 import fckt.io.*
+                import fckt.io.Channels.*
+                import fckt.io.Files.*
+                import fckt.io.Processes.*
 
                 shown(result: Result<String, String>): String = when (result) {
                   Ok(value) -> "ok ${'$'}value"
@@ -1100,8 +1107,8 @@ class CompilerTest {
         }
         // A test can answer FileSystem itself: only what it says is there is.
         val fake = """
-            import fckt.io.*
             import fckt.io.FileSystem
+            import fckt.io.Files.*
 
             @FileSystem config(): String = if (exists("build.conf")) readFile("build.conf") else "default"
 
@@ -1117,12 +1124,7 @@ class CompilerTest {
                   tryMakeDirs = path -> Error("read only"),
                   tryDelete = path -> Error("read only"),
                   tryOpenForReading = path -> Error("not here"),
-                  tryOpenForWriting = (path, append) -> Error("not here"),
-                  readLineFrom = input -> None,
-                  readFrom = (input, count) -> "",
-                  writeTo = (output, text) -> Unit,
-                  closeInput = input -> Unit,
-                  closeOutput = output -> Unit
+                  tryOpenForWriting = (path, append) -> Error("not here")
                 ) { config() }
               }
               println(found.toString())
@@ -1189,9 +1191,9 @@ class CompilerTest {
             assertContains(errorIn("import geometry.Shapes.area\nimport geometry.Units.mm as area\nmain() = Unit"), "'area' is imported already, as geometry.Shapes.area")
             // A capitalised file is its module, written out; another module in it must be private.
             write("Loose.fk", "f() = 1\n")
-            assertContains(errorIn("main() = assertEquals(1, Loose.f())"), "Loose.fk must declare module Loose { ... }")
+            assertContains(errorIn("main() = assertEquals(1, Loose.f())"), "Loose.fk must declare Loose, which it's named for: a module, type, spec or effect")
             write("Two.fk", "module Two { f() = 1 }\nmodule Other { g() = 2 }\n")
-            assertContains(errorIn("main() = assertEquals(1, Two.f())"), "module Other belongs in its own file, Other.fk; or make it private to Two.fk")
+            assertContains(errorIn("main() = assertEquals(1, Two.f())"), "Other belongs in its own file, Other.fk; or make it private to Two.fk")
             write("Pair.fk", "module Pair { f() = Helper.g() }\nprivate module Helper { g() = 2 }\n")
             assertEquals("", runOcaml(compileMain("main() = assertEquals(2, Pair.f())")))
             // A program's own declarations come first: this Ratios is the program's, not the file.

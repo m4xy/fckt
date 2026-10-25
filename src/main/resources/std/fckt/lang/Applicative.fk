@@ -1,0 +1,7 @@
+// Steps that don't depend on each other. A module with map and product but no bind runs a block's
+// `by` lines together, so they all run: Validated collects every error.
+spec Applicative {
+  type M<A>
+  map<A, B>(m: M<A>, f: (A) -> B): M<B>
+  product<A, B>(ma: M<A>, mb: M<B>): M<(A, B)>
+}

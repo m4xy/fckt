@@ -1,0 +1,49 @@
+// Kotlin's methods on lists. Imported into every file.
+module Lists {
+  external List<A>.size: Int = "List.length this"
+  external List<A>.isEmpty(): Boolean = "List.is_empty this"
+  external List<A>.firstOrNull(): Option<A> = "List.nth_opt this 0"
+  external List<A>.map<B>(f: (A) -> B): List<B> = "List.map f this"
+  external List<A>.filter(f: (A) -> Boolean): List<A> = "List.filter f this"
+  external List<A>.flatMap<B>(f: (A) -> List<B>): List<B> = "List.concat_map f this"
+  external List<A>.fold<B>(initial: B, f: (B, A) -> B): B = "List.fold_left f initial this"
+  external List<A>.forEach(f: (A) -> Unit): Unit = "List.iter f this"
+  external List<A>.any(f: (A) -> Boolean): Boolean = "List.exists f this"
+  external List<A>.all(f: (A) -> Boolean): Boolean = "List.for_all f this"
+  external List<A>.find(f: (A) -> Boolean): Option<A> = "List.find_opt f this"
+  external List<A>.contains(x: A): Boolean = "List.mem x this"
+  external List<A>.reversed(): List<A> = "List.rev this"
+  external List<A>.plus(other: List<A>): List<A> = "List.append this other"
+  external List<A>.firstOrNone(): Option<A> = "List.nth_opt this 0"
+  external List<Int>.sum(): Int = "List.fold_left ( + ) 0 this"
+  external List<Float>.sum(): Float = "List.fold_left ( +. ) 0. this"
+
+  external List<A>.take(n: Int): List<A> = "List.take n this"
+  external List<A>.drop(n: Int): List<A> = "List.drop n this"
+  external List<A>.mapIndexed<B>(f: (Int, A) -> B): List<B> = "List.mapi f this"
+  external List<A>.sortedWith(comparison: (A, A) -> Int): List<A> = "List.stable_sort comparison this"
+  List<A>.lastOrNull(): Option<A> = this.reversed().firstOrNull()
+  List<A>.getOrNull(index: Int): Option<A> = if (index < 0) None else this.drop(index).firstOrNull()
+  List<A>.count(f: (A) -> Boolean): Int = this.filter(f).size
+  List<A>.withIndex(): List<(Int, A)> = this.mapIndexed((i, a) -> (i, a))
+
+  // Pairs of items in the same place, as long as the shorter list.
+  List<A>.zip<B>(other: List<B>): List<(A, B)> = when (this, other) {
+    ([a, *xs], [b, *ys]) -> [(a, b), *xs.zip(ys)]
+    else -> []
+  }
+
+  // Each item once, where it first appears.
+  List<A>.distinct(): List<A> = this.fold([], (seen, a) -> if (seen.contains(a)) seen else [a, *seen]).reversed()
+
+  // Smallest first, by OCaml's ordering of values: numbers, then strings, then fields in order.
+  List<A>.sorted(): List<A> = this.sortedWith(compareValues)
+  List<A>.sortedBy<K>(key: (A) -> K): List<A> = this.sortedWith((a, b) -> compareValues(key(a), key(b)))
+  List<A>.sortedDescending(): List<A> = this.sorted().reversed()
+
+  // Below 0 if a comes first, 0 if they're equal, above 0 if b does.
+  external compareValues<A>(a: A, b: A): Int = "compare a b"
+
+  // [(key, value), ...].lookup(key): the value of the first pair with that key.
+  external List<(K, V)>.lookup(key: K): Option<V> = "List.assoc_opt key this"
+}

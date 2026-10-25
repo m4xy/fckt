@@ -1,0 +1,3 @@
+// An annotation's annotations pass on to whatever it's used on, so @Console @Network annotation
+// type Io makes @Io mean both. A @Meta one describes the annotation itself instead, and stays put.
+annotation type Meta

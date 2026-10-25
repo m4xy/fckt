@@ -102,13 +102,14 @@ private fun rolesOf(text: String): Map<String, Role> {
     return roles
 }
 
-/** The standard library's names: the prelude's declarations, and its modules. */
+/** The standard library's names: what each of its files declares, a module or what's in it, or a type, spec or effect. */
 private val STANDARD_ROLES: Map<String, Role> by lazy {
     val roles = mutableMapOf<String, Role>()
-    standardLibrary("prelude")?.let { roles += rolesOf(it) }
     for (name in STANDARD_MODULES) {
-        roles[moduleName(File("$name.fk"))] = Role.OBJECT
-        standardLibrary(name)?.let { roles += rolesOf(it) }
+        val text = standardLibrary(name) ?: continue
+        val simple = name.substringAfterLast('/')
+        if (Regex("\\bmodule $simple\\b").containsMatchIn(text)) roles[simple] = Role.OBJECT
+        roles += rolesOf(text)
     }
     roles
 }

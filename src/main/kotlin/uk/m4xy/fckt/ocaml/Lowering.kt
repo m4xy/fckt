@@ -264,7 +264,7 @@ class Lowering(private val program: Program) {
         currentPath = path
         val types = decls.filter { isType(it) }
         val specs = decls.filterIsInstance<Decl.Spec>()
-        val modules = decls.filterIsInstance<Decl.Module>()
+        val modules = decls.filterIsInstance<Decl.Module>().filter { !isEmpty(it) }
         val groups = program.groups.filter { it.decls.first().path == path }
 
         // Graph nodes, in the order they'd be emitted given no constraints: types, specs, modules, functions.
@@ -280,8 +280,10 @@ class Lowering(private val program: Program) {
                     val followed = modulesIn(node).mapNotNull { program.moduleSpecs[it.name] }
                     // A module made by a functor comes after the functor and the modules it's given.
                     val made = program.applications[node.name]?.let { (functor, args) -> listOf(functor) + args }.orEmpty()
+                    // And after the modules whose types it uses.
+                    val types = typeNamesIn(node)
                     groups.filter { g -> g.decls.any { it in used } } +
-                        modules.filter { m -> m !== node && (used.any { insideOf(m, it.name) } || made.any { it == m.name || insideOf(m, it) }) } +
+                        modules.filter { m -> m !== node && (used.any { insideOf(m, it.name) } || made.any { it == m.name || insideOf(m, it) } || types.any { insideOf(m, it) }) } +
                         specs.filter { it in followed }
                 }
                 is Decl.Spec -> {
@@ -400,6 +402,45 @@ class Lowering(private val program: Program) {
     /** A type declaration to write out: an external type is OCaml's already. */
     private fun isType(d: Decl) = (d is Decl.Record && d.external == null) || d is Decl.Sealed || d is Decl.Alias
 
+    /** [modules], each after those whose functions or types it uses, as the signature must show them. */
+    private fun inDependencyOrder(modules: List<Decl.Module>): List<Decl.Module> {
+        fun insideOf(m: Decl.Module, name: String) = name.startsWith(m.name + ".")
+        val uses = modules.associateWith { node ->
+            val used = functionsIn(node).flatMap { program.uses[it].orEmpty() }.map { it.name } + typeNamesIn(node)
+            modules.filter { m -> m !== node && used.any { insideOf(m, it) } }
+        }
+        return uk.m4xy.fckt.types.stronglyConnected(modules) { uses.getValue(it) }.flatten()
+    }
+
+    /** The full names of the user types that what's in [m] uses: in its types, specs and functions' types. */
+    private fun typeNamesIn(m: Decl.Module): Set<String> {
+        val names = mutableSetOf<String>()
+        fun walk(t: Type) {
+            when (val p = t.prune()) {
+                is Type.Con -> {
+                    names += p.name
+                    p.args.forEach(::walk)
+                }
+                is Type.Fn -> {
+                    p.params.forEach(::walk)
+                    walk(p.result)
+                }
+                else -> {}
+            }
+        }
+        functionsIn(m).forEach { f -> program.functionTypes[f]?.let(::walk) }
+        for (inner in modulesIn(m)) for (d in inner.decls) {
+            if (isType(d)) names += typeRefsOf(d)
+            if (d is Decl.Spec) names += specTypeRefs(d)
+        }
+        return names
+    }
+
+    /** Whether package [m] has nothing in OCaml: only annotations, and effects without operations. */
+    private fun isEmpty(m: Decl.Module): Boolean = m.isPackage && m.decls.all {
+        (it is Decl.Record && it.isAnnotation) || (it is Decl.Module && isEmpty(it))
+    }
+
     private fun modulesIn(m: Decl.Module): List<Decl.Module> = listOf(m) + m.decls.filterIsInstance<Decl.Module>().flatMap { modulesIn(it) }
 
     private fun hasHidden(m: Decl.Module): Boolean = m.decls.any {
@@ -445,7 +486,7 @@ class Lowering(private val program: Program) {
                 sigValue(handleName(spec), "${handlerVars(spec)}${handlerType(spec)} -> (unit -> $ANSWER) -> $ANSWER")
             }
         }
-        for (inner in m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate }) {
+        for (inner in inDependencyOrder(m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate && !isEmpty(it) })) {
             sigModule(moduleName(inner.simpleName)) { signatureItems(inner) }
             currentPath = path
         }

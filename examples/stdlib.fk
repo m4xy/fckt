@@ -1,11 +1,12 @@
-// The standard library: Monad, Applicative and Validation are in the prelude, which needs no
-// import; Options, Results, Validated and Lists are modules of the package fckt, imported as any
-// other module is. Result is OCaml's result.
+// The standard library: Monad and Applicative are in fckt.lang, which every file imports; the
+// monads Options, Results, Validated and Lists are modules of fckt.monads, imported as any other
+// module is. Result is OCaml's result.
 
-import fckt.Lists
-import fckt.Options
-import fckt.Results
-import fckt.Validated
+import fckt.monads.Lists
+import fckt.monads.Options
+import fckt.monads.Results
+import fckt.monads.Validated
+import fckt.monads.Validation
 
 type User(name: String, age: Int)
 
@@ -20,7 +21,7 @@ checkName(name: String): Validation<String, String> = if (name == "") Invalid(["
 
 checkAge(age: Int): Validation<Int, String> = if (age < 0) Invalid(["age $age is negative"]) else Valid(age)
 
-// Monad is the prelude's, and Options the standard library's.
+// Monad is fckt.lang's, which every file imports, and Options is fckt.monads'.
 module MonadOps(M: Monad) {
   twice<A>(m: M.M<A>): M.M<(A, A)> = M {
     a by m

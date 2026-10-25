@@ -1,0 +1,7 @@
+// Values worked out the first time they're needed.
+module Lazies {
+  // lazy(~e): computes e the first time `.value` is read, then remembers it.
+  external lazy<A>(f: () -> A): Lazy<A> = "Lazy.from_fun f"
+  external Lazy<A>.value: A = "Lazy.force this"
+  external Lazy<A>.isInitialized(): Boolean = "Lazy.is_val this"
+}

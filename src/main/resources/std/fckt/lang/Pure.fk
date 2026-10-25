@@ -1,0 +1,2 @@
+// The effect nothing has: a module or function that may only be @Pure does nothing.
+effect Pure

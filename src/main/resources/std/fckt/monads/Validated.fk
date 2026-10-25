@@ -1,3 +1,5 @@
+import fckt.monads.Validation
+
 // Validation without bind: Validated { n by checkName(s); a by checkAge(i); User(n, a) } runs
 // every check, and keeps every error.
 module Validated {

@@ -1,0 +1,4 @@
+// On an annotation for specs: what a module following such a spec does beyond what the spec says
+// stays inside it. @Persistence @Encapsulates annotation type Repository makes every
+// @Repository's callers see @Persistence, whether it's Postgres or a list in memory underneath.
+@Meta annotation type Encapsulates

@@ -470,7 +470,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             },
             functionTypes = schemes.mapValues { it.value.type.zonk() },
             outsideTypes = outsideSchemes.filterKeys { it !in parameterMembers }.mapValues { it.value.type.zonk() },
-            uses = uses,
+            // Worked out again now each method call is to the one extension it resolved to.
+            uses = uses.keys.associateWith { refsOf(it) },
             typeNames = typeNames,
             aliases = aliases.values.toList(),
             specTypes = specSchemes.mapValues { (_, values) -> values.mapValues { it.value.type.zonk() } },
@@ -704,7 +705,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         // A handled effect's operations, which come with it, by the names they're called by.
         fun operationsOf(full: String): List<Pair<String, String>> {
             val spec = known[full] as? Decl.Spec ?: return emptyList()
-            if (spec.annotations.none { it.name == EFFECT }) return emptyList()
+            if (spec.annotations.none { it.name == EFFECT_NAME }) return emptyList()
             val prefix = full.substringBeforeLast('.', "").let { if (it.isEmpty()) "" else "$it." }
             return spec.values.map { it.name to "$prefix${it.name}" }
         }
@@ -728,12 +729,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     members(full).forEach { (name, target) -> implied.getOrPut(name) { linkedSetOf() } += target }
                     continue
                 }
+                // A method, by its name: its module brings in its extensions, as importing the module would.
+                val parent = i.path.dropLast(1).joinToString(".")
+                if (full !in known && full !in cases && decls.any { it is Decl.Function && it.extension && it.methodName == i.path.last() && it.name.substringBeforeLast('.', "") == parent }) continue
                 if (full !in known && full !in cases) throw CompileError(i.pos, "import $full names nothing")
                 named[i.name]?.takeIf { it != full }?.let { throw CompileError(i.pos, "'${i.name}' is imported already, as $it; import this one as another name, with as") }
                 named[i.name] = full
                 // A module brings its types, and their cases, with it.
                 if (known[full] is Decl.Module) types(full).forEach { (name, target) -> implied.getOrPut(name) { linkedSetOf() } += target }
                 operationsOf(full).forEach { (name, target) -> implied.getOrPut(name) { linkedSetOf() } += target }
+                // A type with cases brings them with it.
+                (known[full] as? Decl.Sealed)?.variants?.forEach { implied.getOrPut(it.name) { linkedSetOf() } += "$full.${it.name}" }
             }
             imported[file] = implied.filterValues { it.size == 1 }.mapValues { it.value.single() } + named
             ambiguousImports[file] = implied.filter { (name, targets) -> targets.size > 1 && name !in named }.mapValues { it.value.toList() }

@@ -1,0 +1,2 @@
+// A value, or every reason there isn't one: fckt.monads.Validated runs blocks of them.
+type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }

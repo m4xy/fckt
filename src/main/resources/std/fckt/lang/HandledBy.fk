@@ -1,0 +1,2 @@
+// On a handled effect: the module main handles it with, when nothing around it does.
+@Meta annotation type HandledBy(handler: Module)

@@ -1,0 +1,10 @@
+import fckt.values.Lazies.*
+
+// Reading streams.
+module Streams {
+  // The first n values, or all of them if there are fewer.
+  Stream<A>.take(n: Int): List<A> = when (this) {
+    End -> []
+    Next(a, rest) -> if (n <= 0) [] else if (n == 1) [a] else [a, *rest.value.take(n - 1)]
+  }
+}

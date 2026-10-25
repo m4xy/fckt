@@ -1,0 +1,8 @@
+// Functions every program has. Imported into every file.
+module Functions {
+  external identity<A>(x: A): A = "Fun.id x"
+
+  // Stops the program with message: for what can't happen. To stop with a reason a caller can
+  // handle, use fail.
+  external error<A>(message: String): A = "failwith message"
+}

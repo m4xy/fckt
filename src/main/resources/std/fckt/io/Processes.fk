@@ -1,0 +1,35 @@
+import fckt.io.Channels.*
+
+// Running other programs, through @Process.
+module Processes {
+  // Runs command with args, and body as it prints, a line at a time: so what it prints can be
+  // shown as it happens. Its errors come in with what it prints.
+  @Process streaming<A>(command: String, args: List<String>, body: @Reader () -> A): Exit<A> = {
+    output = when (tryStart(command, args)) {
+      Ok(started) -> started
+      Error(reason) -> fail(reason)
+    }
+    result = attempt { readingFrom(output, body) }
+    code = waitFor(output)
+    when (result) {
+      Ok(value) -> Exit(code, value)
+      Error(reason) -> fail(reason)
+    }
+  }
+
+  // Runs command with args to the end: its exit code, and everything it printed.
+  @Process run(command: String, args: List<String>): Exit<String> = streaming(command, args) { nextChars(-1) }
+
+  // The programs of the machine the program runs on, which main uses.
+  module Local : Process {
+    tryStart(command: String, args: List<String>) = open(command, args)
+    waitFor(output: InputHandle) = close(output)
+    env(name: String) = getenv(name)
+
+    private external open(command: String, args: List<String>): Result<InputHandle, String> =
+      "(fun c a -> try Ok (Unix.open_process_in (Filename.quote_command c a ^ \" 2>&1\")) with Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)) command args"
+    private external close(output: InputHandle): Int =
+      "(fun c -> match Unix.close_process_in c with Unix.WEXITED n -> n | Unix.WSIGNALED n | Unix.WSTOPPED n -> 128 + n) output"
+    private external getenv(name: String): Option<String> = "Sys.getenv_opt name"
+  }
+}

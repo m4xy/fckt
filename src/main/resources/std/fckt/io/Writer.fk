@@ -1,0 +1,4 @@
+// What a block writes to.
+effect Writer {
+  write(text: String): Unit
+}

@@ -1,5 +1,6 @@
 package uk.m4xy.fckt.intellij
 
+import uk.m4xy.fckt.DEFAULT_IMPORTS
 import uk.m4xy.fckt.STANDARD_FILES
 import uk.m4xy.fckt.STANDARD_MODULES
 import uk.m4xy.fckt.analyse
@@ -633,8 +634,8 @@ private class Resolutions(
 }
 
 /**
- * What's in reach of a file besides its own declarations: the prelude's, which need no module's
- * name; and modules, one for each of its directory's other files and the standard library's
+ * What's in reach of a file besides its own declarations: what every file imports, which needs no
+ * module's name; and modules, one for each of its directory's other files and the standard library's
  * modules, whose members are named through them.
  */
 private class Reach {
@@ -693,9 +694,14 @@ private class Reach {
                     val decls = reach.parse(text, f.path) ?: return@forEach
                     if (decls.none { it is Decl.Function && it.name == "main" }) reach.names(decls, f.path, reach.prelude)
                 }
-            reach.parse(standardSource("std/prelude.fk"), "std/prelude.fk")?.let { reach.names(it, "std/prelude.fk", reach.prelude) }
+            // What every file imports: everything in these modules and packages, and these declarations.
+            for (import in DEFAULT_IMPORTS) {
+                val path = import.removeSuffix(".*").replace('.', '/')
+                val files = STANDARD_MODULES.filter { it == path || (import.endsWith(".*") && it.substringBeforeLast('/') == path) }
+                for (name in files) reach.parse(standardSource("std/$name.fk"), "std/$name.fk")?.let { reach.names(it, "std/$name.fk", reach.prelude) }
+            }
             reach.parse(standardSource(BUILTINS), BUILTINS)?.let { reach.names(it, BUILTINS, reach.prelude) }
-            for (name in STANDARD_MODULES) reach.module(moduleName(File("$name.fk")), "std/$name.fk", standardSource("std/$name.fk"))
+            for (name in STANDARD_MODULES) reach.module(name.substringAfterLast('/'), "std/$name.fk", standardSource("std/$name.fk"))
             return reach
         }
     }

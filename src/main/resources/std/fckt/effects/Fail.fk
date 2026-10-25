@@ -1,0 +1,6 @@
+// Stops what it's in: fail("why") never returns, so it fits anywhere, as in
+// if (n < 0) fail("negative"). attempt { ... } turns it into a Result. Where main fails, the
+// program stops, with the reason on standard error and exit code 1.
+@HandledBy(Failure.Crash) effect Fail {
+  fail(reason: String): Nothing
+}

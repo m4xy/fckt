@@ -1,32 +1,10 @@
-// Result as a monad: Results { x by parse(s); y by check(x); y } stops at the first Error.
-// It works for any error type.
+// Methods on Result. Imported into every file; Result as a monad is fckt.monads.Results.
 module Results {
-  pure<A, E>(x: A): Result<A, E> = Ok(x)
-
-  bind<A, B, E>(m: Result<A, E>, f: (A) -> Result<B, E>): Result<B, E> = when (m) {
-    Ok(x) -> f(x)
-    Error(e) -> Error(e)
-  }
-
-  map<A, B, E>(m: Result<A, E>, f: (A) -> B): Result<B, E> = when (m) {
-    Ok(x) -> Ok(f(x))
-    Error(e) -> Error(e)
-  }
-
-  mapError<A, E, F>(m: Result<A, E>, f: (E) -> F): Result<A, F> = when (m) {
-    Ok(x) -> Ok(x)
-    Error(e) -> Error(f(e))
-  }
-
-  // The first error, if either has one.
-  product<A, B, E>(ma: Result<A, E>, mb: Result<B, E>): Result<(A, B), E> = when (ma, mb) {
-    (Ok(a), Ok(b)) -> Ok((a, b))
-    (Error(e), _) -> Error(e)
-    (_, Error(e)) -> Error(e)
-  }
-
-  toOption<A, E>(m: Result<A, E>): Option<A> = when (m) {
-    Ok(x) -> Some(x)
-    Error(_) -> None
-  }
+  external Result<A, E>.map<B>(f: (A) -> B): Result<B, E> = "Result.map f this"
+  external Result<A, E>.mapError<F>(f: (E) -> F): Result<A, F> = "Result.map_error f this"
+  external Result<A, E>.flatMap<B>(f: (A) -> Result<B, E>): Result<B, E> = "Result.bind this f"
+  external Result<A, E>.getOrElse(default: A): A = "Result.value this ~default"
+  external Result<A, E>.isOk(): Boolean = "Result.is_ok this"
+  external Result<A, E>.isError(): Boolean = "Result.is_error this"
+  external Result<A, E>.toOption(): Option<A> = "Result.to_option this"
 }

@@ -1,8 +1,14 @@
+import fckt.collections.Streams.*
+import fckt.effects.Generators.*
+import fckt.effects.Yielding
+import fckt.values.Lazies.*
+import fckt.values.Mutable
+
 // Handlers that choose whether to resume. A function answering an operation may take one more
 // parameter, resume: the rest of the handled block, waiting at the call. Calling it carries on
 // with the operation's result, and gives what the block gives; the handler can call it now,
-// later, or never. It can be called at most once. The prelude's Fail, Yielding and sequence are
-// made this way.
+// later, or never. It can be called at most once. The standard library's Fail, Yielding and
+// sequence are made this way.
 
 // Never resumed: fail gives Nothing, so no handler can resume it, and it fits anywhere, as a branch.
 @Fail entry(line: String): (String, String) = when (line.split('=')) {
@@ -14,7 +20,7 @@
 parse(lines: List<String>): Result<List<(String, String)>, String> =
   Fail(fail = (reason, resume) -> Error(reason)) { Ok(lines.map(entry)) }
 
-// The same, as the prelude has it.
+// The same, as the standard library has it.
 parseAll(lines: List<String>): Result<List<(String, String)>, String> = attempt { lines.map(entry) }
 
 // Resumed later: sequence's handler keeps the rest of the block in the stream, for when it's read.

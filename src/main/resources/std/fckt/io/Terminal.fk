@@ -1,0 +1,9 @@
+// The terminal the program runs in, which main handles @Console with: Terminal { greet() }.
+module Terminal : Console {
+  private external write(s: String): Unit = "print_string s"
+  private external writeLine(s: String): Unit = "print_endline s"
+  private external readTerminalLine(u: Unit): String = "read_line u"
+  print(s: String) = write(s)
+  println(s: String) = writeLine(s)
+  readLine() = readTerminalLine(Unit)
+}

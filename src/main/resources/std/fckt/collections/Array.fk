@@ -1,0 +1,3 @@
+// A fixed number of values, each of which can change: xs[i] = v. fckt.collections.Arrays makes and
+// reads them.
+external type Array<A> = "'a array"
