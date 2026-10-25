@@ -737,6 +737,19 @@ class CompilerTest {
               assertEquals([3, 1], xs.take(2))
               assertEquals([3, 1], xs.drop(3))
               assertEquals(["b", "a"], [Person("a", 30), Person("b", 20)].sortedBy(p -> p.age).map(p -> p.name))
+              assertEquals([[1, 2], [3, 4], [5]], [1, 2, 3, 4, 5].chunked(2))
+              assertEquals([(3, 1), (1, 2)], xs.take(3).zipWithNext())
+              assertEquals(([3, 2, 3], [1, 1]), xs.partition(x -> x > 1))
+              assertEquals([(3, [3, 3]), (1, [1, 1]), (2, [2])], xs.groupBy(x -> x))
+              assertEquals((Some(1), Some(3)), (xs.minOrNull(), xs.maxOrNull()))
+              assertEquals(Some("a"), [Person("a", 30), Person("b", 20)].maxByOrNull(p -> p.age).map(p -> p.name))
+              assertEquals([1, 2, 3], [[1], [], [2, 3]].flatten())
+              assertEquals(([3, 1], [3, 1, 2]), (xs.takeLast(2), xs.dropLast(2)))
+              assertEquals([1, 3], ["1", "x", "3"].mapNotNull(s -> s.toIntOrNone()))
+              assertEquals(([1, 2], ["a", "b"]), [(1, "a"), (2, "b")].unzip())
+              assertEquals(2, xs.indexOfFirst(x -> x == 2))
+              assertEquals(10, xs.sumOf(x -> x))
+              assert(xs.isNotEmpty() && xs.none(x -> x > 3) && xs.filterNot(x -> x == 3) == [1, 2, 1])
             }
         """.trimIndent()
         assertEquals("", run(source))
@@ -1234,6 +1247,14 @@ class CompilerTest {
               assertEquals('A', 'a'.uppercase())
               assert('9'.isDigit() && 'é'.isLetter() && ' '.isWhitespace() && 'A'.isUpperCase() && !'a'.isUpperCase() && 'a'.isLowerCase())
               assertEquals(["a", "b", "", "c"], "a,b,,c".split(","))
+              assertEquals("a+b+c", "a-b-c".replace("-", "+"))
+              assertEquals(("key", "value=x"), ("key=value=x".substringBefore("="), "key=value=x".substringAfter("=")))
+              assertEquals(["one", "two", ""], "one\r\ntwo\n".lines())
+              assertEquals("ababab", "ab".repeat(3))
+              assertEquals("😀 dlröw", s.drop(6).reversed())
+              assertEquals(("hi  ", "  hi"), ("  hi  ".trimStart(), "  hi  ".trimEnd()))
+              assertEquals(("007", "ab  "), ("7".padStart(3, '0'), "ab".padEnd(4)))
+              assert(s.isNotEmpty() && " ".isEmpty() == false && !" ".isNotBlank())
               assertEquals("x", when ('x') {
                 'a' -> "a"
                 'x' -> "x"
@@ -1460,6 +1481,13 @@ class CompilerTest {
             assertContains(errors(), "unknown function 'nothing'")
             File(test, "counts.fk").writeText(counts.replace("module Counting {", "private module Counting {"))
             assertContains(errors(), "a section is run from outside its file, so it can't be private")
+            // What a test or fixture does, something it runs in handles.
+            File(test, "counts.fk").writeText(counts.replace("@Fixtures(counting)\n", ""))
+            assertContains(errors(), "'once' does @Tally, which nothing it runs in handles: list a fixture that does, as @Fixtures(...)")
+            File(test, "counts.fk").writeText(counts.replace("@Fixtures(counting)\n", "@Fixtures(noisy)\n"))
+            assertContains(errors(), "'deep' does @Tally, which neither the runner nor its fixtures, noisy, handle: list a fixture that does, as @Fixtures(...)")
+            File(test, "counts.fk").writeText(counts.replace("@Console noisy", "@Tally noisy").replace("println(\"  (noisy)\")", "count()").replace("@Test plain()", "@Test @Fixtures(noisy) plain()"))
+            assertEquals("the fixture noisy does @Tally, which nothing it runs in handles: list a fixture that does before it", errors())
         } finally {
             dir.deleteRecursively()
         }

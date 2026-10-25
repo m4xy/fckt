@@ -128,7 +128,7 @@ take the place of what it imports.
 | `fckt.lang` | Imported into every file: the annotations the language gives meaning to (`Meta`, `Repeatable`, `Propagates`, `Encapsulates`, `HandledBy`, `Effect`), the effects it tracks (`Mutating`, `Pure`), `spec Monad`, which builds on `spec Applicative`, and `Functions` (`identity`, `error`). |
 | `fckt.io.Console`, `fckt.io.Terminal` | Imported into every file: the effect `Console` (`print`, `println`, `readLine`), and `Terminal`, the module `main` handles it with. |
 | `fckt.effects.Fail`, `fckt.effects.Failure` | Imported into every file: `fail(reason)`, `attempt { ... }`, and `Failure.Crash`, which stops `main` with the reason. |
-| `fckt.collections.Lists`, `fckt.text.Strings`, `fckt.math.Maths`, `fckt.Options`, `fckt.Results` | Imported into every file: the methods on lists, Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count` and more; on strings and characters, with `substring`, `indexOf`, `lastIndexOf`, `split`, `contains`, `take`, `drop`, `removePrefix`, `removeSuffix` and `substringAfterLast`, which take text (`split(",")`), and `toList()`, `code`, `toChar()`, `isDigit()`, `isLetter()` and `isWhitespace()`; `toByte()` and `toInt()` for bytes; numbers' `max`, `sqrt`, `sin` and conversions; and on `Option` and `Result`. |
+| `fckt.collections.Lists`, `fckt.text.Strings`, `fckt.math.Maths`, `fckt.Options`, `fckt.Results` | Imported into every file: the methods on lists, Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count`, `mapNotNull`, `flatten`, `partition`, `groupBy` (to a list of pairs), `chunked`, `minOrNull`, `maxByOrNull` and more; on strings and characters, with `substring`, `indexOf`, `lastIndexOf`, `split`, `replace`, `contains`, `take`, `drop`, `removePrefix`, `removeSuffix`, `substringBefore`, `substringAfterLast`, `padStart` and `lines`, which take text (`split(",")`), and `toList()`, `code`, `toChar()`, `isDigit()`, `isLetter()` and `isWhitespace()`; `toByte()` and `toInt()` for bytes; numbers' `max`, `sqrt`, `sin` and conversions; and on `Option` and `Result`. |
 | `fckt.effects.Yielding`, `fckt.effects.Generators` | `Yielding<A>`, and `sequence { ... }`, which makes a lazy `fckt.collections.Stream<A>`, read with `fckt.collections.Streams`' `take`. |
 | `fckt.collections.Array`, `fckt.collections.Arrays` | OCaml's arrays: `arrayOf(size, value)`, `xs[i]`, `xs[i] = v`. |
 | `fckt.values.Mutable`, `fckt.values.Lazies` | `Mutable<A>(var value: A)`; `lazy(~e)` and `.value`. |
@@ -216,7 +216,8 @@ Tests in a module are in its section, which the runner's `test` is told, outermo
 With `--fixtures uk.m4xy.fktests.api.Fixtures`, a test runs inside the functions that annotation
 lists, each given the rest to run, the first outermost: its sections', as the annotation
 `@Propagates`, then its own. A fixture takes what it runs, `inLedger<A>(test: @Ledger () -> A): A`,
-and can handle what the test does, so a test that does what nothing handles doesn't compile. The
+and can handle what the test does, so a test that does what nothing handles doesn't compile: the
+error is on the test, or on a fixture that does what none before it, nor the runner, handles. The
 names in the annotation mean what they mean where it's written, as the tests are checked before
 their main is made. fk-tests' kiln plugin does this for a project's tests.
 

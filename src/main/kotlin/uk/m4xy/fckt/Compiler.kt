@@ -19,6 +19,7 @@ import uk.m4xy.fckt.syntax.Meta
 import uk.m4xy.fckt.syntax.MetaRef
 import uk.m4xy.fckt.types.Checker
 import uk.m4xy.fckt.types.Program
+import uk.m4xy.fckt.types.Type
 import uk.m4xy.fckt.types.effectiveAnnotations
 import uk.m4xy.fckt.types.EFFECT_NAME
 import uk.m4xy.fckt.types.MUTATING_NAME
@@ -154,8 +155,10 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
 
     // What's marked, as the names mean once checked: with a main that names the tests, so their
     // files are brought in, as the main that runs them does, but runs nothing.
-    val program = check("main(args: List<String>) = {\n  named = () -> {\n${named.joinToString("") { "    $it()\n" }}  }\n  Unit\n}\n")
-    class Found(val sections: List<String>, val decl: Decl.Function, val fixtures: List<Decl.Function>)
+    // It names the runner's test too, for what the runner handles around a test.
+    val program = check("import $runner\n\nmain(args: List<String>) = {\n  named = () -> {\n${named.joinToString("") { "    $it()\n" }}  }\n  runs = $module.test\n  Unit\n}\n")
+    class Fixture(val pos: Pos, val decl: Decl.Function)
+    class Found(val sections: List<String>, val decl: Decl.Function, val fixtures: List<Fixture>)
     val found = linkedMapOf<String, MutableList<Found>>()
     fun walk(decls: List<Decl>, enclosing: List<Decl.Module>) {
         for (d in decls) when (d) {
@@ -171,7 +174,7 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
                             f.isPrivate -> errors += CompileError(m.pos, "${f.simpleName} runs a test from outside its file, so it can't be private")
                             f.extension || f.params?.size != 1 -> errors += CompileError(m.pos, "a fixture takes what it runs, as its one parameter: ${f.simpleName}<A>(test: () -> A): A")
                         }
-                        f
+                        Fixture(m.pos, f)
                     }
                 }
                 found.getOrPut(file.name) { mutableListOf() } += Found(enclosing.map { it.simpleName }, d, around)
@@ -181,19 +184,49 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
     }
     walk(program.root, emptyList())
     CompileErrors.throwIfAny(errors)
+    for (t in found.values.flatten()) errors += unhandled(program, "$runner.test", t.decl, t.fixtures.map { it.pos to it.decl })
+    CompileErrors.throwIfAny(errors)
     fun string(text: String) = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$") + "\""
     val out = StringBuilder("import $runner\n\nmain(args: List<String>) = $module.main(args, $module.plan([\n")
     for ((file, tests) in found.toSortedMap()) {
         out.append("  $module.suite(${string(file)}, [\n")
         for (t in tests.sortedBy { it.decl.pos.line }) {
             // Each fixture runs the rest: the first, the second, ..., the test.
-            val body = t.fixtures.foldRight("${t.decl.name}()") { f, inner -> "${f.name}(() -> $inner)" }
+            val body = t.fixtures.foldRight("${t.decl.name}()") { f, inner -> "${f.decl.name}(() -> $inner)" }
             out.append("    $module.test(${string(file)}, [${t.sections.joinToString(", ") { string(it) }}], ${string(t.decl.simpleName)}, ${t.decl.pos.line}, () -> $body),\n")
         }
         out.append("  ]),\n")
     }
     out.append("]))\n")
     return out.toString()
+}
+
+/**
+ * What [test] and its [fixtures] do that nothing around them handles: each fixture runs inside the
+ * runner's [runnerTest], which handles what its body may do, and the fixtures before it, which each
+ * handle what they give what they run; then the test runs inside them all. What has a default
+ * handler, as `@Console`, is handled anyway.
+ */
+private fun unhandled(program: Program, runnerTest: String, test: Decl.Function, fixtures: List<Pair<Pos, Decl.Function>>): List<CompileError> {
+    fun effects(t: Type?): Set<String> = (t as? Type.Fn)?.let { fn -> Type.row(fn.effects).first.map { it.name }.toSet() }.orEmpty()
+    fun type(f: Decl.Function) = program.functionTypes[f]?.prune() as? Type.Fn
+    // Only an effect with operations needs handling.
+    val needs = program.effects.filter { it.values.isNotEmpty() }.map { it.name }.toSet()
+    val runs = program.functionTypes.entries.firstOrNull { it.key.name == runnerTest }?.value?.prune() as? Type.Fn
+    var handled = program.mainHandlers.map { it.first.name }.toSet() + effects(runs?.params?.lastOrNull()?.prune())
+    fun shown(names: Set<String>) = names.sorted().joinToString(" ") { "@" + it.substringAfterLast('.') }
+    val errors = mutableListOf<CompileError>()
+    for ((pos, f) in fixtures) {
+        val missing = effects(type(f)) intersect needs - handled
+        if (missing.isNotEmpty()) errors += CompileError(pos, "the fixture ${f.simpleName} does ${shown(missing)}, which nothing it runs in handles: list a fixture that does before it")
+        handled = handled + effects(type(f)?.params?.firstOrNull()?.prune())
+    }
+    val missing = effects(type(test)) intersect needs - handled
+    if (missing.isNotEmpty()) {
+        val by = if (fixtures.isEmpty()) "nothing it runs in handles" else "neither the runner nor its fixtures, ${fixtures.joinToString(", ") { it.second.simpleName }}, handle"
+        errors += CompileError(test.pos, "'${test.simpleName}' does ${shown(missing)}, which $by: list a fixture that does, as @Fixtures(...)")
+    }
+    return errors
 }
 
 /** Whether [decls], or modules in them, have a function marked [marker]. */

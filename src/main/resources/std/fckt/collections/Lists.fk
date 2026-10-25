@@ -63,6 +63,56 @@ module Lists {
   // Below 0 if a comes first, 0 if they're equal, above 0 if b does.
   external compareValues<A>(a: A, b: A): Int = "compare a b"
 
+  List<A>.isNotEmpty(): Boolean = !this.isEmpty()
+  // Whether no item passes.
+  List<A>.none(f: (A) -> Boolean): Boolean = !this.any(f)
+  List<A>.filterNot(f: (A) -> Boolean): List<A> = this.filter(a -> !f(a))
+  // What f gives for each item, where it gives something.
+  List<A>.mapNotNull<B>(f: (A) -> Option<B>): List<B> = this.flatMap(a -> when (f(a)) {
+    Some(b) -> [b]
+    None -> []
+  })
+  List<List<A>>.flatten(): List<A> = this.flatMap(items -> items)
+  external List<A>.forEachIndexed(f: (Int, A) -> Unit): Unit = "List.iteri f this"
+  List<A>.sumOf(f: (A) -> Int): Int = this.map(f).sum()
+
+  // The last n items, or all of them if there are fewer; and all but those.
+  List<A>.takeLast(n: Int): List<A> = this.drop(this.size - n)
+  List<A>.dropLast(n: Int): List<A> = this.take(this.size - n)
+
+  // Where the first item that passes is, or -1 if none does.
+  List<A>.indexOfFirst(f: (A) -> Boolean): Int = when (this) {
+    [a, *rest] -> if (f(a)) 0 else {
+      i = rest.indexOfFirst(f)
+      if (i < 0) -1 else i + 1
+    }
+    [] -> -1
+  }
+
+  // The items that pass, and those that don't, each in order.
+  List<A>.partition(f: (A) -> Boolean): (List<A>, List<A>) = (this.filter(f), this.filterNot(f))
+
+  // The items in lists of size, the last maybe shorter.
+  List<A>.chunked(size: Int): List<List<A>> = if (this.isEmpty() || size <= 0) [] else [this.take(size), *this.drop(size).chunked(size)]
+
+  // Each item with the one after it.
+  List<A>.zipWithNext(): List<(A, A)> = this.zip(this.drop(1))
+
+  // The firsts of the pairs, and the seconds.
+  external List<(A, B)>.unzip(): (List<A>, List<B>) = "List.split this"
+
+  // The items by key, each key once, in the order keys first appear: [(key, items), ...].
+  List<A>.groupBy<K>(key: (A) -> K): List<(K, List<A>)> =
+    this.map(key).distinct().map(k -> (k, this.filter(a -> key(a) == k)))
+
+  // The smallest or largest item, or the one with the smallest or largest key, if there are any;
+  // the first, of those that tie.
+  List<A>.minOrNull(): Option<A> = this.sorted().firstOrNull()
+  List<A>.maxOrNull(): Option<A> = this.sortedWith((a, b) -> compareValues(b, a)).firstOrNull()
+  List<A>.minByOrNull<K>(key: (A) -> K): Option<A> = this.sortedBy(key).firstOrNull()
+  List<A>.maxByOrNull<K>(key: (A) -> K): Option<A> = this.sortedByDescending(key).firstOrNull()
+  List<A>.sortedByDescending<K>(key: (A) -> K): List<A> = this.sortedWith((a, b) -> compareValues(key(b), key(a)))
+
   // [(key, value), ...].lookup(key): the value of the first pair with that key.
   external List<(K, V)>.lookup(key: K): Option<V> = "List.assoc_opt key this"
 }

@@ -53,6 +53,32 @@ module Strings {
     i = this.lastIndexOf(delimiter)
     if (i < 0) this else this.drop(i + delimiter.length)
   }
+  // What's before or after the first delimiter, or all of it if there's none.
+  String.substringBefore(delimiter: String): String = {
+    i = this.indexOf(delimiter)
+    if (i < 0) this else this.take(i)
+  }
+  String.substringAfter(delimiter: String): String = {
+    i = this.indexOf(delimiter)
+    if (i < 0) this else this.drop(i + delimiter.length)
+  }
+
+  String.isNotEmpty(): Boolean = !this.isEmpty()
+  String.isNotBlank(): Boolean = !this.isBlank()
+  // It with each old replaced by new, from the start; an empty old replaces nothing.
+  String.replace(old: String, new: String): String = this.split(old).joinToString(new)
+  // Its lines, split at "\n" or "\r\n".
+  String.lines(): List<String> = this.split("\n").map(line -> line.removeSuffix("\r"))
+  // It n times over.
+  String.repeat(n: Int): String = if (n <= 0) "" else this + this.repeat(n - 1)
+  // Its characters backwards.
+  String.reversed(): String = this.toList().reversed().map(c -> c.toString()).joinToString("")
+  // Without the whitespace at its start, or its end.
+  String.trimStart(): String = this.drop(this.toList().takeWhile(c -> c.isWhitespace()).size)
+  String.trimEnd(): String = this.dropLast(this.toList().reversed().takeWhile(c -> c.isWhitespace()).size)
+  // It at least length characters long, with padding before it, or after it.
+  String.padStart(length: Int, padding: Char = ' '): String = padding.toString().repeat(length - this.length) + this
+  String.padEnd(length: Int, padding: Char = ' '): String = this + padding.toString().repeat(length - this.length)
 
   // The character's code point: 'a'.code is 97.
   external Char.code: Int = "Fun.id this"
