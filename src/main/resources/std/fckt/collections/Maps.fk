@@ -73,10 +73,56 @@ module Maps {
       }
     }
   }
-  // It with each of other's entries put in.
-  Map<K, V>.putAll(other: Map<K, V>): Map<K, V> = other.entries.fold(this) { m, entry ->
-    (k, v) = entry
-    m.put(k, v)
+  // It with each of other's entries put in, in place of its own for the same key. Whichever root
+  // goes above stays the root, and the other map is split around its key: so it's in the time of
+  // the smaller map's size, times the log of the larger's.
+  Map<K, V>.putAll(other: Map<K, V>): Map<K, V> = when (this, other) {
+    (MapTip, _) -> other
+    (_, MapTip) -> this
+    (MapNode(l, k, v, r, _, p), MapNode(ol, ok, ov, orr, _, op)) ->
+      if (above(p, k, op, ok)) {
+        (below, found, beyond) = other.split(k)
+        node(l.putAll(below), k, found.getOrElse(v), r.putAll(beyond))
+      } else {
+        (below, _, beyond) = this.split(ok)
+        node(below.putAll(ol), ok, ov, beyond.putAll(orr))
+      }
+  }
+  // Its entries whose keys other has, or doesn't, whatever other's values are.
+  Map<K, V>.intersectKeys<W>(other: Map<K, W>): Map<K, V> = when (this, other) {
+    (MapTip, _) -> MapTip
+    (_, MapTip) -> MapTip
+    (MapNode(l, k, v, r, _, _), _) -> {
+      (below, found, beyond) = other.split(k)
+      left = l.intersectKeys(below)
+      right = r.intersectKeys(beyond)
+      if (found.isSome()) node(left, k, v, right) else joined(left, right)
+    }
+  }
+  Map<K, V>.subtractKeys<W>(other: Map<K, W>): Map<K, V> = when (this, other) {
+    (MapTip, _) -> MapTip
+    (_, MapTip) -> this
+    (_, MapNode(ol, ok, _, orr, _, _)) -> {
+      (below, _, beyond) = this.split(ok)
+      joined(below.subtractKeys(ol), beyond.subtractKeys(orr))
+    }
+  }
+
+  // The entries below key, its value if it has one, and the entries above it.
+  private Map<K, V>.split(key: K): (Map<K, V>, Option<V>, Map<K, V>) = when (this) {
+    MapTip -> (MapTip, None, MapTip)
+    MapNode(l, k, v, r, _, _) -> {
+      c = compareValues(key, k)
+      if (c == 0) {
+        (l, Some(v), r)
+      } else if (c < 0) {
+        (below, found, beyond) = l.split(key)
+        (below, found, node(beyond, k, v, r))
+      } else {
+        (below, found, beyond) = r.split(key)
+        (node(l, k, v, below), found, beyond)
+      }
+    }
   }
   // It without key, and its value.
   Map<K, V>.remove(key: K): Map<K, V> = when (this) {
@@ -106,12 +152,38 @@ module Maps {
     MapNode(l, k, v, r, _, _) -> l.foldRight(f(k, v, r.foldRight(initial, f)), f)
   }
 
-  // Of its entries, in the keys' order.
-  Map<K, V>.forEach(f: (K, V) -> Unit): Unit = this.entries.forEach { k, v -> f(k, v) }
-  Map<K, V>.any(f: (K, V) -> Boolean): Boolean = this.entries.any { k, v -> f(k, v) }
+  // Of its entries, in the keys' order, through the tree: any stops at the first that passes.
+  Map<K, V>.forEach(f: (K, V) -> Unit): Unit = when (this) {
+    MapTip -> Unit
+    MapNode(l, k, v, r, _, _) -> {
+      l.forEach(f)
+      f(k, v)
+      r.forEach(f)
+    }
+  }
+  Map<K, V>.any(f: (K, V) -> Boolean): Boolean = when (this) {
+    MapTip -> false
+    MapNode(l, k, v, r, _, _) -> l.any(f) || f(k, v) || r.any(f)
+  }
   Map<K, V>.all(f: (K, V) -> Boolean): Boolean = !this.any { k, v -> !f(k, v) }
-  Map<K, V>.count(f: (K, V) -> Boolean): Int = this.filter(f).size
-  Map<K, V>.filter(f: (K, V) -> Boolean): Map<K, V> = this.entries.filter { k, v -> f(k, v) }.toMap()
+  Map<K, V>.count(f: (K, V) -> Boolean): Int = when (this) {
+    MapTip -> 0
+    MapNode(l, k, v, r, _, _) -> {
+      before = l.count(f)
+      here = if (f(k, v)) 1 else 0
+      before + here + r.count(f)
+    }
+  }
+  // The entries that pass: those kept keep their places, and where one isn't, its sides are joined.
+  Map<K, V>.filter(f: (K, V) -> Boolean): Map<K, V> = when (this) {
+    MapTip -> MapTip
+    MapNode(l, k, v, r, _, _) -> {
+      left = l.filter(f)
+      keep = f(k, v)
+      right = r.filter(f)
+      if (keep) node(left, k, v, right) else joined(left, right)
+    }
+  }
   Map<K, V>.filterKeys(f: (K) -> Boolean): Map<K, V> = this.filter { k, _ -> f(k) }
   Map<K, V>.filterValues(f: (V) -> Boolean): Map<K, V> = this.filter { _, v -> f(v) }
   // Each value made into another, for the same key.

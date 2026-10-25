@@ -5,9 +5,9 @@ import java.io.File
 import java.security.MessageDigest
 import kotlin.system.exitProcess
 
-private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [-L <interface>]... [--separate] [--import <name>]... [-o <file.ml>]
-       fckt --library <interface> -o <file.ml> [-I <dir>]... [-L <interface>]... <package>...
-       fckt --test <dir> --marker <annotation> --runner <module> [--fixtures <annotation>] [--runner-tests] [-I <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
+private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [--import <name>]... [-o <file.ml>]
+       fckt --library <interface> -o <file.ml> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... <package>...
+       fckt --test <dir> --marker <annotation> --runner <module> [--fixtures <annotation>] [--runner-tests] [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
        fckt --standard -o <file.ml>
        fckt --version
 
@@ -15,7 +15,8 @@ Transpiles a fckt program to OCaml. A folder is a package, under the program's d
 given with -I; a capitalised file is a module, Ratios.fk declaring module Ratios, and a lower-case
 one holds its package's declarations. A file uses its package's by name, and others' by importing
 them: import geometry.Shapes. --import imports into each of the program's files, as if they said
-so: --import kiln.* for a build script. Without -o, writes next to the input with a .ml
+so: --import kiln.* for a build script. --other-project gives a folder as -I does, of another
+project's packages, whose internal declarations the program's own files don't see. Without -o, writes next to the input with a .ml
 extension; with -o -, writes to standard output.
 
 The OCaml has what the program uses of the standard library in it, unless it's compiled
@@ -42,6 +43,7 @@ fun main(args: Array<String>) {
     var runnerTests = false
     var fixtures: String? = null
     val dirs = mutableListOf<File>()
+    val others = mutableListOf<File>()
     val libraries = mutableListOf<File>()
     val imports = mutableListOf<String>()
     val packages = mutableListOf<String>()
@@ -58,6 +60,7 @@ fun main(args: Array<String>) {
             }
             "-o" -> output = args.getOrNull(i++) ?: usage()
             "-I" -> dirs += File(args.getOrNull(i++) ?: usage())
+            "--other-project" -> others += File(args.getOrNull(i++) ?: usage())
             "-L" -> libraries += File(args.getOrNull(i++) ?: usage())
             "--import" -> imports += args.getOrNull(i++) ?: usage()
             "--library" -> library = args.getOrNull(i++) ?: usage()
@@ -89,11 +92,11 @@ fun main(args: Array<String>) {
                 System.err.println("fckt: no such folder: $test")
                 exitProcess(2)
             }
-            write(output ?: File(dir, "tests.ml").path, dir.path) { compileTests(dir.absoluteFile, marker ?: usage(), runner ?: usage(), dirs, libraries, imports, separate, runnerTests, fixtures) }
+            write(output ?: File(dir, "tests.ml").path, dir.path) { compileTests(dir.absoluteFile, marker ?: usage(), runner ?: usage(), dirs, libraries, imports, separate, runnerTests, fixtures, others) }
         }
         library != null -> {
             val target = output ?: usage()
-            write(target, "the library") { compileLibrary(packages, dirs, libraries, unitName(File(target)), File(library)) }
+            write(target, "the library") { compileLibrary(packages, dirs, libraries, unitName(File(target)), File(library), others) }
         }
         else -> {
             val source = File(input ?: usage())
@@ -104,7 +107,7 @@ fun main(args: Array<String>) {
             val roots = listOf(source.absoluteFile.parentFile) + dirs
             val target = output ?: (source.path.removeSuffix(".fk") + ".ml")
             val ocaml = write(target, source.path) {
-                if (separate || libraries.isNotEmpty()) compileSeparately(source, roots, libraries, imports) else compile(source, roots, imports)
+                if (separate || libraries.isNotEmpty()) compileSeparately(source, roots, libraries, imports, others) else compile(source, roots, imports, others)
             }
             val needed = ocamlLibraries(ocaml)
             if (needed.isNotEmpty() && target != "-" && !separate && libraries.isEmpty()) {

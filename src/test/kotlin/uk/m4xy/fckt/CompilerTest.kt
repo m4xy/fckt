@@ -862,7 +862,19 @@ class CompilerTest {
               assertEquals([10, 20, 30], s.map { it * 10 })
               assertEquals(setOf([2]), s.filter { it % 2 == 0 })
               assertEquals([1, 2, 3], [2, 1, 2, 3].toSet().toList())
+              assertEquals([3, 1, 2], [3, 1, 3, 2, 1].distinct())
+              // Through the trees, as an item at a time would: equal, so the same shape, too.
+              a = setOf(upTo(300).map { it * 7 % 300 })
+              b = setOf(upTo(200).map { it * 3 })
+              assertEquals(setOf(a.toList().filter { b.contains(it) }), a.intersect(b))
+              assertEquals(setOf(a.toList().filter { !b.contains(it) }), a.subtract(b))
+              assertEquals(setOf(a.toList() + b.toList()), a.union(b))
+              assertEquals(setOf(b.toList() + a.toList()), b.union(a))
+              assertEquals(100, a.count { it % 3 == 0 })
+              assertEquals(setOf(upTo(100).map { it * 3 }), a.filter { it % 3 == 0 })
+              assertEquals(mapOf([(1, "a"), (2, "c"), (3, "d")]), mapOf([(1, "a"), (2, "b")]).putAll(mapOf([(2, "c"), (3, "d")])))
             }
+            upTo(n: Int): List<Int> = if (n <= 0) [] else upTo(n - 1) + [n - 1]
         """.trimIndent()
         assertEquals("", run(source))
     }
@@ -1918,6 +1930,45 @@ class CompilerTest {
     }
 
     @Test
+    fun `a standard library file open in an editor is checked as part of the standard library`() {
+        val maps = File("src/main/resources/std/fckt/collections/Maps.fk")
+        // Not as a program beside the standard library's own copy of it, whose methods it'd clash with.
+        compile(maps.readText(), maps, listOf(maps.parentFile))
+        val broken = maps.readText().replace("Map<K, V>.isEmpty(): Boolean = this.size == 0", "Map<K, V>.isEmpty(): Boolean = this.size == \"0\"")
+        val error = assertFailsWith<CompileError> { compile(broken, maps, listOf(maps.parentFile)) }
+        // Its errors are the file's own, as the editor has it.
+        assertEquals(null, error.pos?.file)
+        assertContains(error.message!!, "expected Int but found String")
+    }
+
+    @Test
+    fun `what's internal is seen only in its project, not another's compiled with it`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-internal").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent() + "\n")
+        try {
+            write("shop/src/shop/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = Rounding.whole(items.sum())\n  internal tax(n: Int): Int = n / 5\n}")
+            write("shop/src/shop/Rounding.fk", "internal module Rounding {\n  whole(n: Int): Int = n\n}")
+            write("shop/src/main.fk", "import shop.*\nmain() = println(Prices.tax(Rounding.whole(10)).toString())")
+            val shop = File(dir, "shop/src")
+            // In its own project, it's as any other declaration.
+            compile(File(shop, "main.fk"), listOf(shop))
+            // As in the project's tests, a root of its own, given as the program's.
+            write("shop/test/checks.fk", "import shop.*\nmain() = println(Rounding.whole(Prices.tax(10)).toString())")
+            compile(File(dir, "shop/test/checks.fk"), listOf(File(dir, "shop/test"), shop))
+            // In another, built with the shop's sources as another project's, it's not there to use.
+            write("till/src/main.fk", "import shop.*\nmain() = println(Prices.tax(10).toString())")
+            write("till/src/whole.fk", "import shop.*\nmain() = println(Rounding.whole(10).toString())")
+            val till = File(dir, "till/src")
+            val tax = assertFailsWith<CompileError> { compile(File(till, "main.fk"), listOf(till), others = listOf(shop)) }
+            assertContains(tax.message!!, "'tax' is internal to its project")
+            val whole = assertFailsWith<CompileError> { compile(File(till, "whole.fk"), listOf(till), others = listOf(shop)) }
+            assertContains(whole.message!!, "'Rounding' is internal to its project")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a library is compiled once, and programs are checked against its interface`() {
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val dir = kotlin.io.path.createTempDirectory("fckt-libraries").toFile()
@@ -1948,9 +1999,11 @@ class CompilerTest {
                   twice<A>(f: (A) -> A, x: A): A = f(f(x))
                   @Console report(m: Money, label: String = "total"): Unit = println("${'$'}label: ${'$'}{m.pounds()} (${'$'}m)")
                   private pad(n: Int): String = if (n < 10) "0${'$'}n" else "${'$'}n"
+                  internal pence(m: Money): Int = Rounding.whole(m.pence)
                 }
                 """,
             )
+            write("units/uk/m4xy/units/Rounding.fk", "internal module Rounding {\n  whole(n: Int): Int = n\n}")
             val units = File(dir, "lib/units").apply { mkdirs() }
             File(units, "uk_m4xy_units.ml").writeText(compileLibrary(listOf("uk.m4xy.units"), listOf(File(dir, "units")), emptyList(), "Uk_m4xy_units", File(units, "interface")))
             ocamlc(File(units, "uk_m4xy_units.ml"), std)
@@ -1959,6 +2012,9 @@ class CompilerTest {
             assertContains(moneys, "  sum(items: List<Money>, start: Money = compiled): Money\n")
             assertContains(moneys, "  @Console report(m: Money, label: String = compiled): Unit\n")
             assertFalse("pad" in moneys)
+            // Nor what's internal: no other project sees it.
+            assertFalse("pence(" in moneys)
+            assertFalse(File(units, "interface/uk/m4xy/units/Rounding.fki").exists())
             assertContains(File(units, "interface/uk/m4xy/units/Tagged.fki").readText(), "annotation type Tagged(vararg tags: String)")
             assertContains(File(units, "interface/uk/m4xy/units/Measure.fki").readText(), "  doubled(m: T): Int = amount(m) * 2\n}")
             assertContains(File(units, "interface/uk/m4xy/units/Boxes.fki").readText(), "module Boxes<E> {\n  type M<A> = Result<A, E>\n  ok<A>(x: A): Result<A, E>\n}")

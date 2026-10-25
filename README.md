@@ -39,6 +39,7 @@ tour of the core language, translated section by section.
 | `List<A>.second(): Option<A> = ...` | `let list_second (this : 'a list) : 'a option = ...` | An extension function, called as `xs.second()`. It's chosen by the receiver's type, which must be known, so `List<Int>.sum()` and `List<Float>.sum()` can both exist; the most specific one that fits wins. Inside, the receiver is `this`. Bare names in the receiver that are a capital letter, maybe with digits, like `A` or `T1`, are its type parameters; any other name is a type, from this file or another. Without parentheses, `String.size: Int = ...`, it's a property: `s.size`. See `examples/extensions.fk`. |
 | `external List<A>.map<B>(f: (A) -> B): List<B> = "List.map f this"` | `List.map f xs` at each call | A function whose body is OCaml: a function applied to the parameters, by name, with `~name` for a labelled argument. It's written out at each use, so it has no OCaml definition of its own, and the compiler trusts its declared types, as OCaml trusts its own `external`. |
 | `private gcd(...)` | left out of the module's `sig` | Visible only inside its module. A public member can't expose a private type. |
+| `internal tax(...)`, `internal module Rounding` | in the `sig`, but not the library's interface | Visible only in its project: the program's own folders, `-I`, and not another project's compiled with it, `--other-project`, nor a library's, whose `.fki` leaves it out, as does a file with nothing else. Like Kotlin's `internal`; a project's tests are in it. |
 | `type Ratio private(n: Int, d: Int)` | `type ratio = private { ... }` in the `sig` | Like Kotlin's `private constructor`: readable and matchable anywhere, but only its module can build or `copy` one. |
 | `spec Counter { type T; inc(c: T): T }` | `module type Counter = sig type t val inc : t -> t ... end` | What a module must define. Each of its types gets a show function, so values of it work in string templates. Members are one per line. |
 | `spec Monad : Applicative { ... map(...): M<B> = bind(m, ...) }` | `module type Monad = sig type 'a m ... val map ... end` | A spec can build on others, and has what they list too; a module that follows it can be given where any of them is wanted. A spec's function can have a default, its body, which a module that follows the spec and doesn't define it has: `Monad`'s `map` and `product` are from `bind` and `pure`, so a monad defines just those, and may still write its own. A library's interface has its specs' defaults, as written. |
@@ -185,12 +186,14 @@ ocamlopt -I +unix unix.cmxa fckt_std.cmx uk_m4xy_units.cmx main.ml -o main
 ```
 
 `--library <folder>` compiles the packages named to the OCaml module `-o` names, and writes the
-library's interface to the folder: each file's public declarations without their code, as
+library's interface to the folder: each file's public declarations, not its private or internal ones, without their code, as
 `.fki` files, `sum(items: List<Money>, start: Money = compiled): Money`. Its public functions and
 values say their types, so a program's types never depend on code that isn't there. `-L <folder>`
 uses a library through its interface, and `--separate`, which `-L` implies, uses the standard
 library compiled on its own, rather than putting what's used of it in the program; the program and
 its libraries then share one standard library, as handling a library's effects needs.
+`--other-project <dir>` gives a folder of packages as `-I` does, but as another project's, compiled
+with the program from source, whose internal declarations it doesn't see.
 `fckt --version` says which fckt it is, down to its build, as OCaml compiled by one fckt can't be
 linked with another's. [kiln](https://github.com/m4xy/kiln) does all of this for a project.
 

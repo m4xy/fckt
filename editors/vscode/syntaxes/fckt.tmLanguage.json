@@ -565,6 +565,10 @@
         },
         {
           "name": "storage.modifier.fckt",
+          "match": "^\\s*internal(?=\\s+[A-Za-z@])"
+        },
+        {
+          "name": "storage.modifier.fckt",
           "match": "\\bannotation(?=\\s+type\\b)"
         }
       ]

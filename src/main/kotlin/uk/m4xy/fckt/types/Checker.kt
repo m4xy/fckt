@@ -106,6 +106,8 @@ private class Scope(val parent: Scope?) {
  * error, for tools that want to know what names refer to while it's being written.
  */
 class Checker(file: SourceFile, private val coverage: Boolean = true) {
+    private val projectOf = file.projectOf
+
     private val u = Unifier()
 
     /** Functors called in expressions, each by the module the call makes. */
@@ -679,6 +681,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** Why [d] can't be seen from the current module, or null if it can. */
     private fun whyHidden(d: Decl): String? {
+        if (d.isInternal && projectOf(d.pos.file) != projectOf(currentFile)) return "'${d.simpleName}' is internal to its project, ${projectOf(d.pos.file)}"
         if (d.isPrivate && !inside(d.path)) return "'${d.simpleName}' is private to ${d.path.joinToString(".").ifEmpty { "this file" }}"
         // Private in a package, out of any module: private to its file, as in Kotlin.
         if (d.isPrivate && d !is Decl.Module && inPackage(d) && d.pos.file != currentFile) return "'${d.simpleName}' is private to ${d.pos.file ?: "the program's file"}"

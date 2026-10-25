@@ -29,7 +29,7 @@ enum class Role {
     LOCAL_VARIABLE, // bound in a block: x = ..., x by ..., (a, b) = ...
     PROPERTY,       // a field: r.n, or where a record declares it
     NAMED_ARGUMENT,
-    KEYWORD,        // spec, external, opaque, annotation and by, where they're keywords
+    KEYWORD,        // spec, external, opaque, internal, annotation and by, where they're keywords
     ANNOTATION,     // @Name, and annotation type Name
 }
 
@@ -477,9 +477,12 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
             name == "import" && next?.kind == TokKind.IDENT && (prev == null || !sameLine(prev, t)) -> Role.KEYWORD
             name == "as" && next?.kind == TokKind.IDENT && importLine(t) -> Role.KEYWORD
             (name == "opaque" || name == "annotation") && word(next) == "type" -> Role.KEYWORD
+            // `internal` before what it declares, at a line's start: a function may still be called internal.
+            name == "internal" && next != null && sameLine(t, next) && (prev == null || !sameLine(prev, t)) &&
+                next.kind !in setOf(TokKind.LPAREN, TokKind.COLON, TokKind.ASSIGN, TokKind.DOT, TokKind.OPERATOR) -> Role.KEYWORD
             (name == "var" || name == "vararg") && next?.kind == TokKind.IDENT && sameLine(t, next) -> Role.KEYWORD
             name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN || word(next) == "type") &&
-                (prev == null || !sameLine(prev, t) || word(prev) == "private") -> Role.KEYWORD
+                (prev == null || !sameLine(prev, t) || word(prev) == "private" || word(prev) == "internal") -> Role.KEYWORD
             name == "by" && prev != null && sameLine(prev, t) && (prev.kind == TokKind.IDENT || prev.kind == TokKind.RPAREN) &&
                 next != null && sameLine(t, next) && next.kind !in setOf(TokKind.ASSIGN, TokKind.DOT, TokKind.COMMA, TokKind.RPAREN, TokKind.LPAREN, TokKind.COLON) -> Role.KEYWORD
             name == "_" -> null

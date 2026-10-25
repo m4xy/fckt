@@ -81,6 +81,12 @@ sealed interface Decl {
     /** `private`: visible only inside the module that declares it. */
     val isPrivate: Boolean
 
+    /**
+     * `internal`: visible only in its project, the source root its file is in, and left out of a
+     * library's interface, so other projects never see it.
+     */
+    val isInternal: Boolean
+
     /** `opaque type`: outside its module, a type that can be named but not built or looked into. */
     val isOpaque: Boolean get() = false
 
@@ -105,6 +111,7 @@ sealed interface Decl {
         val typeParams: List<String>,
         val fields: List<FieldDef>,
         override val isPrivate: Boolean = false,
+        override val isInternal: Boolean = false,
         val privateConstructor: Boolean = false,
         override val isOpaque: Boolean = false,
         override val annotations: List<Annotation> = emptyList(),
@@ -125,6 +132,7 @@ sealed interface Decl {
         val caseRefs: List<CaseRefDef> = emptyList(),
         val includes: List<TypeRef.Named> = emptyList(),
         override val isPrivate: Boolean = false,
+        override val isInternal: Boolean = false,
         override val isOpaque: Boolean = false,
         override val annotations: List<Annotation> = emptyList(),
     ) : Decl
@@ -136,6 +144,7 @@ sealed interface Decl {
         val typeParams: List<String>,
         val target: TypeRef,
         override val isPrivate: Boolean = false,
+        override val isInternal: Boolean = false,
         override val isOpaque: Boolean = false,
         override val annotations: List<Annotation> = emptyList(),
     ) : Decl
@@ -157,6 +166,7 @@ sealed interface Decl {
         val returnType: TypeRef?,
         val body: Expr,
         override val isPrivate: Boolean = false,
+        override val isInternal: Boolean = false,
         val extension: Boolean = false,
         val property: Boolean = false,
         val external: String? = null,
@@ -179,6 +189,7 @@ sealed interface Decl {
         override val name: String,
         val decls: List<Decl>,
         override val isPrivate: Boolean = false,
+        override val isInternal: Boolean = false,
         val spec: TypeRef.Named? = null,
         val params: List<ModuleParam> = emptyList(),
         val application: Application? = null,
@@ -208,6 +219,7 @@ sealed interface Decl {
         val types: List<SpecType>,
         val values: List<SpecValue>,
         override val isPrivate: Boolean = false,
+        override val isInternal: Boolean = false,
         override val annotations: List<Annotation> = emptyList(),
         val typeParams: List<String> = emptyList(),
         /** `effect OrdersDb = Database`: a separate effect with the same operations, which linking fills in. */
@@ -262,7 +274,12 @@ data class CaseRefDef(val pos: Pos, val owner: String, val case: String)
  * A program's declarations, with each file's imports, by its path: null for the program's own
  * file. A file's [Import]s name what it uses from other packages.
  */
-data class SourceFile(val decls: List<Decl>, val imports: Map<String?, List<Import>> = emptyMap())
+data class SourceFile(
+    val decls: List<Decl>,
+    val imports: Map<String?, List<Import>> = emptyMap(),
+    /** The project a file is in, by its path, null for the program's own: internal declarations are seen only in theirs. */
+    val projectOf: (String?) -> String = { "program" },
+)
 
 /**
  * `import geometry.Shapes`, `import geometry.Shapes.area as size`, or `import geometry.*`

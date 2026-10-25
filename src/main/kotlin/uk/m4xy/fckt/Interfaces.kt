@@ -20,7 +20,7 @@ import uk.m4xy.fckt.types.EFFECT_NAME
  * A library's interface: what each of its files declares for others to use, as fckt without the
  * code, `greet(name: String): Unit`, which a program that uses the library is checked against. Its
  * public functions and values say their types, so nothing has to be inferred from code that isn't
- * there.
+ * there. What's private or internal isn't in it: no other project sees it.
  */
 internal object Interfaces {
     /**
@@ -38,7 +38,7 @@ internal object Interfaces {
             i.alias?.let { out.append(" as ").append(it) }
             out.append('\n')
         }
-        for (d in file.decls.filter { !it.isPrivate }) {
+        for (d in file.decls.filter { !it.isPrivate && !it.isInternal }) {
             out.append('\n')
             decl(d, "", out)
         }
@@ -68,7 +68,7 @@ internal object Interfaces {
     fun untyped(file: SourceFile): List<CompileError> {
         val errors = mutableListOf<CompileError>()
         fun walk(ds: List<Decl>) {
-            for (d in ds.filter { !it.isPrivate }) when (d) {
+            for (d in ds.filter { !it.isPrivate && !it.isInternal }) when (d) {
                 is Decl.Module -> walk(d.decls)
                 is Decl.Function -> {
                     val untyped = d.params.orEmpty().filter { it.type == null }.map { it.name }
@@ -147,7 +147,7 @@ internal object Interfaces {
                 if (d.params.isNotEmpty()) out.append(d.params.joinToString(", ", "(", ")") { p -> "${p.name}: ${type(p.spec)}" + (p.default?.let { " = " + type(it) } ?: "") })
                 d.spec?.let { out.append(" : ").append(type(it)) }
                 out.append(" {\n")
-                for (inner in d.decls.filter { !it.isPrivate }) decl(inner, "$indent  ", out)
+                for (inner in d.decls.filter { !it.isPrivate && !it.isInternal }) decl(inner, "$indent  ", out)
                 out.append("$indent}")
             }
             // A copy of an effect; any other spec is as written, above.

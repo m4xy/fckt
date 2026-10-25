@@ -2,6 +2,7 @@ package uk.m4xy.fckt.intellij
 
 import uk.m4xy.fckt.standardLibrary
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 
 class SemanticsTest {
@@ -236,6 +237,14 @@ class SemanticsTest {
             """.trimIndent(),
             marked(source),
         )
+    }
+
+    @Test
+    fun `internal is a keyword before what it declares`() {
+        val marked = marked("internal module Rounding { whole(n: Int): Int = n }\ninternal external half(n: Int): Int = \"n / 2\"\ninternal(x: Int) = x")
+        assertContains(marked, "[KEYWORD:internal] module")
+        assertContains(marked, "[KEYWORD:internal] [KEYWORD:external]")
+        assertContains(marked, "[FUNCTION_DECLARATION:internal]([PARAMETER:x]")
     }
 
     @Test

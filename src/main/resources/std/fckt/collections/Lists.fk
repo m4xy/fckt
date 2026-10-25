@@ -52,8 +52,6 @@ module Lists {
     else -> []
   }
 
-  // Each item once, where it first appears.
-  List<A>.distinct(): List<A> = this.fold([]) { seen, a -> if (seen.contains(a)) seen else [a, *seen] }.reversed()
 
   // Smallest first, by OCaml's ordering of values: numbers, then strings, then fields in order.
   List<A>.sorted(): List<A> = this.sortedWith(compareValues)

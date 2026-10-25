@@ -142,7 +142,21 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 else -> throw IllegalStateException("opaque applies to a type")
             }
         }
+        // `internal`: seen only in its project, and not in its interface. A soft keyword, so a function may still be called internal.
+        if (at(T.IDENT) && peek.text == "internal" && peekAt(1).kind !in setOf(T.LPAREN, T.COLON, T.ASSIGN, T.DOT, T.LT)) {
+            next()
+            if (at(T.PRIVATE)) throw error("a private declaration is hidden already; it can't also be internal")
+            return when (val d = decl()) {
+                is Decl.Record -> d.copy(isInternal = true)
+                is Decl.Sealed -> d.copy(isInternal = true)
+                is Decl.Function -> d.copy(isInternal = true)
+                is Decl.Module -> d.copy(isInternal = true)
+                is Decl.Alias -> d.copy(isInternal = true)
+                is Decl.Spec -> d.copy(isInternal = true)
+            }
+        }
         if (accept(T.PRIVATE) != null) {
+            if (at(T.IDENT) && peek.text == "internal") throw error("a private declaration is hidden already; it can't also be internal")
             if (at(T.IDENT) && peek.text == "opaque") throw error("a private type is hidden already; it can't also be opaque")
             return when (val d = decl()) {
                 is Decl.Record -> d.copy(isPrivate = true)

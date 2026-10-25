@@ -34,7 +34,8 @@ fun compile(source: String): String = compile(link(source, Packages(emptyList(),
  * package; a capitalised file is a module, `Ratios.fk` is Ratios, and a lower-case one holds
  * declarations of its package. A file uses its package's by name, and others' by importing them.
  */
-fun compile(entry: File, dirs: List<File>, imports: List<String> = emptyList()): String = compile(entry.readText(), entry, dirs, imports)
+fun compile(entry: File, dirs: List<File>, imports: List<String> = emptyList(), others: List<File> = emptyList()): String =
+    compile(entry.readText(), entry, dirs, imports, others = others)
 
 /**
  * [text] as the contents of [entry], which an editor may not have saved yet, and the files it uses.
@@ -42,20 +43,47 @@ fun compile(entry: File, dirs: List<File>, imports: List<String> = emptyList()):
  * every file imports: `kiln.*` into a build script. With [libraries], interfaces, it's compiled
  * separately, as [compileSeparately] is.
  */
-fun compile(text: String, entry: File, dirs: List<File>, imports: List<String> = emptyList(), libraries: List<File> = emptyList()): String =
-    compile(link(text, packages(dirs, entry, libraries), imports).file)
+fun compile(text: String, entry: File, dirs: List<File>, imports: List<String> = emptyList(), libraries: List<File> = emptyList(), others: List<File> = emptyList()): String {
+    standardPath(entry)?.let { path -> return asItsOwn(path) { compile(linkStandard(path, text).file, showsAll = true) } }
+    return compile(link(text, packages(dirs, entry, libraries, others), imports).file)
+}
+
+/**
+ * The standard library's file [entry] is, `std/fckt/collections/Maps.fk`, if it's one of its
+ * sources, as where fckt is worked on: checked as part of the standard library, not as a program
+ * that has it beside another copy of itself.
+ */
+private fun standardPath(entry: File?): String? {
+    val path = entry?.absoluteFile?.invariantSeparatorsPath ?: return null
+    val std = path.substring(path.lastIndexOf("/std/").takeIf { it >= 0 }?.plus(1) ?: return null)
+    return std.takeIf { it.removePrefix("std/") in STANDARD_FILES }
+}
+
+/** The whole standard library, with [text] as the file at [path], if there's one. */
+private fun linkStandard(path: String? = null, text: String = ""): Linked {
+    val packages = STANDARD_FILES.map { it.substringBeforeLast('/').replace('/', '.') }.distinct()
+    return link(packages.joinToString("") { "import $it.*\n" }, Packages(emptyList(), null, standardText = path?.let { it to text }), whole = true)
+}
+
+/** What [body] gives, with the errors in the standard library's file at [path] as the entry's own, at no file. */
+private fun <A> asItsOwn(path: String, body: () -> A): A = try {
+    body()
+} catch (e: CompileError) {
+    CompileErrors.throwIfAny(e.errors.map { if (it.pos?.file == path) CompileError(it.pos.copy(file = null), it.message!!) else it })
+    throw e
+}
 
 /** Where packages are, from [dirs] and [libraries]: with any library, the standard library is compiled on its own too. */
-private fun packages(dirs: List<File>, entry: File?, libraries: List<File>) =
-    if (libraries.isEmpty()) Packages(dirs, entry) else Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT)
+private fun packages(dirs: List<File>, entry: File?, libraries: List<File>, others: List<File> = emptyList()) =
+    if (libraries.isEmpty()) Packages(dirs, entry, others = others) else Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT, others = others)
 
 /**
  * [entry] and the files it uses, to OCaml that's linked with what's compiled already: the
  * standard library, as [STANDARD_UNIT] (fckt --standard), and [libraries], each a library's
  * interface (fckt --library), whose packages the program uses without their code.
  */
-fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, imports: List<String> = emptyList()): String =
-    compile(link(entry.readText(), Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT), imports).file)
+fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, imports: List<String> = emptyList(), others: List<File> = emptyList()): String =
+    compile(link(entry.readText(), Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT, others = others), imports).file)
 
 /**
  * The tests in [dir], to one program: each function in its lower-case files, or in modules in
@@ -91,9 +119,12 @@ fun compileTests(
     separate: Boolean = false,
     runnerTests: Boolean = false,
     fixtures: String? = null,
+    others: List<File> = emptyList(),
 ): String {
     val entry = File(dir, "<tests>")
-    val packages = { if (separate || libraries.isNotEmpty()) Packages(listOf(dir) + dirs, entry, libraries.map(::Library), STANDARD_UNIT) else packages(listOf(dir) + dirs, entry, libraries) }
+    val packages = {
+        if (separate || libraries.isNotEmpty()) Packages(listOf(dir) + dirs, entry, libraries.map(::Library), STANDARD_UNIT, others = others) else packages(listOf(dir) + dirs, entry, libraries, others)
+    }
     val main = testsMain(dir, marker, runner, runnerTests, fixtures) { stub -> Checker(link(stub, packages(), imports).file).check() }
     return compile(link(main, packages(), imports).file)
 }
@@ -239,9 +270,9 @@ private fun hasTests(decls: List<Decl>, marker: String): Boolean = decls.any { d
  * interface written to [interfaceDir], for programs that use it to be checked against. It uses
  * [libraries] and the standard library compiled already, as a program does.
  */
-fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<File>, unit: String, interfaceDir: File): String {
+fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<File>, unit: String, interfaceDir: File, others: List<File> = emptyList()): String {
     if (packages.isEmpty()) throw CompileError(null, "a library needs packages")
-    val sources = Packages(dirs, null, libraries.map(::Library), STANDARD_UNIT)
+    val sources = Packages(dirs, null, libraries.map(::Library), STANDARD_UNIT, others = others)
     val ocaml = compile(link(packages.joinToString("") { "import $it.*\n" }, sources).file, showsAll = true)
     // Each of its files' public declarations, as they're written, without their code.
     val files = packages.flatMap { pkg ->
@@ -254,7 +285,8 @@ fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<Fil
     }
     CompileErrors.throwIfAny(files.flatMap { (_, _, parsed) -> Interfaces.untyped(parsed) })
     interfaceDir.deleteRecursively()
-    for ((path, f, parsed) in files) {
+    // A file with nothing other projects see, an internal module's, has no interface.
+    for ((path, f, parsed) in files.filter { (_, _, parsed) -> parsed.decls.any { !it.isPrivate && !it.isInternal } }) {
         val target = File(interfaceDir, path.joinToString("/") + "/" + f.nameWithoutExtension + ".fki")
         target.parentFile.mkdirs()
         target.writeText(Interfaces.write(parsed, f.path, f.readText()))
@@ -265,8 +297,7 @@ fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<Fil
 
 /** The whole standard library, to OCaml, as [STANDARD_UNIT]: what programs compiled separately are linked with. */
 fun compileStandardLibrary(): String {
-    val packages = STANDARD_FILES.map { it.substringBeforeLast('/').replace('/', '.') }.distinct()
-    return compile(link(packages.joinToString("") { "import $it.*\n" }, Packages(emptyList(), null), whole = true).file, showsAll = true)
+    return compile(linkStandard().file, showsAll = true)
 }
 
 /** The OCaml module the standard library is, compiled on its own: fckt --standard writes fckt_std.ml. */
@@ -295,6 +326,13 @@ class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
  * standard library, and with [libraries], their interfaces' declarations. Throws [uk.m4xy.fckt.syntax.CompileError].
  */
 fun analyse(text: String, entry: File?, dirs: List<File>, libraries: List<File> = emptyList()): Analysis {
+    standardPath(entry)?.let { path ->
+        return asItsOwn(path) {
+            val linked = linkStandard(path, text)
+            fun inFile(ds: List<Decl>): List<Decl> = ds.flatMap { d -> if (d.pos.file == path) listOf(d) else if (d is Decl.Module) inFile(d.decls) else emptyList() }
+            Analysis(inFile(linked.file.decls), Checker(linked.file, coverage = false).check())
+        }
+    }
     val linked = link(text, packages(dirs, entry, libraries))
     // A when that misses some cases is still clear about what its names refer to.
     return Analysis(linked.main, Checker(linked.file, coverage = false).check())
@@ -400,16 +438,23 @@ private fun withUses(text: String, decls: List<Decl>): List<Pair<Decl, Set<Strin
 }
 
 /**
- * Where a program's packages are: each a folder, under one of [roots] or in one of [libraries]'
+ * Where a program's packages are: each a folder, under one of [own] or [others] or in one of [libraries]'
  * interfaces, or the standard library's, which with [standardUnit] is compiled already, as that
  * OCaml module. Names are matched against what's in a folder, so `ratios.fk` is never taken for `Ratios.fk`.
  */
 private class Packages(
-    private val roots: List<File>,
+    private val own: List<File>,
     private val entry: File?,
     private val libraries: List<Library> = emptyList(),
     private val standardUnit: String? = null,
+    /** A standard library file's text, by its path, in place of what's bundled: as an editor has it. */
+    private val standardText: Pair<String, String>? = null,
+    /** Other projects' sources, compiled with the program, whose internal declarations it doesn't see. */
+    private val others: List<File> = emptyList(),
 ) {
+    /** The folders packages are in: the program's own project's, and others'. */
+    private val roots: List<File> = own + others
+
     private val listings = mutableMapOf<List<String>, List<File>>()
 
     /** The files in [pkg]'s folders, in each root and interface, but the program's own. */
@@ -422,8 +467,8 @@ private class Packages(
     /** A file of code: a program's, `.fk`, or a library's interface's, `.fki`. */
     private fun isCode(f: File) = f.isFile && (f.extension == "fk" || f.extension == "fki")
 
-    /** [pkg]'s own files in [roots], the program's: not a library's. */
-    fun sourceFiles(pkg: List<String>): List<File> = roots.map { File(it, pkg.joinToString("/")) }.filter { it.isDirectory }
+    /** [pkg]'s own files in [own], the program's: not a library's, nor another project's. */
+    fun sourceFiles(pkg: List<String>): List<File> = own.map { File(it, pkg.joinToString("/")) }.filter { it.isDirectory }
         .flatMap { dir -> dir.listFiles().orEmpty().filter { it.isFile && it.extension == "fk" }.sortedBy { it.name } }
 
     private fun source(f: File) = Source(f.path, f.extension == "fki") { f.readText() }
@@ -440,6 +485,18 @@ private class Packages(
         if (owners.size > 1) throw CompileError(null, "package $name is in two libraries, ${owners.joinToString(" and ") { it.unit }}, so it's unclear which is meant")
         if (owners.isNotEmpty() && own) throw CompileError(null, "package $name is library ${owners.single().unit}'s, so it can't have files of its own here too")
         return owners.singleOrNull()?.unit
+    }
+
+    /**
+     * The project [file] is in, which its internal declarations are seen only in: the program's,
+     * whose roots its file and the roots given it are; another's, one of [others]; the standard
+     * library; or a library, whose interface has none of them anyway.
+     */
+    fun projectOf(file: String?): String {
+        if (file == null) return "program"
+        if (file.startsWith("std/")) return "std"
+        val path = File(file).canonicalPath
+        return (others + libraries.map { it.dir }).map { it.canonicalPath }.firstOrNull { path.startsWith("$it/") } ?: "program"
     }
 
     /** Whether [pkg] is the standard library or in it, which no folder of the program's can be. */
@@ -473,7 +530,7 @@ private class Packages(
 
     private fun standardSource(pkg: List<String>, file: String): Source {
         val path = "std/${pkg.joinToString("/")}/$file"
-        return Source(path) { resource(path) }
+        return Source(path) { standardText?.takeIf { it.first == path }?.second ?: resource(path) }
     }
 
     companion object {
@@ -754,7 +811,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
     // Every package on the way to one with contents has a module too.
     for (pkg in contents.keys.toList()) for (n in 1 until pkg.size) packageContents(pkg.take(n))
     val all = withSpecs(copyEffects(tree(emptyList()) + main.decls, linkedImports), linkedImports)
-    return Linked(SourceFile(all, linkedImports), all.takeLast(main.decls.size))
+    return Linked(SourceFile(all, linkedImports, packages::projectOf), all.takeLast(main.decls.size))
 }
 
 /**
