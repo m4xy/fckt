@@ -2,16 +2,18 @@ import fckt.monads.Validation
 
 // Validation without bind: Validated { n by checkName(s); a by checkAge(i); User(n, a) } runs
 // every check, and keeps every error.
-module Validated {
-  pure<A, E>(x: A): Validation<A, E> = Valid(x)
+module Validated<E> : Applicative {
+  type M<A> = Validation<A, E>
 
-  map<A, B, E>(m: Validation<A, E>, f: (A) -> B): Validation<B, E> = when (m) {
+  pure<A>(x: A): Validation<A, E> = Valid(x)
+
+  map<A, B>(m: Validation<A, E>, f: (A) -> B): Validation<B, E> = when (m) {
     Valid(x) -> Valid(f(x))
     Invalid(errors) -> Invalid(errors)
   }
 
   // Both failed? Keep both lists of errors.
-  product<A, B, E>(ma: Validation<A, E>, mb: Validation<B, E>): Validation<(A, B), E> = when (ma, mb) {
+  product<A, B>(ma: Validation<A, E>, mb: Validation<B, E>): Validation<(A, B), E> = when (ma, mb) {
     (Valid(a), Valid(b)) -> Valid((a, b))
     (Invalid(e1), Invalid(e2)) -> Invalid(e1 + e2)
     (Invalid(e), _) -> Invalid(e)
@@ -19,12 +21,12 @@ module Validated {
   }
 
   // A Result's error as a one-error Validation.
-  fromResult<A, E>(r: Result<A, E>): Validation<A, E> = when (r) {
+  fromResult<A>(r: Result<A, E>): Validation<A, E> = when (r) {
     Ok(x) -> Valid(x)
     Error(e) -> Invalid([e])
   }
 
-  toResult<A, E>(v: Validation<A, E>): Result<A, List<E>> = when (v) {
+  toResult<A>(v: Validation<A, E>): Result<A, List<E>> = when (v) {
     Valid(x) -> Ok(x)
     Invalid(errors) -> Error(errors)
   }

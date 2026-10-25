@@ -14,6 +14,7 @@ import uk.m4xy.fckt.syntax.RawPart
 import uk.m4xy.fckt.syntax.SourceFile
 import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.syntax.Token
+import uk.m4xy.fckt.syntax.TypeRef
 import uk.m4xy.fckt.types.Checker
 import uk.m4xy.fckt.types.EFFECT_NAME
 import uk.m4xy.fckt.types.MUTATING_NAME
@@ -74,7 +75,7 @@ fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<Fil
     for ((path, f, parsed) in files) {
         val target = File(interfaceDir, path.joinToString("/") + "/" + f.nameWithoutExtension + ".fki")
         target.parentFile.mkdirs()
-        target.writeText(Interfaces.write(parsed, f.path))
+        target.writeText(Interfaces.write(parsed, f.path, f.readText()))
     }
     File(interfaceDir, Library.UNIT_FILE).writeText(unit + "\n")
     return ocaml
@@ -547,7 +548,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
     }
     // Every package on the way to one with contents has a module too.
     for (pkg in contents.keys.toList()) for (n in 1 until pkg.size) packageContents(pkg.take(n))
-    val all = copyEffects(tree(emptyList()) + main.decls, linkedImports)
+    val all = withSpecs(copyEffects(tree(emptyList()) + main.decls, linkedImports), linkedImports)
     return Linked(SourceFile(all, linkedImports), all.takeLast(main.decls.size))
 }
 
@@ -557,7 +558,128 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
  * checker would find it, from the inside out.
  */
 private fun copyEffects(decls: List<Decl>, imports: Map<String?, List<Import>>): List<Decl> {
-    fun lookup(parts: List<String>, scope: List<Decl>): Decl? {
+    val scoped = Scoped(decls, imports)
+    fun copy(d: Decl.Spec, scopes: List<List<Decl>>, seen: Set<Decl.Spec>): Decl {
+        val ref = d.copyOf!!
+        if (d in seen) throw CompileError(d.pos, "effect '${d.name}' is a copy of itself")
+        val target = scoped.find(ref.name, scopes, d.pos.file) ?: throw CompileError(ref.pos, "unknown effect '${ref.name}'")
+        val original = if (target is Decl.Spec && target.copyOf != null) copy(target, scopes, seen + d) else target
+        if (original.annotations.none { it.name == EFFECT_NAME }) throw CompileError(ref.pos, "'${ref.name}' isn't an effect, so there's nothing to copy")
+        return when (original) {
+            is Decl.Spec -> (Copier({ it }).decl(original) as Decl.Spec)
+                .copy(pos = d.pos, name = d.name, annotations = d.annotations, isPrivate = d.isPrivate, copyOf = null)
+            is Decl.Record -> Decl.Record(d.pos, d.name, emptyList(), emptyList(), isAnnotation = true, annotations = d.annotations, isPrivate = d.isPrivate)
+            else -> throw CompileError(ref.pos, "'${ref.name}' isn't an effect, so there's nothing to copy")
+        }
+    }
+    return scoped.map { d, scopes -> if (d is Decl.Spec && d.copyOf != null) copy(d, scopes, emptySet()) else d }
+}
+
+/**
+ * [decls] with what specs and modules say filled in, from the inside out, as the checker finds names:
+ *  - a spec that builds on others, `spec Monad : Applicative`, has their types and values too;
+ *  - a module that follows a spec has each of the spec's defaults it doesn't define itself;
+ *  - each function of a module with type parameters, `module Results<E>`, takes them too.
+ */
+private fun withSpecs(decls: List<Decl>, imports: Map<String?, List<Import>>): List<Decl> {
+    // Specs first, with what they build on, which may be anywhere.
+    val before = Scoped(decls, imports)
+    val flat = java.util.IdentityHashMap<Decl.Spec, Decl.Spec>()
+    fun flatten(d: Decl.Spec, seen: Set<Decl.Spec>): Decl.Spec = flat[d] ?: run {
+        if (d in seen) throw CompileError(d.pos, "spec '${d.simpleName}' builds on itself")
+        val inherited = d.parents.map { ref ->
+            val parent = before.find(ref.name, before.scopesOf(d), d.pos.file) as? Decl.Spec ?: throw CompileError(ref.pos, "unknown spec '${ref.name}'")
+            if (ref.args.isNotEmpty() || parent.typeParams.isNotEmpty()) throw CompileError(ref.pos, "a spec can't build on one with type arguments yet")
+            if (parent.annotations.any { it.name == EFFECT_NAME } || d.annotations.any { it.name == EFFECT_NAME }) throw CompileError(ref.pos, "an effect can't build on another yet")
+            flatten(parent, seen + d)
+        }
+        // Its own, in place of what it builds on has of the same name.
+        val types = (inherited.flatMap { it.types } + d.types).associateBy { it.name }.values.toList()
+        val own = d.values.map { it.name }.toSet()
+        val values = inherited.flatMap { it.values }.filter { it.name !in own }.distinctBy { it.name } + d.values
+        // What it builds on stays named, for the checker: a Monad can be given where an Applicative is wanted.
+        d.copy(types = types, values = values).also { flat[d] = it }
+    }
+    val specced = before.map { d, _ -> if (d is Decl.Spec && d.parents.isNotEmpty()) flatten(d, emptySet()) else d }
+
+    // Then the modules, against the specs as they are now.
+    val after = Scoped(specced, imports)
+    return after.map { d, scopes ->
+        if (d !is Decl.Module) return@map d
+        var decls = d.decls
+        val ref = d.spec
+        val spec = ref?.let { after.find(it.name, scopes, d.pos.file) as? Decl.Spec }
+        if (spec != null && ref != null) {
+            val defined = decls.filterIsInstance<Decl.Function>().map { it.name }.toSet()
+            val fixed = fixedTypes(spec, ref)
+            decls = decls + spec.values.filter { it.default != null && it.name !in defined }.map { v -> defaultOf(v, fixed) }
+        }
+        if (d.typeParams.isNotEmpty()) {
+            decls = decls.map { inner ->
+                if (inner !is Decl.Function) return@map inner
+                inner.typeParams.firstOrNull { it in d.typeParams }?.let {
+                    throw CompileError(inner.pos, "'${inner.methodName}' is in ${d.name}<${d.typeParams.joinToString()}>, so its own type parameters can't be named $it too")
+                }
+                inner.copy(typeParams = inner.typeParams + d.typeParams)
+            }
+        }
+        d.copy(decls = decls)
+    }
+}
+
+/**
+ * For a module following [ref], what each of [spec]'s types it gives in type arguments stands
+ * for: `Monad<Option>` makes `M<A>` an `Option<A>`, as the checker's aliases do.
+ */
+private fun fixedTypes(spec: Decl.Spec, ref: TypeRef.Named): Map<String, (List<TypeRef>) -> TypeRef> =
+    spec.types.zip(ref.args).associate { (t, arg) ->
+        t.name to { args: List<TypeRef> ->
+            if (t.typeParams.isEmpty() || arg !is TypeRef.Named) arg
+            else if (arg.args.none { it is TypeRef.Named && it.name == "_" }) arg.copy(args = arg.args + args)
+            else {
+                val fill = args.iterator()
+                arg.copy(args = arg.args.map { if (it is TypeRef.Named && it.name == "_" && fill.hasNext()) fill.next() else it })
+            }
+        }
+    }
+
+/** A module's copy of a spec's default [v], with the types the module gave the spec's in [fixed]. */
+private fun defaultOf(v: uk.m4xy.fckt.syntax.SpecValue, fixed: Map<String, (List<TypeRef>) -> TypeRef>): Decl.Function {
+    val copier = Copier({ it })
+    fun type(t: TypeRef): TypeRef = when (t) {
+        is TypeRef.Named -> fixed[t.name]?.invoke(t.args.map(::type)) ?: t.copy(args = t.args.map(::type))
+        is TypeRef.Function -> t.copy(params = t.params.map(::type), result = type(t.result))
+        is TypeRef.Tuple -> t.copy(elements = t.elements.map(::type))
+        is TypeRef.Effects -> t
+    }
+    return Decl.Function(
+        v.pos, v.name, v.typeParams,
+        v.params?.map { p -> copier.param(p).let { it.copy(type = it.type?.let(::type)) } },
+        type(copier.type(v.type)), copier.expr(v.default!!), annotations = v.annotations,
+    )
+}
+
+/**
+ * Declarations with the scopes each is in, from the inside out, to find names as the checker
+ * would: in the scopes, then through what the file imports.
+ */
+private class Scoped(private val decls: List<Decl>, private val imports: Map<String?, List<Import>>) {
+    private val scopes = java.util.IdentityHashMap<Decl, List<List<Decl>>>()
+
+    init {
+        fun walk(here: List<Decl>, outer: List<List<Decl>>) {
+            val inner = listOf(here) + outer
+            for (d in here) {
+                scopes[d] = inner
+                if (d is Decl.Module) walk(d.decls, inner)
+            }
+        }
+        walk(decls, emptyList())
+    }
+
+    fun scopesOf(d: Decl): List<List<Decl>> = scopes[d].orEmpty()
+
+    private fun lookup(parts: List<String>, scope: List<Decl>): Decl? {
         var here = scope
         for ((i, part) in parts.withIndex()) {
             val d = here.firstOrNull { it.name == part && it !is Decl.Function } ?: return null
@@ -566,6 +688,7 @@ private fun copyEffects(decls: List<Decl>, imports: Map<String?, List<Import>>):
         }
         return null
     }
+
     fun find(name: String, scopes: List<List<Decl>>, file: String?): Decl? {
         val parts = name.split('.')
         for (scope in scopes) lookup(parts, scope)?.let { return it }
@@ -578,30 +701,15 @@ private fun copyEffects(decls: List<Decl>, imports: Map<String?, List<Import>>):
         }
         return null
     }
-    fun copy(d: Decl.Spec, scopes: List<List<Decl>>, seen: Set<Decl.Spec>): Decl {
-        val ref = d.copyOf!!
-        if (d in seen) throw CompileError(d.pos, "effect '${d.name}' is a copy of itself")
-        val target = find(ref.name, scopes, d.pos.file) ?: throw CompileError(ref.pos, "unknown effect '${ref.name}'")
-        val original = if (target is Decl.Spec && target.copyOf != null) copy(target, scopes, seen + d) else target
-        if (original.annotations.none { it.name == EFFECT_NAME }) throw CompileError(ref.pos, "'${ref.name}' isn't an effect, so there's nothing to copy")
-        return when (original) {
-            is Decl.Spec -> (Copier({ it }).decl(original) as Decl.Spec)
-                .copy(pos = d.pos, name = d.name, annotations = d.annotations, isPrivate = d.isPrivate, copyOf = null)
-            is Decl.Record -> Decl.Record(d.pos, d.name, emptyList(), emptyList(), isAnnotation = true, annotations = d.annotations, isPrivate = d.isPrivate)
-            else -> throw CompileError(ref.pos, "'${ref.name}' isn't an effect, so there's nothing to copy")
+
+    /** Each declaration, given the scopes it's in, replaced by what [f] makes of it, from the inside out. */
+    fun map(f: (Decl, List<List<Decl>>) -> Decl): List<Decl> {
+        fun walk(here: List<Decl>, outer: List<List<Decl>>): List<Decl> {
+            val inner = listOf(here) + outer
+            return here.map { d -> f(if (d is Decl.Module) d.copy(decls = walk(d.decls, inner)) else d, inner) }
         }
+        return walk(decls, emptyList())
     }
-    fun walk(here: List<Decl>, outer: List<List<Decl>>): List<Decl> {
-        val scopes = listOf(here) + outer
-        return here.map { d ->
-            when {
-                d is Decl.Spec && d.copyOf != null -> copy(d, scopes, emptySet())
-                d is Decl.Module -> d.copy(decls = walk(d.decls, scopes))
-                else -> d
-            }
-        }
-    }
-    return walk(decls, emptyList())
 }
 
 private fun compile(file: SourceFile, showsAll: Boolean = false): String {

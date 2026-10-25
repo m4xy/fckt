@@ -31,7 +31,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
     }.also { onCopy(d, it) }
 
     // TypeRefs are told apart by identity once resolved, so each copy gets its own.
-    private fun type(t: TypeRef): TypeRef = when (t) {
+    fun type(t: TypeRef): TypeRef = when (t) {
         is TypeRef.Named -> named(t)
         is TypeRef.Function -> t.copy(params = t.params.map(::type), result = type(t.result))
         is TypeRef.Tuple -> t.copy(elements = t.elements.map(::type))
@@ -40,9 +40,9 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
 
     private fun named(t: TypeRef.Named) = t.copy(args = t.args.map(::type))
     private fun field(f: FieldDef) = f.copy(type = type(f.type))
-    private fun param(p: Param) = p.copy(type = p.type?.let(::type))
+    fun param(p: Param) = p.copy(type = p.type?.let(::type))
 
-    private fun expr(e: Expr): Expr = when (e) {
+    fun expr(e: Expr): Expr = when (e) {
         is Expr.Compiled -> Expr.Compiled(e.pos)
         is Expr.IntLit -> Expr.IntLit(e.pos, e.value)
         is Expr.FloatLit -> Expr.FloatLit(e.pos, e.value)

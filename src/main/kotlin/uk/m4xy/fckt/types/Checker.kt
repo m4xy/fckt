@@ -260,6 +260,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val name = (arg as TypeRef.Named).name
             val m = find(name, modules, arg.pos) ?: throw CompileError(arg.pos, "unknown module '$name'")
             if (m.params.isNotEmpty()) throw CompileError(arg.pos, "${m.simpleName} is a functor; give it modules first")
+            if (m.typeParams.isNotEmpty()) throw CompileError(arg.pos, "${m.simpleName} takes type parameters, ${m.typeParams.joinToString()}, so it can't be given to a functor yet")
             m
         }
         val copier = Copier({ name -> app.name + name.removePrefix(functor.name) }) { original, copy ->
@@ -339,6 +340,21 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return name
     }
 
+    /** Whether [spec] builds on [other], or on a spec that does: `spec Monad : Applicative`. */
+    private fun buildsOn(spec: Decl.Spec, other: Decl.Spec, seen: Set<Decl.Spec> = emptySet()): Boolean {
+        if (spec in seen) return false
+        val saved = currentPath to currentFile
+        currentPath = spec.path
+        currentFile = spec.pos.file
+        val parents = try {
+            spec.parents.mapNotNull { find(it.name, specs, it.pos) }
+        } finally {
+            currentPath = saved.first
+            currentFile = saved.second
+        }
+        return parents.any { it === other || buildsOn(it, other, seen + spec) }
+    }
+
     /** Every module given to a functor has what its parameter's spec lists. */
     private fun checkArgumentsDefine() {
         for ((app, made) in applications) {
@@ -359,7 +375,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     if (!u.unify(needed, given)) fail("${functor.simpleName} needs its ${t.name} to be $needed, but here it's $given")
                 }
                 if (argSpec === spec) continue
-                if (argSpec != null) fail("it follows ${argSpec.simpleName}, not ${spec.simpleName}")
+                // A module whose spec builds on the one wanted has all it lists.
+                if (argSpec != null && !buildsOn(argSpec, spec)) fail("it follows ${argSpec.simpleName}, not ${spec.simpleName}")
                 for (t in spec.types) {
                     val d = typeDecl("${arg.name}.${t.name}") ?: fail("it doesn't define type ${t.name}, which ${spec.simpleName} needs")
                     whyHidden(d)?.let { fail(it) }
@@ -518,7 +535,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for (a in aliases.values) {
             currentPath = a.path
             currentFile = a.pos.file
-            withTypeParams(a.typeParams) { privateTypes(resolve(a.target)).firstOrNull { exposes(a, it) }?.let { complain(a, it) } }
+            withTypeParams(a.typeParams + moduleTypeParams(a.path)) { privateTypes(resolve(a.target)).firstOrNull { exposes(a, it) }?.let { complain(a, it) } }
         }
         currentPath = emptyList()
         currentFile = null
@@ -1120,12 +1137,34 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         currentFile = null
     }
 
+    /** The type parameters of the module at [path]: E, for `module Results<E>`. */
+    private fun moduleTypeParams(path: List<String>): List<String> = modules[path.joinToString(".")]?.typeParams.orEmpty()
+
+    /**
+     * [block], seeing [module]'s types from inside it, with a type for each of its type parameters:
+     * `M<A>`, in `module Results<E>`, is `Result<A, E>` for that E. Those types, and what it gives.
+     */
+    private inline fun <R> withModuleTypes(module: List<String>, block: () -> R): Pair<List<Type>, R> {
+        val saved = typeParams to currentPath
+        val vars = moduleTypeParams(module).associateWith { u.fresh() as Type }
+        typeParams = vars
+        currentPath = module
+        try {
+            return vars.values.toList() to block()
+        } finally {
+            typeParams = saved.first
+            currentPath = saved.second
+        }
+    }
+
     /** What alias [a] stands for, applied to [args]; its target means what it does where it's written. */
     private fun expand(a: Decl.Alias, args: List<Type>): Type {
         if (!expanding.add(a.name)) throw CompileError(a.pos, "type '${a.simpleName}' is defined in terms of itself")
         val saved = Triple(typeParams, specTypes, currentPath)
         val savedFile = currentFile
-        typeParams = a.typeParams.zip(args).toMap()
+        // In `module Results<E>`, `type M<A> = Result<A, E>` has the E of what uses it there; elsewhere, any.
+        val inModule = currentPath.take(a.path.size) == a.path
+        typeParams = moduleTypeParams(a.path).associateWith { (if (inModule) typeParams[it] else null) ?: u.fresh() } + a.typeParams.zip(args).toMap()
         specTypes = emptyMap()
         currentPath = a.path
         currentFile = a.pos.file
@@ -1984,7 +2023,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         // Its type parameters must work for any type; what else it may do is open, to be checked below.
         val rest = wanted.vars.drop(names.size).associateWith { u.fresh() as Type }
         val rigid = names.associate { (v, n) -> v to Type.Con("#$n") as Type } + rest
-        val inside = specView(wanted.type, rigid) { name, args -> typeOf(typeDecl("$module.$name")!!, args) }
+        val inside = withModuleTypes(decl.path) { specView(wanted.type, rigid) { name, args -> typeOf(typeDecl("$module.$name")!!, args) } }.second
         val actual = u.instantiate(schemes.getValue(decl))
         val shown = actual.zonk()
         if (!u.unify(actual, inside)) {
@@ -2013,12 +2052,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         // Callers outside see the spec's view: with what the spec says it does, or, where the spec
         // says nothing, what this one does.
-        val shownType = specView(wanted.type, emptyMap()) { name, args -> outsideType(module, name, args) }
+        // Generic, too, in the module's own type parameters.
+        val (moduleVars, shownType) = withModuleTypes(decl.path) { specView(wanted.type, emptyMap()) { name, args -> outsideType(module, name, args) } }
+        val vars = wanted.vars + moduleVars.filterIsInstance<Type.Var>()
         outsideSchemes[decl] = if (declared.isEmpty() && shownType is Type.Fn) {
             val rest = u.fresh()
-            Scheme(wanted.vars + rest, Type.Fn(shownType.params, shownType.result, Type.effects(done, rest)))
+            Scheme(vars + rest, Type.Fn(shownType.params, shownType.result, Type.effects(done, rest)))
         } else {
-            Scheme(wanted.vars, shownType)
+            Scheme(vars, shownType)
         }
     }
 

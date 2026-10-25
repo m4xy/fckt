@@ -170,9 +170,11 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                     expect(T.RPAREN, "')'")
                     return Decl.Module(pos, name, emptyList(), application = TypeRef.Named(functorPos, functor, args))
                 }
+                // module Name<E>: generic in E, as each of its declarations is
+                if (at(T.LT) && peekAt(2).kind == T.COLON) throw error("a functor takes its modules in parentheses: module $name(M: Spec)")
+                val moduleTypeParams = typeParams()
                 // module Name(M: Spec, ...): a functor
                 val params = mutableListOf<ModuleParam>()
-                if (at(T.LT)) throw error("a functor takes its modules in parentheses: module $name(M: Spec)")
                 if (accept(T.LPAREN) != null) {
                     do {
                         val paramPos = peek.pos
@@ -186,7 +188,8 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 val spec = if (accept(T.COLON) != null) specName() else null
                 expect(T.LBRACE, "'{' after the module name")
                 val decls = members { decl() }
-                Decl.Module(pos, name, decls, spec = spec, params = params)
+                if (moduleTypeParams.isNotEmpty() && params.isNotEmpty()) throw error("a functor can't take type parameters too yet", pos)
+                Decl.Module(pos, name, decls, spec = spec, params = params, typeParams = moduleTypeParams)
             }
             // `effect Console { println(s: String): Unit }`: an effect with operations, which a handler
             // answers; `effect Mutating`: one without, only tracked. A keyword only here, as `spec` is.
@@ -207,12 +210,15 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 Decl.Record(pos, name, emptyList(), emptyList(), isAnnotation = true, annotations = effect)
             }
             // `spec` is a keyword only here, so it can still name a value.
-            at(T.IDENT) && peek.text == "spec" && peekAt(1).kind == T.IDENT && (peekAt(2).kind == T.LBRACE || peekAt(2).kind == T.LT) -> {
+            at(T.IDENT) && peek.text == "spec" && peekAt(1).kind == T.IDENT && peekAt(2).kind in setOf(T.LBRACE, T.LT, T.COLON) -> {
                 next()
                 val name = upperIdent("a spec name")
                 val specTypeParams = typeParams()
+                // spec Monad : Applicative { ... }: it has what Applicative has, and more
+                val parents = mutableListOf<TypeRef.Named>()
+                if (accept(T.COLON) != null) do parents += specName() while (accept(T.COMMA) != null)
                 expect(T.LBRACE, "'{'")
-                specBody(pos, name, specTypeParams)
+                specBody(pos, name, specTypeParams).copy(parents = parents)
             }
             at(T.IDENT) && peek.text == "interface" && peekAt(1).kind == T.IDENT ->
                 throw error("write a type with cases as 'type ${peekAt(1).text} { ... }'")
@@ -420,7 +426,15 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 val params = if (at(T.LPAREN)) params() else null
                 params?.firstOrNull { it.type == null }?.let { throw error("a spec's parameters need types: ${it.name}: Type", it.pos) }
                 expect(T.COLON, if (params == null) "':' and the value's type" else "':' and the result type")
-                values += SpecValue(memberPos, valueName, typeParams, params, type(), annotations)
+                val type = type()
+                // A default: what a module that doesn't define it has.
+                val default = if (accept(T.ASSIGN) != null) {
+                    skipNewlines()
+                    expr()
+                } else {
+                    null
+                }
+                values += SpecValue(memberPos, valueName, typeParams, params, type, annotations, default)
             }
         }
         return Decl.Spec(pos, name, types, values, typeParams = typeParams)

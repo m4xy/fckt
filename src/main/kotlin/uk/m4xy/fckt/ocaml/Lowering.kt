@@ -523,6 +523,17 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     /** Whether [name] is declared in a package a library compiled, whose OCaml is that library's. */
     private fun isCompiled(name: String): Boolean = compiledPackages.any { name.startsWith("$it.") }
 
+    /** Each module's type parameters, by its full name: E, for `module Results<E>`. */
+    private val moduleTypeParams: Map<String, List<String>> = buildMap {
+        fun walk(ds: List<Decl>) {
+            for (d in ds.filterIsInstance<Decl.Module>()) {
+                if (d.typeParams.isNotEmpty()) put(d.name, d.typeParams)
+                walk(d.decls)
+            }
+        }
+        walk(program.root)
+    }
+
     /** The full names of the packages libraries compiled. */
     private val compiledPackages: List<String> = buildList {
         fun walk(ds: List<Decl>) {
@@ -551,7 +562,8 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     private fun typeParamsOf(d: Decl, all: Boolean = false): List<String> = when (d) {
         is Decl.Record -> d.typeParams
         is Decl.Sealed -> d.typeParams
-        is Decl.Alias -> d.typeParams
+        // In `module Results<E>`, `type M<A> = Result<A, E>` is OCaml's `('a, 'e) m`.
+        is Decl.Alias -> d.typeParams + moduleTypeParams[d.path.joinToString(".")].orEmpty()
         else -> emptyList()
     }.let { if (all) it else it.ocaml() }
 
@@ -590,8 +602,8 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                     }
                 }
                 is Decl.Alias -> typeDef(snake(decl.simpleName)) {
-                    params = decl.typeParams.ocaml().map(::typeVar)
-                    alias = typeText(decl.target, decl.typeParams.ocaml())
+                    params = typeParamsOf(decl).map(::typeVar)
+                    alias = typeText(decl.target, typeParamsOf(decl))
                 }
                 is Decl.Function, is Decl.Module, is Decl.Spec -> {}
             }
@@ -612,7 +624,13 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         is TypeRef.Tuple -> tupleText(ref.elements.map { typeText(it, typeParams) to compound(it) })
         is TypeRef.Named ->
             if (ref.name in typeParams) typeVar(ref.name)
-            else applied(program.typeNames[ref] ?: ref.name, ref.args.filter { it !is TypeRef.Effects }.map { typeText(it, typeParams) to compound(it) })
+            else {
+                val name = program.typeNames[ref] ?: ref.name
+                // An alias in `module Results<E>` takes E too: the E here, if there is one, else any.
+                val moduleArgs = aliases[name]?.let { a -> moduleTypeParams[a.path.joinToString(".")] }.orEmpty()
+                    .map { (if (it in typeParams) typeVar(it) else "_") to false }
+                applied(name, ref.args.filter { it !is TypeRef.Effects }.map { typeText(it, typeParams) to compound(it) } + moduleArgs)
+            }
         is TypeRef.Effects -> error("effects aren't an OCaml type")
     }
 
@@ -1485,9 +1503,11 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         }
         // An alias shows as what it stands for.
         aliases[name]?.let { a ->
-            val params = a.typeParams.ocaml().map { "show_${it.lowercase()}" } +
-                "(v : ${applied(a.name, a.typeParams.ocaml().map { typeVar(it) to false })})"
-            return params to Gen.App(showRef(a.target, a.typeParams.ocaml()), listOf(v))
+            // With its module's type parameters: `M<A>` in `module Results<E>` shows E too.
+            val typeParams = typeParamsOf(a)
+            val params = typeParams.map { "show_${it.lowercase()}" } +
+                "(v : ${applied(a.name, typeParams.map { typeVar(it) to false })})"
+            return params to Gen.App(showRef(a.target, typeParams), listOf(v))
         }
         val s = sealeds.getValue(name)
         val params = s.typeParams.ocaml().map { "show_${it.lowercase()}" } + "(v : ${applied(s.name, s.typeParams.ocaml().map { typeVar(it) to false })})"

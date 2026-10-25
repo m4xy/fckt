@@ -7,9 +7,8 @@ module Lists : Monad {
 
   bind<A, B>(xs: List<A>, f: (A) -> List<B>): List<B> = xs.flatMap(f)
 
+  // Its own map, which is List's: quicker than Monad's, from bind.
   map<A, B>(xs: List<A>, f: (A) -> B): List<B> = xs.map(f)
-
-  product<A, B>(xs: List<A>, ys: List<B>): List<(A, B)> = xs.flatMap(x -> ys.map(y -> (x, y)))
 
   // Lists { x by xs; _ by guard(x > 1); x } keeps the xs over 1.
   guard(ok: Boolean): List<Unit> = if (ok) [Unit] else []

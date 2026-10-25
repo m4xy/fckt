@@ -184,6 +184,12 @@ sealed interface Decl {
         /** A package: the declarations of a folder's files, named after the folder. */
         val isPackage: Boolean = false,
         /**
+         * `module Results<E> : Monad`: types its declarations are generic in, as each of its
+         * functions takes them as type parameters, and its type aliases use them, `type M<A> =
+         * Result<A, E>`, meaning the E of whatever uses them.
+         */
+        val typeParams: List<String> = emptyList(),
+        /**
          * For a package a library compiled already, the OCaml module it's in, `Uk_m4xy_units`: its
          * declarations come from the library's interface, and the OCaml refers to that module's.
          */
@@ -204,6 +210,11 @@ sealed interface Decl {
         val typeParams: List<String> = emptyList(),
         /** `effect OrdersDb = Database`: a separate effect with the same operations, which linking fills in. */
         val copyOf: TypeRef.Named? = null,
+        /**
+         * `spec Monad : Applicative`: the specs it builds on, whose types and values it has too, which
+         * linking fills in. A module that follows it can be given where any of them is wanted.
+         */
+        val parents: List<TypeRef.Named> = emptyList(),
     ) : Decl
 }
 
@@ -213,7 +224,11 @@ data class ModuleParam(val pos: Pos, val name: String, val spec: TypeRef.Named)
 /** `type Name<A>` in a spec. */
 data class SpecType(val pos: Pos, val name: String, val typeParams: List<String>)
 
-/** `name<A>(params): R` or `name: T` in a spec; [params] is null for a value. */
+/**
+ * `name<A>(params): R` or `name: T` in a spec; [params] is null for a value. With a [default]
+ * (`map(...): M<B> = bind(m, ...)`), a module that follows the spec and doesn't define it has
+ * this, which linking copies in.
+ */
 data class SpecValue(
     val pos: Pos,
     val name: String,
@@ -221,6 +236,7 @@ data class SpecValue(
     val params: List<Param>?,
     val type: TypeRef,
     val annotations: List<Annotation> = emptyList(),
+    val default: Expr? = null,
 )
 
 data class VariantDef(val pos: Pos, val name: String, val fields: List<FieldDef>, val annotations: List<Annotation> = emptyList())

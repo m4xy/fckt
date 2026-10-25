@@ -1008,8 +1008,9 @@ class CompilerTest {
         val ml = compile(source)
         assertContains(ml, "module Options = struct")
         assertContains(ml, "module type Monad = sig")
-        // Only what's used: no Applicative, and nothing at all for a program that uses none of it.
-        assertTrue("Applicative" !in ml)
+        // Only what's used: Monad, with Applicative, which it builds on, but no Streams; and nothing at
+        // all for a program that uses none of it.
+        assertTrue("Streams" !in ml)
         assertTrue("module" !in compile("main() = assertEquals(1, 1)"))
         assertTrue("module type" !in compile("import fckt.monads.Validation\nv(): Validation<Int, String> = Valid(1)\nmain() = assert(v() == Valid(1))"))
         // The program's own declarations take the place of the library's.
@@ -1315,6 +1316,90 @@ class CompilerTest {
         compile("f(x: Int) = {\n  big = x >\n    10\n  big\n}")
     }
 
+    @Test
+    fun `a spec builds on another, and its defaults are what a module leaves out`() {
+        val specs = """
+            spec Sized {
+              type M<A>
+              size<A>(m: M<A>): Int
+              isEmpty<A>(m: M<A>): Boolean = size(m) == 0
+            }
+
+            spec Stack : Sized {
+              empty<A>(): M<A>
+              push<A>(m: M<A>, x: A): M<A>
+              // Each of xs, from the first.
+              pushAll<A>(m: M<A>, xs: List<A>): M<A> = xs.fold(m, (all, x) -> push(all, x))
+            }
+
+            module ListStack : Stack {
+              type M<A> = List<A>
+              size<A>(m: List<A>): Int = m.size
+              empty<A>(): List<A> = []
+              push<A>(m: List<A>, x: A): List<A> = [x, *m]
+            }
+
+            // A Stack is Sized, so it can be given where that's all that's wanted.
+            module Describe(S: Sized) {
+              describe<A>(m: S.M<A>): String = if (S.isEmpty(m)) "empty" else "${'$'}{S.size(m)} items"
+            }
+
+            module Stacks = Describe(ListStack)
+        """.trimIndent()
+        assertEquals(
+            "",
+            run(
+                specs + """
+
+                main() = {
+                  assertEquals([3, 2, 1], ListStack.pushAll(ListStack.empty(), [1, 2, 3]))
+                  assertEquals(true, ListStack.isEmpty(ListStack.empty()))
+                  assertEquals("2 items", Stacks.describe([1, 2]))
+                }
+                """.trimIndent(),
+            ),
+        )
+        // What it builds on still has to be there.
+        assertContains(error(specs + "\nmodule Bad : Stack {\n  type M<A> = List<A>\n  empty<A>(): List<A> = []\n  push<A>(m: List<A>, x: A): List<A> = m\n}"), "Bad doesn't define 'size', which its spec Stack needs")
+        assertContains(error("spec Loop : Loop {\n  f(): Int\n}"), "spec 'Loop' builds on itself")
+        assertContains(error("spec A : Nowhere {\n  f(): Int\n}"), "unknown spec 'Nowhere'")
+    }
+
+    @Test
+    fun `a module with type parameters is generic in them, as each of its functions is`() {
+        assertEquals(
+            "",
+            run(
+                """
+                import fckt.monads.Results
+                import fckt.monads.Validated
+                import fckt.monads.Validation
+
+                parse(s: String): Result<Int, String> = when (s.toIntOrNone()) {
+                  Some(n) -> Ok(n)
+                  None -> Error("not a number: ${'$'}s")
+                }
+
+                positive(n: Int): Validation<Int, Int> = if (n > 0) Valid(n) else Invalid([n])
+
+                main() = {
+                  assertEquals(Ok(3), Results { a by parse("1"); b by parse("2"); a + b })
+                  // map and product are Monad's, from bind and pure, for any error type.
+                  assertEquals(Error("not a number: x"), Results.map(parse("x"), n -> n * 2))
+                  assertEquals(Ok((1, 2)), Results.product(parse("1"), parse("2")))
+                  assertEquals(Error(15), Results.mapError(parse("y"), e -> e.length))
+                  assertEquals(Invalid([-1, -2]), Validated { a by positive(-1); b by positive(-2); a + b })
+                }
+                """.trimIndent(),
+            ),
+        )
+        assertContains(error("module Boxes<E> {\n  get<E>(x: E): E = x\n}"), "'get' is in Boxes<E>, so its own type parameters can't be named E too")
+        assertContains(
+            error("spec Sized {\n  type M<A>\n  size<A>(m: M<A>): Int\n}\nmodule Boxes<E> : Sized {\n  type M<A> = Result<A, E>\n  size<A>(m: Result<A, E>): Int = 1\n}\nmodule Count(S: Sized) {\n  one(): Int = 1\n}\nmodule C = Count(Boxes)"),
+            "Boxes takes type parameters, E, so it can't be given to a functor yet",
+        )
+    }
+
     /** Compiles [ml] with ocamlc, beside it, with the modules in [dirs]: as kiln compiles a library once. */
     private fun ocamlc(ml: File, vararg dirs: File) {
         val ocamlc = File(File(ocaml!!).parentFile, "ocamlc").path
@@ -1338,6 +1423,9 @@ class CompilerTest {
             write("units/uk/m4xy/units/Money.fk", "type Money(pence: Int)")
             write("units/uk/m4xy/units/Shape.fk", "type Shape {\n  Circle(radius: Float),\n  Square(side: Float),\n}")
             write("units/uk/m4xy/units/Ask.fk", "effect Ask {\n  ask(question: String): String\n}")
+            // A spec with a default, whose code a program's module that follows it has, and a generic module.
+            write("units/uk/m4xy/units/Measure.fk", "spec Measure {\n  type T\n  amount(m: T): Int\n  doubled(m: T): Int = amount(m) * 2\n}")
+            write("units/uk/m4xy/units/Boxes.fk", "module Boxes<E> {\n  type M<A> = Result<A, E>\n  ok<A>(x: A): Result<A, E> = Ok(x)\n}")
             write("units/uk/m4xy/units/helpers.fk", "@Ask greeting(): String = \"hello ${'$'}{ask(\"name\")}\"\nexternal double(x: Int): Int = \"x * 2\"")
             write(
                 "units/uk/m4xy/units/Moneys.fk",
@@ -1360,6 +1448,8 @@ class CompilerTest {
             assertContains(moneys, "  sum(items: List<Money>, start: Money = compiled): Money\n")
             assertContains(moneys, "  @Console report(m: Money, label: String = compiled): Unit\n")
             assertFalse("pad" in moneys)
+            assertContains(File(units, "interface/uk/m4xy/units/Measure.fki").readText(), "  doubled(m: T): Int = amount(m) * 2\n}")
+            assertContains(File(units, "interface/uk/m4xy/units/Boxes.fki").readText(), "module Boxes<E> {\n  type M<A> = Result<A, E>\n  ok<A>(x: A): Result<A, E>\n}")
             assertEquals("Uk_m4xy_units\n", File(units, "interface/unit").readText())
 
             // A library that uses it, which programs use with it.
@@ -1400,8 +1490,15 @@ class CompilerTest {
                 import uk.m4xy.money.*
                 import uk.m4xy.money.Wallets.*
 
+                module Pence : Measure {
+                  type T = Money
+                  amount(m: Money): Int = m.pence
+                }
+
                 @Console main() = {
                   total = sum([Money(150), Money(275)])
+                  boxed: Result<Int, String> = Boxes.ok(Pence.doubled(Money(21)))
+                  println("${'$'}boxed")
                   report(total)
                   report(twice(m -> Money(m.pence * 2), total), label = "quadrupled")
                   shape: Shape = Circle(2.0)
@@ -1428,7 +1525,7 @@ class CompilerTest {
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)
             assertEquals(
-                "total: £4.25 (Money(pence=425))\nquadrupled: £17.00 (Money(pence=1700))\nCircle(radius=2.0) 42 Money(pence=0)\nhello world (name)\n" +
+                "Ok(42)\ntotal: £4.25 (Money(pence=425))\nquadrupled: £17.00 (Money(pence=1700))\nCircle(radius=2.0) 42 Money(pence=0)\nhello world (name)\n" +
                     "failed: max can't spend £9.00\n£4.00\n2\n",
                 output,
             )

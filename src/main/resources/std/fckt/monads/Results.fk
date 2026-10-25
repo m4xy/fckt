@@ -1,31 +1,21 @@
-// Result as a monad: Results { x by parse(s); y by check(x); y } stops at the first Error.
-// It works for any error type.
-module Results {
-  pure<A, E>(x: A): Result<A, E> = Ok(x)
+// Result as a monad, for any type of error, E: Results { x by parse(s); y by check(x); y } stops at
+// the first Error.
+module Results<E> : Monad {
+  type M<A> = Result<A, E>
 
-  bind<A, B, E>(m: Result<A, E>, f: (A) -> Result<B, E>): Result<B, E> = when (m) {
+  pure<A>(x: A): Result<A, E> = Ok(x)
+
+  bind<A, B>(m: Result<A, E>, f: (A) -> Result<B, E>): Result<B, E> = when (m) {
     Ok(x) -> f(x)
     Error(e) -> Error(e)
   }
 
-  map<A, B, E>(m: Result<A, E>, f: (A) -> B): Result<B, E> = when (m) {
-    Ok(x) -> Ok(f(x))
-    Error(e) -> Error(e)
-  }
-
-  mapError<A, E, F>(m: Result<A, E>, f: (E) -> F): Result<A, F> = when (m) {
+  mapError<A, F>(m: Result<A, E>, f: (E) -> F): Result<A, F> = when (m) {
     Ok(x) -> Ok(x)
     Error(e) -> Error(f(e))
   }
 
-  // The first error, if either has one.
-  product<A, B, E>(ma: Result<A, E>, mb: Result<B, E>): Result<(A, B), E> = when (ma, mb) {
-    (Ok(a), Ok(b)) -> Ok((a, b))
-    (Error(e), _) -> Error(e)
-    (_, Error(e)) -> Error(e)
-  }
-
-  toOption<A, E>(m: Result<A, E>): Option<A> = when (m) {
+  toOption<A>(m: Result<A, E>): Option<A> = when (m) {
     Ok(x) -> Some(x)
     Error(_) -> None
   }

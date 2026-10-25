@@ -1,7 +1,11 @@
 // A type that takes a type, a way to wrap a value, and a way to chain a step that might stop. A
-// module with pure and bind runs blocks: Options { x by half(n); x + 1 }.
-spec Monad {
-  type M<A>
+// module with pure and bind runs blocks: Options { x by half(n); x + 1 }. It's an Applicative too,
+// whose map and product it has from bind and pure, unless it says them itself.
+spec Monad : Applicative {
   pure<A>(x: A): M<A>
   bind<A, B>(m: M<A>, f: (A) -> M<B>): M<B>
+
+  map<A, B>(m: M<A>, f: (A) -> B): M<B> = bind(m, x -> pure(f(x)))
+
+  product<A, B>(ma: M<A>, mb: M<B>): M<(A, B)> = bind(ma, a -> bind(mb, b -> pure((a, b))))
 }

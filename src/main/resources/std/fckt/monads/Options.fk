@@ -8,14 +8,4 @@ module Options : Monad {
     Some(x) -> f(x)
     None -> None
   }
-
-  map<A, B>(m: Option<A>, f: (A) -> B): Option<B> = when (m) {
-    Some(x) -> Some(f(x))
-    None -> None
-  }
-
-  product<A, B>(ma: Option<A>, mb: Option<B>): Option<(A, B)> = when (ma, mb) {
-    (Some(a), Some(b)) -> Some((a, b))
-    else -> None
-  }
 }

@@ -11,6 +11,9 @@ import uk.m4xy.fckt.syntax.Param
 import uk.m4xy.fckt.syntax.SourceFile
 import uk.m4xy.fckt.syntax.StringPart
 import uk.m4xy.fckt.syntax.TypeRef
+import uk.m4xy.fckt.syntax.Lexer
+import uk.m4xy.fckt.syntax.Pos
+import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.types.EFFECT_NAME
 
 /**
@@ -20,8 +23,12 @@ import uk.m4xy.fckt.types.EFFECT_NAME
  * there.
  */
 internal object Interfaces {
-    /** [file]'s interface, with its imports, as its declarations' types name what they import. */
-    fun write(file: SourceFile, path: String): String {
+    /**
+     * [file]'s interface, with its imports, as its declarations' types name what they import. A spec
+     * is as [text] has it, with its defaults' code, as a module that follows it has that code.
+     */
+    fun write(file: SourceFile, path: String, text: String): String {
+        source = text
         val out = StringBuilder("// The interface of $path, which fckt --library wrote: its declarations, without their code.\n")
         val imports = file.imports[path].orEmpty()
         if (imports.isNotEmpty()) out.append('\n')
@@ -36,6 +43,22 @@ internal object Interfaces {
             decl(d, "", out)
         }
         return out.toString()
+    }
+
+    /** The text of the file being written, for its specs. */
+    private var source = ""
+
+    /** [d] as the source has it: from where it starts to the brace that closes it. */
+    private fun verbatim(d: Decl): String {
+        val lineStarts = mutableListOf(0).apply { source.forEachIndexed { i, c -> if (c == '\n') add(i + 1) } }
+        fun offset(pos: Pos) = lineStarts[pos.line - 1] + pos.col - 1
+        val tokens = Lexer(source, Pos(1, 1, null)).tokenize().dropWhile { it.pos.line < d.pos.line || (it.pos.line == d.pos.line && it.pos.col < d.pos.col) }
+        var depth = 0
+        for (t in tokens.dropWhile { it.kind != T.LBRACE }) {
+            if (t.kind == T.LBRACE) depth++
+            if (t.kind == T.RBRACE && --depth == 0) return source.substring(offset(d.pos), offset(t.pos) + 1)
+        }
+        error("a spec's braces don't close")
     }
 
     /**
@@ -65,6 +88,11 @@ internal object Interfaces {
 
     private fun decl(d: Decl, indent: String, out: StringBuilder) {
         out.append(indent)
+        // A spec as written, with its annotations, what it builds on and its defaults' code.
+        if (d is Decl.Spec && d.copyOf == null) {
+            out.append(verbatim(d)).append('\n')
+            return
+        }
         val effect = d.annotations.indexOfFirst { it.name == EFFECT_NAME }.takeIf { it >= 0 && (d is Decl.Spec || (d is Decl.Record && d.isAnnotation && d.fields.isEmpty())) }
         annotations(d.annotations.filterIndexed { i, _ -> i != effect }, out)
         if (d.isOpaque) out.append("opaque ")
@@ -110,7 +138,7 @@ internal object Interfaces {
                 if (d.external != null) out.append(" = ").append(string(d.external))
             }
             is Decl.Module -> {
-                out.append("module ").append(d.name)
+                out.append("module ").append(d.name).append(typeParams(d.typeParams))
                 d.application?.let { app ->
                     out.append(" = ").append(app.name).append(app.args.joinToString(", ", "(", ")") { type(it) })
                     out.append('\n')
@@ -122,20 +150,8 @@ internal object Interfaces {
                 for (inner in d.decls.filter { !it.isPrivate }) decl(inner, "$indent  ", out)
                 out.append("$indent}")
             }
-            is Decl.Spec -> {
-                out.append(if (effect != null) "effect " else "spec ").append(d.name).append(typeParams(d.typeParams))
-                d.copyOf?.let { out.append(" = ").append(type(it)).append('\n'); return }
-                out.append(" {\n")
-                for (t in d.types) out.append("$indent  type ${t.name}${typeParams(t.typeParams)}\n")
-                for (v in d.values) {
-                    out.append("$indent  ")
-                    annotations(v.annotations, out)
-                    out.append(v.name).append(typeParams(v.typeParams))
-                    v.params?.let { ps -> out.append(ps.joinToString(", ", "(", ")") { param(it) }) }
-                    out.append(": ").append(type(v.type)).append('\n')
-                }
-                out.append("$indent}")
-            }
+            // A copy of an effect; any other spec is as written, above.
+            is Decl.Spec -> out.append(if (effect != null) "effect " else "spec ").append(d.name).append(" = ").append(type(d.copyOf!!))
         }
         out.append('\n')
     }
