@@ -1,4 +1,5 @@
 import fckt.text.Bytes
+import fckt.time.Instant
 
 // Reads and writes files and folders. A relative path is from the folder the program runs in.
 // What can't be done, such as reading a file that isn't there, fails with why: Files'
@@ -19,4 +20,11 @@ import fckt.text.Bytes
   tryDelete(path: Path): Result<Unit, String>
   tryOpenForReading(path: Path): Result<InputHandle, String>
   tryOpenForWriting(path: Path, append: Boolean): Result<OutputHandle, String>
+  // When the file was last changed.
+  tryLastModified(path: Path): Result<Instant, String>
+  // Where the file really is: its path from the root, with links followed.
+  tryCanonical(path: Path): Result<Path, String>
+  // The folder relative paths are from, and moving it to another.
+  workingDirectory(): Path
+  tryChangeDirectory(path: Path): Result<Unit, String>
 }

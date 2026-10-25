@@ -4,5 +4,13 @@
   tryStart(command: String, args: List<String>): Result<InputHandle, String>
   // Waits for the program started with output to end, and gives its exit code.
   waitFor(output: InputHandle): Int
+  // Runs command with args to the end, with this program's terminal, so what it prints is shown
+  // rather than read; and gives its exit code.
+  runAttached(command: String, args: List<String>): Int
   env(name: String): Option<String>
+  setEnv(name: String, value: String): Unit
+  // The file this program was run from.
+  executable(): Path
+  // Ends this program, with code: 0 if it worked.
+  exit(code: Int): Nothing
 }

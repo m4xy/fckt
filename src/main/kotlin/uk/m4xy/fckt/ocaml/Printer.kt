@@ -80,7 +80,10 @@ object Printer {
         else -> "(${params.joinToString(", ")}) "
     }
 
-    private fun typeDef(n: ResolvedNode): String {
+    private fun typeDef(n: ResolvedNode): String =
+        typeDefBody(n) + if (n.attributes["partlyUsed"] == true) " [@@warning \"-37-69\"]" else ""
+
+    private fun typeDefBody(n: ResolvedNode): String {
         val name = typeParams(n.list("params")) + n.str("name")
         val head = "$name ="
         val first = n.children.firstOrNull()

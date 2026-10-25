@@ -2304,10 +2304,23 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     // ---- Dependency order ----
 
+    /** Of the functions each one's body may use, those it was only taken to because of a `.name`. */
+    private val guessedRefs = mutableMapOf<Decl.Function, Set<Decl.Function>>()
+
     private fun dependencyGroups(): List<FunctionGroup> {
         val decls = globals.values.filter { it !in parameterMembers }
         val deps = decls.associateWith { decl -> refsOf(decl).also { uses[decl] = it }.filter { it !in parameterMembers } }
-        return stronglyConnected(decls) { deps.getValue(it) }.map { component ->
+        // A call between modules goes one way, as OCaml's modules can't call each other: so where
+        // only `.name`s, which may be any extension of that name, join functions of different
+        // modules into a group, they're taken as the other modules' extensions they may be, not as calls.
+        val certain = decls.associateWith { decl ->
+            val guessed = guessedRefs[decl].orEmpty()
+            deps.getValue(decl).filter { it !in guessed || it.path == decl.path }
+        }
+        val components = stronglyConnected(decls) { deps.getValue(it) }.flatMap { component ->
+            if (component.map { it.path }.distinct().size > 1) stronglyConnected(component) { d -> certain.getValue(d).filter { it in component } } else listOf(component)
+        }
+        return components.map { component ->
             val recursive = component.size > 1 || component[0] in deps.getValue(component[0])
             component.firstOrNull { it.params == null && recursive }?.let {
                 throw CompileError(it.pos, "value '${it.simpleName}' is defined in terms of itself")
@@ -2345,19 +2358,21 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         currentPath = decl.path
         currentFile = decl.pos.file
         try {
+            val guessed = mutableSetOf<Decl.Function>()
+            val named = mutableSetOf<Decl.Function>()
             return refs.flatMap { ref ->
                 // After a dot, only an extension of that name.
-                if (ref.startsWith(".")) return@flatMap extensions[ref.drop(1)].orEmpty().filter { visible(it) } + defaultsUsed(ref.drop(1))
+                if (ref.startsWith(".")) return@flatMap (extensions[ref.drop(1)].orEmpty().filter { visible(it) } + defaultsUsed(ref.drop(1))).also { guessed += it }
                 // A method's name may be any extension of that name.
                 // A module used as a handler or a value: its functions.
-                lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) || valueSpec(it) } == true }
+                (lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) || valueSpec(it) } == true }
                     ?.let { m -> globals.values.filter { it.path == m.name.split('.') } }.orEmpty() +
                 extensions[ref].orEmpty().filter { visible(it) } + listOfNotNull(
                     lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
                         lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
                     },
-                ) + defaultsUsed(ref)
-            }.distinct()
+                ) + defaultsUsed(ref)).also { named += it }
+            }.distinct().also { guessedRefs[decl] = guessed - named }
         } finally {
             currentPath = saved
             currentFile = savedFile

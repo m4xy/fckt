@@ -7,4 +7,18 @@ module Results {
   external Result<A, E>.isOk(): Boolean = "Result.is_ok this"
   external Result<A, E>.isError(): Boolean = "Result.is_error this"
   external Result<A, E>.toOption(): Option<A> = "Result.to_option this"
+  // f of its value, if it's Ok.
+  external Result<A, E>.forEach(f: (A) -> Unit): Unit = "Result.iter f this"
+
+  // As fold, while f gives Ok: the first Error is what it gives.
+  List<A>.foldResult<B, E>(initial: B, f: (B, A) -> Result<B, E>): Result<B, E> = when (this) {
+    [] -> Ok(initial)
+    [a, *rest] -> when (f(initial, a)) {
+      Ok(b) -> rest.foldResult(b, f)
+      Error(e) -> Error(e)
+    }
+  }
+  // What f gives each item, if it gives every one Ok; or the first Error.
+  List<A>.mapResult<B, E>(f: (A) -> Result<B, E>): Result<List<B>, E> =
+    this.foldResult([]) { done, a -> f(a).map { [it, *done] } }.map { it.reversed() }
 }

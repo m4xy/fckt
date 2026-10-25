@@ -2,6 +2,7 @@ import fckt.io.Channels.*
 import fckt.io.Paths.*
 import fckt.text.Bytes
 import fckt.text.Encodings.*
+import fckt.time.Instant
 
 // Reading and writing files and folders, through @FileSystem: path.readText(),
 // path.writeText(text), dir.listFiles() and the rest.
@@ -29,6 +30,14 @@ module Files {
   @FileSystem Path.delete(): Unit = orFail(tryDelete(this))
   // Copies the file to target, a little at a time.
   @FileSystem Path.copyTo(target: Path): Unit = orFail(tryCopy(this, target))
+
+  // When the file was last changed.
+  @FileSystem Path.lastModified(): Instant = orFail(tryLastModified(this))
+  // Where the file really is: its path from the root, with links followed. An installed program is
+  // often a link to where it is.
+  @FileSystem Path.canonical(): Path = orFail(tryCanonical(this))
+  // Makes folder the one relative paths are from.
+  @FileSystem changeDirectory(folder: Path): Unit = orFail(tryChangeDirectory(folder))
 
   // Copies the folder and everything in it to target, which it makes; or the file, as copyTo.
   @FileSystem Path.copyRecursively(target: Path): Unit = if (this.isDirectory()) {
@@ -65,6 +74,10 @@ module Files {
     tryDelete(path: Path) = remove(path.value)
     tryOpenForReading(path: Path) = openIn(path.value)
     tryOpenForWriting(path: Path, append: Boolean) = openOut(path.value, append)
+    tryLastModified(path: Path) = modified(path.value).map { Instant(it) }
+    tryCanonical(path: Path) = realPath(path.value).map { it.toPath() }
+    workingDirectory() = currentDirectory(Unit).toPath()
+    tryChangeDirectory(path: Path) = changeTo(path.value)
 
     private external read(path: String): Result<Bytes, String> =
       "(fun p -> try Ok (In_channel.with_open_bin p In_channel.input_all) with Sys_error e -> Error e) path"
@@ -85,5 +98,11 @@ module Files {
       "(fun p -> try Ok (open_in_bin p) with Sys_error e -> Error e) path"
     private external openOut(path: String, append: Boolean): Result<OutputHandle, String> =
       "(fun p a -> try Ok (open_out_gen (Open_wronly :: Open_creat :: Open_binary :: (if a then [Open_append] else [Open_trunc])) 0o644 p) with Sys_error e -> Error e) path append"
+    private external modified(path: String): Result<Int, String> =
+      "(fun p -> try Ok (int_of_float ((Unix.stat p).Unix.st_mtime *. 1000.)) with Unix.Unix_error (e, _, _) -> Error (p ^ \": \" ^ Unix.error_message e)) path"
+    private external realPath(path: String): Result<String, String> =
+      "(fun p -> try Ok (Unix.realpath p) with Unix.Unix_error (e, _, _) -> Error (p ^ \": \" ^ Unix.error_message e)) path"
+    private external currentDirectory(u: Unit): String = "(fun _ -> Sys.getcwd ()) u"
+    private external changeTo(path: String): Result<Unit, String> = "(fun p -> try Ok (Sys.chdir p) with Sys_error e -> Error e) path"
   }
 }

@@ -315,6 +315,7 @@ val STANDARD_FILES = listOf(
     "collections/Arrays",
     "collections/Lists",
     "collections/Maps",
+    "collections/Sets",
     "collections/Stream",
     "collections/Streams",
     "effects/Fail",
@@ -354,6 +355,7 @@ val STANDARD_FILES = listOf(
     "monads/Validated",
     "monads/Validation",
     "text/Bytes",
+    "text/Digests",
     "text/Encodings",
     "text/Strings",
     "time/Clock",
@@ -374,7 +376,7 @@ val STANDARD_MODULES = STANDARD_FILES.map { it.removeSuffix(".fk") }
  */
 val DEFAULT_IMPORTS = listOf(
     "lang.*", "lang.Functions.*", "io.Console", "io.Terminal", "effects.Fail", "effects.Failure.*",
-    "collections.Lists.*", "collections.Maps.*", "text.Strings.*", "math.Maths.*", "Options.*", "Results.*",
+    "collections.Lists.*", "collections.Maps.*", "collections.Sets.*", "text.Strings.*", "math.Maths.*", "Options.*", "Results.*",
 ).map { "$STANDARD_PACKAGE.$it" }
 
 /** The OCaml libraries beyond the standard one that compiled [ocaml] needs: `unix`, for fckt.io's processes. */

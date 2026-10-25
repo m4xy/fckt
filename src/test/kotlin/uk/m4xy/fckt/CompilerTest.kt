@@ -848,6 +848,44 @@ class CompilerTest {
     }
 
     @Test
+    fun `sets hold each item once, in order, equal by their items`() {
+        val source = """
+            main() = {
+              s = setOf([3, 1, 2, 3])
+              assertEquals("[1, 2, 3]", s.toString())
+              assertEquals(3, s.size)
+              assertEquals(s, emptySet().plus(2).plus(3).plus(1))
+              assert(s.contains(2) && !s.contains(4) && s.isNotEmpty() && emptySet().plus(1).minus(1).isEmpty())
+              assertEquals(setOf([1, 2, 3, 4]), s.union(setOf([4, 1])))
+              assertEquals(setOf([2, 3]), s.intersect(setOf([2, 3, 4])))
+              assertEquals(setOf([1]), s.subtract(setOf([2, 3])))
+              assertEquals([10, 20, 30], s.map { it * 10 })
+              assertEquals(setOf([2]), s.filter { it % 2 == 0 })
+              assertEquals([1, 2, 3], [2, 1, 2, 3].toSet().toList())
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+    }
+
+    @Test
+    fun `options and results combine, and a list maps to a result while each is ok`() {
+        val source = """
+            number(text: String): Result<Int, String> = text.toIntOrNone().toResult("not a number: ${'$'}text")
+            main() = {
+              assertEquals(Ok([1, 2]), ["1", "2"].mapResult { number(it) })
+              assertEquals(Error("not a number: x"), ["1", "x", "y"].mapResult { number(it) })
+              assertEquals(Ok(6), [1, 2, 3].foldResult(0) { sum, n -> if (n > 0) Ok(sum + n) else Error("${'$'}n") })
+              assertEquals(Error("0"), [1, 0, 3].foldResult(0) { sum, n -> if (n > 0) Ok(sum + n) else Error("${'$'}n") })
+              assertEquals(None, Some(3).filter { it > 5 })
+              assertEquals(Some(1), None.orElse { Some(1) })
+              assertEquals(Some(2), Some(2).orElse { Some(1) })
+              assertEquals([2], Some(2).toList())
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+    }
+
+    @Test
     fun `arguments run left to right, as in Kotlin`() {
         val source = """
             @Console f(s: String): Int = {
@@ -1405,7 +1443,11 @@ class CompilerTest {
                   tryMakeDirs = file -> Error("read only"),
                   tryDelete = file -> Error("read only"),
                   tryOpenForReading = file -> Error("not here"),
-                  tryOpenForWriting = (file, append) -> Error("not here")
+                  tryOpenForWriting = (file, append) -> Error("not here"),
+                  tryLastModified = file -> Error("not here"),
+                  tryCanonical = file -> Ok(file),
+                  workingDirectory = ~path("."),
+                  tryChangeDirectory = file -> Error("read only")
                 ) { config() }
               }
               println(found.toString())

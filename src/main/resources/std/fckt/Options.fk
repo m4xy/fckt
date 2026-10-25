@@ -6,4 +6,14 @@ module Options {
   external Option<A>.isSome(): Boolean = "Option.is_some this"
   external Option<A>.isNone(): Boolean = "Option.is_none this"
   external Option<A>.toResult<E>(none: E): Result<A, E> = "Option.to_result ~none this"
+  external Option<A>.toList(): List<A> = "Option.to_list this"
+  // f of its value, if it has one.
+  external Option<A>.forEach(f: (A) -> Unit): Unit = "Option.iter f this"
+  // It, if its value passes.
+  Option<A>.filter(f: (A) -> Boolean): Option<A> = this.flatMap { if (f(it)) Some(it) else None }
+  // It, if it has a value, or what other gives: options tried in turn.
+  Option<A>.orElse(other: () -> Option<A>): Option<A> = when (this) {
+    Some(_) -> this
+    None -> other()
+  }
 }

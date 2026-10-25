@@ -1,0 +1,38 @@
+// Kotlin's sets: items, each once. Imported into every file. A set never changes: plus and minus
+// make another. Its items are in order, smallest first, as a map's keys are, and two sets with the
+// same items are equal.
+module Sets {
+  // The items as a map's keys.
+  opaque type Set<A>(items: Map<A, Unit>)
+
+  // A set with nothing in it; with the list's items.
+  emptySet<A>(): Set<A> = Set(emptyMap())
+  setOf<A>(items: List<A>): Set<A> = Set(items.map { (it, Unit) }.toMap())
+  List<A>.toSet(): Set<A> = setOf(this)
+
+  Set<A>.size: Int = this.items.size
+  Set<A>.isEmpty(): Boolean = this.items.isEmpty()
+  Set<A>.isNotEmpty(): Boolean = this.items.isNotEmpty()
+  Set<A>.contains(item: A): Boolean = this.items.containsKey(item)
+
+  // It with item, or without it.
+  Set<A>.plus(item: A): Set<A> = Set(this.items.put(item, Unit))
+  Set<A>.minus(item: A): Set<A> = Set(this.items.remove(item))
+  // The items in either, in both, or in it but not other.
+  Set<A>.union(other: Set<A>): Set<A> = Set(this.items.putAll(other.items))
+  Set<A>.intersect(other: Set<A>): Set<A> = this.filter { other.contains(it) }
+  Set<A>.subtract(other: Set<A>): Set<A> = this.filter { !other.contains(it) }
+
+  // Its items, in order.
+  Set<A>.toList(): List<A> = this.items.keys
+  Set<A>.forEach(f: (A) -> Unit): Unit = this.toList().forEach(f)
+  Set<A>.any(f: (A) -> Boolean): Boolean = this.toList().any(f)
+  Set<A>.all(f: (A) -> Boolean): Boolean = this.toList().all(f)
+  Set<A>.count(f: (A) -> Boolean): Int = this.toList().count(f)
+  Set<A>.filter(f: (A) -> Boolean): Set<A> = Set(this.items.filterKeys(f))
+  // What f makes of each item, in order: a list, as Kotlin's is, as two items may make the same.
+  Set<A>.map<B>(f: (A) -> B): List<B> = this.toList().map(f)
+
+  // As Kotlin shows a set: [a, b].
+  Set<A>.toString(showA: (A) -> String): String = "[" + this.toList().map(showA).joinToString(", ") + "]"
+}

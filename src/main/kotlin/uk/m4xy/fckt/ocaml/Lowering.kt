@@ -601,8 +601,11 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 typeDef(snake(decl.simpleName)) { params = typeParamsOf(decl).map(::typeVar) }
                 continue
             }
+            // Only the methods a program uses come from the standard library, which may not build its opaque types.
+            val partly = !forSignature && decl.isOpaque && decl.pos.file?.startsWith("std/") == true
             when (decl) {
                 is Decl.Record -> typeDef(snake(decl.simpleName)) {
+                    if (partly) partlyUsed = true
                     params = decl.typeParams.ocaml().map(::typeVar)
                     if (forSignature && decl.privateConstructor) isPrivate = true
                     for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams.ocaml())) { if (field.isVar) isMutable = true }
@@ -618,6 +621,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                         }
                     }
                 } else typeDef(snake(decl.simpleName)) {
+                    if (partly) partlyUsed = true
                     params = decl.typeParams.ocaml().map(::typeVar)
                     for (variant in decl.variants) {
                         variant(variant.name) {

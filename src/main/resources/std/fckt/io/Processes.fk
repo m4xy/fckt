@@ -1,4 +1,5 @@
 import fckt.io.Channels.*
+import fckt.io.Paths.*
 
 // Running other programs, through @Process.
 module Processes {
@@ -24,12 +25,20 @@ module Processes {
   module Local : Process {
     tryStart(command: String, args: List<String>) = open(command, args)
     waitFor(output: InputHandle) = close(output)
+    runAttached(command: String, args: List<String>) = system(command, args)
     env(name: String) = getenv(name)
+    setEnv(name: String, value: String) = putenv(name, value)
+    executable() = executableName(Unit).toPath()
+    exit(code: Int) = stop(code)
 
     private external open(command: String, args: List<String>): Result<InputHandle, String> =
       "(fun c a -> try Ok (Unix.open_process_in (Filename.quote_command c a ^ \" 2>&1\")) with Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)) command args"
     private external close(output: InputHandle): Int =
       "(fun c -> match Unix.close_process_in c with Unix.WEXITED n -> n | Unix.WSIGNALED n | Unix.WSTOPPED n -> 128 + n) output"
     private external getenv(name: String): Option<String> = "Sys.getenv_opt name"
+    private external system(command: String, args: List<String>): Int = "(fun c a -> Sys.command (Filename.quote_command c a)) command args"
+    private external putenv(name: String, value: String): Unit = "Unix.putenv name value"
+    private external executableName(u: Unit): String = "(fun _ -> Sys.executable_name) u"
+    private external stop(code: Int): Nothing = "exit code"
   }
 }

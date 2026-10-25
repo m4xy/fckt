@@ -1,0 +1,5 @@
+// Digests of text: a short name for it, the same for the same text, as what's cached is kept under.
+module Digests {
+  // Its MD5 digest, as 32 hex digits: to tell texts apart, not to keep them secret.
+  external String.md5(): String = "(fun t -> Digest.to_hex (Digest.string t)) this"
+}

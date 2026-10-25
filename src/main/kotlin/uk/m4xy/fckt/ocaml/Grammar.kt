@@ -93,6 +93,12 @@ interface TypeDef {
     /** `= private { ... }`: readable outside its module, but only built inside it. */
     val isPrivate: Boolean
     val alias: String
+
+    /**
+     * `[@@warning "-37-69"]`: its cases and fields needn't all be built or read. A standard library
+     * type linked for the methods a program uses may come without the functions that build it.
+     */
+    val partlyUsed: Boolean
 }
 
 /** `name : type` in a record or inline record; `mutable name : type` if it [isMutable]. */
