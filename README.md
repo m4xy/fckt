@@ -192,17 +192,17 @@ written with and what runs them are apart: [fk-tests](https://github.com/m4xy/fk
 `@Test`, and fk-tests-runner runs tests marked with it.
 
 ```kotlin
-import uk.m4xy.fktests.Test
+import uk.m4xy.fktests.api.Test
 import pricing.Prices
 
 @Test sumsItems() = assert(Prices.total([1, 2, 3]) == 6)
 @Test emptyIsZero() = assertEquals(0, Prices.total([]))
 ```
 
-`fckt --test test --marker uk.m4xy.fktests.Test --runner uk.m4xy.fktestsrunner.Testing -I src`
+`fckt --test test --marker uk.m4xy.fktests.api.Test --runner uk.m4xy.fktests.runner.Runner -I src`
 compiles the functions in a folder's files marked with `--marker`'s annotation to one program,
-whose main gives `--runner`'s module a plan of them: `Plan`, `Suite`, `TestCase`, `TestId` and
-`Location`, which the runner's package has (see `compileTests`). A test can't use the runner's package, unless it's the runner's own, with
+whose main has `--runner`'s module make a plan of them, with its `test`, `suite` and `plan`, and
+run it, with its `main` (see `compileTests`); the plan's types are the runner's own. A test can't use the runner's package, unless it's the runner's own, with
 `--runner-tests`. It takes no parameters, and its effects are main's, handled as main's are; the
 folder's other files are what the tests share, and a file with a `main` is a program of its own.
 fk-tests' kiln plugin does this for a project's tests.

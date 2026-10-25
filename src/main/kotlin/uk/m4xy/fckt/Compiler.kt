@@ -54,19 +54,17 @@ fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, impo
 
 /**
  * The tests in [dir], to one program: each function in its lower-case files marked with [marker],
- * an annotation, as `uk.m4xy.fktests.Test`, run by [runner], a module, from a main made for them.
+ * an annotation, as `uk.m4xy.fktests.api.Test`, run by [runner], a module, from a main made for them.
  * What tests are written with and what runs them are apart: fckt knows neither, and a test can't
  * use the runner, whose package only the main sees, unless they're [runnerTests], the runner's own.
- * The main gives the runner the tests as a plan, of the types its package has, as fk-tests-runner's
- * `uk.m4xy.fktestsrunner` has:
+ * The main gives the runner the tests as a plan, which the runner makes, of its own types, with:
  *
- * - `Plan<@E>(suites: List<Suite<@E>>)`, the tests: a suite for each file with any;
- * - `Suite<@E>(file: String, cases: List<TestCase<@E>>)`;
- * - `TestCase<@E>(id: TestId, at: Location, body: @Fail @E () -> Unit)`, a test;
- * - `TestId(file: String, name: String)` and `Location(file: String, line: Int)`;
+ * - `test<@E>(file: String, name: String, line: Int, body: @Fail @E () -> Unit)`, a test;
+ * - `suite<@E>(file: String, tests: List<...>)`, a file's tests;
+ * - `plan<@E>(suites: List<...>)`, a suite for each file with any;
  *
- * and [runner] has `main<@E>(args: List<String>, plan: Plan<@E>): Unit`, which runs them as the
- * program's arguments say.
+ * and runs them with `main<@E>(args: List<String>, plan: ...): Unit`, as the program's arguments
+ * say. fk-tests-runner's `uk.m4xy.fktests.runner.Runner` is one.
  *
  * With [separate], it's compiled as [compileSeparately] compiles a program.
  */
@@ -76,9 +74,6 @@ fun compileTests(dir: File, marker: String, runner: String, dirs: List<File>, li
     return compile(link(testsMain(dir, marker, runner, runnerTests), packages, imports).file)
 }
 
-/** The types of a plan of tests, which a runner's package has. */
-private val TEST_PLAN_TYPES = listOf("Plan", "Suite", "TestCase", "TestId", "Location")
-
 /** The main that runs [dir]'s tests: the plan of them, which it gives [runner]. */
 internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: Boolean = false): String {
     fun split(name: String, what: String, example: String): Pair<String, String> {
@@ -87,8 +82,8 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
         if (pkg.isEmpty() || !simple[0].isUpperCase()) throw CompileError(null, "$what is named with its package: $example")
         return pkg to simple
     }
-    val (markerPackage, markerName) = split(marker, "what marks a test", "uk.m4xy.fktests.Test")
-    val (runnerPackage, module) = split(runner, "a test runner", "uk.m4xy.fktestsrunner.Testing")
+    val (markerPackage, markerName) = split(marker, "what marks a test", "uk.m4xy.fktests.api.Test")
+    val (runnerPackage, module) = split(runner, "a test runner", "uk.m4xy.fktests.runner.Runner")
     val errors = mutableListOf<CompileError>()
     val files = dir.listFiles().orEmpty().filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }.sortedBy { it.name }
     val sections = files.mapNotNull { file ->
@@ -116,14 +111,10 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
     CompileErrors.throwIfAny(errors)
     if (sections.isEmpty()) throw CompileError(Pos(1, 1, dir.path), "no tests here: a test is a function marked @$markerName, as in @$markerName sums() = assert(1 + 1 == 2)")
     fun string(text: String) = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$") + "\""
-    val out = StringBuilder("import $runner\n")
-    for (type in TEST_PLAN_TYPES) out.append("import $runnerPackage.$type\n")
-    out.append("\nmain(args: List<String>) = $module.main(args, Plan([\n")
+    val out = StringBuilder("import $runner\n\nmain(args: List<String>) = $module.main(args, $module.plan([\n")
     for ((file, tests) in sections) {
-        out.append("  Suite(${string(file)}, [\n")
-        for ((name, line) in tests) {
-            out.append("    TestCase(TestId(${string(file)}, ${string(name)}), Location(${string(file)}, $line), () -> $name()),\n")
-        }
+        out.append("  $module.suite(${string(file)}, [\n")
+        for ((name, line) in tests) out.append("    $module.test(${string(file)}, ${string(name)}, $line, () -> $name()),\n")
         out.append("  ]),\n")
     }
     out.append("]))\n")

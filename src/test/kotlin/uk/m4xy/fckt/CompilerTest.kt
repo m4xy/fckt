@@ -1233,26 +1233,28 @@ class CompilerTest {
             write("src/pricing/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = items.fold(0, (a, b) -> a + b)\n}\n")
             // What tests are written with, and, apart, what runs them, with what fckt --test calls.
             write("lib/check/Test.fk", "annotation type Test\n")
-            write("lib/runs/Plan.fk", "type Plan<@E>(suites: List<Suite<@E>>)\n")
-            write("lib/runs/Suite.fk", "type Suite<@E>(file: String, cases: List<TestCase<@E>>)\n")
-            write("lib/runs/TestCase.fk", "type TestCase<@E>(id: TestId, at: Location, body: @Fail @E () -> Unit)\n")
-            write("lib/runs/TestId.fk", "type TestId(file: String, name: String)\n")
-            write("lib/runs/Location.fk", "type Location(file: String, line: Int)\n")
+            // Its types are its own, as it likes them: fckt makes them only through the runner.
+            write("lib/runs/plan/Case.fk", "type Case<@E>(file: String, name: String, line: Int, body: @Fail @E () -> Unit)\n")
             write(
                 "lib/runs/Runner.fk",
                 """
+                import runs.plan.Case
+
                 module Runner {
                   type Outcome { Passed, Failed }
-                  @Console main<@E>(args: List<String>, plan: Plan<@E>): Unit = {
-                    outcomes = plan.suites.flatMap(suite -> {
-                      println(suite.file)
-                      suite.cases.filter(c -> args.isEmpty() || args.contains(c.id.name)).map(c -> check(c))
+                  test<@E>(file: String, name: String, line: Int, body: @Fail @E () -> Unit): Case<@E> = Case(file, name, line, body)
+                  suite<@E>(file: String, tests: List<Case<@E>>): List<Case<@E>> = tests
+                  plan<@E>(suites: List<List<Case<@E>>>): List<List<Case<@E>>> = suites
+                  @Console main<@E>(args: List<String>, plan: List<List<Case<@E>>>): Unit = {
+                    outcomes = plan.flatMap(suite -> {
+                      suite.firstOrNone().map(c -> println(c.file)).getOrElse(Unit)
+                      suite.filter(c -> args.isEmpty() || args.contains(c.name)).map(c -> check(c))
                     })
                     println("${'$'}{outcomes.filter(o -> o == Failed).size} failed")
                   }
-                  @Console check<@E>(c: TestCase<@E>): Outcome = when (attempt { caught(c.body).map(reason -> fail(reason)).getOrElse(Unit) }) {
-                    Ok(_) -> { println("  passed ${'$'}{c.id.name} at line ${'$'}{c.at.line}"); Passed }
-                    Error(reason) -> { println("  FAILED ${'$'}{c.id.name}: ${'$'}reason"); Failed }
+                  @Console check<@E>(c: Case<@E>): Outcome = when (attempt { caught(c.body).map(reason -> fail(reason)).getOrElse(Unit) }) {
+                    Ok(_) -> { println("  passed ${'$'}{c.name} at line ${'$'}{c.line}"); Passed }
+                    Error(reason) -> { println("  FAILED ${'$'}{c.name}: ${'$'}reason"); Failed }
                   }
                   private external caught(body: () -> Unit): Option<String> =
                     "(fun f -> try f (); None with Failure m -> Some m | e -> Some (Printexc.to_string e)) body"
@@ -1280,12 +1282,12 @@ class CompilerTest {
             )
             assertEquals("files.fk\nprices.fk\n  passed sums at line 4\n0 failed\n", runOcaml(ml, listOf("sums")))
             // The runner's own tests use it.
-            write("test/runner.fk", "import check.Test\nimport runs.TestId\n@Test idsAreValues() = assert(TestId(\"a.fk\", \"b\") == TestId(\"a.fk\", \"b\"))\n")
-            assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), runnerTests = true), listOf("idsAreValues")), "  passed idsAreValues")
+            write("test/runner.fk", "import check.Test\nimport runs.plan.Case\n@Test casesAreValues() = assert(Case(\"a.fk\", \"b\", 1, () -> Unit).line == 1)\n")
+            assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), runnerTests = true), listOf("casesAreValues")), "  passed casesAreValues")
             File(test, "runner.fk").delete()
             write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
             write("test/unmarked.fk", "@Test d() = Unit\n")
-            write("test/sneaky.fk", "import check.Test\nimport runs.TestId\n@Test e() = Unit\n")
+            write("test/sneaky.fk", "import check.Test\nimport runs.plan.Case\n@Test e() = Unit\n")
             val errors = assertFailsWith<CompileError> { compileTests(test, "check.Test", "runs.Runner", roots, emptyList()) }.errors.map { it.message }
             assertEquals(
                 listOf(

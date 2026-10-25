@@ -24,8 +24,8 @@ which fckt --standard writes as fckt_std.ml, and with each library -L names. fck
 compiles packages as a library, to the OCaml module -o names, and writes the interface that
 programs using it are checked against to <interface>; a library's public functions say their
 types. fckt --test compiles the tests in a folder, its functions marked with --marker's annotation,
-uk.m4xy.fktests.Test for fk-tests's, to one program that runs each with --runner's module,
-uk.m4xy.fktestsrunner.Testing for fk-tests-runner's. Tests can't use the runner, unless they're
+uk.m4xy.fktests.api.Test for fk-tests's, to one program that runs each with --runner's module,
+uk.m4xy.fktests.runner.Runner for fk-tests-runner's. Tests can't use the runner, unless they're
 its own: --runner-tests. Building projects is kiln's job."""
 
 fun main(args: Array<String>) {
