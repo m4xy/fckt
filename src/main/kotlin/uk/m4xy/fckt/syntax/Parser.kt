@@ -263,7 +263,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
         val name = expect(T.IDENT, "a function name").text
         if (name[0].isUpperCase()) throw error("functions and values start with a lower-case letter", pos)
         val typeParams = typeParams()
-        val params = if (at(T.LPAREN)) params() else null
+        val params = if (at(T.LPAREN)) params(defaults = true) else null
         val returnType = if (accept(T.COLON) != null) type() else null
         expect(T.ASSIGN, "'='")
         skipNewlines()
@@ -433,7 +433,10 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
             if (at(T.IDENT) && peekAt(1).kind == T.COLON) {
                 val name = next().text
                 next()
-                fields += FieldDef(pos, name, type(), annotations, isVar)
+                val type = type()
+                // `version: String = "0.1.0"`: what it is when a constructor call leaves it out.
+                val default = if (accept(T.ASSIGN) != null) expr() else null
+                fields += FieldDef(pos, name, type, annotations, isVar, default)
             } else {
                 fields += FieldDef(pos, "", type(), annotations)
             }
@@ -448,7 +451,8 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
         return fields
     }
 
-    private fun params(): List<Param> {
+    /** `(a: A, b: B)`; with [defaults], a declared function's, a parameter can have one: `b: B = value`. */
+    private fun params(defaults: Boolean = false): List<Param> {
         expect(T.LPAREN, "'('")
         val params = mutableListOf<Param>()
         while (!at(T.RPAREN)) {
@@ -457,7 +461,14 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
             // `_` for one that isn't used, as in Kotlin's lambdas.
             val name = if (accept(T.UNDERSCORE) != null) "_" else ident("a parameter name")
             val type = if (accept(T.COLON) != null) type() else null
-            params += Param(pos, name, type, annotations)
+            val default = if (at(T.ASSIGN)) {
+                if (!defaults) throw error("only a declared function's parameters can have a default")
+                next()
+                expr()
+            } else {
+                null
+            }
+            params += Param(pos, name, type, annotations, default)
             if (accept(T.COMMA) == null) break
         }
         expect(T.RPAREN, "')'")
@@ -645,7 +656,8 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
             return Expr.Lambda(pos, listOf(Param(pos, name, null)), expr())
         }
         if (at(T.LPAREN) && isLambdaParams()) {
-            val params = params()
+            val params = params(defaults = true)
+            params.firstOrNull { it.default != null }?.let { throw error("only a declared function's parameters can have a default", it.default!!.pos) }
             expect(T.ARROW, "'->'")
             return Expr.Lambda(pos, params, expr())
         }
@@ -656,7 +668,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
     private fun isLambdaParams(): Boolean {
         val save = p
         return try {
-            params()
+            params(defaults = true)
             at(T.ARROW)
         } catch (_: CompileError) {
             false
@@ -742,10 +754,8 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
             args += Arg(name, expr())
             if (accept(T.COMMA) == null) break
         }
+        // As in Kotlin, those passed in order come first; the checker says if one follows a named one.
         expect(T.RPAREN, "')'")
-        if (args.any { it.name != null } && args.any { it.name == null }) {
-            throw error("can't mix named and positional arguments")
-        }
         return args
     }
 

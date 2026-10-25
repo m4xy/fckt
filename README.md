@@ -74,6 +74,7 @@ tour of the core language, translated section by section.
 | `type Names = List<String>` | `type names = string list` | Another name for a type, with type parameters if needed: `type Pair<A> = (A, A)`. |
 | `type Box<T>(value: T)` | `type 't box = { value : 't }` | Type parameters work on types and functions. |
 | `f(x: Int, y: Int): Int = e` | `let f (x : int) (y : int) : int = e` | Top-level order doesn't matter; mutual recursion becomes `let rec ... and`. |
+| `greet(name: String, greeting: String = "hello")` | `let greet_default_greeting () = "hello"` | A default, as in Kotlin, for a declared function's parameter or a record's or case's field: `type Project(name: String, version: String = "0.1.0")`. A call can leave it out, `Project(name = "shop")`, and pass some in order and the rest by name, `Project("shop", version = "2.0")`. A default is worked out where it's written, without the other arguments, and what it does is done by the call that leaves it out. |
 | `name = e` | `let name = e` | A top-level value or a binding in a block. |
 | `{ a = 1; f(a) }` | `let a = 1 in f a` | A block is an expression; it ends with its value. Unit expressions before that run in order (`e1; e2`). |
 | `x -> e`, `(a, b) -> e` | `fun x -> e`, `fun a b -> e` | Lambdas never use braces, so `{` always starts a block. `_` is a parameter that isn't used: `(reason, _) -> Error(reason)`. |

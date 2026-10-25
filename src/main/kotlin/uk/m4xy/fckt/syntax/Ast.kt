@@ -52,10 +52,21 @@ sealed interface TypeRef {
 
 // ---- Declarations ----
 
-/** A field; a [isVar] one (`var balance: Int`) can be changed, which is `@Mutating`. */
-data class FieldDef(val pos: Pos, val name: String, val type: TypeRef, val annotations: List<Annotation> = emptyList(), val isVar: Boolean = false)
+/**
+ * A field; a [isVar] one (`var balance: Int`) can be changed, which is `@Mutating`. With a
+ * [default] (`version: String = "0.1.0"`), a constructor call can leave it out.
+ */
+data class FieldDef(
+    val pos: Pos,
+    val name: String,
+    val type: TypeRef,
+    val annotations: List<Annotation> = emptyList(),
+    val isVar: Boolean = false,
+    val default: Expr? = null,
+)
 
-data class Param(val pos: Pos, val name: String, val type: TypeRef?, val annotations: List<Annotation> = emptyList())
+/** A parameter; with a [default] (`greeting: String = "hello"`), a call can leave it out. */
+data class Param(val pos: Pos, val name: String, val type: TypeRef?, val annotations: List<Annotation> = emptyList(), val default: Expr? = null)
 
 /**
  * A declaration. The parser gives each its own [name]; the checker renames them to their full
@@ -302,7 +313,10 @@ sealed class Expr {
     class ListLit(override val pos: Pos, val items: List<Expr>) : Expr()
 
     /** `callee(args)`; arguments may be named (`f(x = 1)`). */
-    class Call(override val pos: Pos, val callee: Expr, val args: List<Arg>) : Expr() {
+    class Call(override val pos: Pos, val callee: Expr, args: List<Arg>) : Expr() {
+        /** As written, then with a call to its default for each parameter left out that has one. */
+        var args: List<Arg> = args
+
         var resolved: CallRef? = null
 
         /** Gives Nothing: it never returns, so whatever type is wanted where it is. */

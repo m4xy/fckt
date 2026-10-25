@@ -397,6 +397,7 @@ private class Resolutions(
                 d.params.orEmpty().forEach {
                     annotations(it.annotations)
                     type(it.type)
+                    it.default?.let(::expr)
                 }
                 type(d.returnType)
                 if (d.external == null) expr(d.body)
@@ -406,6 +407,7 @@ private class Resolutions(
                 d.fields.forEach {
                     annotations(it.annotations)
                     type(it.type)
+                    it.default?.let(::expr)
                 }
             }
             is Decl.Sealed -> {

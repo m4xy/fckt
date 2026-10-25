@@ -177,6 +177,7 @@ private class Hovers(val text: String, val program: Program) {
                     d.params.orEmpty().forEachIndexed { i, p ->
                         annotations(p.annotations)
                         typeRef(p.type)
+                        p.default?.let(::expr)
                         type?.params?.getOrNull(i)?.let { put(p.pos, p.name, "${p.name}: ${show(it)}") }
                     }
                     typeRef(d.returnType)
@@ -185,6 +186,7 @@ private class Hovers(val text: String, val program: Program) {
                 is Decl.Record -> d.fields.forEach {
                     annotations(it.annotations)
                     typeRef(it.type)
+                    it.default?.let(::expr)
                 }
                 is Decl.Sealed -> d.variants.forEach { v ->
                     annotations(v.annotations)

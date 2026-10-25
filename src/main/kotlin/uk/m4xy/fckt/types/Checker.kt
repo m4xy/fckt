@@ -106,7 +106,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private val u = Unifier()
 
     /** The declarations with their full names: `make` in `module Ratios` is `Ratios.make`. */
-    private val root: List<Decl> = file.decls.map { qualify(it, "") }
+    private val root: List<Decl> = withDefaults(file.decls).map { qualify(it, "") }
     private val modules = linkedMapOf<String, Decl.Module>()
     private val decls: MutableList<Decl> = flatten(root).toMutableList()
 
@@ -521,6 +521,58 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         currentPath = emptyList()
         currentFile = null
+    }
+
+    // ---- Default values ----
+
+    /**
+     * [decls] with a function for each default value of a parameter or field, beside what it's a
+     * default of: `greet$default$greeting()` for `greet(name, greeting = "hello")`. A call that
+     * leaves the argument out calls it, so the default means what it does where it's written.
+     */
+    private fun withDefaults(decls: List<Decl>): List<Decl> = decls.flatMap { d ->
+        fun defaultOf(owner: String, name: String, pos: Pos, type: TypeRef?, value: Expr, typeParams: List<String>) =
+            Decl.Function(pos, defaultName(owner, name), typeParams, emptyList(), type, value, isPrivate = d.isPrivate)
+        when (d) {
+            is Decl.Module -> listOf(d.copy(decls = withDefaults(d.decls)))
+            is Decl.Function -> listOf(d) + d.params.orEmpty().mapNotNull { p ->
+                p.default?.let { value ->
+                    // It's worked out where it's written, without the call's other arguments.
+                    val refs = linkedSetOf<String>().also { collectRefs(value, emptySet(), it) }
+                    d.params.orEmpty().firstOrNull { it.name in refs }?.let {
+                        throw CompileError(value.pos, "a default can't use the other parameters, as '${it.name}' here: it's worked out on its own")
+                    }
+                    defaultOf(d.name, p.name, p.pos, p.type, value, d.typeParams)
+                }
+            }
+            is Decl.Record -> {
+                if (d.isAnnotation) d.fields.firstOrNull { it.default != null }?.let { throw CompileError(it.pos, "an annotation's fields can't have defaults") }
+                listOf(d) + d.fields.mapNotNull { f -> f.default?.let { defaultOf(d.name, f.name, f.pos, f.type, it, d.typeParams) } }
+            }
+            is Decl.Sealed -> listOf(d) + d.variants.flatMap { v ->
+                v.fields.mapNotNull { f -> f.default?.let { defaultOf("${d.name}$${v.name}", f.name, f.pos, f.type, it, d.typeParams) } }
+            }
+            else -> listOf(d)
+        }
+    }
+
+    private fun defaultName(owner: String, name: String) = "$owner\$default\$$name"
+
+    /**
+     * [e] with a call to the default of each of [params] it leaves out that has one: those after
+     * the ones passed in order, and not passed by name. [owner] is the full name defaults are named for.
+     */
+    private fun withDefaultArgs(e: Expr.Call, params: List<Pair<String, Boolean>>, owner: String, named: Boolean = true) {
+        val inOrder = e.args.takeWhile { it.name == null }.size
+        val byName = e.args.mapNotNull { it.name }.toSet()
+        val missing = params.drop(inOrder).filter { (name, hasDefault) -> hasDefault && name !in byName }.map { it.first }
+        if (missing.isEmpty()) return
+        // A method call passes everything in order, so only those at the end can be left out.
+        val defaults = missing.map { name ->
+            Arg(if (named) name else null, Expr.Call(e.pos, Expr.Name(e.pos, defaultName(owner, name)), emptyList()))
+        }
+        if (!named && params.drop(inOrder).map { it.first } != missing) return
+        e.args = e.args + defaults
     }
 
     // ---- Modules and names ----
@@ -1739,6 +1791,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private fun checkEffects(decl: Decl.Function, row: Type) {
         if (decl.name == "main") return
+        // A default value's: what it does is done by the call that leaves the argument out.
+        if ("\$default\$" in decl.simpleName) return
         // A module a functor made was checked as the functor; what it does with its real modules is theirs.
         if (enclosingApplication(decl.path) != null) return
         // What a functor's parameters do is theirs too: a use case may do whatever its repositories do.
@@ -1977,6 +2031,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
     }
 
+    /**
+     * The default values' functions a use of [ref] may call: a function's or extension's, or the
+     * fields' of a record or case it may build, as calls that leave arguments out call them.
+     */
+    private fun defaultsUsed(ref: String): List<Decl.Function> {
+        val owners = listOfNotNull(lookupGlobal(ref, null)?.name, lookupRecord(ref, null)?.name) +
+            extensions[ref].orEmpty().map { it.name } +
+            variantsByName[ref.substringAfterLast('.')].orEmpty().map { (s, v) -> "${s.name}$${v.name}" }
+        return owners.flatMap { owner -> globals.values.filter { it.name.startsWith("$owner\$default\$") } }
+    }
+
     /** The functions and values [decl]'s body may use; once it's checked, only those it does. */
     private fun refsOf(decl: Decl.Function): List<Decl.Function> {
         val refs = linkedSetOf<String>()
@@ -1997,7 +2062,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
                         lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
                     },
-                )
+                ) + defaultsUsed(ref)
             }.distinct()
         } finally {
             currentPath = saved
@@ -2760,6 +2825,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 else -> {}
             }
             callee.type = fn
+            withDefaultArgs(e, global.params.map { it.name to (it.default != null) }, global.name)
             val order = argOrder(e.args.map { it.name to it.value.pos }, global.params.map { it.name }, e.pos, "'${global.simpleName}'")
             checkArgs(e.args, order, fn.params, scope)
             e.resolved = CallRef.Function(order)
@@ -2812,6 +2878,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun construct(e: Expr.Call, shape: ConstructorShape, name: String, expected: Type?, scope: Scope): Type {
         if (shape.fieldTypes.isEmpty()) throw CompileError(e.pos, "'$name' takes no arguments; write it without ()")
+        when (val ref = shape.ref) {
+            is ConstructorRef.Record -> withDefaultArgs(e, ref.decl.fields.map { it.name to (it.default != null) }, ref.decl.name)
+            is ConstructorRef.Variant -> ref.variant?.let { v ->
+                withDefaultArgs(e, v.fields.map { it.name to (it.default != null) }, "${ref.sealed!!.name}$${v.name}")
+            }
+        }
         val order = argOrder(e.args.map { it.name to it.value.pos }, shape.fieldNames, e.pos, "'$name'")
         expected?.let { u.unify(shape.result, it) }
         checkArgs(e.args, order, shape.fieldTypes, scope)
@@ -2849,6 +2921,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         extension(member, receiver)?.let { decl ->
             if (decl.property) throw CompileError(member.pos, "'${member.name}' is a property; write it without ()")
             val fn = globalType(decl) as Type.Fn
+            withDefaultArgs(e, decl.params!!.drop(1).map { it.name to (it.default != null) }, decl.name, named = false)
             if (fn.params.size - 1 != e.args.size) {
                 throw CompileError(e.pos, "'${member.name}' takes ${fn.params.size - 1} argument${if (fn.params.size == 2) "" else "s"}, not ${e.args.size}")
             }

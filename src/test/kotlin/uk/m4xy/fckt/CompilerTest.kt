@@ -470,6 +470,37 @@ class CompilerTest {
     }
 
     @Test
+    fun `parameters and fields can have defaults`() {
+        val source = """
+            type Project(name: String, version: String = "0.1.0", sources: List<String> = ["src"], tests: List<String> = defaultTests())
+            defaultTests(): List<String> = ["test"]
+            greet(name: String, greeting: String = "hello", punctuation: String = "!") = "${'$'}greeting ${'$'}name${'$'}punctuation"
+            type Shape { Circle(radius: Float = 1.0), Square(side: Float) }
+            List<Int>.scaled(by: Int = 2): List<Int> = this.map(x -> x * by)
+            @Console loud(s: String = readLine()) = s.uppercase()
+            main() = {
+              assertEquals(Project("shop", "0.1.0", ["src"], ["test"]), Project(name = "shop"))
+              assertEquals(Project("x", "2.0", ["src"], ["test"]), Project("x", version = "2.0"))
+              assertEquals("hello Ada!", greet("Ada"))
+              assertEquals("hi Ada!", greet("Ada", "hi"))
+              assertEquals("hello Ada?", greet("Ada", punctuation = "?"))
+              assertEquals(Circle(1.0), Circle())
+              assertEquals([2, 4], [1, 2].scaled())
+              assertEquals([3, 6], [1, 2].scaled(3))
+              // What a default does is done where the call leaves it out.
+              assertEquals("ADA", Console(print = s -> Unit, println = s -> Unit, readLine = ~"ada") { loud() })
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        assertContains(error("greet(name: String, greeting: String = \"hello\") = name\nmain() = assertEquals(\"\", greet())"), "'greet' is missing argument 'name'")
+        assertContains(error("f(n: Int = \"x\") = n\nmain() = Unit"), "expected Int but found String")
+        assertContains(error("f(a: Int, b: Int = a) = b\nmain() = Unit"), "a default can't use the other parameters, as 'a' here")
+        assertContains(error("@Console f(s: String = readLine()) = s\ng() = f()\nmain() = Unit"), "'g' does @Console")
+        assertContains(error("main() = {\n  f = (x: Int = 1) -> x\n  f(2)\n}"), "only a declared function's parameters can have a default")
+        assertContains(error("f(a: Int, b: Int) = a\nmain() = assertEquals(1, f(b = 2, 1))"), "an argument passed in order can't follow one passed by name")
+    }
+
+    @Test
     fun `a copy of an effect is a separate effect`() {
         val database = "effect Database { query(sql: String): List<String> }\neffect OrdersDb = Database\neffect UsersDb = Database\n"
         val source = database + """
