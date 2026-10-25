@@ -712,6 +712,25 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
     }
 
     /** Whether `(` starts a parameter list followed by `->`, found by trying to parse one. */
+    /**
+     * Type arguments and the `(` after them, read from here, or null if they aren't: the tokens
+     * are read on success, and left otherwise.
+     */
+    private fun callTypeArgs(): List<TypeRef>? {
+        val save = p
+        val types = try {
+            expect(T.LT, "'<'")
+            val list = mutableListOf(type())
+            while (accept(T.COMMA) != null) list += type()
+            expect(T.GT, "'>'")
+            list.takeIf { at(T.LPAREN) && tokens[p - 1].pos.line == peek.pos.line }
+        } catch (_: CompileError) {
+            null
+        }
+        if (types == null) p = save
+        return types
+    }
+
     private fun isLambdaParams(): Boolean {
         val save = p
         return try {
@@ -769,6 +788,12 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                     Expr.Member(name.pos, e, name.text)
                 }
                 at(T.LPAREN) -> Expr.Call(peek.pos, e, args())
+                // `emptyMap<String, Int>()`: types for the function's type parameters, if what's
+                // between `<` and `>` is types and a call follows; otherwise `<` compares.
+                at(T.LT) && (e is Expr.Name || e is Expr.Member) -> {
+                    val typeArgs = callTypeArgs() ?: return e
+                    Expr.Call(peek.pos, e, args(), typeArgs)
+                }
                 // `xs[i]` calls `xs.get(i)`, so any type with a get can be indexed. On the same
                 // line only: a `[` that starts one is a list.
                 at(T.LBRACKET) && tokens[p - 1].pos.line == peek.pos.line -> {

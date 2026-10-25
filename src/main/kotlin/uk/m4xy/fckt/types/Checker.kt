@@ -1885,7 +1885,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         // A method: `path.reading { ... }`, `xs.fold(0) { ... }`.
         if (h is Expr.Member) return infer(Expr.Call(e.pos, h, listOf(block)).also { e.call = it }, expected, scope)
         if (h is Expr.Call && h.callee is Expr.Member && h.callee.name[0].isLowerCase()) {
-            return infer(Expr.Call(e.pos, h.callee, h.args + block).also { e.call = it }, expected, scope)
+            return infer(Expr.Call(e.pos, h.callee, h.args + block, h.typeArgs).also { e.call = it }, expected, scope)
         }
         // A declared function's last parameter, by name, so those before it can be left to their defaults.
         val (callee, given) = when {
@@ -1898,12 +1898,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (callee != null && last != null && declared.params!!.size > given.size + 1 && given.none { it.name == last } &&
             declared.params.dropLast(1).drop(given.takeWhile { it.name == null }.size).all { p -> p.default != null || given.any { it.name == p.name } }
         ) {
-            return infer(Expr.Call(e.pos, callee, given + block.copy(name = last)).also { e.call = it }, expected, scope)
+            return infer(Expr.Call(e.pos, callee, given + block.copy(name = last), (h as? Expr.Call)?.typeArgs.orEmpty()).also { e.call = it }, expected, scope)
         }
         if (h is Expr.Call && !makesHandler) {
             val callee = infer(h.callee, null, scope).prune()
             if (callee is Type.Fn && callee.params.size == h.args.size + 1) {
-                return infer(Expr.Call(e.pos, h.callee, h.args + block).also { e.call = it }, expected, scope)
+                return infer(Expr.Call(e.pos, h.callee, h.args + block, h.typeArgs).also { e.call = it }, expected, scope)
             }
         }
         val type = infer(e.handler, null, scope).prune()
@@ -2602,6 +2602,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (decl.params == null) regionsIn(type).forEach { if (it is Type.Var) u.unify(it, Type.GLOBAL) }
             // Values aren't generalized: OCaml's value restriction wouldn't generalize most of them either.
             schemes[decl] = if (decl.params == null) Scheme.mono(type) else Scheme(type.freeVars().toList(), type)
+            typeParamVars[decl] = vars.filterKeys { !it.startsWith("@") }.mapValues { it.value.prune() as Type.Var }
             outside[decl]?.let(::seen)?.let { shown -> outsideSchemes[decl] = if (decl.params == null) Scheme.mono(shown) else Scheme(shown.freeVars().toList(), shown) }
         }
         for (decl in group.decls) conform(decl)
@@ -2718,6 +2719,41 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun globalType(decl: Decl.Function): Type {
         if (!inside(decl.path)) outsideSchemes[decl]?.let { return u.instantiate(it) }
         return provisional[decl] ?: u.instantiate(schemes[decl] ?: error("${decl.name} used before it was checked"))
+    }
+
+    /** The calls whose type arguments a function took. */
+    private val typed = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Expr.Call, Boolean>())
+
+    /** Each function's type parameters, by name, as the variables its type is generic in. */
+    private val typeParamVars = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
+
+    /**
+     * [decl]'s type for [call], which may give types for the type parameters [decl] declares, after
+     * those of a method's receiver: `emptyMap<String, Int>()`.
+     */
+    private fun globalType(decl: Decl.Function, call: Expr.Call): Type {
+        if (call.typeArgs.isEmpty()) return globalType(decl)
+        typed += call
+        val declared = decl.typeParams.filter { !it.startsWith("@") }.let { all ->
+            val receiver = if (decl.extension) typeNamesIn(decl.params!!.first().type!!) else emptySet()
+            all.dropWhile { it in receiver }
+        }
+        if (declared.size != call.typeArgs.size) {
+            throw CompileError(call.pos, "'${decl.methodName}' takes ${declared.size} type argument${if (declared.size == 1) "" else "s"}, not ${call.typeArgs.size}")
+        }
+        val given = call.typeArgs.map { resolve(it) }
+        val vars = typeParamVars[decl]
+        val scheme = (if (!inside(decl.path)) outsideSchemes[decl] else null) ?: schemes[decl]
+        if (vars == null || scheme == null) throw CompileError(call.pos, "'${decl.methodName}' can't be given type arguments here")
+        return u.instantiate(scheme, declared.zip(given).mapNotNull { (name, t) -> vars[name]?.let { it to t } }.toMap())
+    }
+
+    /** The names [ref] mentions, as a receiver's type parameters: `K` and `V` in `Map<K, V>`. */
+    private fun typeNamesIn(ref: TypeRef): Set<String> = when (ref) {
+        is TypeRef.Named -> setOf(ref.name) + ref.args.flatMap { typeNamesIn(it) }
+        is TypeRef.Function -> (ref.params + ref.result).flatMap { typeNamesIn(it) }.toSet()
+        is TypeRef.Tuple -> ref.elements.flatMap { typeNamesIn(it) }.toSet()
+        is TypeRef.Effects -> emptySet()
     }
 
     // ---- Expressions ----
@@ -2898,7 +2934,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             Type.list(element)
         }
-        is Expr.Call -> inferCall(e, expected, scope)
+        is Expr.Call -> inferCall(e, expected, scope).also {
+            if (e.typeArgs.isNotEmpty() && e !in typed) throw CompileError(e.pos, "only a declared function is given type arguments, as in emptyMap<String, Int>()")
+        }
         is Expr.Member -> inferMember(e, expected, scope)
         is Expr.Binary -> inferBinary(e, scope)
         is Expr.Unary -> when (e.op) {
@@ -3135,7 +3173,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             else -> null
         }
         if (global?.params != null) {
-            val fn = globalType(global) as Type.Fn
+            val fn = globalType(global, e) as Type.Fn
             when (callee) {
                 is Expr.Name -> callee.resolved = NameRef.Global(global)
                 is Expr.Member -> callee.resolved = MemberRef.Global(global)
@@ -3239,7 +3277,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         // and is called with them.
         extension(member, receiver)?.takeIf { member.name != "toString" || e.args.isNotEmpty() }?.let { decl ->
             if (decl.property) throw CompileError(member.pos, "'${member.name}' is a property; write it without ()")
-            val fn = globalType(decl) as Type.Fn
+            val fn = globalType(decl, e) as Type.Fn
             withDefaultArgs(e, decl.params!!.drop(1).map { it.name to (it.default != null) }, decl.name, named = false)
             if (fn.params.size - 1 != e.args.size) {
                 throw CompileError(e.pos, "'${member.name}' takes ${fn.params.size - 1} argument${if (fn.params.size == 2) "" else "s"}, not ${e.args.size}")
@@ -3262,7 +3300,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         val global = lookupGlobal(member.name, null)?.takeIf { scope.lookup(member.name) == null }
         if (global?.params != null && global.params.size == e.args.size + 1) {
-            val fn = globalType(global) as Type.Fn
+            val fn = globalType(global, e) as Type.Fn
             assign(member.target, receiver, fn.params[0])
             checkArgs(e.args, e.args.indices.toList(), fn.params.drop(1), scope)
             e.resolved = CallRef.Extension(global)
@@ -3488,8 +3526,26 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             doing(row) { check(e.body, result, scope) }
             return Type.Fn(params, result, row)
         }
-        val hint = expectedFn?.takeIf { it.params.size == e.params.size }
         checkDistinct(e.params.map { it.name to it.pos })
+        // Several parameters where one is expected take apart a tuple, as `pairs.map((k, v) -> ...)`.
+        if (expectedFn != null && expectedFn.params.size == 1 && e.params.size > 1) {
+            val tuple = expectedFn.params[0].prune()
+            val parts = if (tuple is Type.Con && tuple.name == Type.TUPLE) {
+                if (tuple.args.size != e.params.size) throw CompileError(e.pos, "this function is given a tuple of ${tuple.args.size}, so it takes ${tuple.args.size} parameters, not ${e.params.size}")
+                tuple.args
+            } else {
+                List(e.params.size) { u.fresh() }.also { expect(tuple, Type.Con(Type.TUPLE, it), e.pos) }
+            }
+            val inner = Scope(scope)
+            e.params.forEachIndexed { i, p ->
+                p.type?.let { withArrowEffects(row) { resolve(it) } }?.let { expect(parts[i], it, p.pos) }
+                inner.vars[p.name] = Local(parts[i], snake(p.name))
+            }
+            e.paramNames = listOf(e.params.joinToString(", ", "(", ")") { snake(it.name) })
+            doing(row) { check(e.body, expectedFn.result, inner) }
+            return Type.Fn(listOf(tuple), expectedFn.result, row)
+        }
+        val hint = expectedFn?.takeIf { it.params.size == e.params.size }
         val inner = Scope(scope)
         val params = e.params.mapIndexed { i, p ->
             val declared = p.type?.let { withArrowEffects(row) { resolve(it) } }

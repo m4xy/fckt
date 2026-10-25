@@ -755,6 +755,34 @@ class CompilerTest {
     }
 
     @Test
+    fun `a lambda takes a tuple apart, and a call can say its function's type arguments`() {
+        val source = """
+            List<A>.firstAs<B>(f: (A) -> B): Option<B> = this.firstOrNull().map(f)
+            main() = {
+              pairs = [("a", 1), ("b", 2)]
+              assertEquals(["a1", "b2"], pairs.map((k, v) -> k + v.toString()))
+              assertEquals([("b", 2)], pairs.filter((_, v) -> v > 1))
+              assertEquals([6], [(1, 2, 3)].map((a, b, c) -> a + b + c))
+              // Two parameters where two are expected are two, as ever.
+              assertEquals(3, [1, 2].fold(0, (sum, x) -> sum + x))
+              m = emptyMap<String, Int>()
+              assertEquals("{a=1}", m.put("a", 1).toString())
+              assertEquals(Some("n1"), [1].firstAs<String>(x -> "n${'$'}x"))
+              // Otherwise < compares.
+              a = 1
+              assert(a < 2 && 2 > a)
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        fun error(code: String) = assertFailsWith<CompileError> { compile("List<A>.firstAs<B>(f: (A) -> B): Option<B> = this.firstOrNull().map(f)\ntype Box<A>(item: A)\nmain() = $code") }.message
+        assertContains(error("[(1, 2)].map((a, b, c) -> a)").orEmpty(), "this function is given a tuple of 2, so it takes 2 parameters, not 3")
+        assertContains(error("emptyMap<String>()").orEmpty(), "'emptyMap' takes 2 type arguments, not 1")
+        assertContains(error("[1].firstAs<Int, Int>(x -> x)").orEmpty(), "'firstAs' takes 1 type argument, not 2")
+        assertContains(error("Box<Int>(1)").orEmpty(), "only a declared function is given type arguments")
+        assertContains(error("{\n  m: Map<String, Int> = emptyMap<Int, Int>()\n  m\n}").orEmpty(), "type mismatch")
+    }
+
+    @Test
     fun `maps hold a value for each key, equal and shown by their entries`() {
         val source = """
             type Person(name: String, age: Int)

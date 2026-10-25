@@ -82,7 +82,8 @@ tour of the core language, translated section by section.
 | `greet(name: String, greeting: String = "hello")` | `let greet_default_greeting () = "hello"` | A default, as in Kotlin, for a declared function's parameter or a record's or case's field: `type Project(name: String, version: String = "0.1.0")`. A call can leave it out, `Project(name = "shop")`, and pass some in order and the rest by name, `Project("shop", version = "2.0")`. A default is worked out where it's written, without the other arguments, and what it does is done by the call that leaves it out. |
 | `name = e` | `let name = e` | A top-level value or a binding in a block. |
 | `{ a = 1; f(a) }` | `let a = 1 in f a` | A block is an expression; it ends with its value. Unit expressions before that run in order (`e1; e2`). |
-| `x -> e`, `(a, b) -> e` | `fun x -> e`, `fun a b -> e` | Lambdas never use braces, so `{` always starts a block. `_` is a parameter that isn't used: `(reason, _) -> Error(reason)`. |
+| `x -> e`, `(a, b) -> e` | `fun x -> e`, `fun a b -> e` | Lambdas never use braces, so `{` always starts a block. `_` is a parameter that isn't used: `(reason, _) -> Error(reason)`. Given where a function of one tuple is expected, several parameters take the tuple apart: `pairs.map((k, v) -> k)`, as Kotlin's `{ (k, v) -> k }`. |
+| `emptyMap<String, Int>()` | `empty_map ()`, typed `(string, int) map` | Types for the type parameters a function declares, when nothing else says what they are; a method's are those after its receiver's: `xs.firstAs<String>(...)` for `List<A>.firstAs<B>`. |
 | `~e` | `fun () -> e`, `fun _ _ -> e` | A function that ignores its arguments. It takes as many as the expected type has, so `~true` can be a `(String, Money) -> Boolean`. With no expected function type it's a thunk, `() -> T`. |
 | `x \|> f` | `x \|> f` | |
 | `x \|> f(a)` | `x \|> f a` | When `f` takes one more argument than it's given, `x` is passed last. |

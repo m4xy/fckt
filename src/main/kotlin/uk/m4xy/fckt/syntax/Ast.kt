@@ -359,7 +359,8 @@ sealed class Expr {
     class ListLit(override val pos: Pos, val items: List<Expr>) : Expr()
 
     /** `callee(args)`; arguments may be named (`f(x = 1)`). */
-    class Call(override val pos: Pos, val callee: Expr, args: List<Arg>) : Expr() {
+    /** `f(x)`, or with [typeArgs], the types for those `f` declares: `emptyMap<String, Int>()`. */
+    class Call(override val pos: Pos, val callee: Expr, args: List<Arg>, val typeArgs: List<TypeRef> = emptyList()) : Expr() {
         /** As written, then with a call to its default for each parameter left out that has one. */
         var args: List<Arg> = args
 

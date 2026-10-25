@@ -556,6 +556,7 @@ private class Resolutions(
                 }
                 if (target != null && offset != null) put(offset, target)
                 expr(callee)
+                e.typeArgs.forEach(::type)
                 e.args.forEach { expr(it.value) }
             }
             is Expr.Member -> {

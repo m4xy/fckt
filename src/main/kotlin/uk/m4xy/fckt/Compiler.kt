@@ -675,7 +675,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
     }
 
     imports[null] = main.imports[null].orEmpty() + defaults(null)
-    pending += Use(emptyList(), declaredNames(main.decls), mentioned(text, null) + MUTATING_NAME + "get" + "set" + EFFECT_NAME)
+    pending += Use(emptyList(), declaredNames(main.decls), mentioned(text, null) + MUTATING_NAME + "get" + "set" + "toString" + EFFECT_NAME)
     pendingImports += imports[null]!!
     while (pending.isNotEmpty() || pendingImports.isNotEmpty()) {
         // What's imported first, so the names used find it.

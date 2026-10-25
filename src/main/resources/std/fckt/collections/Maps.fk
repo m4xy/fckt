@@ -107,20 +107,11 @@ module Maps {
   }
 
   // Of its entries, in the keys' order.
-  Map<K, V>.forEach(f: (K, V) -> Unit): Unit = this.entries.forEach(entry -> {
-    (k, v) = entry
-    f(k, v)
-  })
-  Map<K, V>.any(f: (K, V) -> Boolean): Boolean = this.entries.any(entry -> {
-    (k, v) = entry
-    f(k, v)
-  })
+  Map<K, V>.forEach(f: (K, V) -> Unit): Unit = this.entries.forEach((k, v) -> f(k, v))
+  Map<K, V>.any(f: (K, V) -> Boolean): Boolean = this.entries.any((k, v) -> f(k, v))
   Map<K, V>.all(f: (K, V) -> Boolean): Boolean = !this.any((k, v) -> !f(k, v))
   Map<K, V>.count(f: (K, V) -> Boolean): Int = this.filter(f).size
-  Map<K, V>.filter(f: (K, V) -> Boolean): Map<K, V> = this.entries.filter(entry -> {
-    (k, v) = entry
-    f(k, v)
-  }).toMap()
+  Map<K, V>.filter(f: (K, V) -> Boolean): Map<K, V> = this.entries.filter((k, v) -> f(k, v)).toMap()
   Map<K, V>.filterKeys(f: (K) -> Boolean): Map<K, V> = this.filter((k, _) -> f(k))
   Map<K, V>.filterValues(f: (V) -> Boolean): Map<K, V> = this.filter((_, v) -> f(v))
   // Each value made into another, for the same key.
@@ -129,15 +120,9 @@ module Maps {
     MapNode(l, k, v, r, n, p) -> MapNode(l.mapValues(f), k, f(k, v), r.mapValues(f), n, p)
   }
   // Each key made into another; of keys that become the same, the last's value.
-  Map<K, V>.mapKeys<J>(f: (K, V) -> J): Map<J, V> = this.entries.map(entry -> {
-    (k, v) = entry
-    (f(k, v), v)
-  }).toMap()
+  Map<K, V>.mapKeys<J>(f: (K, V) -> J): Map<J, V> = this.entries.map((k, v) -> (f(k, v), v)).toMap()
   // What f makes of each entry, in the keys' order.
-  Map<K, V>.map<R>(f: (K, V) -> R): List<R> = this.entries.map(entry -> {
-    (k, v) = entry
-    f(k, v)
-  })
+  Map<K, V>.map<R>(f: (K, V) -> R): List<R> = this.entries.map((k, v) -> f(k, v))
 
   // As Kotlin shows a map: {a=1, b=2}.
   Map<K, V>.toString(showKey: (K) -> String, showValue: (V) -> String): String =

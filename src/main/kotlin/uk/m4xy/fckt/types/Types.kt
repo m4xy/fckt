@@ -186,9 +186,10 @@ class Unifier {
 
     fun fresh() = Type.Var(nextId++)
 
-    fun instantiate(scheme: Scheme): Type {
+    /** [scheme]'s type with fresh variables for its own, or, for those [given] has, its types. */
+    fun instantiate(scheme: Scheme, given: Map<Type.Var, Type> = emptyMap()): Type {
         if (scheme.vars.isEmpty()) return scheme.type
-        val mapping = scheme.vars.associateWith { fresh() as Type }
+        val mapping = scheme.vars.associateWith { given[it] ?: fresh() }
         return substitute(scheme.type, mapping)
     }
 
