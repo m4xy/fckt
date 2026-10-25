@@ -314,6 +314,7 @@ val STANDARD_FILES = listOf(
     "collections/Array",
     "collections/Arrays",
     "collections/Lists",
+    "collections/Maps",
     "collections/Stream",
     "collections/Streams",
     "effects/Fail",
@@ -369,11 +370,11 @@ val STANDARD_MODULES = STANDARD_FILES.map { it.removeSuffix(".fk") }
 
 /**
  * What every file imports, as Kotlin imports kotlin.* and others: what the language relies on,
- * the console, failing, and the methods on lists, strings, numbers, options and results.
+ * the console, failing, maps, and the methods on lists, strings, numbers, options and results.
  */
 val DEFAULT_IMPORTS = listOf(
     "lang.*", "lang.Functions.*", "io.Console", "io.Terminal", "effects.Fail", "effects.Failure.*",
-    "collections.Lists.*", "text.Strings.*", "math.Maths.*", "Options.*", "Results.*",
+    "collections.Lists.*", "collections.Maps.*", "text.Strings.*", "math.Maths.*", "Options.*", "Results.*",
 ).map { "$STANDARD_PACKAGE.$it" }
 
 /** The OCaml libraries beyond the standard one that compiled [ocaml] needs: `unix`, for fckt.io's processes. */
@@ -498,6 +499,16 @@ private class Partial(
     val included = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Decl, Boolean>())
     var whole = false
 
+    /** The types the module declares, by name. */
+    private val types: Set<String> = module?.decls.orEmpty().filter { it is Decl.Record || it is Decl.Sealed }.map { it.name }.toSet()
+
+    /**
+     * The type [d] is a method of, if the module declares it: `Map` for `Map<K, V>.size`, which is
+     * of use only once something has a `Map`.
+     */
+    fun methodOf(d: Decl): String? =
+        ((d as? Decl.Function)?.takeIf { it.extension }?.params?.firstOrNull()?.type as? TypeRef.Named)?.name?.takeIf { it in types }
+
     /** What's been brought in, as the package's declarations: none if nothing has. */
     fun linked(): List<Decl> {
         val decls = members.map { it.first }.filter { whole || it in included }
@@ -612,7 +623,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
             val names = listOf(d.name) + listOfNotNull((d as? Decl.Function)?.takeIf { it.extension }?.methodName) +
                 ((d as? Decl.Spec)?.takeIf { s -> s.annotations.any { it.name == EFFECT_NAME } }?.values?.map { it.name }.orEmpty())
             for (n in names.toSet()) partialMembers.getOrPut(n) { mutableListOf() } += partial to member
-            val wanted = !d.isPrivate && if (d is Decl.Function && d.extension) d.methodName in usedMethods && d.name !in own else names.any { it in used }
+            val wanted = !d.isPrivate && if (d is Decl.Function && d.extension) d.methodName in usedMethods && d.name !in own && partial.methodOf(d).let { it == null || it in used } else names.any { it in used }
             if (wanted) include(partial, d, member.second)
         }
         // With [whole], all of the standard library, as it's compiled on its own.
@@ -683,8 +694,12 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
                 val d = member.first
                 // A private one only from its own file.
                 if (d.isPrivate && use.file != partial.source.path) return@forEach
-                val keep = if (d is Decl.Function && d.extension) d.name !in own else !shadowed
+                val keep = if (d is Decl.Function && d.extension) d.name !in own && partial.methodOf(d).let { it == null || it in used } else !shadowed
                 if (keep) include(partial, d, member.second)
+            }
+            // A type of the standard library's, once used, brings in its methods used so far.
+            if (!shadowed) for (partial in partials.values) for ((d, uses) in partial.members) {
+                if (!d.isPrivate && partial.methodOf(d) == name && (d as Decl.Function).methodName in usedMethods && d.name !in own) include(partial, d, uses)
             }
             // A module of the standard library's, named outright: all of it, as a block may run in it.
             if (!(use.file == null && name in own)) partials.values.filter { it.name == name }.forEach { includeWhole(it) }

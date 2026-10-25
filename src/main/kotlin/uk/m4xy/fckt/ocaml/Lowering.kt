@@ -69,6 +69,18 @@ private fun List<String>.ocaml() = filter { !it.startsWith("@") }
  */
 class Lowering(private val program: Program, private val showsAll: Boolean = false) {
     private val records = program.records.associateBy { it.name }
+
+    /**
+     * The types whose module says how they're shown, by the type's full name: `T<A, B>.toString(showA:
+     * (A) -> String, showB: (B) -> String): String`, given how to show each of its type parameters.
+     */
+    private val toStrings: Map<String, Decl.Function> = run {
+        val typeParams = (program.records.map { it.name to it.typeParams.size } + program.sealeds.map { it.name to it.typeParams.size }).toMap()
+        program.groups.flatMap { it.decls }.filter { it.extension && it.name.endsWith("\$toString") }.mapNotNull { f ->
+            val type = f.name.removeSuffix("\$toString")
+            typeParams[type]?.takeIf { f.params?.size == it + 1 }?.let { type to f }
+        }.toMap()
+    }
     private val sealeds = program.sealeds.associateBy { it.name }
     private val aliases = program.aliases.associateBy { it.name }
 
@@ -112,7 +124,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         }
         // Each show function can need those of its fields' types.
         while (true) {
-            val name = showTypes.firstOrNull { it !in showBodies && !isCompiled(it) } ?: break
+            val name = showTypes.firstOrNull { it !in showBodies && it !in toStrings && !isCompiled(it) } ?: break
             currentPath = name.split('.').dropLast(1)
             showBodies[name] = showBody(name)
         }
@@ -1445,7 +1457,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         "List" -> Gen.App(Gen.Id(helper("fk_show_list")), args)
         "Option" -> Gen.App(Gen.Id(helper("fk_show_option")), args)
         "Result" -> Gen.App(Gen.Id(helper("fk_show_result")), args)
-        else -> records[name]?.takeIf { it.external != null }?.let { Gen.Fun(listOf("_"), Gen.Str("<${it.simpleName}>")) } ?: run {
+        else -> records[name]?.takeIf { it.external != null }?.let { Gen.Fun(listOf("_"), Gen.Str("<${it.simpleName}>")) } ?: toStrings[name]?.let { f ->
+            // Its module's toString, given how to show each of its type parameters.
+            Gen.Fun(listOf("v"), Gen.App(Gen.Id(ref(f.name, ::snake)), listOf(Gen.Id("v")) + args))
+        } ?: run {
             // A type's show function lives in the type's module. A module a functor made has the
             // functor's; a functor's parameter has what its spec lists.
             val module = name.substringBeforeLast('.', "")

@@ -740,7 +740,6 @@ class CompilerTest {
               assertEquals([[1, 2], [3, 4], [5]], [1, 2, 3, 4, 5].chunked(2))
               assertEquals([(3, 1), (1, 2)], xs.take(3).zipWithNext())
               assertEquals(([3, 2, 3], [1, 1]), xs.partition(x -> x > 1))
-              assertEquals([(3, [3, 3]), (1, [1, 1]), (2, [2])], xs.groupBy(x -> x))
               assertEquals((Some(1), Some(3)), (xs.minOrNull(), xs.maxOrNull()))
               assertEquals(Some("a"), [Person("a", 30), Person("b", 20)].maxByOrNull(p -> p.age).map(p -> p.name))
               assertEquals([1, 2, 3], [[1], [], [2, 3]].flatten())
@@ -751,6 +750,42 @@ class CompilerTest {
               assertEquals(10, xs.sumOf(x -> x))
               assert(xs.isNotEmpty() && xs.none(x -> x > 3) && xs.filterNot(x -> x == 3) == [1, 2, 1])
             }
+        """.trimIndent()
+        assertEquals("", run(source))
+    }
+
+    @Test
+    fun `maps hold a value for each key, equal and shown by their entries`() {
+        val source = """
+            type Person(name: String, age: Int)
+            main() = {
+              m = mapOf([("b", 2), ("a", 1), ("c", 3)])
+              assertEquals(Some(1), m["a"])
+              assertEquals(None, m.get("z"))
+              assertEquals(3, m.size)
+              assertEquals("{a=1, b=2, c=3}", m.toString())
+              // However they were put in, the same entries are the same map.
+              assertEquals(m, emptyMap().put("c", 3).put("a", 1).put("b", 2))
+              assertEquals(mapOf([("a", 1), ("c", 3)]), m.remove("b"))
+              assertEquals(m, m.remove("z"))
+              assertEquals(Some(20), m.put("b", 20)["b"])
+              assertEquals((["a", "b", "c"], [1, 2, 3]), (m.keys, m.values))
+              assertEquals([("a", 1), ("b", 2), ("c", 3)], m.entries)
+              assertEquals(7, m.getOrDefault("z", 7))
+              assert(m.containsKey("a") && !m.containsKey("z") && m.isNotEmpty() && emptyMap().put(1, 1).remove(1).isEmpty())
+              assertEquals(mapOf([("a", 10), ("b", 20), ("c", 30)]), m.mapValues((_, v) -> v * 10))
+              assertEquals(mapOf([("b", 2), ("c", 3)]), m.filter((_, v) -> v > 1))
+              assertEquals(["a1", "b2", "c3"], m.map((k, v) -> "${'$'}k${'$'}v"))
+              assertEquals(mapOf([("a", 1), ("b", 2), ("c", 3), ("d", 4)]), m.putAll(mapOf([("d", 4), ("a", 1)])))
+              assertEquals("{3=[3, 3], 1=[1, 1], 2=[2]}".length, [3, 1, 2, 3, 1].groupBy(x -> x).toString().length)
+              assertEquals(mapOf([(1, [1, 1]), (2, [2]), (3, [3, 3])]), [3, 1, 2, 3, 1].groupBy(x -> x))
+              assertEquals(mapOf([("a", Person("a", 30))]), [Person("a", 20), Person("a", 30)].associateBy(p -> p.name))
+              assertEquals(mapOf([(2, 4), (3, 9)]), [2, 3].associateWith(x -> x * x))
+              // A type shows as its own toString says, given how to show its type parameters.
+              assertEquals("box of 1, in {a=box of 2}", "${'$'}{Box(1)}, in ${'$'}{mapOf([("a", Box(2))])}")
+            }
+            type Box<A>(item: A)
+            Box<A>.toString(showItem: (A) -> String): String = "box of " + showItem(this.item)
         """.trimIndent()
         assertEquals("", run(source))
     }

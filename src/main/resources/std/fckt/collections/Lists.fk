@@ -101,10 +101,6 @@ module Lists {
   // The firsts of the pairs, and the seconds.
   external List<(A, B)>.unzip(): (List<A>, List<B>) = "List.split this"
 
-  // The items by key, each key once, in the order keys first appear: [(key, items), ...].
-  List<A>.groupBy<K>(key: (A) -> K): List<(K, List<A>)> =
-    this.map(key).distinct().map(k -> (k, this.filter(a -> key(a) == k)))
-
   // The smallest or largest item, or the one with the smallest or largest key, if there are any;
   // the first, of those that tie.
   List<A>.minOrNull(): Option<A> = this.sorted().firstOrNull()

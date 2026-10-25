@@ -3235,7 +3235,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             return receiver
         }
         if (e.args.any { it.name != null }) throw CompileError(e.pos, "named arguments aren't supported in method calls")
-        extension(member, receiver)?.let { decl ->
+        // toString() is every value's; a type's own toString takes how to show its type parameters,
+        // and is called with them.
+        extension(member, receiver)?.takeIf { member.name != "toString" || e.args.isNotEmpty() }?.let { decl ->
             if (decl.property) throw CompileError(member.pos, "'${member.name}' is a property; write it without ()")
             val fn = globalType(decl) as Type.Fn
             withDefaultArgs(e, decl.params!!.drop(1).map { it.name to (it.default != null) }, decl.name, named = false)
