@@ -56,13 +56,17 @@ fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, impo
  * The tests in [dir], to one program: each function in its lower-case files marked with [marker],
  * an annotation, as `uk.m4xy.fktests.Test`, run by [runner], a module, from a main made for them.
  * What tests are written with and what runs them are apart: fckt knows neither, and a test can't
- * use the runner, whose package only the main sees, unless they're [runnerTests], the runner's own. [runner] has, as fk-tests-runner's
- * `uk.m4xy.fktestsrunner.Testing` has,
+ * use the runner, whose package only the main sees, unless they're [runnerTests], the runner's own.
+ * The main gives the runner the tests as a plan, of the types its package has, as fk-tests-runner's
+ * `uk.m4xy.fktestsrunner` has:
  *
- * - `section(args: List<String>, file: String, names: List<String>): Unit`, called before a file's tests;
- * - `check(args: List<String>, file: String, name: String, body: @Fail () -> Unit): Outcome`, which
- *   runs a test, as args choose, and says how it went;
- * - `finish(outcomes: List<Outcome>): Unit`, called with how each went.
+ * - `Plan<@E>(suites: List<Suite<@E>>)`, the tests: a suite for each file with any;
+ * - `Suite<@E>(file: String, cases: List<TestCase<@E>>)`;
+ * - `TestCase<@E>(id: TestId, at: Location, body: @Fail @E () -> Unit)`, a test;
+ * - `TestId(file: String, name: String)` and `Location(file: String, line: Int)`;
+ *
+ * and [runner] has `main<@E>(args: List<String>, plan: Plan<@E>): Unit`, which runs them as the
+ * program's arguments say.
  *
  * With [separate], it's compiled as [compileSeparately] compiles a program.
  */
@@ -72,10 +76,10 @@ fun compileTests(dir: File, marker: String, runner: String, dirs: List<File>, li
     return compile(link(testsMain(dir, marker, runner, runnerTests), packages, imports).file)
 }
 
-/**
- * The main that runs [dir]'s tests: for each file with any, its name, then each test, checked by
- * [runner], so that one that fails doesn't stop the others; then how they went.
- */
+/** The types of a plan of tests, which a runner's package has. */
+private val TEST_PLAN_TYPES = listOf("Plan", "Suite", "TestCase", "TestId", "Location")
+
+/** The main that runs [dir]'s tests: the plan of them, which it gives [runner]. */
 internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: Boolean = false): String {
     fun split(name: String, what: String, example: String): Pair<String, String> {
         val pkg = name.substringBeforeLast('.', "")
@@ -107,22 +111,22 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
             t.extension || t.params.isNotEmpty() || t.typeParams.isNotEmpty() -> errors += CompileError(t.pos, "a test takes no parameters, as it's run as ${t.name}()")
             t.isPrivate -> errors += CompileError(t.pos, "a test is run from outside its file, so it can't be private")
         }
-        tests.takeIf { it.isNotEmpty() }?.let { file.name to it.map { t -> t.name } }
+        tests.takeIf { it.isNotEmpty() }?.let { file.name to it.map { t -> t.name to t.pos.line } }
     }
     CompileErrors.throwIfAny(errors)
     if (sections.isEmpty()) throw CompileError(Pos(1, 1, dir.path), "no tests here: a test is a function marked @$markerName, as in @$markerName sums() = assert(1 + 1 == 2)")
-    var n = 0
-    val out = StringBuilder("import $runner\n\nmain(args: List<String>) = {\n")
-    val outcomes = mutableListOf<String>()
-    for ((file, names) in sections) {
-        out.append("  $module.section(args, \"$file\", ${names.joinToString(", ", "[", "]") { "\"$it\"" }})\n")
-        for (name in names) {
-            val outcome = "outcome${n++}"
-            outcomes += outcome
-            out.append("  $outcome = $module.check(args, \"$file\", \"$name\", () -> $name())\n")
+    fun string(text: String) = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$") + "\""
+    val out = StringBuilder("import $runner\n")
+    for (type in TEST_PLAN_TYPES) out.append("import $runnerPackage.$type\n")
+    out.append("\nmain(args: List<String>) = $module.main(args, Plan([\n")
+    for ((file, tests) in sections) {
+        out.append("  Suite(${string(file)}, [\n")
+        for ((name, line) in tests) {
+            out.append("    TestCase(TestId(${string(file)}, ${string(name)}), Location(${string(file)}, $line), () -> $name()),\n")
         }
+        out.append("  ]),\n")
     }
-    out.append("  $module.finish(${outcomes.joinToString(", ", "[", "]")})\n}\n")
+    out.append("]))\n")
     return out.toString()
 }
 

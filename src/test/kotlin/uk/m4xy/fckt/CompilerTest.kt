@@ -1233,19 +1233,27 @@ class CompilerTest {
             write("src/pricing/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = items.fold(0, (a, b) -> a + b)\n}\n")
             // What tests are written with, and, apart, what runs them, with what fckt --test calls.
             write("lib/check/Test.fk", "annotation type Test\n")
+            write("lib/runs/Plan.fk", "type Plan<@E>(suites: List<Suite<@E>>)\n")
+            write("lib/runs/Suite.fk", "type Suite<@E>(file: String, cases: List<TestCase<@E>>)\n")
+            write("lib/runs/TestCase.fk", "type TestCase<@E>(id: TestId, at: Location, body: @Fail @E () -> Unit)\n")
+            write("lib/runs/TestId.fk", "type TestId(file: String, name: String)\n")
+            write("lib/runs/Location.fk", "type Location(file: String, line: Int)\n")
             write(
                 "lib/runs/Runner.fk",
                 """
                 module Runner {
-                  type Outcome { Passed, Failed, Skipped }
-                  @Console section(args: List<String>, file: String, names: List<String>): Unit = println(file)
-                  @Console check(args: List<String>, file: String, name: String, body: @Fail () -> Unit): Outcome =
-                    if (!args.isEmpty() && !args.contains(name)) Skipped
-                    else when (attempt { caught(body).map(reason -> fail(reason)).getOrElse(Unit) }) {
-                      Ok(_) -> { println("  passed ${'$'}name"); Passed }
-                      Error(reason) -> { println("  FAILED ${'$'}name: ${'$'}reason"); Failed }
-                    }
-                  @Console finish(outcomes: List<Outcome>): Unit = println("${'$'}{outcomes.filter(o -> o == Failed).size} failed")
+                  type Outcome { Passed, Failed }
+                  @Console main<@E>(args: List<String>, plan: Plan<@E>): Unit = {
+                    outcomes = plan.suites.flatMap(suite -> {
+                      println(suite.file)
+                      suite.cases.filter(c -> args.isEmpty() || args.contains(c.id.name)).map(c -> check(c))
+                    })
+                    println("${'$'}{outcomes.filter(o -> o == Failed).size} failed")
+                  }
+                  @Console check<@E>(c: TestCase<@E>): Outcome = when (attempt { caught(c.body).map(reason -> fail(reason)).getOrElse(Unit) }) {
+                    Ok(_) -> { println("  passed ${'$'}{c.id.name} at line ${'$'}{c.at.line}"); Passed }
+                    Error(reason) -> { println("  FAILED ${'$'}{c.id.name}: ${'$'}reason"); Failed }
+                  }
                   private external caught(body: () -> Unit): Option<String> =
                     "(fun f -> try f (); None with Failure m -> Some m | e -> Some (Printexc.to_string e)) body"
                 }
@@ -1266,18 +1274,18 @@ class CompilerTest {
             val roots = listOf(File(dir, "src"), File(dir, "lib"))
             val ml = compileTests(test, "check.Test", "runs.Runner", roots, emptyList())
             assertEquals(
-                "files.fk\n  passed missing\nprices.fk\n  passed sums\n  FAILED empty: prices.fk line 5: expected:<1> but was:<0>\n" +
+                "files.fk\n  passed missing at line 6\nprices.fk\n  passed sums at line 4\n  FAILED empty: prices.fk line 5: expected:<1> but was:<0>\n" +
                     "  FAILED divides: Division_by_zero\n  FAILED fails: on purpose\n3 failed\n",
                 runOcaml(ml),
             )
-            assertEquals("files.fk\nprices.fk\n  passed sums\n0 failed\n", runOcaml(ml, listOf("sums")))
+            assertEquals("files.fk\nprices.fk\n  passed sums at line 4\n0 failed\n", runOcaml(ml, listOf("sums")))
             // The runner's own tests use it.
-            write("test/runner.fk", "import check.Test\nimport runs.Runner\n@Test passedIsntFailed() = assert(Runner.Passed != Runner.Failed)\n")
-            assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), runnerTests = true), listOf("passedIsntFailed")), "  passed passedIsntFailed")
+            write("test/runner.fk", "import check.Test\nimport runs.TestId\n@Test idsAreValues() = assert(TestId(\"a.fk\", \"b\") == TestId(\"a.fk\", \"b\"))\n")
+            assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), runnerTests = true), listOf("idsAreValues")), "  passed idsAreValues")
             File(test, "runner.fk").delete()
             write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
             write("test/unmarked.fk", "@Test d() = Unit\n")
-            write("test/sneaky.fk", "import check.Test\nimport runs.Runner\n@Test e() = Unit\n")
+            write("test/sneaky.fk", "import check.Test\nimport runs.TestId\n@Test e() = Unit\n")
             val errors = assertFailsWith<CompileError> { compileTests(test, "check.Test", "runs.Runner", roots, emptyList()) }.errors.map { it.message }
             assertEquals(
                 listOf(
