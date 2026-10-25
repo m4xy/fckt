@@ -162,13 +162,16 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                     val functor = moduleName("a functor applied to modules: Functor(Module)")
                     if (at(T.LT)) throw error("a functor takes its modules in parentheses: $functor(Module)")
                     if (accept(T.LPAREN) == null) throw error("expected modules for $functor: $functor(Module)")
-                    val args = mutableListOf<TypeRef>()
-                    do {
+                    val args = mutableListOf<ModuleArg>()
+                    // Functor(): every module its default.
+                    if (!at(T.RPAREN)) do {
+                        val argName = if (at(T.IDENT) && peekAt(1).kind == T.ASSIGN) upperIdent("a module parameter's name").also { next() } else null
+                        if (argName == null && args.any { it.name != null }) throw error("a module given by position goes before those given by name")
                         val argPos = peek.pos
-                        args += TypeRef.Named(argPos, moduleName("a module, by name"), emptyList())
+                        args += ModuleArg(argName, TypeRef.Named(argPos, moduleName("a module, by name"), emptyList()))
                     } while (accept(T.COMMA) != null)
                     expect(T.RPAREN, "')'")
-                    return Decl.Module(pos, name, emptyList(), application = TypeRef.Named(functorPos, functor, args))
+                    return Decl.Module(pos, name, emptyList(), application = Application(TypeRef.Named(functorPos, functor, emptyList()), args))
                 }
                 // module Name<E>: generic in E, as each of its declarations is
                 if (at(T.LT) && peekAt(2).kind == T.COLON) throw error("a functor takes its modules in parentheses: module $name(M: Spec)")
@@ -180,7 +183,9 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                         val paramPos = peek.pos
                         val paramName = upperIdent("a module parameter")
                         expect(T.COLON, "':' and the spec the module must follow")
-                        params += ModuleParam(paramPos, paramName, specName())
+                        val spec = specName()
+                        val default = if (accept(T.ASSIGN) != null) TypeRef.Named(peek.pos, moduleName("the module it's given by default"), emptyList()) else null
+                        params += ModuleParam(paramPos, paramName, spec, default)
                     } while (accept(T.COMMA) != null)
                     expect(T.RPAREN, "')'")
                 }

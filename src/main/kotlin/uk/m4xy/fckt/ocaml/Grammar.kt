@@ -49,12 +49,14 @@ interface SigValue {
 
 /**
  * `module Name : sig ... end` inside a signature, or with [spec], `module Name : Spec`; with
- * [alias], `module Name = Other`, another compilation unit's module, the same in every way.
+ * [alias], `module Name = Other`, another compilation unit's module, the same in every way. A
+ * functor has [params], `(M : Ordered)`.
  */
 @Element("sig-module", function = "sigModule")
 @Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class, Effects::class)
 interface SigModule {
     @Required val name: String
+    val params: String
     val spec: String
     val alias: String
 }

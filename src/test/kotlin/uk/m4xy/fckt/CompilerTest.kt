@@ -959,6 +959,40 @@ class CompilerTest {
     }
 
     @Test
+    fun `a functor's modules can have defaults, and be given by name`() {
+        val source = """
+            spec Shout { loud(s: String): String }
+            spec Greeting { hello(name: String): String }
+            module Plain : Shout { loud(s: String): String = s }
+            module Caps : Shout { loud(s: String): String = s.uppercase() }
+            module English : Greeting { hello(name: String): String = "hello ${'$'}name" }
+            module French : Greeting { hello(name: String): String = "bonjour ${'$'}name" }
+            module Greeter(S: Shout = Plain, G: Greeting = English) {
+              greet(name: String): String = S.loud(G.hello(name))
+            }
+            module Standard = Greeter()
+            module Loud = Greeter(Caps)
+            module Polite = Greeter(G = French)
+            module Both = Greeter(Caps, G = French)
+
+            @Console main() = println("${'$'}{Standard.greet("a")}, ${'$'}{Loud.greet("b")}, ${'$'}{Polite.greet("c")}, ${'$'}{Both.greet("d")}")
+        """.trimIndent()
+        assertEquals("hello a, HELLO B, bonjour c, BONJOUR D\n", run(source))
+        assertContains(compile(source), "module Polite = Greeter (Plain) (French)")
+
+        val greeter = source.substringBefore("module Standard")
+        assertContains(error(greeter + "module X = Greeter(Shout = Caps)"), "Greeter has no module Shout: it takes S, G")
+        assertContains(error(greeter + "module X = Greeter(Caps, S = Plain)"), "Greeter's S is given twice")
+        assertContains(error(greeter + "module X = Greeter(G = French, Caps)"), "a module given by position goes before those given by name")
+        assertContains(error(greeter + "module X = Greeter(Caps, French, Plain)"), "Greeter takes 2 modules, not 3")
+        assertContains(error(greeter + "module X = Greeter(G = Caps)"), "Caps can't be Greeter's G")
+        // Without a default, a module must be given.
+        assertContains(error(greeter.replace("S: Shout = Plain", "S: Shout") + "module X = Greeter()"), "Greeter needs a module for S, which follows Shout")
+        // A default must follow the spec too.
+        assertContains(error(greeter.replace("G: Greeting = English", "G: Greeting = Caps") + "module X = Greeter()"), "Caps can't be Greeter's G")
+    }
+
+    @Test
     fun `spec type arguments say what a functor's parameter's types are`() {
         val source = File("examples/monads.fk").readText()
         assertEquals("", run(source))
@@ -1609,11 +1643,14 @@ class CompilerTest {
             write("money/uk/m4xy/money/Ordered.fk", "spec Ordered {\n  type T\n  compare(a: T, b: T): Int\n}")
             write("money/uk/m4xy/money/ByPence.fk", "import uk.m4xy.units.Money\n\nmodule ByPence : Ordered {\n  type T = Money\n  compare(a: Money, b: Money): Int = a.pence - b.pence\n}")
             write("money/uk/m4xy/money/Code.fk", "type Code private(value: String)")
+            // A functor whose module has a default, which a program gets without naming it.
+            write("money/uk/m4xy/money/Ranked.fk", "module Ranked(O: Ordered = ByPence) {\n  higher(a: O.T, b: O.T): O.T = if (O.compare(a, b) >= 0) a else b\n}")
             val money = File(dir, "lib/money").apply { mkdirs() }
             File(money, "uk_m4xy_money.ml").writeText(
                 compileLibrary(listOf("uk.m4xy.money"), listOf(File(dir, "money")), listOf(File(units, "interface")), "Uk_m4xy_money", File(money, "interface")),
             )
             ocamlc(File(money, "uk_m4xy_money.ml"), std, units)
+            assertContains(File(money, "interface/uk/m4xy/money/Ranked.fki").readText(), "module Ranked(O: Ordered = ByPence) {")
 
             val main = File(dir, "shop/main.fk")
             fun compileMain(source: String) = main.apply { parentFile.mkdirs() }.writeText(source.trimIndent()).let {
@@ -1648,7 +1685,10 @@ class CompilerTest {
                   }
                   println(attempt { w.spend(Money(100)).balance.pounds() }.getOrElse("?"))
                   println("${'$'}{ByPence.compare(Money(3), Money(1))}")
+                  println("${'$'}{Richest.higher(Money(3), Money(9))}")
                 }
+
+                module Richest = Ranked()
                 """,
             )
             assertContains(ml, "module Fckt = Fckt_std.Fckt")
@@ -1662,7 +1702,7 @@ class CompilerTest {
             process.waitFor(30, TimeUnit.SECONDS)
             assertEquals(
                 "Ok(42)\ntotal: £4.25 (Money(pence=425))\nquadrupled: £17.00 (Money(pence=1700))\nCircle(radius=2.0) 42 Money(pence=0)\nhello world (name)\n" +
-                    "failed: max can't spend £9.00\n£4.00\n2\n",
+                    "failed: max can't spend £9.00\n£4.00\n2\nMoney(pence=9)\n",
                 output,
             )
 

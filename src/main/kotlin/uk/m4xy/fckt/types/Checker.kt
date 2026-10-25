@@ -251,17 +251,40 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         enclosingFunctor(app.path)?.let { throw CompileError(app.pos, "a functor can't be applied inside another functor (${it.simpleName}) yet") }
         currentPath = app.path
         currentFile = app.pos.file
-        val functor = find(ref.name, modules, ref.pos) ?: throw CompileError(ref.pos, "unknown module '${ref.name}'")
-        if (functor.params.isEmpty()) throw CompileError(ref.pos, "${functor.simpleName} isn't a functor: it takes no modules")
-        if (functor.params.size != ref.args.size) {
-            throw CompileError(ref.pos, "${functor.simpleName} takes ${functor.params.size} module${if (functor.params.size == 1) "" else "s"}, not ${ref.args.size}")
+        val functor = find(ref.functor.name, modules, ref.functor.pos) ?: throw CompileError(ref.functor.pos, "unknown module '${ref.functor.name}'")
+        if (functor.params.isEmpty()) throw CompileError(ref.functor.pos, "${functor.simpleName} isn't a functor: it takes no modules")
+        val positional = ref.args.takeWhile { it.name == null }
+        if (positional.size > functor.params.size) {
+            throw CompileError(ref.functor.pos, "${functor.simpleName} takes ${functor.params.size} module${if (functor.params.size == 1) "" else "s"}, not ${positional.size}")
         }
-        val args = ref.args.map { arg ->
-            val name = (arg as TypeRef.Named).name
-            val m = find(name, modules, arg.pos) ?: throw CompileError(arg.pos, "unknown module '$name'")
+        val named = ref.args.drop(positional.size)
+        for (arg in named) {
+            val at = functor.params.indexOfFirst { it.name == arg.name }
+            if (at < 0) throw CompileError(arg.module.pos, "${functor.simpleName} has no module ${arg.name}: it takes ${functor.params.joinToString { it.name }}")
+            if (at < positional.size || named.count { it.name == arg.name } > 1) throw CompileError(arg.module.pos, "${functor.simpleName}'s ${arg.name} is given twice")
+        }
+        fun module(arg: TypeRef.Named): Decl.Module {
+            val m = find(arg.name, modules, arg.pos) ?: throw CompileError(arg.pos, "unknown module '${arg.name}'")
             if (m.params.isNotEmpty()) throw CompileError(arg.pos, "${m.simpleName} is a functor; give it modules first")
             if (m.typeParams.isNotEmpty()) throw CompileError(arg.pos, "${m.simpleName} takes type parameters, ${m.typeParams.joinToString()}, so it can't be given to a functor yet")
-            m
+            return m
+        }
+        val args = functor.params.mapIndexed { i, p ->
+            val given = positional.getOrNull(i)?.module ?: named.find { it.name == p.name }?.module
+            when {
+                given != null -> module(given)
+                // A default is named where the functor is declared, so it's the functor's own.
+                p.default != null -> {
+                    currentPath = functor.path
+                    currentFile = functor.pos.file
+                    val m = module(p.default)
+                    currentPath = app.path
+                    currentFile = app.pos.file
+                    if (m.name in parameterModules) throw CompileError(p.default.pos, "${functor.simpleName}'s ${p.name} can't default to another of its modules")
+                    m
+                }
+                else -> throw CompileError(ref.functor.pos, "${functor.simpleName} needs a module for ${p.name}, which follows ${p.spec.name}")
+            }
         }
         val copier = Copier({ name -> app.name + name.removePrefix(functor.name) }) { original, copy ->
             if (copy !is Decl.Function && copy !is Decl.Module && copy !is Decl.Spec) copyOrigins[copy.name] = original.name

@@ -24,8 +24,8 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
             name = rename(d.name),
             decls = d.decls.map(::decl),
             spec = d.spec?.let(::named),
-            params = d.params.map { it.copy(spec = named(it.spec)) },
-            application = d.application?.let(::named),
+            params = d.params.map { it.copy(spec = named(it.spec), default = it.default?.let(::named)) },
+            application = d.application?.let { app -> Application(named(app.functor), app.args.map { it.copy(module = named(it.module)) }) },
         )
         is Decl.Spec -> d.copy(name = rename(d.name), values = d.values.map { v -> v.copy(params = v.params?.map(::param), type = type(v.type)) })
     }.also { onCopy(d, it) }

@@ -140,11 +140,11 @@ internal object Interfaces {
             is Decl.Module -> {
                 out.append("module ").append(d.name).append(typeParams(d.typeParams))
                 d.application?.let { app ->
-                    out.append(" = ").append(app.name).append(app.args.joinToString(", ", "(", ")") { type(it) })
+                    out.append(" = ").append(app.functor.name).append(app.args.joinToString(", ", "(", ")") { (it.name?.let { n -> "$n = " } ?: "") + type(it.module) })
                     out.append('\n')
                     return
                 }
-                if (d.params.isNotEmpty()) out.append(d.params.joinToString(", ", "(", ")") { "${it.name}: ${type(it.spec)}" })
+                if (d.params.isNotEmpty()) out.append(d.params.joinToString(", ", "(", ")") { p -> "${p.name}: ${type(p.spec)}" + (p.default?.let { " = " + type(it) } ?: "") })
                 d.spec?.let { out.append(" : ").append(type(it)) }
                 out.append(" {\n")
                 for (inner in d.decls.filter { !it.isPrivate }) decl(inner, "$indent  ", out)

@@ -348,7 +348,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(moduleName(m.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(applies))
         }
         currentPath = path.dropLast(1)
-        val params = program.functorParams[m.name]?.joinToString(" ") { (name, spec) -> "($name : ${specText("${m.name}.$name", spec)})" }
+        val params = functorParams(m)
         val items = moduleItems(path, m.decls, functionItems).map { child ->
             when (child) {
                 is StructureChild.TypeGroup -> ModuleDefChild.TypeGroup(child.element)
@@ -485,6 +485,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         return fields.flatMap { typeRefNames(it.type) } + origins
     }
 
+    /** A functor's parameters, `(M : Ordered)`, or null for a module that takes none. */
+    private fun functorParams(m: Decl.Module): String? =
+        program.functorParams[m.name]?.joinToString(" ") { (name, spec) -> "($name : ${specText("${m.name}.$name", spec)})" }
+
     /** What module [m] shows outside: its public types, nested modules, show functions and values. */
     private fun <S> S.signatureItems(m: Decl.Module) where
         S : TypeGroupParent<Unit>, S : SigValueParent<Unit>, S : SigModuleParent<Unit>, S : ModuleTypeParent<Unit>, S : EffectsParent<Unit> {
@@ -503,7 +507,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         for (inner in inDependencyOrder(m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate && !isEmpty(it) })) {
             val alias = compiledModule(inner)
             if (alias != null) sigModule(moduleName(inner.simpleName)) { this.alias = alias }
-            else sigModule(moduleName(inner.simpleName)) { signatureItems(inner) }
+            else sigModule(moduleName(inner.simpleName)) {
+                functorParams(inner)?.let { params = it }
+                signatureItems(inner)
+            }
             currentPath = path
         }
         for (type in types) {

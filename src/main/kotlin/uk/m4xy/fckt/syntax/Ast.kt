@@ -179,7 +179,7 @@ sealed interface Decl {
         override val isPrivate: Boolean = false,
         val spec: TypeRef.Named? = null,
         val params: List<ModuleParam> = emptyList(),
-        val application: TypeRef.Named? = null,
+        val application: Application? = null,
         override val annotations: List<Annotation> = emptyList(),
         /** A package: the declarations of a folder's files, named after the folder. */
         val isPackage: Boolean = false,
@@ -218,8 +218,20 @@ sealed interface Decl {
     ) : Decl
 }
 
-/** `M: Spec` in a functor's `(...)`: a module it takes. */
-data class ModuleParam(val pos: Pos, val name: String, val spec: TypeRef.Named)
+/**
+ * `M: Spec` in a functor's `(...)`: a module it takes; with `= Standard`, the module it's given when
+ * an application leaves it out, named where the functor is declared.
+ */
+data class ModuleParam(val pos: Pos, val name: String, val spec: TypeRef.Named, val default: TypeRef.Named? = null)
+
+/**
+ * `SortedSet(IntOrder)`, `Plugin(Reporting = Quiet)`: a functor given modules, in order, then by the
+ * names of the parameters they're for, with those left out given their defaults.
+ */
+data class Application(val functor: TypeRef.Named, val args: List<ModuleArg>)
+
+/** A module given to a functor: for its next parameter, or for the one [name]d. */
+data class ModuleArg(val name: String?, val module: TypeRef.Named)
 
 /** `type Name<A>` in a spec. */
 data class SpecType(val pos: Pos, val name: String, val typeParams: List<String>)
