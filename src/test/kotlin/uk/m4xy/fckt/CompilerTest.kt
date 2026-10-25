@@ -31,7 +31,7 @@ class CompilerTest {
                 .directory(dir).redirectErrorStream(true).apply { environment().putAll(env) }.start()
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)
-            assertEquals(0, process.exitValue(), "OCaml failed:\n$output\n--- generated ---\n$ml")
+            assertEquals(0, process.exitValue(), "OCaml failed:\n$output\n${excerpt(output, ml)}")
             assertNoWarnings(output, ml)
             return output
         } finally {
@@ -39,8 +39,20 @@ class CompilerTest {
         }
     }
 
+    /**
+     * The generated OCaml around the first line OCaml's [output] names, numbered: enough to see what
+     * it complains about, without the whole program.
+     */
+    private fun excerpt(output: String, ml: String): String {
+        val lines = ml.lines()
+        val line = Regex("line (\\d+)").find(output)?.groupValues?.get(1)?.toInt() ?: return "--- generated: ${lines.size} lines, no line named ---"
+        val from = maxOf(1, line - 8)
+        val to = minOf(lines.size, line + 4)
+        return "--- generated, lines $from-$to of ${lines.size} ---\n" + (from..to).joinToString("\n") { "%5d %s".format(it, lines[it - 1]) }
+    }
+
     private fun assertNoWarnings(output: String, ml: String) {
-        if ("Warning" in output || "Error" in output) throw AssertionError("OCaml reported:\n$output\n--- generated ---\n$ml")
+        if ("Warning" in output || "Error" in output) throw AssertionError("OCaml reported:\n$output\n${excerpt(output, ml)}")
     }
 
     private fun error(source: String): String = assertFailsWith<CompileError> { compile(source) }.toString()
@@ -1407,7 +1419,7 @@ class CompilerTest {
             .redirectErrorStream(true).start()
         val output = process.inputStream.bufferedReader().readText()
         process.waitFor(60, TimeUnit.SECONDS)
-        assertEquals(0, process.exitValue(), "ocamlc failed on ${ml.name}:\n$output\n--- generated ---\n${ml.readText()}")
+        assertEquals(0, process.exitValue(), "ocamlc failed on ${ml.name}:\n$output\n${excerpt(output, ml.readText())}")
     }
 
     @Test
