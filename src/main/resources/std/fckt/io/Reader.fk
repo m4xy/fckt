@@ -1,5 +1,8 @@
-// What a block reads from, a line or some characters at a time.
+import fckt.text.Bytes
+
+// What a block reads from, a line or some bytes at a time.
 effect Reader {
   nextLine(): Option<String>
-  nextChars(count: Int): String
+  // Up to count bytes, or none at the end; all that's left if count is below 0.
+  nextBytes(count: Int): Bytes
 }

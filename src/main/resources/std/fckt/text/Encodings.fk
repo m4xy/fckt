@@ -1,0 +1,24 @@
+import fckt.text.Bytes
+
+// Bytes, and text as UTF-8 bytes.
+module Encodings {
+  external Bytes.size: Int = "String.length this"
+  // The byte at index, 0 to 255: bytes[i].
+  external Bytes.get(index: Int): Int = "(fun s i -> Char.code (String.get s i)) this index"
+  external Bytes.toList(): List<Int> = "(fun s -> List.map Char.code (List.of_seq (String.to_seq s))) this"
+  external Bytes.plus(other: Bytes): Bytes = "this ^ other"
+  // Bytes from values 0 to 255.
+  external bytesOf(values: List<Int>): Bytes = "(fun v -> String.of_seq (List.to_seq (List.map Char.chr v))) values"
+
+  // The text as UTF-8, as fckt's strings are.
+  external String.encodeToBytes(): Bytes = "Fun.id this"
+
+  // The text the bytes are as UTF-8, with any that aren't replaced by U+FFFD, as Kotlin's
+  // decodeToString does.
+  external Bytes.decodeToString(): String =
+    "(fun s -> let b = Buffer.create (String.length s) in let rec go i = if i < String.length s then (let d = String.get_utf_8_uchar s i in Buffer.add_utf_8_uchar b (Uchar.utf_decode_uchar d); go (i + Uchar.utf_decode_length d)) in go 0; Buffer.contents b) this"
+
+  // The text the bytes are, or an Error if they aren't UTF-8.
+  external Bytes.decodeUtf8(): Result<String, String> =
+    "(fun s -> if String.is_valid_utf_8 s then Ok s else Error \"not UTF-8\") this"
+}

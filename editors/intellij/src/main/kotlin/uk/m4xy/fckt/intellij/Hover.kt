@@ -153,7 +153,10 @@ private class Hovers(val text: String, val program: Program) {
 
     /** What the declaration of full name [full] is, for an import line. */
     private fun describe(full: String, byName: Map<String, Decl>): String? {
-        val d = byName[full]
+        // A method, by its name: the extensions of that name in the module, one per line.
+        val methods = byName.values.filter { it is Decl.Function && it.extension && it.methodName == full.substringAfterLast('.') && it.name.substringBeforeLast('.', "") == full.substringBeforeLast('.', "") }
+        val d = byName[full] ?: methods.singleOrNull()
+        if (d == null && methods.isNotEmpty()) return methods.joinToString("\n") { signature(it as Decl.Function).lineSequence().first() }
         if (d == null) {
             // A case: the name of a type with cases, then its case's.
             val sealed = byName[full.substringBeforeLast('.', "")] as? Decl.Sealed ?: return null

@@ -1,15 +1,22 @@
-// Reads and writes files and folders. A path is relative to the folder the program runs in.
-// What can't be done, such as reading a file that isn't there, fails with why: Files.readFile and
-// the others fail where they're called, and the operations give a Result, for a handler to
-// answer. What's opened is read and written through @Channel.
+import fckt.text.Bytes
+
+// Reads and writes files and folders. A relative path is from the folder the program runs in.
+// What can't be done, such as reading a file that isn't there, fails with why: Files'
+// path.readText() and the others fail where they're called, and the operations give a Result, for
+// a handler to answer. What's opened is read and written through @Channel.
 @Fail @Channel @HandledBy(Files.Local) effect FileSystem {
-  tryReadFile(path: String): Result<String, String>
-  tryWriteFile(path: String, text: String, append: Boolean): Result<Unit, String>
-  exists(path: String): Boolean
-  isDirectory(path: String): Boolean
-  tryListFiles(path: String): Result<List<String>, String>
-  tryMakeDirs(path: String): Result<Unit, String>
-  tryDelete(path: String): Result<Unit, String>
-  tryOpenForReading(path: String): Result<InputHandle, String>
-  tryOpenForWriting(path: String, append: Boolean): Result<OutputHandle, String>
+  tryReadBytes(path: Path): Result<Bytes, String>
+  tryWriteBytes(path: Path, bytes: Bytes, append: Boolean): Result<Unit, String>
+  // Copies the file at source to target, a little at a time.
+  tryCopy(source: Path, target: Path): Result<Unit, String>
+  exists(path: Path): Boolean
+  isDirectory(path: Path): Boolean
+  // What's in a folder, in order of name.
+  tryListFiles(path: Path): Result<List<Path>, String>
+  // Makes a folder, and those it's in, if they aren't there.
+  tryMakeDirs(path: Path): Result<Unit, String>
+  // Deletes a file, or a folder and everything in it, if it's there.
+  tryDelete(path: Path): Result<Unit, String>
+  tryOpenForReading(path: Path): Result<InputHandle, String>
+  tryOpenForWriting(path: Path, append: Boolean): Result<OutputHandle, String>
 }

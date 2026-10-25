@@ -1,3 +1,6 @@
+import fckt.text.Bytes
+import fckt.text.Encodings.*
+
 // Reading and writing a little at a time, through @Reader and @Writer: files, and what other
 // programs print.
 module Channels {
@@ -13,6 +16,9 @@ module Channels {
     None -> Unit
   }
 
+  // What's left, as text: see Encodings' decodeToString.
+  @Reader remainingText(): String = nextBytes(-1).decodeToString()
+
   // The lines that are left.
   @Reader remainingLines(): List<String> = when (nextLine()) {
     Some(line) -> [line, *remainingLines()]
@@ -21,7 +27,7 @@ module Channels {
 
   // Runs body reading input, and leaves it open.
   @Channel readingFrom<A>(input: InputHandle, body: @Reader () -> A): A =
-    Reader(nextLine = ~readLineFrom(input), nextChars = count -> readFrom(input, count)) { body() }
+    Reader(nextLine = ~readLineFrom(input), nextBytes = count -> readFrom(input, count)) { body() }
 
   // Runs body reading input, and closes it after, even if body fails.
   @Channel @Fail readingAll<A>(input: InputHandle, body: @Reader () -> A): A = {
@@ -35,7 +41,7 @@ module Channels {
 
   // Runs body writing to output, and closes it after, even if body fails.
   @Channel @Fail writingAll<A>(output: OutputHandle, body: @Writer () -> A): A = {
-    result = attempt { Writer(write = text -> writeTo(output, text)) { body() } }
+    result = attempt { Writer(write = text -> writeTo(output, text.encodeToBytes()), writeBytes = bytes -> writeTo(output, bytes)) { body() } }
     closeOutput(output)
     when (result) {
       Ok(value) -> value
@@ -46,14 +52,14 @@ module Channels {
   // OCaml's channels, which main uses.
   module Local : Channel {
     private external inputLine(input: InputHandle): Option<String> = "In_channel.input_line input"
-    private external inputChars(input: InputHandle, count: Int): String =
+    private external inputBytes(input: InputHandle, count: Int): Bytes =
       "(fun c n -> if n < 0 then In_channel.input_all c else match In_channel.really_input_string c n with Some s -> s | None -> In_channel.input_all c) input count"
-    private external outputString(output: OutputHandle, text: String): Unit = "Out_channel.output_string output text"
+    private external outputBytes(output: OutputHandle, bytes: Bytes): Unit = "Out_channel.output_string output bytes"
     private external closeIn(input: InputHandle): Unit = "In_channel.close input"
     private external closeOut(output: OutputHandle): Unit = "Out_channel.close output"
     readLineFrom(input: InputHandle) = inputLine(input)
-    readFrom(input: InputHandle, count: Int) = inputChars(input, count)
-    writeTo(output: OutputHandle, text: String) = outputString(output, text)
+    readFrom(input: InputHandle, count: Int) = inputBytes(input, count)
+    writeTo(output: OutputHandle, bytes: Bytes) = outputBytes(output, bytes)
     closeInput(input: InputHandle) = closeIn(input)
     closeOutput(output: OutputHandle) = closeOut(output)
   }

@@ -1,11 +1,13 @@
+import fckt.text.Bytes
+
 // Reads from and writes to what's open. Files and Processes open what it reads and writes;
 // reading, writing and streaming use it, and close what they open.
 @HandledBy(Channels.Local) effect Channel {
   // The next line, without its end, or None at the end.
   readLineFrom(input: InputHandle): Option<String>
-  // Up to count characters, or "" at the end; all that's left if count is below 0.
-  readFrom(input: InputHandle, count: Int): String
-  writeTo(output: OutputHandle, text: String): Unit
+  // Up to count bytes, or none at the end; all that's left if count is below 0.
+  readFrom(input: InputHandle, count: Int): Bytes
+  writeTo(output: OutputHandle, bytes: Bytes): Unit
   closeInput(input: InputHandle): Unit
   closeOutput(output: OutputHandle): Unit
 }

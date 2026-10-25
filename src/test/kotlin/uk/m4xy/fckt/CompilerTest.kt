@@ -1053,7 +1053,9 @@ class CompilerTest {
                 import fckt.io.*
                 import fckt.io.Channels.*
                 import fckt.io.Files.*
+                import fckt.io.Paths.*
                 import fckt.io.Processes.*
+                import fckt.text.Encodings.*
 
                 shown(result: Result<String, String>): String = when (result) {
                   Ok(value) -> "ok ${'$'}value"
@@ -1061,29 +1063,39 @@ class CompilerTest {
                 }
 
                 @Console @FileSystem @Process main() = {
-                  makeDirs("out/a")
-                  writeFile("out/a/x.txt", "one\ntwo\n")
-                  appendFile("out/a/x.txt", "three\n")
-                  println(readLines("out/a/x.txt").joinToString(","))
-                  writing("out/y.txt") {
+                  out = path("out")
+                  out.resolve("a").makeDirs()
+                  x = out.resolve("a/x.txt")
+                  x.writeText("one\ntwo\n")
+                  x.appendText("three\n")
+                  println(x.readLines().joinToString(","))
+                  out.resolve("y.txt").writing {
                     writeLine("hello")
                     write("world")
                   }
-                  println(reading("out/y.txt") { [nextChars(2), nextLine().getOrElse("?"), nextChars(-1)] }.joinToString("|"))
-                  println(listFiles("out").joinToString(",") + " " + isDirectory("out/a").toString() + " " + exists("out/z").toString())
+                  println(out.resolve("y.txt").reading { [nextBytes(2).decodeToString(), nextLine().getOrElse("?"), remainingText()] }.joinToString("|"))
+                  x.copyTo(out.resolve("z.txt"))
+                  println(out.listFiles().map(p -> p.name).joinToString(",") + " " + out.resolve("a").isDirectory().toString() + " " + out.resolve("q").exists().toString())
                   exit = streaming("sh", ["-c", "echo first; echo second >&2; exit 3"]) {
                     forEachLine(line -> println("> ${'$'}line"))
                   }
                   println("exit ${'$'}{exit.code}: ${'$'}{run("echo", ["a b", "c"]).value.trim()}")
-                  println(shown(attempt { readFile("out/missing") }))
-                  println(shown(attempt { reading("out/y.txt") { line = nextLine().getOrElse(""); if (line == "hello") fail("stopped at ${'$'}line") else line } }))
-                  delete("out")
-                  println(exists("out").toString())
+                  println(shown(attempt { out.resolve("missing").readText() }))
+                  println(shown(attempt { out.resolve("y.txt").reading { line = nextLine().getOrElse(""); if (line == "hello") fail("stopped at ${'$'}line") else line } }))
+                  out.delete()
+                  println(out.exists().toString())
+                  // Paths are tidied, and taken apart without looking at the disk.
+                  p = path("a//b/./c/../d.fk")
+                  println("${'$'}{p.value} ${'$'}{p.name} ${'$'}{p.extension} ${'$'}{p.parent.map(f -> f.value).getOrElse("-")} ${'$'}{p.withExtension("ml").value}")
+                  println("${'$'}{path("/x/../..").value} ${'$'}{path("../a/..").value} ${'$'}{path("").value} ${'$'}{path("src/a/b.fk").relativeTo(path("src")).map(f -> f.value).getOrElse("-")}")
+                  // Bytes, and text as UTF-8.
+                  println("${'$'}{bytesOf([104, 105]).decodeToString()} ${'$'}{"ü".encodeToBytes().size} ${'$'}{bytesOf([255]).decodeUtf8().isOk()}")
                 }
             """.trimIndent()
             assertEquals(
-                "one,two,three\nhe|llo|world\na,y.txt true false\n> first\n> second\nexit 3: a b c\n" +
-                    "failed: out/missing: No such file or directory\nfailed: stopped at hello\nfalse\n",
+                "one,two,three\nhe|llo|world\na,y.txt,z.txt true false\n> first\n> second\nexit 3: a b c\n" +
+                    "failed: out/missing: No such file or directory\nfailed: stopped at hello\nfalse\n" +
+                    "a/b/d.fk d.fk fk a/b a/b/d.ml\n/ .. . a/b.fk\nhi 2 false\n",
                 run(source, dir = dir),
             )
         } finally {
@@ -1109,22 +1121,28 @@ class CompilerTest {
         val fake = """
             import fckt.io.FileSystem
             import fckt.io.Files.*
+            import fckt.io.Paths.*
+            import fckt.text.Encodings.*
 
-            @FileSystem config(): String = if (exists("build.conf")) readFile("build.conf") else "default"
+            @FileSystem config(): String = {
+              conf = path("build.conf")
+              if (conf.exists()) conf.readText() else "default"
+            }
 
             main() = {
-              files = ["build.conf"]
+              files = [path("build.conf")]
               found = attempt {
                 FileSystem(
-                  tryReadFile = path -> if (files.contains(path)) Ok("from ${'$'}path") else Error("no ${'$'}path"),
-                  tryWriteFile = (path, text, append) -> Error("read only"),
-                  exists = path -> files.contains(path),
-                  isDirectory = path -> false,
-                  tryListFiles = path -> Ok(files),
-                  tryMakeDirs = path -> Error("read only"),
-                  tryDelete = path -> Error("read only"),
-                  tryOpenForReading = path -> Error("not here"),
-                  tryOpenForWriting = (path, append) -> Error("not here")
+                  tryReadBytes = file -> if (files.contains(file)) Ok("from ${'$'}{file.value}".encodeToBytes()) else Error("no ${'$'}{file.value}"),
+                  tryWriteBytes = (file, bytes, append) -> Error("read only"),
+                  tryCopy = (source, target) -> Error("read only"),
+                  exists = file -> files.contains(file),
+                  isDirectory = file -> false,
+                  tryListFiles = file -> Ok(files),
+                  tryMakeDirs = file -> Error("read only"),
+                  tryDelete = file -> Error("read only"),
+                  tryOpenForReading = file -> Error("not here"),
+                  tryOpenForWriting = (file, append) -> Error("not here")
                 ) { config() }
               }
               println(found.toString())

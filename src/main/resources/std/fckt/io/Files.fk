@@ -1,28 +1,44 @@
 import fckt.io.Channels.*
+import fckt.io.Paths.*
+import fckt.text.Bytes
+import fckt.text.Encodings.*
 
-// Reading and writing files and folders, through @FileSystem.
+// Reading and writing files and folders, through @FileSystem: path.readText(),
+// path.writeText(text), dir.listFiles() and the rest.
 module Files {
-  @FileSystem readFile(path: String): String = orFail(tryReadFile(path))
-  @FileSystem writeFile(path: String, text: String): Unit = orFail(tryWriteFile(path, text, false))
-  @FileSystem appendFile(path: String, text: String): Unit = orFail(tryWriteFile(path, text, true))
-  // The names of what's in a folder, in order.
-  @FileSystem listFiles(path: String): List<String> = orFail(tryListFiles(path))
-  // Makes a folder, and those it's in, if they aren't there.
-  @FileSystem makeDirs(path: String): Unit = orFail(tryMakeDirs(path))
-  // Deletes a file, or a folder and everything in it, if it's there.
-  @FileSystem delete(path: String): Unit = orFail(tryDelete(path))
+  // The file's text, as UTF-8: bytes that aren't are replaced by U+FFFD.
+  @FileSystem Path.readText(): String = this.readBytes().decodeToString()
+  @FileSystem Path.readBytes(): Bytes = orFail(tryReadBytes(this))
+  // The file's lines, without their ends.
+  @FileSystem Path.readLines(): List<String> = this.reading { remainingLines() }
 
-  // Runs body with the file at path to read, a line or some characters at a time, and closes it
-  // after, even if body fails. Only body can read it, so nothing reads it once it's closed.
-  @FileSystem reading<A>(path: String, body: @Reader () -> A): A = readingAll(orFail(tryOpenForReading(path)), body)
+  // Writes the file, from the start, making it if it isn't there.
+  @FileSystem Path.writeText(text: String): Unit = this.writeBytes(text.encodeToBytes())
+  @FileSystem Path.writeBytes(bytes: Bytes): Unit = orFail(tryWriteBytes(this, bytes, false))
+  // Writes after what's in the file, making it if it isn't there.
+  @FileSystem Path.appendText(text: String): Unit = this.appendBytes(text.encodeToBytes())
+  @FileSystem Path.appendBytes(bytes: Bytes): Unit = orFail(tryWriteBytes(this, bytes, true))
 
-  // Runs body with the file at path to write to, from the start or, with append, after what's
-  // there, and closes it after, even if body fails.
-  @FileSystem writing<A>(path: String, append: Boolean = false, body: @Writer () -> A): A =
-    writingAll(orFail(tryOpenForWriting(path, append)), body)
+  @FileSystem Path.exists(): Boolean = exists(this)
+  @FileSystem Path.isDirectory(): Boolean = isDirectory(this)
+  // What's in the folder, in order of name.
+  @FileSystem Path.listFiles(): List<Path> = orFail(tryListFiles(this))
+  // Makes the folder, and those it's in, if they aren't there.
+  @FileSystem Path.makeDirs(): Unit = orFail(tryMakeDirs(this))
+  // Deletes the file, or the folder and everything in it, if it's there.
+  @FileSystem Path.delete(): Unit = orFail(tryDelete(this))
+  // Copies the file to target, a little at a time.
+  @FileSystem Path.copyTo(target: Path): Unit = orFail(tryCopy(this, target))
 
-  // The lines of the file at path.
-  @FileSystem readLines(path: String): List<String> = reading(path) { remainingLines() }
+  // Runs body with the file to read, a line or some bytes at a time, and closes it after, even if
+  // body fails. Only body can read it, so nothing reads it once it's closed.
+  @FileSystem Path.reading<A>(body: @Reader () -> A): A = readingAll(orFail(tryOpenForReading(this)), body)
+
+  // Runs body with the file to write to, from the start, and closes it after, even if body fails.
+  @FileSystem Path.writing<A>(body: @Writer () -> A): A = writingAll(orFail(tryOpenForWriting(this, false)), body)
+
+  // Runs body with the file to write to, after what's in it.
+  @FileSystem Path.appending<A>(body: @Writer () -> A): A = writingAll(orFail(tryOpenForWriting(this, true)), body)
 
   private @Fail orFail<A>(result: Result<A, String>): A = when (result) {
     Ok(value) -> value
@@ -31,20 +47,23 @@ module Files {
 
   // The files and folders of the machine the program runs on, which main uses.
   module Local : FileSystem {
-    tryReadFile(path: String) = read(path)
-    tryWriteFile(path: String, text: String, append: Boolean) = write(path, text, append)
-    exists(path: String) = fileExists(path)
-    isDirectory(path: String) = directory(path)
-    tryListFiles(path: String) = list(path)
-    tryMakeDirs(path: String) = mkdirs(path)
-    tryDelete(path: String) = remove(path)
-    tryOpenForReading(path: String) = openIn(path)
-    tryOpenForWriting(path: String, append: Boolean) = openOut(path, append)
+    tryReadBytes(path: Path) = read(path.value)
+    tryWriteBytes(path: Path, bytes: Bytes, append: Boolean) = write(path.value, bytes, append)
+    tryCopy(source: Path, target: Path) = copy(source.value, target.value)
+    exists(path: Path) = fileExists(path.value)
+    isDirectory(path: Path) = directory(path.value)
+    tryListFiles(path: Path) = list(path.value).map(names -> names.map(name -> path.resolve(name)))
+    tryMakeDirs(path: Path) = mkdirs(path.value)
+    tryDelete(path: Path) = remove(path.value)
+    tryOpenForReading(path: Path) = openIn(path.value)
+    tryOpenForWriting(path: Path, append: Boolean) = openOut(path.value, append)
 
-    private external read(path: String): Result<String, String> =
+    private external read(path: String): Result<Bytes, String> =
       "(fun p -> try Ok (In_channel.with_open_bin p In_channel.input_all) with Sys_error e -> Error e) path"
-    private external write(path: String, text: String, append: Boolean): Result<Unit, String> =
-      "(fun p t a -> try Ok (Out_channel.with_open_gen (Open_wronly :: Open_creat :: Open_binary :: (if a then [Open_append] else [Open_trunc])) 0o644 p (fun c -> Out_channel.output_string c t)) with Sys_error e -> Error e) path text append"
+    private external write(path: String, bytes: Bytes, append: Boolean): Result<Unit, String> =
+      "(fun p t a -> try Ok (Out_channel.with_open_gen (Open_wronly :: Open_creat :: Open_binary :: (if a then [Open_append] else [Open_trunc])) 0o644 p (fun c -> Out_channel.output_string c t)) with Sys_error e -> Error e) path bytes append"
+    private external copy(source: String, target: String): Result<Unit, String> =
+      "(fun a b -> try Ok (In_channel.with_open_bin a (fun ic -> Out_channel.with_open_bin b (fun oc -> let buf = Bytes.create 65536 in let rec go () = let n = In_channel.input ic buf 0 65536 in if n > 0 then (Out_channel.output oc buf 0 n; go ()) in go ()))) with Sys_error e -> Error e) source target"
     private external fileExists(path: String): Boolean = "Sys.file_exists path"
     private external directory(path: String): Boolean = "(fun p -> Sys.file_exists p && Sys.is_directory p) path"
     private external list(path: String): Result<List<String>, String> =

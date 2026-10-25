@@ -1631,6 +1631,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val h = e.handler
         val makesHandler = h is Expr.Call && h.callee is Expr.Name && scope.lookup(h.callee.name) == null &&
             lookupGlobal(h.callee.name, h.callee.pos) == null && find(h.callee.name, specs, null)?.let { isEffect(it) } == true
+        // A method: `path.reading { ... }`, `xs.fold(0) { ... }`.
+        if (h is Expr.Member) return infer(Expr.Call(e.pos, h, listOf(block)).also { e.call = it }, expected, scope)
+        if (h is Expr.Call && h.callee is Expr.Member && h.callee.name[0].isLowerCase()) {
+            return infer(Expr.Call(e.pos, h.callee, h.args + block).also { e.call = it }, expected, scope)
+        }
         // A declared function's last parameter, by name, so those before it can be left to their defaults.
         val (callee, given) = when {
             h is Expr.Call && !makesHandler -> h.callee to h.args
@@ -2109,7 +2114,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun collectRefs(e: Expr, bound: Set<String>, into: MutableSet<String>) {
         fun go(x: Expr, b: Set<String> = bound) = collectRefs(x, b, into)
         when (e) {
-            is Expr.Name -> if (e.name !in bound) into += e.name
+            is Expr.Name -> when (val r = e.resolved) {
+                // Once checked, an operation isn't a function of its name.
+                is NameRef.Operation -> {}
+                else -> if (e.name !in bound) into += e.name
+            }
             is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
             is Expr.Tuple -> e.elements.forEach { go(it) }
             is Expr.Spread -> go(e.list)

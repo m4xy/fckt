@@ -56,7 +56,7 @@ class ImportTest {
         val fileSystem = uk.m4xy.fckt.standardLibrary("fckt/io/FileSystem")!!.lines()
         val files = uk.m4xy.fckt.standardLibrary("fckt/io/Files")!!.lines()
         assertEquals(listOf("FileSystem.fk:${fileSystem.indexOfFirst { "effect FileSystem" in it } + 1}"), goto(5, "FileSystem"))
-        assertEquals(listOf("Files.fk:${files.indexOfFirst { " readLines(" in it } + 1}"), goto(6, "readLines"))
+        assertEquals(listOf("Files.fk:${files.indexOfFirst { ".readLines(" in it } + 1}"), goto(6, "readLines"))
     }
 
     @Test
@@ -71,6 +71,6 @@ class ImportTest {
         assertEquals("Circle: a case of geometry.Shapes.Shape", hovers[at(3, "Circle")])
         assertEquals("module fckt.Options", hovers[at(4, "Options")])
         assertEquals("effect fckt.io.FileSystem", hovers[at(5, "FileSystem")])
-        assertEquals("fckt.io.Files.readLines(path: String): List<String>\ndoes @FileSystem, @Fail, @Channel", hovers[at(6, "readLines")])
+        assertEquals("fckt.io.Path.readLines(): List<String>\ndoes @FileSystem, @Fail, @Channel", hovers[at(6, "readLines")])
     }
 }

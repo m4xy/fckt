@@ -1,0 +1,64 @@
+// Making paths, and taking them apart, without looking at what's there.
+module Paths {
+  // A path from text: a/b, /a/b or ../a. An empty one is ".", the folder the program runs in.
+  path(text: String): Path = {
+    absolute = text.startsWith("/")
+    // The names so far, last first: .. takes one off, unless there's none to take.
+    names = text.split('/').fold([], (kept: List<String>, name: String) ->
+      if (name.isEmpty() || name == ".") kept
+      else if (name == "..") when (kept) {
+        [last, *rest] -> if (last == "..") [name, *kept] else rest
+        [] -> if (absolute) [] else [name]
+      }
+      else [name, *kept]
+    )
+    joined = names.reversed().joinToString("/")
+    Path(if (absolute) "/$joined" else if (joined.isEmpty()) "." else joined)
+  }
+
+  String.toPath(): Path = path(this)
+
+  Path.isAbsolute: Boolean = this.value.startsWith("/")
+
+  // Its names in order: [src, main.fk] for src/main.fk; none for / or ".".
+  Path.names: List<String> = this.value.split('/').filter(name -> !name.isEmpty() && name != ".")
+
+  // The last of its names, main.fk for src/main.fk, or "" if it has none.
+  Path.name: String = this.names.lastOrNull().getOrElse("")
+
+  // What its name ends with after the last dot, fk for main.fk; "" for Makefile or .gitignore.
+  Path.extension: String = {
+    i = this.name.lastIndexOf('.')
+    if (i <= 0) "" else this.name.drop(i + 1)
+  }
+
+  // Its name without the extension: main for main.fk.
+  Path.nameWithoutExtension: String = {
+    i = this.name.lastIndexOf('.')
+    if (i <= 0) this.name else this.name.take(i)
+  }
+
+  // The folder it's in: src for src/main.fk, / for /a; None for a lone name, / or ".".
+  Path.parent: Option<Path> = when (this.names) {
+    [] -> None
+    [only] -> if (only == "..") Some(this.resolve("..")) else if (this.isAbsolute) Some(path("/")) else None
+    else -> Some(this.resolve(".."))
+  }
+
+  // other, from this one: src.resolve("main.fk") is src/main.fk. An absolute other is itself.
+  Path.resolve(other: String): Path = if (other.startsWith("/")) path(other) else path("${this.value}/$other")
+
+  // The same, with another extension: main.fk.withExtension("ml") is main.ml.
+  Path.withExtension(extension: String): Path = {
+    renamed = "${this.nameWithoutExtension}.$extension"
+    when (this.parent) {
+      Some(folder) -> folder.resolve(renamed)
+      None -> path(renamed)
+    }
+  }
+
+  // Where it is from base, if it's inside it: src/a/b.fk from src is a/b.fk.
+  Path.relativeTo(base: Path): Option<Path> =
+    if (this.isAbsolute != base.isAbsolute || this.names.take(base.names.size) != base.names) None
+    else Some(path(this.names.drop(base.names.size).joinToString("/")))
+}

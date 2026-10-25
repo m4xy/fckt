@@ -1,0 +1,5 @@
+// Where a file or folder is, or would be: a/b, /a/b or ../a. Made by fckt.io.Paths' path("src")
+// or "src".toPath(), always tidied, so a//b/./c/ is a/b/c and a/b/.. is a: two paths to the same
+// place written alike are equal. It says nothing of whether anything's there, which can change at
+// any time; Files' path.exists() asks. path.value is it as text.
+type Path private(value: String)

@@ -1,4 +1,8 @@
+import fckt.text.Bytes
+
 // What a block writes to.
 effect Writer {
+  // Writes text, as UTF-8.
   write(text: String): Unit
+  writeBytes(bytes: Bytes): Unit
 }

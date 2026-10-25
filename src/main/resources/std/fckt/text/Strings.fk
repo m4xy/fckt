@@ -10,6 +10,26 @@ module Strings {
   external String.endsWith(suffix: String): Boolean = "String.ends_with ~suffix this"
   external String.contains(c: Char): Boolean = "String.contains this c"
   external String.split(separator: Char): List<String> = "String.split_on_char separator this"
+  // The characters from start up to, not including, endIndex.
+  external String.substring(start: Int, endIndex: Int): String = "(fun s a b -> String.sub s a (b - a)) this start endIndex"
+  // Where c first or last is, or -1 if it isn't.
+  external String.indexOf(c: Char): Int = "(fun s c -> match String.index_opt s c with Some i -> i | None -> -1) this c"
+  external String.lastIndexOf(c: Char): Int = "(fun s c -> match String.rindex_opt s c with Some i -> i | None -> -1) this c"
+  // The first n characters, or all of them if there are fewer; and the rest.
+  external String.take(n: Int): String = "(fun s n -> String.sub s 0 (max 0 (min n (String.length s)))) this n"
+  external String.drop(n: Int): String = "(fun s n -> let n = max 0 (min n (String.length s)) in String.sub s n (String.length s - n)) this n"
+  String.dropLast(n: Int): String = this.take(this.length - n)
+  String.removePrefix(prefix: String): String = if (this.startsWith(prefix)) this.drop(prefix.length) else this
+  String.removeSuffix(suffix: String): String = if (this.endsWith(suffix)) this.dropLast(suffix.length) else this
+  // What's before or after the last delimiter, or all of it if there's none.
+  String.substringBeforeLast(delimiter: Char): String = {
+    i = this.lastIndexOf(delimiter)
+    if (i < 0) this else this.take(i)
+  }
+  String.substringAfterLast(delimiter: Char): String = {
+    i = this.lastIndexOf(delimiter)
+    if (i < 0) this else this.drop(i + 1)
+  }
   external String.toInt(): Int = "int_of_string this"
   external String.toIntOrNone(): Option<Int> = "int_of_string_opt this"
   external String.toFloat(): Float = "float_of_string this"

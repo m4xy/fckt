@@ -276,7 +276,11 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
         )
     }
 
-    /** Bare names in an extension's receiver that aren't types, `A` in `List<A>`: its type parameters. */
+    /**
+     * Bare names in an extension's receiver that name type parameters, `A` in `List<A>`: a capital
+     * letter, maybe with digits, that the file doesn't declare as a type. Any other name is a type,
+     * which may be declared in another file.
+     */
     private fun receiverTypeParams(ds: List<Decl>, types: Set<String>): List<Decl> = ds.map { d ->
         when {
             d is Decl.Module -> d.copy(decls = receiverTypeParams(d.decls, types))
@@ -292,7 +296,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
                 }
                 val receiver = d.params!!.first().type!!
                 walk(receiver)
-                val params = (names - types - BUILTIN_TYPES.keys - d.typeParams.toSet()).toList()
+                val params = (names - types - BUILTIN_TYPES.keys - d.typeParams.toSet()).filter { TYPE_PARAMETER.matches(it) }
                 // Named for the receiver's type, without its type parameters: List<Int>.sum is ListInt$sum.
                 fun mangle(t: TypeRef): String = when (t) {
                     is TypeRef.Named -> if (t.name in params) "" else t.name.substringAfterLast('.') + t.args.joinToString("") { mangle(it) }
@@ -305,6 +309,8 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
             else -> d
         }
     }
+
+    private val TYPE_PARAMETER = Regex("[A-Z][0-9]*")
 
     private fun typeNames(ds: List<Decl>): Set<String> = ds.flatMap { d ->
         when (d) {
@@ -732,8 +738,10 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
                 }
                 // `Options { ... }`: a module's name right before a block runs the block in it.
                 at(T.LBRACE) && isModulePath(e) -> Expr.Monadic(e.pos, e, block() as Expr.Block)
-                // `Console(println = ...) { ... }`, `handler { ... }`: a handler value runs the block, on the same line.
-                at(T.LBRACE) && (e is Expr.Call || (e is Expr.Name && e.name[0].isLowerCase())) && tokens[p - 1].pos.line == peek.pos.line ->
+                // `Console(println = ...) { ... }`, `handler { ... }`: a handler value runs the block, on the same line;
+                // or `path.reading { ... }`: a method given its last argument as a block.
+                at(T.LBRACE) && (e is Expr.Call || (e is Expr.Name && e.name[0].isLowerCase()) || (e is Expr.Member && e.name[0].isLowerCase())) &&
+                    tokens[p - 1].pos.line == peek.pos.line ->
                     Expr.Handle(e.pos, e, block() as Expr.Block)
                 else -> return e
             }
