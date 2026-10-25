@@ -1144,45 +1144,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `a build script builds, tests and runs its project`() {
-        val dir = kotlin.io.path.createTempDirectory("fckt-build").toFile()
-        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
-        try {
-            write("src/pricing/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = items.sum()\n}\n")
-            write("src/main.fk", "import pricing.Prices\n\nmain(args: List<String>) = println(\"total ${'$'}{Prices.total([1, 2, 3])} for ${'$'}{args.joinToString(\" \")}\")\n")
-            write("test/prices.fk", "import pricing.Prices\n\nmain() = assertEquals(6, Prices.total([1, 2, 3]))\n")
-            // What fckt makes of build.fk: a main that runs the tasks it's given.
-            val script = """
-                import fckt.build.*
-                import fckt.build.Builds.*
-                import fckt.io.Files.*
-
-                project = Project(name = "shop", version = "1.2.0")
-
-                tasks = standardTasks + [
-                  Task("stamp", "Writes the version", dependsOn = ["compile"], action = p -> p.output.resolve("VERSION").writeText(p.version)),
-                ]
-
-                main(args: List<String>) = fckt.build.Builds.runBuild(project, args, tasks)
-            """.trimIndent()
-            val ml = compile(script)
-            assertContains(runOcaml(ml, listOf("tasks"), dir), "  stamp - Writes the version")
-            // Building runs the compiler, as fckt build does.
-            val fckt = File("build/install/fckt/bin/fckt").absoluteFile
-            assumeTrue(fckt.canExecute(), "fckt isn't installed: ./gradlew installDist")
-            val env = mapOf("FCKT_COMPILER" to fckt.path)
-            assertEquals(
-                "> Task :compile\n> Task :test\n  passed prices.fk\n> Task :build\nBUILD SUCCESSFUL\n",
-                runOcaml(ml, listOf("build"), dir, env),
-            )
-            assertEquals("> Task :compile\n> Task :run\ntotal 6 for a b\n> Task :stamp\nBUILD SUCCESSFUL\n", runOcaml(ml, listOf("run", "stamp", "--", "a", "b"), dir, env))
-            assertEquals("1.2.0", File(dir, "build/VERSION").readText())
-        } finally {
-            dir.deleteRecursively()
-        }
-    }
-
-    @Test
     fun `main fails with the reason, and file system operations can be answered`() {
         val ml = compile("main() = {\n  println(\"a\")\n  fail(\"boom\")\n}")
         assumeTrue(ocaml != null, "ocaml isn't installed")
@@ -1228,6 +1189,8 @@ class CompilerTest {
             }
         """.trimIndent()
         assertEquals("Ok(from build.conf)\n", run(fake))
+        // A program's own declarations are its own: the standard library's write is still Writer's.
+        compile("import fckt.io.Files.*\nimport fckt.io.Paths.*\nimport fckt.io.Channels.*\nimport fckt.io.FileSystem\nwrite(a: Int, b: Int, c: Int): Int = a\n@FileSystem main() = path(\"x\").writing { writeLine(\"y\") }")
         // A trailing block is the last parameter, so those with defaults before it can be left out.
         assertEquals("hi\nhi\n", run("@Console repeat(times: Int = 2, f: @Console () -> Unit): Unit = if (times > 0) {\n  f()\n  repeat(times - 1, f)\n}\nmain() = repeat { println(\"hi\") }"))
     }

@@ -604,6 +604,27 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     /** Whether [d] is directly in a package, the program's or a folder's, rather than in a module. */
     private fun inPackage(d: Decl): Boolean = d.path.isEmpty() || modules[d.path.joinToString(".")]?.isPackage == true
 
+    /**
+     * How many of the current path's names are packages: fckt.io in fckt.io.Files. A name is looked
+     * for in the modules around it only so far out as its package, so a file never sees another
+     * package's declarations, the program's own included, but through imports.
+     */
+    private fun packageDepth(): Int {
+        var depth = 0
+        while (depth < currentPath.size && modules[currentPath.take(depth + 1).joinToString(".")]?.isPackage == true) depth++
+        return depth
+    }
+
+    /**
+     * How far out from the current module [name] is looked for: to its package; and, written in
+     * full from a package, as fckt.io.Files.readFile, from the root.
+     */
+    private fun reach(name: String): List<Int> {
+        val depth = packageDepth()
+        val full = depth > 0 && modules[name.substringBefore('.')]?.isPackage == true
+        return (currentPath.size downTo depth).toList() + if (full) listOf(0) else emptyList()
+    }
+
     /** Whether the current module is [path] or inside it. */
     private fun inside(path: List<String>) = currentPath.take(path.size) == path
 
@@ -649,7 +670,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      * declaration at [pos], or, without [pos], skips it.
      */
     private fun <D : Decl> find(name: String, table: Map<String, D>, pos: Pos?): D? {
-        for (n in currentPath.size downTo 0) {
+        for (n in reach(name)) {
             val d = table[canonical((currentPath.take(n) + name).joinToString("."))] ?: continue
             val hidden = whyHidden(d)
             if (hidden != null) {
@@ -1507,7 +1528,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** The operation [name] calls from here, if it's one: unqualified, it must be the only one of that name. */
     private fun operation(name: String, pos: Pos): Pair<Decl.Spec, SpecValue>? {
-        for (n in currentPath.size downTo 0) {
+        for (n in reach(name)) {
             val found = operations[(currentPath.take(n) + name).joinToString(".")]?.filter { visible(it.first) }.orEmpty()
             if (found.isEmpty()) continue
             if (found.size > 1) {

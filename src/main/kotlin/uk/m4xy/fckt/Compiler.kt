@@ -28,10 +28,15 @@ fun compile(source: String): String = compile(link(source, Packages(emptyList(),
  * package; a capitalised file is a module, `Ratios.fk` is Ratios, and a lower-case one holds
  * declarations of its package. A file uses its package's by name, and others' by importing them.
  */
-fun compile(entry: File, dirs: List<File>): String = compile(entry.readText(), entry, dirs)
+fun compile(entry: File, dirs: List<File>, imports: List<String> = emptyList()): String = compile(entry.readText(), entry, dirs, imports)
 
-/** [text] as the contents of [entry], which an editor may not have saved yet, and the files it uses. */
-fun compile(text: String, entry: File, dirs: List<File>): String = compile(link(text, Packages(dirs, entry)).file)
+/**
+ * [text] as the contents of [entry], which an editor may not have saved yet, and the files it uses.
+ * [imports] are imported into each of the program's files, but the standard library's, beside what
+ * every file imports: `kiln.*` into a build script.
+ */
+fun compile(text: String, entry: File, dirs: List<File>, imports: List<String> = emptyList()): String =
+    compile(link(text, Packages(dirs, entry), imports).file)
 
 /** A checked program: [decls] are the entry file's own, with what each name refers to filled in. */
 class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
@@ -58,10 +63,6 @@ const val STANDARD_PACKAGE = "fckt"
 val STANDARD_FILES = listOf(
     "Options",
     "Results",
-    "build/Building",
-    "build/Builds",
-    "build/Project",
-    "build/Task",
     "collections/Array",
     "collections/Arrays",
     "collections/Lists",
@@ -226,7 +227,7 @@ private class Partial(
  * is a module named after its folder: `geometry.Shapes`. Of the standard library's modules, only
  * the declarations used are brought in, so only they go into the OCaml.
  */
-private fun link(text: String, packages: Packages): Linked {
+private fun link(text: String, packages: Packages, extraImports: List<String> = emptyList()): Linked {
     val main = Parser.parse(text)
     val own = main.decls.map { it.name }.toSet()
     // What each package has, by its path; the program's own package is the root, [].
@@ -252,7 +253,8 @@ private fun link(text: String, packages: Packages): Linked {
     val used = mutableSetOf<String>()
     val usedMethods = mutableSetOf<String>()
     // Every file imports these, whose members it uses by name.
-    fun defaults(file: String?) = DEFAULT_IMPORTS.map { Import(Pos(1, 1, file), it.removeSuffix(".*").split('.'), wildcard = it.endsWith(".*")) }
+    fun defaults(file: String?) = (DEFAULT_IMPORTS + if (file?.startsWith("std/") == true) emptyList() else extraImports)
+        .map { Import(Pos(1, 1, file), it.removeSuffix(".*").split('.'), wildcard = it.endsWith(".*")) }
 
     fun packageContents(pkg: List<String>) = contents.getOrPut(pkg) { mutableListOf() }
 

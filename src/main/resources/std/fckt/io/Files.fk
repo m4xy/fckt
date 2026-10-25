@@ -30,6 +30,14 @@ module Files {
   // Copies the file to target, a little at a time.
   @FileSystem Path.copyTo(target: Path): Unit = orFail(tryCopy(this, target))
 
+  // Copies the folder and everything in it to target, which it makes; or the file, as copyTo.
+  @FileSystem Path.copyRecursively(target: Path): Unit = if (this.isDirectory()) {
+    target.makeDirs()
+    this.listFiles().forEach(child -> child.copyRecursively(target.resolve(child.name)))
+  } else {
+    this.copyTo(target)
+  }
+
   // Runs body with the file to read, a line or some bytes at a time, and closes it after, even if
   // body fails. Only body can read it, so nothing reads it once it's closed.
   @FileSystem Path.reading<A>(body: @Reader () -> A): A = readingAll(orFail(tryOpenForReading(this)), body)
