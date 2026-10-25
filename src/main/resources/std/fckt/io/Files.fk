@@ -70,8 +70,9 @@ module Files {
       "(fun p -> try Ok (In_channel.with_open_bin p In_channel.input_all) with Sys_error e -> Error e) path"
     private external write(path: String, bytes: Bytes, append: Boolean): Result<Unit, String> =
       "(fun p t a -> try Ok (Out_channel.with_open_gen (Open_wronly :: Open_creat :: Open_binary :: (if a then [Open_append] else [Open_trunc])) 0o644 p (fun c -> Out_channel.output_string c t)) with Sys_error e -> Error e) path bytes append"
+    // As cp does, with what may be done with it: a program stays one.
     private external copy(source: String, target: String): Result<Unit, String> =
-      "(fun a b -> try Ok (In_channel.with_open_bin a (fun ic -> Out_channel.with_open_bin b (fun oc -> let buf = Bytes.create 65536 in let rec go () = let n = In_channel.input ic buf 0 65536 in if n > 0 then (Out_channel.output oc buf 0 n; go ()) in go ()))) with Sys_error e -> Error e) source target"
+      "(fun a b -> try Ok (In_channel.with_open_bin a (fun ic -> Out_channel.with_open_bin b (fun oc -> let buf = Bytes.create 65536 in let rec go () = let n = In_channel.input ic buf 0 65536 in if n > 0 then (Out_channel.output oc buf 0 n; go ()) in go ())); Unix.chmod b (Unix.stat a).Unix.st_perm) with Sys_error e | Unix.Unix_error (_, _, e) -> Error e) source target"
     private external fileExists(path: String): Boolean = "Sys.file_exists path"
     private external directory(path: String): Boolean = "(fun p -> Sys.file_exists p && Sys.is_directory p) path"
     private external list(path: String): Result<List<String>, String> =
