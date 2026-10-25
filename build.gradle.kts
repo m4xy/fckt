@@ -29,3 +29,6 @@ application {
 }
 
 tasks.test { useJUnitPlatform() }
+
+// fckt --version reads it.
+tasks.jar { manifest { attributes("Implementation-Version" to project.version) } }

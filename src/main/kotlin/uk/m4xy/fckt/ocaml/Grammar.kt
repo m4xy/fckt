@@ -47,12 +47,16 @@ interface SigValue {
     @Required val type: String
 }
 
-/** `module Name : sig ... end` inside a signature, or with [spec], `module Name : Spec`. */
+/**
+ * `module Name : sig ... end` inside a signature, or with [spec], `module Name : Spec`; with
+ * [alias], `module Name = Other`, another compilation unit's module, the same in every way.
+ */
 @Element("sig-module", function = "sigModule")
 @Children(TypeGroup::class, SigValue::class, SigModule::class, ModuleType::class, Effects::class)
 interface SigModule {
     @Required val name: String
     val spec: String
+    val alias: String
 }
 
 /** `type _ Effect.t += C : a -> r Effect.t | ...`: a handled effect's operations, as OCaml 5's effects. */

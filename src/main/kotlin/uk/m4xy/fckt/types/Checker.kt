@@ -2142,7 +2142,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 is NameRef.Operation -> {}
                 else -> if (e.name !in bound) into += e.name
             }
-            is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
+            is Expr.Compiled, is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
             is Expr.Tuple -> e.elements.forEach { go(it) }
             is Expr.Spread -> go(e.list)
             is Expr.StringLit -> e.parts.forEach { if (it is StringPart.Interpolated) go(it.expr) }
@@ -2301,7 +2301,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val type = provisional.getValue(decl)
             val scope = Scope(null)
             val row = rows.getValue(decl)
-            // An external's body is OCaml, trusted to have its declared type and effects.
+            // An external's body is OCaml, trusted to have its declared type and effects; a compiled
+            // library's, in its interface, is trusted to do what its function or module says.
+            if (decl.body is Expr.Compiled && decl.external == null) {
+                // A default value's does what the call that leaves the argument out does.
+                val does = if ("\$default\$" in decl.simpleName) emptySet() else allowed(decl)
+                u.unify(row, Type.row(does.map { Type.Con(it) }, u.fresh()))
+                continue
+            }
             if (decl.external != null) {
                 // An external that's @Mutating changes what it's given, so where that was made decides who sees it.
                 // What it does is what it declares: its body is OCaml, which can't be checked.
@@ -2338,7 +2345,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         group.decls.firstOrNull { it.name == "main" }?.let { mainHandlers = mainDefaults(it, done.getValue(it)) }
-        for (decl in group.decls) if (decl.external == null) checkEffects(decl, done.getValue(decl))
+        for (decl in group.decls) if (decl.external == null && decl.body !is Expr.Compiled) checkEffects(decl, done.getValue(decl))
         for (decl in group.decls) {
             // A declared type parameter must stay abstract: `id<T>(x: T): Int = x` is an error.
             val vars = declaredParams.getValue(decl)
@@ -2621,6 +2628,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     private fun inferInner(e: Expr, expected: Type?, scope: Scope): Type = when (e) {
+        // Only a declaration's body or default can be, and those are trusted to be what they say.
+        is Expr.Compiled -> expected ?: u.fresh()
         is Expr.Assign -> inferAssign(e, scope)
         is Expr.Handle -> inferHandle(e, expected, scope)
         // An integer literal can stand for a float where one is expected.

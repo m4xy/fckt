@@ -38,6 +38,66 @@ fun compile(entry: File, dirs: List<File>, imports: List<String> = emptyList()):
 fun compile(text: String, entry: File, dirs: List<File>, imports: List<String> = emptyList()): String =
     compile(link(text, Packages(dirs, entry), imports).file)
 
+/**
+ * [entry] and the files it uses, to OCaml that's linked with what's compiled already: the
+ * standard library, as [STANDARD_UNIT] (fckt --standard), and [libraries], each a library's
+ * interface (fckt --library), whose packages the program uses without their code.
+ */
+fun compileSeparately(entry: File, dirs: List<File>, libraries: List<File>, imports: List<String> = emptyList()): String =
+    compile(link(entry.readText(), Packages(dirs, entry, libraries.map(::Library), STANDARD_UNIT), imports).file)
+
+/**
+ * A library: [packages], from [dirs], to OCaml, which is the OCaml module [unit], with the library's
+ * interface written to [interfaceDir], for programs that use it to be checked against. It uses
+ * [libraries] and the standard library compiled already, as a program does.
+ */
+fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<File>, unit: String, interfaceDir: File): String {
+    if (packages.isEmpty()) throw CompileError(null, "a library needs packages")
+    val sources = Packages(dirs, null, libraries.map(::Library), STANDARD_UNIT)
+    val ocaml = compile(link(packages.joinToString("") { "import $it.*\n" }, sources).file, showsAll = true)
+    // Each of its files' public declarations, as they're written, without their code.
+    val files = packages.flatMap { pkg ->
+        val path = pkg.split('.')
+        if (!sources.isPackage(path) || sources.unitOf(path) != null) throw CompileError(null, "$pkg isn't a package in ${dirs.joinToString(", ")}")
+        sources.sourceFiles(path).filter { it.extension == "fk" }.map { f ->
+            val parsed = Parser.parse(f.readText(), f.path)
+            Triple(path, f, parsed)
+        }.filter { (_, _, parsed) -> parsed.decls.none { it is Decl.Function && it.name == "main" } }
+    }
+    CompileErrors.throwIfAny(files.flatMap { (_, _, parsed) -> Interfaces.untyped(parsed) })
+    interfaceDir.deleteRecursively()
+    for ((path, f, parsed) in files) {
+        val target = File(interfaceDir, path.joinToString("/") + "/" + f.nameWithoutExtension + ".fki")
+        target.parentFile.mkdirs()
+        target.writeText(Interfaces.write(parsed, f.path))
+    }
+    File(interfaceDir, Library.UNIT_FILE).writeText(unit + "\n")
+    return ocaml
+}
+
+/** The whole standard library, to OCaml, as [STANDARD_UNIT]: what programs compiled separately are linked with. */
+fun compileStandardLibrary(): String {
+    val packages = STANDARD_FILES.map { it.substringBeforeLast('/').replace('/', '.') }.distinct()
+    return compile(link(packages.joinToString("") { "import $it.*\n" }, Packages(emptyList(), null), whole = true).file, showsAll = true)
+}
+
+/** The OCaml module the standard library is, compiled on its own: fckt --standard writes fckt_std.ml. */
+const val STANDARD_UNIT = "Fckt_std"
+
+/**
+ * A library compiled already: its interface, in [dir], a folder of packages whose files are its
+ * declarations without their code, `.fki`; and the OCaml module its code is, [unit].
+ */
+private class Library(val dir: File) {
+    val unit: String = File(dir, UNIT_FILE).takeIf { it.isFile }?.readText()?.trim()
+        ?: throw CompileError(null, "${dir.path} isn't a library's interface: fckt --library writes one")
+
+    companion object {
+        /** The file in an interface that names the library's OCaml module. */
+        const val UNIT_FILE = "unit"
+    }
+}
+
 /** A checked program: [decls] are the entry file's own, with what each name refers to filled in. */
 class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
 
@@ -125,8 +185,10 @@ val DEFAULT_IMPORTS = listOf(
 /** The OCaml libraries beyond the standard one that compiled [ocaml] needs: `unix`, for fckt.io's processes. */
 fun ocamlLibraries(ocaml: String): List<String> = listOfNotNull("unix".takeIf { "Unix." in ocaml })
 
-/** A file to read if it's used: one of the program's, or the standard library's. */
-class Source(val path: String, val read: () -> String)
+/** A file to read if it's used: one of the program's, the standard library's, or a library's interface ([isInterface]). */
+class Source(val path: String, val isInterface: Boolean = false, val read: () -> String) {
+    fun parse(code: String) = if (isInterface) Parser.parseInterface(code, path) else Parser.parse(code, path)
+}
 
 private fun resource(path: String): String =
     Source::class.java.getResourceAsStream("/$path")?.use { it.reader().readText() } ?: error("missing $path")
@@ -141,17 +203,46 @@ private fun withUses(text: String, decls: List<Decl>): List<Pair<Decl, Set<Strin
 }
 
 /**
- * Where a program's packages are: each a folder, under one of [roots], or the standard library's.
- * Names are matched against what's in a folder, so `ratios.fk` is never taken for `Ratios.fk`.
+ * Where a program's packages are: each a folder, under one of [roots] or in one of [libraries]'
+ * interfaces, or the standard library's, which with [standardUnit] is compiled already, as that
+ * OCaml module. Names are matched against what's in a folder, so `ratios.fk` is never taken for `Ratios.fk`.
  */
-private class Packages(private val roots: List<File>, private val entry: File?) {
+private class Packages(
+    private val roots: List<File>,
+    private val entry: File?,
+    private val libraries: List<Library> = emptyList(),
+    private val standardUnit: String? = null,
+) {
     private val listings = mutableMapOf<List<String>, List<File>>()
 
-    /** The files in [pkg]'s folders, in each root, but the program's own. */
+    /** The files in [pkg]'s folders, in each root and interface, but the program's own. */
     private fun files(pkg: List<String>): List<File> = listings.getOrPut(pkg) {
-        roots.map { File(it, pkg.joinToString("/")) }.filter { it.isDirectory }.flatMap { dir ->
-            dir.listFiles().orEmpty().filter { it.canonicalFile != entry?.canonicalFile }.sortedBy { it.name }
+        (roots + libraries.map { it.dir }).map { File(it, pkg.joinToString("/")) }.filter { it.isDirectory }.flatMap { dir ->
+            dir.listFiles().orEmpty().filter { it.canonicalFile != entry?.canonicalFile && (it.isDirectory || isCode(it)) }.sortedBy { it.name }
         }
+    }
+
+    /** A file of code: a program's, `.fk`, or a library's interface's, `.fki`. */
+    private fun isCode(f: File) = f.isFile && (f.extension == "fk" || f.extension == "fki")
+
+    /** [pkg]'s own files in [roots], the program's: not a library's. */
+    fun sourceFiles(pkg: List<String>): List<File> = roots.map { File(it, pkg.joinToString("/")) }.filter { it.isDirectory }
+        .flatMap { dir -> dir.listFiles().orEmpty().filter { it.isFile && it.extension == "fk" }.sortedBy { it.name } }
+
+    private fun source(f: File) = Source(f.path, f.extension == "fki") { f.readText() }
+
+    /**
+     * The OCaml module [pkg]'s code is in, if it's compiled already: the standard library's, or a
+     * library's whose interface has its files. A package is one library's, or the program's.
+     */
+    fun unitOf(pkg: List<String>): String? {
+        if (standard(pkg)) return standardUnit
+        val owners = libraries.filter { lib -> File(lib.dir, pkg.joinToString("/")).listFiles().orEmpty().any { isCode(it) } }
+        val own = roots.any { root -> File(root, pkg.joinToString("/")).listFiles().orEmpty().any { isCode(it) && it.canonicalFile != entry?.canonicalFile } }
+        val name = pkg.joinToString(".")
+        if (owners.size > 1) throw CompileError(null, "package $name is in two libraries, ${owners.joinToString(" and ") { it.unit }}, so it's unclear which is meant")
+        if (owners.isNotEmpty() && own) throw CompileError(null, "package $name is library ${owners.single().unit}'s, so it can't have files of its own here too")
+        return owners.singleOrNull()?.unit
     }
 
     /** Whether [pkg] is the standard library or in it, which no folder of the program's can be. */
@@ -164,24 +255,24 @@ private class Packages(private val roots: List<File>, private val entry: File?) 
     /** Whether [pkg] is a package: a folder, named as a value is, or one of the standard library's. */
     fun isPackage(pkg: List<String>): Boolean =
         if (standard(pkg)) STANDARD_FILES.any { it.startsWith(pkg.joinToString("/", postfix = "/")) }
-        else pkg.isNotEmpty() && pkg.all { IDENTIFIER.matches(it) } && roots.any { File(it, pkg.joinToString("/")).isDirectory }
+        else pkg.isNotEmpty() && pkg.all { IDENTIFIER.matches(it) } && (roots + libraries.map { it.dir }).any { File(it, pkg.joinToString("/")).isDirectory }
 
     /** The module [name] in [pkg]: its file, `Name.fk`. */
     fun module(pkg: List<String>, name: String): Source? {
         if (!name[0].isUpperCase()) return null
         if (standard(pkg)) return "$name.fk".takeIf { it in standardFiles(pkg) }?.let { standardSource(pkg, it) }
-        return files(pkg).firstOrNull { it.isFile && it.name == "$name.fk" }?.let { f -> Source(f.path) { f.readText() } }
+        return files(pkg).firstOrNull { it.isFile && it.nameWithoutExtension == name }?.let(::source)
     }
 
     /** The names of [pkg]'s modules. */
     fun modules(pkg: List<String>): List<String> =
         if (standard(pkg)) standardFiles(pkg).filter { it[0].isUpperCase() }.map { it.removeSuffix(".fk") }
-        else files(pkg).filter { it.isFile && it.extension == "fk" && it.name[0].isUpperCase() }.map { it.nameWithoutExtension }
+        else files(pkg).filter { it.isFile && it.name[0].isUpperCase() }.map { it.nameWithoutExtension }
 
     /** [pkg]'s lower-case files, whose declarations are the package's own. */
     fun declarationFiles(pkg: List<String>): List<Source> =
         if (standard(pkg)) standardFiles(pkg).filter { it[0].isLowerCase() }.map { standardSource(pkg, it) }
-        else files(pkg).filter { it.isFile && it.extension == "fk" && it.name[0].isLowerCase() }.map { f -> Source(f.path) { f.readText() } }
+        else files(pkg).filter { it.isFile && it.name[0].isLowerCase() }.map(::source)
 
     private fun standardSource(pkg: List<String>, file: String): Source {
         val path = "std/${pkg.joinToString("/")}/$file"
@@ -227,7 +318,7 @@ private class Partial(
  * is a module named after its folder: `geometry.Shapes`. Of the standard library's modules, only
  * the declarations used are brought in, so only they go into the OCaml.
  */
-private fun link(text: String, packages: Packages, extraImports: List<String> = emptyList()): Linked {
+private fun link(text: String, packages: Packages, extraImports: List<String> = emptyList(), whole: Boolean = false): Linked {
     val main = Parser.parse(text)
     val own = main.decls.map { it.name }.toSet()
     // What each package has, by its path; the program's own package is the root, [].
@@ -262,7 +353,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
     fun declsOf(pkg: List<String>) = packageDecls.getOrPut(pkg) {
         packages.declarationFiles(pkg).flatMap { source ->
             val code = source.read()
-            val parsed = Parser.parse(code, source.path)
+            val parsed = source.parse(code)
             if (parsed.decls.any { it is Decl.Function && it.name == "main" }) return@flatMap emptyList()
             imports[source.path] = parsed.imports[source.path].orEmpty() + defaults(source.path)
             withUses(code, parsed.decls).map { (d, uses) -> Triple(d, uses, source) }
@@ -303,7 +394,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
         partials[source.path]?.let { return it }
         if (!loaded.add(source.path)) return null
         val code = source.read()
-        val parsed = Parser.parse(code, source.path)
+        val parsed = source.parse(code)
         val fileImports = parsed.imports[source.path].orEmpty() + defaults(source.path)
         imports[source.path] = fileImports
         pendingImports += fileImports
@@ -330,7 +421,8 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
             val wanted = !d.isPrivate && if (d is Decl.Function && d.extension) d.methodName in usedMethods && d.name !in own else names.any { it in used }
             if (wanted) include(partial, d, member.second)
         }
-        if (name in used) includeWhole(partial)
+        // With [whole], all of the standard library, as it's compiled on its own.
+        if (name in used || whole) includeWhole(partial)
         return partial
     }
 
@@ -429,11 +521,22 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
     }
     // Imports of what was left out name nothing used, so they go too.
     val linkedImports = imports.mapValues { (_, list) -> list.filter { i -> omitted.none { i.path.joinToString(".").let { p -> p == it || p.startsWith("$it.") } } } }
+    // A package compiled already is all one library's, with what's in it: its module is that library's.
+    fun compiledUnit(pkg: List<String>): String? {
+        val unit = packages.unitOf(pkg) ?: return null
+        for (inner in contents.keys) {
+            if (inner.size <= pkg.size || inner.take(pkg.size) != pkg || contents[inner].isNullOrEmpty()) continue
+            if (packages.unitOf(inner) != unit) {
+                throw CompileError(null, "package ${inner.joinToString(".")} is in ${pkg.joinToString(".")}, which library $unit compiled, so it must be that library's too")
+            }
+        }
+        return unit
+    }
     // Each package a module named after its folder, inside its parent's.
     fun tree(pkg: List<String>): List<Decl> {
         val children = contents.keys.filter { it.size == pkg.size + 1 && it.take(pkg.size) == pkg }.distinct()
             .filter { child -> contents.keys.any { it.take(child.size) == child && contents[it].orEmpty().isNotEmpty() } }
-        val packageModules = children.map { child -> Decl.Module(Pos(1, 1, null), child.last(), tree(child), isPackage = true) }
+        val packageModules = children.map { child -> Decl.Module(Pos(1, 1, null), child.last(), tree(child), isPackage = true, compiled = compiledUnit(child)) }
         val mine = contents[pkg].orEmpty()
         return packageModules + if (pkg.isEmpty()) mine.filter { it !in main.decls } else mine
     }
@@ -496,9 +599,9 @@ private fun copyEffects(decls: List<Decl>, imports: Map<String?, List<Import>>):
     return walk(decls, emptyList())
 }
 
-private fun compile(file: SourceFile): String {
+private fun compile(file: SourceFile, showsAll: Boolean = false): String {
     val program = Checker(file).check()
-    val tree = Lowering(program).lower()
+    val tree = Lowering(program, showsAll).lower()
     return Printer.print(tree.resolve(Unit))
 }
 

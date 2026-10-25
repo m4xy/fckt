@@ -254,7 +254,7 @@ internal class Scopes {
             is Expr.Tuple -> e.elements.forEach { expr(it, scope) }
             is Expr.ListLit -> e.items.forEach { expr(it, scope) }
             is Expr.Spread -> expr(e.list, scope)
-            is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
+            is Expr.Compiled, is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
         }
     }
 

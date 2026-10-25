@@ -158,6 +158,29 @@ OCaml's other libraries, as one using `fckt.io` needs `unix`, is run with it: `o
 OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the result with `ocaml`
 when it's installed.
 
+### Compiling separately
+
+A program's `.ml` normally has in it what it uses of the standard library and of its packages. A
+library can instead be compiled once, and the programs that use it checked against its interface
+and linked with its OCaml:
+
+```sh
+fckt --standard -o fckt_std.ml                    # the whole standard library, as the module Fckt_std
+fckt --library units -o uk_m4xy_units.ml -I src uk.m4xy.units
+fckt main.fk -L units -o main.ml                  # uk.m4xy.units is Uk_m4xy_units's
+ocamlopt -I +unix unix.cmxa fckt_std.cmx uk_m4xy_units.cmx main.ml -o main
+```
+
+`--library <folder>` compiles the packages named to the OCaml module `-o` names, and writes the
+library's interface to the folder: each file's public declarations without their code, as
+`.fki` files, `sum(items: List<Money>, start: Money = compiled): Money`. Its public functions and
+values say their types, so a program's types never depend on code that isn't there. `-L <folder>`
+uses a library through its interface, and `--separate`, which `-L` implies, uses the standard
+library compiled on its own, rather than putting what's used of it in the program; the program and
+its libraries then share one standard library, as handling a library's effects needs.
+`fckt --version` says which fckt it is, down to its build, as OCaml compiled by one fckt can't be
+linked with another's. [kiln](https://github.com/m4xy/kiln) does all of this for a project.
+
 Kastor comes from `../kastor` through a Gradle included build.
 
 ## Building a project

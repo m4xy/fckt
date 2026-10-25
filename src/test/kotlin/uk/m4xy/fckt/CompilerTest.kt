@@ -1314,4 +1314,143 @@ class CompilerTest {
         // A line break after '>' still continues a comparison.
         compile("f(x: Int) = {\n  big = x >\n    10\n  big\n}")
     }
+
+    /** Compiles [ml] with ocamlc, beside it, with the modules in [dirs]: as kiln compiles a library once. */
+    private fun ocamlc(ml: File, vararg dirs: File) {
+        val ocamlc = File(File(ocaml!!).parentFile, "ocamlc").path
+        val process = ProcessBuilder(listOf(ocamlc, "-c", "-w", "-a", "-I", "+unix") + dirs.flatMap { listOf("-I", it.path) } + ml.path)
+            .redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor(60, TimeUnit.SECONDS)
+        assertEquals(0, process.exitValue(), "ocamlc failed on ${ml.name}:\n$output\n--- generated ---\n${ml.readText()}")
+    }
+
+    @Test
+    fun `a library is compiled once, and programs are checked against its interface`() {
+        assumeTrue(ocaml != null, "ocaml isn't installed")
+        val dir = kotlin.io.path.createTempDirectory("fckt-libraries").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent() + "\n")
+        try {
+            val std = File(dir, "std").apply { mkdirs() }
+            File(std, "fckt_std.ml").writeText(compileStandardLibrary())
+            ocamlc(File(std, "fckt_std.ml"))
+
+            write("units/uk/m4xy/units/Money.fk", "type Money(pence: Int)")
+            write("units/uk/m4xy/units/Shape.fk", "type Shape {\n  Circle(radius: Float),\n  Square(side: Float),\n}")
+            write("units/uk/m4xy/units/Ask.fk", "effect Ask {\n  ask(question: String): String\n}")
+            write("units/uk/m4xy/units/helpers.fk", "@Ask greeting(): String = \"hello ${'$'}{ask(\"name\")}\"\nexternal double(x: Int): Int = \"x * 2\"")
+            write(
+                "units/uk/m4xy/units/Moneys.fk",
+                """
+                module Moneys {
+                  zero: Money = Money(0)
+                  Money.pounds(): String = "£${'$'}{this.pence / 100}.${'$'}{pad(this.pence % 100)}"
+                  sum(items: List<Money>, start: Money = zero): Money = items.fold(start, (a, b) -> Money(a.pence + b.pence))
+                  twice<A>(f: (A) -> A, x: A): A = f(f(x))
+                  @Console report(m: Money, label: String = "total"): Unit = println("${'$'}label: ${'$'}{m.pounds()} (${'$'}m)")
+                  private pad(n: Int): String = if (n < 10) "0${'$'}n" else "${'$'}n"
+                }
+                """,
+            )
+            val units = File(dir, "lib/units").apply { mkdirs() }
+            File(units, "uk_m4xy_units.ml").writeText(compileLibrary(listOf("uk.m4xy.units"), listOf(File(dir, "units")), emptyList(), "Uk_m4xy_units", File(units, "interface")))
+            ocamlc(File(units, "uk_m4xy_units.ml"), std)
+            // The interface is the declarations without their code, or what's private.
+            val moneys = File(units, "interface/uk/m4xy/units/Moneys.fki").readText()
+            assertContains(moneys, "  sum(items: List<Money>, start: Money = compiled): Money\n")
+            assertContains(moneys, "  @Console report(m: Money, label: String = compiled): Unit\n")
+            assertFalse("pad" in moneys)
+            assertEquals("Uk_m4xy_units\n", File(units, "interface/unit").readText())
+
+            // A library that uses it, which programs use with it.
+            write("money/uk/m4xy/money/Wallet.fk", "import uk.m4xy.units.Money\n\nopaque type Wallet(owner: String, cash: Money)")
+            write(
+                "money/uk/m4xy/money/Wallets.fk",
+                """
+                import uk.m4xy.units.Money
+                import uk.m4xy.units.Moneys.*
+
+                module Wallets {
+                  open(owner: String): Wallet = Wallet(owner, zero)
+                  Wallet.balance: Money = this.cash
+                  Wallet.deposit(amount: Money): Wallet = Wallet(this.owner, sum([this.cash, amount]))
+                  @Fail Wallet.spend(amount: Money): Wallet =
+                    if (amount.pence > this.cash.pence) fail("${'$'}{this.owner} can't spend ${'$'}{amount.pounds()}")
+                    else Wallet(this.owner, Money(this.cash.pence - amount.pence))
+                }
+                """,
+            )
+            write("money/uk/m4xy/money/Ordered.fk", "spec Ordered {\n  type T\n  compare(a: T, b: T): Int\n}")
+            write("money/uk/m4xy/money/ByPence.fk", "import uk.m4xy.units.Money\n\nmodule ByPence : Ordered {\n  type T = Money\n  compare(a: Money, b: Money): Int = a.pence - b.pence\n}")
+            write("money/uk/m4xy/money/Code.fk", "type Code private(value: String)")
+            val money = File(dir, "lib/money").apply { mkdirs() }
+            File(money, "uk_m4xy_money.ml").writeText(
+                compileLibrary(listOf("uk.m4xy.money"), listOf(File(dir, "money")), listOf(File(units, "interface")), "Uk_m4xy_money", File(money, "interface")),
+            )
+            ocamlc(File(money, "uk_m4xy_money.ml"), std, units)
+
+            val main = File(dir, "shop/main.fk")
+            fun compileMain(source: String) = main.apply { parentFile.mkdirs() }.writeText(source.trimIndent()).let {
+                compileSeparately(main, listOf(main.parentFile), listOf(File(units, "interface"), File(money, "interface")))
+            }
+            val ml = compileMain(
+                """
+                import uk.m4xy.units.*
+                import uk.m4xy.units.Moneys.*
+                import uk.m4xy.money.*
+                import uk.m4xy.money.Wallets.*
+
+                @Console main() = {
+                  total = sum([Money(150), Money(275)])
+                  report(total)
+                  report(twice(m -> Money(m.pence * 2), total), label = "quadrupled")
+                  shape: Shape = Circle(2.0)
+                  println("${'$'}shape ${'$'}{double(21)} ${'$'}zero")
+                  println(Ask(ask = q -> "world (${'$'}q)") { greeting() })
+                  w = open("max").deposit(Money(500))
+                  // The library fails, and the program handles it: both use the one standard library.
+                  when (attempt { w.spend(Money(900)) }) {
+                    Ok(_) -> println("spent")
+                    Error(reason) -> println("failed: ${'$'}reason")
+                  }
+                  println(attempt { w.spend(Money(100)).balance.pounds() }.getOrElse("?"))
+                  println("${'$'}{ByPence.compare(Money(3), Money(1))}")
+                }
+                """,
+            )
+            assertContains(ml, "module Fckt = Fckt_std.Fckt")
+            assertContains(ml, "module Units = Uk_m4xy_units.Uk.M4xy.Units")
+            assertFalse("pad" in ml)
+            val program = File(main.parentFile, "main.ml").apply { writeText(ml) }
+            val process = ProcessBuilder(ocaml, "-I", "+unix", "-I", std.path, "-I", units.path, "-I", money.path, "unix.cma",
+                File(std, "fckt_std.cmo").path, File(units, "uk_m4xy_units.cmo").path, File(money, "uk_m4xy_money.cmo").path, program.path)
+                .redirectErrorStream(true).start()
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor(30, TimeUnit.SECONDS)
+            assertEquals(
+                "total: £4.25 (Money(pence=425))\nquadrupled: £17.00 (Money(pence=1700))\nCircle(radius=2.0) 42 Money(pence=0)\nhello world (name)\n" +
+                    "failed: max can't spend £9.00\n£4.00\n2\n",
+                output,
+            )
+
+            fun errorIn(source: String) = assertFailsWith<CompileError> { compileMain(source) }.toString()
+            assertContains(errorIn("import uk.m4xy.money.*\nmain() = Code(\"abc\")"), "Code's constructor is private to uk.m4xy.money")
+            assertContains(errorIn("import uk.m4xy.money.*\nimport uk.m4xy.units.Money\nmain() = Wallet(\"x\", Money(1))"), "Wallet is opaque")
+            // A package is one library's.
+            write("shop/uk/m4xy/units/Other.fk", "type Other(x: Int)")
+            assertContains(errorIn("import uk.m4xy.units.*\nmain() = Unit"), "package uk.m4xy.units is library Uk_m4xy_units's")
+
+            // What a library shows says its types.
+            write("bad/uk/m4xy/bad/Bad.fk", "module Bad {\n  twice(f, x) = f(f(x))\n  version = \"1\"\n  ok(x: Int) = x\n  private fine(x: Int) = x\n}")
+            val untyped = assertFailsWith<CompileError> {
+                compileLibrary(listOf("uk.m4xy.bad"), listOf(File(dir, "bad")), emptyList(), "Uk_m4xy_bad", File(dir, "lib/bad"))
+            }.toString()
+            assertContains(untyped, "'twice' is in a library's interface, which programs are checked against, so its parameters need types: f, x")
+            assertContains(untyped, "'version' is in a library's interface, which programs are checked against, so it needs a type")
+            assertContains(untyped, "'ok' is in a library's interface, which programs are checked against, so it needs a result type")
+            assertFalse("fine" in untyped)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

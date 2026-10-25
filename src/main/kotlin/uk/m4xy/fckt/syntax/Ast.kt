@@ -183,6 +183,11 @@ sealed interface Decl {
         override val annotations: List<Annotation> = emptyList(),
         /** A package: the declarations of a folder's files, named after the folder. */
         val isPackage: Boolean = false,
+        /**
+         * For a package a library compiled already, the OCaml module it's in, `Uk_m4xy_units`: its
+         * declarations come from the library's interface, and the OCaml refers to that module's.
+         */
+        val compiled: String? = null,
     ) : Decl
 
     /**
@@ -297,6 +302,12 @@ sealed class Expr {
 
     /** Set when the value is used as a larger sealed type than its own, e.g. a Vowel as an Alphabet. */
     var coerceTo: Type? = null
+
+    /**
+     * The body of a declaration in a library's interface, or a default value's there: compiled
+     * already, so what it is is what the declaration says.
+     */
+    class Compiled(override val pos: Pos) : Expr()
 
     class IntLit(override val pos: Pos, val value: Long) : Expr()
     class FloatLit(override val pos: Pos, val value: Double) : Expr()

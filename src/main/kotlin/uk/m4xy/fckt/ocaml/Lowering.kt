@@ -63,8 +63,11 @@ private const val ANSWER = "'fk_answer"
 /** Type parameters OCaml has: all but effect parameters, `@E`, which only the checker uses. */
 private fun List<String>.ocaml() = filter { !it.startsWith("@") }
 
-/** Translates a checked program into the Kastor-built OCaml tree. */
-class Lowering(private val program: Program) {
+/**
+ * Translates a checked program into the Kastor-built OCaml tree. A library's ([showsAll]) gives
+ * each of its types a show function, as a program that uses it may show any of them.
+ */
+class Lowering(private val program: Program, private val showsAll: Boolean = false) {
     private val records = program.records.associateBy { it.name }
     private val sealeds = program.sealeds.associateBy { it.name }
     private val aliases = program.aliases.associateBy { it.name }
@@ -95,7 +98,11 @@ class Lowering(private val program: Program) {
         }
         // Lower every function first; that finds which show functions are needed. A module made by a
         // functor is the functor's OCaml, so its own copies aren't.
-        val functionItems = program.groups.filter { g -> !inApplication(g.decls.first().path) }.associateWith { group ->
+        if (showsAll) {
+            showTypes += (program.records.filter { it.external == null && !it.isAnnotation } + program.sealeds).map { it.name }.filter { !isCompiled(it) }
+        }
+        // A library's packages are its OCaml's.
+        val functionItems = program.groups.filter { g -> !inApplication(g.decls.first().path) && !isCompiled(g.decls.first().name) }.associateWith { group ->
             currentPath = group.decls.first().path
             StructureElement.build<Unit> {
                 let(group.recursive) {
@@ -105,7 +112,7 @@ class Lowering(private val program: Program) {
         }
         // Each show function can need those of its fields' types.
         while (true) {
-            val name = showTypes.firstOrNull { it !in showBodies } ?: break
+            val name = showTypes.firstOrNull { it !in showBodies && !isCompiled(it) } ?: break
             currentPath = name.split('.').dropLast(1)
             showBodies[name] = showBody(name)
         }
@@ -333,6 +340,8 @@ class Lowering(private val program: Program) {
 
     private fun moduleDef(m: Decl.Module, functionItems: Map<uk.m4xy.fckt.types.FunctionGroup, StructureChild<Unit>>): ModuleDefElement<Unit> {
         val path = m.name.split('.')
+        // A package a library compiled: that library's module.
+        compiledModule(m)?.let { return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(moduleName(m.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(it)) }
         program.applications[m.name]?.let { (functor, args) ->
             currentPath = path.dropLast(1)
             val applies = (listOf(ref(functor) { it }) + args.map { "(${ref(it) { name -> name }})" }).joinToString(" ")
@@ -490,7 +499,9 @@ class Lowering(private val program: Program) {
             }
         }
         for (inner in inDependencyOrder(m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate && !isEmpty(it) })) {
-            sigModule(moduleName(inner.simpleName)) { signatureItems(inner) }
+            val alias = compiledModule(inner)
+            if (alias != null) sigModule(moduleName(inner.simpleName)) { this.alias = alias }
+            else sigModule(moduleName(inner.simpleName)) { signatureItems(inner) }
             currentPath = path
         }
         for (type in types) {
@@ -503,6 +514,21 @@ class Lowering(private val program: Program) {
             val type = program.outsideTypes[f] ?: program.functionTypes.getValue(f)
             sigValue(snake(f.simpleName), typeText(type, mutableMapOf()))
         }
+    }
+
+    /** For a package a library compiled, its module there: `Uk_m4xy_units.Uk.M4xy.Units` for uk.m4xy.units. */
+    private fun compiledModule(m: Decl.Module): String? =
+        m.compiled?.let { unit -> (listOf(unit) + m.name.split('.').map(::moduleName)).joinToString(".") }
+
+    /** Whether [name] is declared in a package a library compiled, whose OCaml is that library's. */
+    private fun isCompiled(name: String): Boolean = compiledPackages.any { name.startsWith("$it.") }
+
+    /** The full names of the packages libraries compiled. */
+    private val compiledPackages: List<String> = buildList {
+        fun walk(ds: List<Decl>) {
+            for (d in ds.filterIsInstance<Decl.Module>()) if (d.compiled != null) add(d.name) else walk(d.decls)
+        }
+        walk(program.root)
     }
 
     /** [full] as written from the current module: `Ratios.make` is `make` inside Ratios, and `Ratios.make` outside. */
@@ -714,7 +740,7 @@ class Lowering(private val program: Program) {
 
     /** Whether computing [e] may run code, which could do something: anything but values and what's made of them. */
     private fun runs(e: Expr): Boolean = when (e) {
-        is Expr.Name, is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit, is Expr.Lambda -> false
+        is Expr.Compiled, is Expr.Name, is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit, is Expr.Lambda -> false
         is Expr.StringLit -> e.parts.any { it is StringPart.Interpolated && runs(it.expr) }
         is Expr.Member -> e.resolved !is MemberRef.Field || runs(e.target)
         is Expr.Call -> e.resolved !is CallRef.Construct || e.args.any { runs(it.value) }
@@ -732,6 +758,7 @@ class Lowering(private val program: Program) {
         S : MatchParent<Unit>, S : FieldGetParent<Unit>, S : RecordLitParent<Unit>, S : ConstructParent<Unit>,
         S : AnnotatedParent<Unit>, S : ListLitParent<Unit>, S : TupleParent<Unit>, S : RecordUpdateParent<Unit> {
         when (e) {
+            is Expr.Compiled -> error("a library's interface has no code to lower")
             is Expr.IntLit -> literal(if (e.type?.prune() == Type.FLOAT) "${e.value}." else e.value.toString())
             is Expr.FloatLit -> literal(e.value.toString())
             is Expr.BoolLit -> literal(e.value.toString())

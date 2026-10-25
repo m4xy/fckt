@@ -608,7 +608,7 @@ private class Resolutions(
             is Expr.Tuple -> e.elements.forEach(::expr)
             is Expr.ListLit -> e.items.forEach(::expr)
             is Expr.Spread -> expr(e.list)
-            is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
+            is Expr.Compiled, is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> {}
         }
     }
 

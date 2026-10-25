@@ -3,7 +3,7 @@ package uk.m4xy.fckt.syntax
 import uk.m4xy.fckt.types.BUILTIN_TYPES
 
 /** Recursive-descent parser for `.fk` source. */
-class Parser(private val tokens: List<Token>, private val file: String? = null) {
+class Parser(private val tokens: List<Token>, private val file: String? = null, private val isInterface: Boolean = false) {
     private var p = 0
 
     /** The `get` calls written `xs[i]`, which `xs[i] = v` turns into a `set`. */
@@ -11,6 +11,13 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
 
     companion object {
         fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize(), file).file()
+
+        /**
+         * A library's interface, as `fckt --library` writes it: declarations without their code. A
+         * function is its signature, `greet(name: String): Unit`, and a default is `= compiled`.
+         */
+        fun parseInterface(source: String, file: String? = null): SourceFile =
+            Parser(Lexer(source, Pos(1, 1, file)).tokenize(), file, isInterface = true).file()
     }
 
     /** The prelude's annotation that makes one an effect, which `effect Name` declares one with. */
@@ -265,9 +272,11 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
         val typeParams = typeParams()
         val params = if (at(T.LPAREN)) params(defaults = true) else null
         val returnType = if (accept(T.COLON) != null) type() else null
-        expect(T.ASSIGN, "'='")
-        skipNewlines()
-        val body = expr()
+        val body = if (isInterface && !at(T.ASSIGN)) Expr.Compiled(pos) else {
+            expect(T.ASSIGN, "'='")
+            skipNewlines()
+            expr()
+        }
         if (receiver == null) return Decl.Function(pos, name, typeParams, params, returnType, body)
         // Named for its receiver once its type parameters are known, in receiverTypeParams.
         return Decl.Function(
@@ -777,7 +786,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null) 
             T.FALSE -> Expr.BoolLit(pos, false).also { next() }
             T.STRING -> stringLiteral(next())
             T.CHAR -> Expr.CharLit(pos, next().text.codePointAt(0))
-            T.IDENT -> Expr.Name(pos, next().text)
+            T.IDENT -> if (isInterface && token.text == "compiled") Expr.Compiled(pos).also { next() } else Expr.Name(pos, next().text)
             T.LPAREN -> {
                 next()
                 val items = mutableListOf(expr())

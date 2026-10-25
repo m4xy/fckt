@@ -43,6 +43,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
     private fun param(p: Param) = p.copy(type = p.type?.let(::type))
 
     private fun expr(e: Expr): Expr = when (e) {
+        is Expr.Compiled -> Expr.Compiled(e.pos)
         is Expr.IntLit -> Expr.IntLit(e.pos, e.value)
         is Expr.FloatLit -> Expr.FloatLit(e.pos, e.value)
         is Expr.BoolLit -> Expr.BoolLit(e.pos, e.value)
