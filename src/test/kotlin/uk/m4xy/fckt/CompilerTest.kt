@@ -783,6 +783,35 @@ class CompilerTest {
     }
 
     @Test
+    fun `a block given last says its parameters, or a function of one calls it it`() {
+        val source = """
+            twice(f: (Int) -> Int): Int = f(f(1))
+            maker(make: () -> (Int) -> Int): Int = make()(10)
+            main() = {
+              xs = [1, 2, 3]
+              assertEquals([2, 3], xs.filter { x -> x > 1 })
+              assertEquals([2, 3], xs.filter { it > 1 })
+              assertEquals(6, xs.fold(0) { sum, x -> sum + x })
+              assertEquals(["a1", "b2"], [("a", 1), ("b", 2)].map { k, v -> "${'$'}k${'$'}v" })
+              assertEquals([11, 21, 31], xs.map { x ->
+                y = x * 10
+                y + 1
+              })
+              assertEquals(9, twice { it * 3 })
+              // In parentheses, a lambda is what the block gives back.
+              assertEquals(11, maker { (x -> x + 1) })
+              assertEquals([[2, 3], [3], []], xs.map { x -> xs.filter { it > x } })
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        fun error(code: String) = assertFailsWith<CompileError> { compile("maker(make: () -> (Int) -> Int): Int = make()(10)\nmain() = {\n  xs = [1]\n  $code\n}") }.message.orEmpty()
+        assertContains(error("maker { x -> x + 1 }"), "this block takes no parameters, as it's run with none: to give back a function, write { (x -> ...) }")
+        assertContains(error("xs.map { xs.filter { it > 1 } + [it] }"), "this block's 'it' hides the 'it' outside it: name this block's parameter, { x -> ... }")
+        assertContains(error("xs.fold(0) { it }"), "this block is given 2 parameters, so it has no 'it': name them, { a, b -> ... }")
+        assertContains(error("maker { it }"), "there's no 'it' here")
+    }
+
+    @Test
     fun `maps hold a value for each key, equal and shown by their entries`() {
         val source = """
             type Person(name: String, age: Int)

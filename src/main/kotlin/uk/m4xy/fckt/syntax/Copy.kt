@@ -68,7 +68,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
         )
         is Expr.Block -> block(e)
         is Expr.Monadic -> Expr.Monadic(e.pos, expr(e.module), block(e.block))
-        is Expr.Handle -> Expr.Handle(e.pos, expr(e.handler), block(e.block))
+        is Expr.Handle -> Expr.Handle(e.pos, expr(e.handler), block(e.block), e.params)
     }
 
     private fun block(e: Expr.Block): Expr.Block {

@@ -398,6 +398,9 @@ sealed class Expr {
         val ignoresArguments: Boolean = false,
     ) : Expr() {
         var paramNames: List<String> = emptyList()
+
+        /** A function's last argument written as a block, which says its parameters as `{ x -> ... }`, or `it`. */
+        var trailing = false
     }
 
     class Pipe(override val pos: Pos, val value: Expr, val function: Expr) : Expr() {
@@ -445,7 +448,11 @@ sealed class Expr {
      * `handler { block }`: runs [block] with [handler], a value made from a handled effect's spec,
      * as `Console(println = ...)`, answering that effect's operations.
      */
-    class Handle(override val pos: Pos, val handler: Expr, val block: Block) : Expr() {
+    /**
+     * `handler { ... }`, or a function given its last argument as a block: `xs.filter { x -> x > 1 }`,
+     * whose [params] are written first, if any; with none, a function of one parameter calls it `it`.
+     */
+    class Handle(override val pos: Pos, val handler: Expr, val block: Block, val params: List<Param>? = null) : Expr() {
         var handles: Decl.Spec? = null
 
         /** Set instead when [handler] is a function: `sequence { ... }` is `sequence(~{ ... })`. */

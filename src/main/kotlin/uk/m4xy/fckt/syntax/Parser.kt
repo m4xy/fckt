@@ -808,7 +808,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 // or `path.reading { ... }`: a method given its last argument as a block.
                 at(T.LBRACE) && (e is Expr.Call || (e is Expr.Name && e.name[0].isLowerCase()) || (e is Expr.Member && e.name[0].isLowerCase())) &&
                     tokens[p - 1].pos.line == peek.pos.line ->
-                    Expr.Handle(e.pos, e, block() as Expr.Block)
+                    trailingBlock().let { (params, block) -> Expr.Handle(e.pos, e, block, params) }
                 else -> return e
             }
         }
@@ -1007,8 +1007,34 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         }
     }
 
-    private fun block(): Expr {
+    /** A block given as a function's last argument, with the parameters it starts with, if any: `{ a, b -> ... }`. */
+    private fun trailingBlock(): Pair<List<Param>?, Expr.Block> {
         val pos = expect(T.LBRACE, "'{'").pos
+        skipNewlines()
+        var n = 0
+        while (peekAt(n).kind == T.IDENT || peekAt(n).kind == T.UNDERSCORE) {
+            n++
+            if (peekAt(n).kind == T.COMMA) n++ else break
+        }
+        val params = if (n > 0 && peekAt(n).kind == T.ARROW) {
+            buildList<Param> {
+                while (!at(T.ARROW)) {
+                    val name = next()
+                    add(Param(name.pos, name.text, null))
+                    accept(T.COMMA)
+                }
+                next()
+            }
+        } else {
+            null
+        }
+        return params to blockRest(pos) as Expr.Block
+    }
+
+    private fun block(): Expr = blockRest(expect(T.LBRACE, "'{'").pos)
+
+    /** A block's statements and result, after its `{` at [pos]. */
+    private fun blockRest(pos: Pos): Expr {
         skipNewlines()
         val statements = mutableListOf<Statement>()
         while (!at(T.RBRACE)) {

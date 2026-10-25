@@ -221,7 +221,10 @@ internal class Scopes {
             }
             is Expr.Handle -> {
                 expr(e.handler, scope)
-                expr(e.block, scope)
+                // Its parameters, or `it`, bound where the block starts, which a use of it goes to.
+                val inner = Scope(scope)
+                e.params?.let { params(it, inner) } ?: inner.names.set("it", Role.PARAMETER to e.block.pos)
+                expr(e.block, inner)
             }
             is Expr.Lambda -> {
                 val inner = Scope(scope)

@@ -85,7 +85,8 @@ class FunctionGroup(val decls: List<Decl.Function>, var recursive: Boolean)
 class ConstructorShape(val ref: ConstructorRef, val fieldNames: List<String>, val fieldTypes: List<Type>, val result: Type)
 
 /** A local or parameter; a `var` one has a [region] of its own, which assigning it changes. */
-private class Local(val type: Type, val ocamlName: String, val cast: Cast? = null, val region: Type? = null) {
+/** A local, which [hides] another of its name if it's a block's `it` inside another's. */
+private class Local(val type: Type, val ocamlName: String, val cast: Cast? = null, val region: Type? = null, val hides: Boolean = false) {
     val isVar get() = region != null
 }
 
@@ -1878,7 +1879,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun inferHandle(e: Expr.Handle, expected: Type?, scope: Scope): Type {
         // A function given its last argument as a block, as in Kotlin: `sequence { ... }` is
         // `sequence(~{ ... })`, and `retry(3) { ... }` is `retry(3, ~{ ... })`.
-        val block = Arg(null, Expr.Lambda(e.block.pos, emptyList(), e.block))
+        val block = Arg(null, Expr.Lambda(e.block.pos, e.params.orEmpty(), e.block).apply { trailing = true })
         val h = e.handler
         val makesHandler = h is Expr.Call && h.callee is Expr.Name && scope.lookup(h.callee.name) == null &&
             lookupGlobal(h.callee.name, h.callee.pos) == null && find(h.callee.name, specs, null)?.let { isEffect(it) } == true
@@ -1913,6 +1914,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val handler = type as? Type.Con
         val spec = handler?.name?.takeIf { it.startsWith(Type.HANDLER) }?.let { specs[it.removePrefix(Type.HANDLER)] }
             ?: throw CompileError(e.handler.pos, "this isn't a handler: make one from a handled effect, as Console(println = ...), or use a module that follows one")
+        if (e.params != null) throw CompileError(e.block.pos, "a handler's block runs with the effect handled, so it takes no parameters")
         e.handles = spec
         val n = handler.args.size
         return handling(spec, handler.args.take(n - 2), handler.args[n - 2], handler.args[n - 1], e.block, expected, scope, e.pos)
@@ -2978,6 +2980,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun inferName(e: Expr.Name, expected: Type?, scope: Scope): Type {
         scope.lookup(e.name)?.let {
+            if (it.hides) throw CompileError(e.pos, "this block's 'it' hides the 'it' outside it: name this block's parameter, { x -> ... }")
             e.resolved = NameRef.Local(it.ocamlName, it.isVar)
             return it.type
         }
@@ -3007,6 +3010,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             e.resolved = NameRef.Module(m, spec)
             return type
         }
+        if (e.name == "it") throw CompileError(e.pos, "there's no 'it' here: only a block given as a function of one parameter has one, as in xs.filter { it > 1 }")
         throw CompileError(e.pos, "unknown name '${e.name}'${importHint(e.name)}")
     }
 
@@ -3525,6 +3529,25 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val result = expectedFn?.result ?: u.fresh()
             doing(row) { check(e.body, result, scope) }
             return Type.Fn(params, result, row)
+        }
+        // A block given as a function's last argument: what it's written with must be what's wanted,
+        // and with none, a function of one parameter calls it `it`.
+        if (e.trailing && expectedFn != null) {
+            val wanted = expectedFn.params.size
+            if (e.params.isNotEmpty() && wanted == 0) {
+                throw CompileError(e.pos, "this block takes no parameters, as it's run with none: to give back a function, write { (${e.params.joinToString(", ") { it.name }} -> ...) }")
+            }
+            if (e.params.isEmpty() && wanted > 1) {
+                throw CompileError(e.pos, "this block is given $wanted parameters, so it has no 'it': name them, { ${('a'..'z').take(wanted).joinToString(", ")} -> ... }")
+            }
+            if (e.params.isEmpty() && wanted == 1) {
+                val inner = Scope(scope)
+                val type = expectedFn.params[0]
+                inner.vars["it"] = Local(type, "it", hides = scope.lookup("it") != null)
+                e.paramNames = listOf("it")
+                doing(row) { check(e.body, expectedFn.result, inner) }
+                return Type.Fn(listOf(type), expectedFn.result, row)
+            }
         }
         checkDistinct(e.params.map { it.name to it.pos })
         // Several parameters where one is expected take apart a tuple, as `pairs.map((k, v) -> ...)`.

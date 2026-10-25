@@ -243,7 +243,11 @@ private class Hovers(val text: String, val program: Program) {
             is Expr.Binary -> { expr(e.left); expr(e.right) }
             is Expr.Unary -> expr(e.operand)
             is Expr.Assign -> { expr(e.target); expr(e.value) }
-            is Expr.Handle -> { expr(e.handler); expr(e.block) }
+            is Expr.Handle -> {
+                // Shown through the call it's the last argument of, with its parameters' types.
+                expr(e.handler)
+                (e.call?.args?.lastOrNull()?.value as? Expr.Lambda)?.let { expr(it) } ?: expr(e.block)
+            }
             is Expr.Pipe -> { expr(e.value); expr(e.function) }
             is Expr.If -> { expr(e.condition); expr(e.then); expr(e.otherwise) }
             is Expr.When -> {
