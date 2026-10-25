@@ -724,6 +724,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             return d
         }
+        // In a module a functor made, what the functor's body names is what it names where the
+        // functor is: Testing, beside it in its package, wherever it's applied. Not its modules,
+        // which the made module has as what it was given.
+        enclosingApplication(currentPath)?.let { app ->
+            val saved = currentPath
+            currentPath = applications.getValue(app).first.name.split('.') + currentPath.drop(app.split('.').size)
+            try {
+                find(name, table, pos)?.takeIf { d -> parameterModules.none { d.name == it || d.name.startsWith("$it.") } }?.let { return it }
+            } finally {
+                currentPath = saved
+            }
+        }
         // What the file imports: `Shapes.area`, with `import geometry.Shapes`, is geometry.Shapes.area.
         // Two imports bringing in the same name matter only if both mean something of this kind.
         val names = importedNames(name)

@@ -1690,7 +1690,9 @@ class CompilerTest {
             // A functor whose module has a default, which a program gets without naming it.
             write("money/uk/m4xy/money/Ranked.fk", "module Ranked(O: Ordered = ByPence) {\n  higher(a: O.T, b: O.T): O.T = if (O.compare(a, b) >= 0) a else b\n}")
             // A spec in units, a functor that follows it here, and a program that makes it a value.
-            write("money/uk/m4xy/money/Sale.fk", "import uk.m4xy.units.Pricing\n\nmodule Sale(O: Ordered = ByPence) : Pricing {\n  label(): String = \"sale\"\n}")
+            // Its body names what's beside it in its package, wherever it's applied.
+            write("money/uk/m4xy/money/Sale.fk", "import uk.m4xy.units.Pricing\n\nmodule Sale(O: Ordered = ByPence) : Pricing {\n  label(): String = Labels.sale\n}")
+            write("money/uk/m4xy/money/Labels.fk", "module Labels {\n  sale: String = \"sale\"\n}")
             val money = File(dir, "lib/money").apply { mkdirs() }
             File(money, "uk_m4xy_money.ml").writeText(
                 compileLibrary(listOf("uk.m4xy.money"), listOf(File(dir, "money")), listOf(File(units, "interface")), "Uk_m4xy_money", File(money, "interface")),
