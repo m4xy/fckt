@@ -92,6 +92,9 @@ sealed class Type {
         /** Before a spec's own type, while the spec says what a module must define. */
         const val SPEC_TYPE = "@"
 
+        /** Before a spec's full name: a module that follows it, as a value, `Plugin`. */
+        const val MODULE = "module "
+
         /** Before a handled effect's full name: a handler for it, `handler Console`, with the effect's type arguments and then what its answers do. */
         const val HANDLER = "handler "
 
@@ -149,7 +152,7 @@ sealed class Type {
         fun effectNames(type: Type): Set<String> = row(type).first.map { it.name }.toSet()
 
         /** A type's name in messages and output, without the markers above or a type parameter's `#`. */
-        fun displayName(name: String) = name.removePrefix(META).removePrefix(ABSTRACT).removePrefix(SPEC_TYPE).removePrefix("#")
+        fun displayName(name: String) = name.removePrefix(META).removePrefix(MODULE).removePrefix(ABSTRACT).removePrefix(SPEC_TYPE).removePrefix("#")
 
         fun render(type: Type, names: MutableMap<Var, String>): String = when (val t = type.prune()) {
             is Var -> names.getOrPut(t) { "T${names.size + 1}" }

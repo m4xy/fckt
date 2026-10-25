@@ -554,6 +554,9 @@ sealed interface NameRef {
     /** A module following a handled effect's spec, used as a value: a handler. */
     data class Handler(val module: Decl.Module, val spec: Decl.Spec) : NameRef
 
+    /** A module used as a value of the spec it follows, as `Quiet` is a `Reporting`. */
+    data class Module(val module: Decl.Module, val spec: Decl.Spec) : NameRef
+
     /** A record type or variant used as a value, e.g. as `Money` in `items.map(Money)`. */
     data class Constructor(val ref: ConstructorRef) : NameRef
     data class Builtin(val ocaml: String) : NameRef
@@ -590,6 +593,9 @@ sealed interface CallRef {
 
     /** `record.copy(field = value, ...)`: a copy with some fields replaced. */
     data class Copy(val record: Decl.Record) : CallRef
+
+    /** `FkTests.Plugin(Reporting = Quiet)`: a functor's module, made beside the call, as a value of the functor's spec. */
+    data class Module(val module: Decl.Module, val spec: Decl.Spec) : CallRef
 }
 
 sealed interface MemberRef {
@@ -613,6 +619,12 @@ sealed interface MemberRef {
 
     /** `Alphabet.A`: a case named through its sealed type. */
     data class Case(val ref: ConstructorRef) : MemberRef
+
+    /** `reporting.Quiet`: a module named through its package, as a value of the spec it follows. */
+    data class Module(val module: Decl.Module, val spec: Decl.Spec) : MemberRef
+
+    /** `plugin.tasks`: what a module given as a value of [spec] has for its [value]. */
+    data class OfModule(val spec: Decl.Spec, val value: SpecValue) : MemberRef
 
     data class Builtin(val method: uk.m4xy.fckt.types.Builtin) : MemberRef
 }

@@ -2,6 +2,7 @@ package uk.m4xy.fckt.types
 
 import uk.m4xy.fckt.ocaml.snake
 import uk.m4xy.fckt.syntax.Annotation
+import uk.m4xy.fckt.syntax.Application
 import uk.m4xy.fckt.syntax.Arg
 import uk.m4xy.fckt.syntax.BinaryRef
 import uk.m4xy.fckt.syntax.CallRef
@@ -13,6 +14,7 @@ import uk.m4xy.fckt.syntax.Decl
 import uk.m4xy.fckt.syntax.FieldDef
 import uk.m4xy.fckt.syntax.Expr
 import uk.m4xy.fckt.syntax.MemberRef
+import uk.m4xy.fckt.syntax.ModuleArg
 import uk.m4xy.fckt.syntax.Meta
 import uk.m4xy.fckt.syntax.MetaRef
 import uk.m4xy.fckt.syntax.NameRef
@@ -105,8 +107,11 @@ private class Scope(val parent: Scope?) {
 class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private val u = Unifier()
 
+    /** Functors called in expressions, each by the module the call makes. */
+    private val lifted = mutableMapOf<Expr.Call, String>()
+
     /** The declarations with their full names: `make` in `module Ratios` is `Ratios.make`. */
-    private val root: List<Decl> = withDefaults(file.decls).map { qualify(it, "") }
+    private var root: List<Decl> = withDefaults(file.decls).map { qualify(it, "") }
     private val modules = linkedMapOf<String, Decl.Module>()
     private val decls: MutableList<Decl> = flatten(root).toMutableList()
 
@@ -216,6 +221,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         collectImports()
         for (f in modules.values.filter { it.params.isNotEmpty() }) addParameters(f)
         for (app in modules.values.filter { it.application != null }) apply(app)
+        liftApplications()
         currentPath = emptyList()
         currentFile = null
     }
@@ -225,7 +231,6 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      * types abstract: the body must work for any module that follows the spec.
      */
     private fun addParameters(f: Decl.Module) {
-        if (f.spec != null) throw CompileError(f.spec.pos, "a functor can't have a spec yet")
         enclosingFunctor(f.path)?.let { throw CompileError(f.pos, "a functor can't be inside another functor (${it.simpleName}) yet") }
         currentPath = f.path
         currentFile = f.pos.file
@@ -809,6 +814,129 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun lookupGlobal(name: String, pos: Pos?) = find(name, globals, pos)
     private fun lookupModule(name: String, pos: Pos?) = find(name, modules, pos)
+
+    /** Whether a module that follows [spec] can be a value of it: it has no types of its own. */
+    private fun valueSpec(spec: Decl.Spec): Boolean = !isEffect(spec) && spec.types.isEmpty() && spec.typeParams.isEmpty()
+
+    /** The type of a module that follows [spec], as a value: `Plugin`. */
+    private fun moduleType(spec: Decl.Spec, pos: Pos): Type {
+        if (isEffect(spec)) throw CompileError(pos, "'${spec.simpleName}' is an effect: a function does it, written @${spec.simpleName}, and a handler answers it; no value has its type")
+        if (spec.types.isNotEmpty()) {
+            throw CompileError(pos, "${spec.simpleName} has types of its own, ${spec.types.joinToString { it.name }}, which a value of it couldn't say, so it can't be a value's type yet")
+        }
+        if (spec.typeParams.isNotEmpty()) throw CompileError(pos, "${spec.simpleName} takes type parameters, so it can't be a value's type yet")
+        return Type.Con(Type.MODULE + spec.name)
+    }
+
+    /**
+     * [m] as a value of the spec it follows, which is all a value of it shows: so what it does must
+     * be what the spec says it may.
+     */
+    private fun moduleValue(m: Decl.Module, pos: Pos): Pair<Decl.Spec, Type> {
+        if (m.params.isNotEmpty()) throw CompileError(pos, "${m.simpleName} is a functor; give it modules first: ${m.simpleName}(...)")
+        if (m.name in parameterModules) throw CompileError(pos, "${m.simpleName} is a functor's module, which can't be a value yet")
+        val spec = moduleSpecs[m.name]
+            ?: throw CompileError(pos, "${m.simpleName} is a module, which is a value only of a spec it follows: module ${m.simpleName} : Spec { ... }")
+        val type = moduleType(spec, pos)
+        for (value in spec.values) {
+            val decl = globals["${m.name}.${value.name}"] ?: continue
+            val done = (globalType(decl) as? Type.Fn)?.let { Type.effectNames(it.effects) }.orEmpty()
+            val extra = done - specEffects(spec, value)
+            if (extra.isNotEmpty() && !hides(spec, value)) {
+                throw CompileError(
+                    pos,
+                    "${m.simpleName} can't be a ${spec.simpleName} value: its ${value.name} does ${shown(extra)}, which ${spec.simpleName}'s ${value.name} doesn't say it can, " +
+                        "and a value shows only what the spec says",
+                )
+            }
+        }
+        return spec to type
+    }
+
+    /**
+     * A functor called in an expression, `plugins = [FkTests.Plugin(Reporting = Quiet)]`, makes its
+     * module beside the declaration it's in, as `module Plugin__1 = FkTests.Plugin(Reporting = Quiet)`
+     * would; the call is that module, as a value of the functor's spec.
+     */
+    private fun liftApplications() {
+        var count = 0
+        for (d in decls.filterIsInstance<Decl.Function>()) {
+            currentPath = d.path
+            currentFile = d.pos.file
+            for (call in (listOf(d.body) + d.params.orEmpty().mapNotNull { it.default }).flatMap { calls(it) }) {
+                val name = dotted(call.callee, null) ?: continue
+                val functor = lookupModule(name, null)?.takeIf { it.params.isNotEmpty() } ?: continue
+                if (enclosingFunctor(d.path) != null) throw CompileError(call.pos, "a functor can't be applied inside another functor yet")
+                if (enclosingApplication(d.path) != null) continue
+                val args = call.args.map { arg ->
+                    val module = dotted(arg.value, null)?.takeIf { lookupModule(it, null) != null }
+                        ?: throw CompileError(arg.value.pos, "${functor.simpleName} takes modules, by name")
+                    ModuleArg(arg.name, TypeRef.Named(arg.value.pos, module, emptyList()))
+                }
+                val app = Decl.Module(
+                    call.pos,
+                    (d.path + "${functor.simpleName}__${++count}").joinToString("."),
+                    emptyList(),
+                    isPrivate = true,
+                    application = Application(TypeRef.Named(call.callee.pos, name, emptyList()), args),
+                )
+                modules[app.name] = app
+                apply(app)
+                lifted[call] = app.name
+                root = withModule(root, d.path, app)
+            }
+        }
+    }
+
+    /** [ds] with [m] in the module at [path], or among them where [path] is empty. */
+    private fun withModule(ds: List<Decl>, path: List<String>, m: Decl.Module): List<Decl> {
+        if (path.isEmpty()) return ds + m
+        val name = path.joinToString(".")
+        return ds.map { d ->
+            when {
+                d !is Decl.Module -> d
+                d.name == name -> d.copy(decls = d.decls + m).also { modules[name] = it }
+                name.startsWith(d.name + ".") -> d.copy(decls = withModule(d.decls, path, m)).also { modules[d.name] = it }
+                else -> d
+            }
+        }
+    }
+
+    /** The calls in [e], and in what it holds. */
+    private fun calls(e: Expr): List<Expr.Call> {
+        val found = mutableListOf<Expr.Call>()
+        fun statement(s: Statement) = when (s) {
+            is Statement.Binding -> listOf(s.value)
+            is Statement.Effect -> listOf(s.expr)
+            is Statement.Destructure -> listOf(s.value)
+            is Statement.Bind -> listOf(s.value)
+        }
+        fun go(x: Expr) {
+            if (x is Expr.Call) found += x
+            val inner: List<Expr> = when (x) {
+                is Expr.Call -> listOf(x.callee) + x.args.map { it.value }
+                is Expr.Tuple -> x.elements
+                is Expr.Spread -> listOf(x.list)
+                is Expr.StringLit -> x.parts.filterIsInstance<StringPart.Interpolated>().map { it.expr }
+                is Expr.ListLit -> x.items
+                is Expr.Member -> listOf(x.target)
+                is Expr.Binary -> listOf(x.left, x.right)
+                is Expr.Unary -> listOf(x.operand)
+                is Expr.Assign -> listOf(x.target, x.value)
+                is Expr.Lambda -> listOf(x.body)
+                is Expr.Pipe -> listOf(x.value, x.function)
+                is Expr.If -> listOf(x.condition, x.then, x.otherwise)
+                is Expr.When -> listOfNotNull(x.subject) + x.branches.flatMap { listOfNotNull(it.condition, it.guard, it.body) }
+                is Expr.Block -> x.statements.flatMap { statement(it) } + x.result
+                is Expr.Monadic -> listOf(x.module, x.block)
+                is Expr.Handle -> listOf(x.handler, x.block)
+                else -> emptyList()
+            }
+            inner.forEach { go(it) }
+        }
+        go(e)
+        return found
+    }
     private fun lookupSealed(name: String, pos: Pos?) = find(name, sealeds, pos)
     private fun lookupRecord(name: String, pos: Pos?) = find(name, records, pos)
     private fun lookupAlias(name: String, pos: Pos?) = find(name, aliases, pos)
@@ -885,6 +1013,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             moduleSpecs[m.name] = spec
         }
+        // A module a functor makes follows the functor's spec, with its modules in place.
+        for ((app, made) in applications) moduleSpecs[made.first.name]?.let { moduleSpecs[app] = it }
         currentPath = emptyList()
         currentFile = null
         for ((name, variants) in variantsByName) {
@@ -1066,6 +1196,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     arity(typeParamsOf(it).size)
                     typeNames[ref] = it.name
                     typeOf(it, args)
+                }
+                ?: find(ref.name, specs, null)?.let { spec ->
+                    arity(0)
+                    moduleType(spec, ref.pos).also { typeNames[ref] = Type.MODULE + spec.name }
                 }
                 ?: find(ref.name, annotationTypes, null)?.let {
                     throw CompileError(ref.pos, "'${ref.name}' is an annotation, written @${ref.name}(...) before a declaration; no value has its type")
@@ -2179,8 +2313,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 // After a dot, only an extension of that name.
                 if (ref.startsWith(".")) return@flatMap extensions[ref.drop(1)].orEmpty().filter { visible(it) } + defaultsUsed(ref.drop(1))
                 // A method's name may be any extension of that name.
-                // A module used as a handler: its functions.
-                lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) } == true }
+                // A module used as a handler or a value: its functions.
+                lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) || valueSpec(it) } == true }
                     ?.let { m -> globals.values.filter { it.path == m.name.split('.') } }.orEmpty() +
                 extensions[ref].orEmpty().filter { visible(it) } + listOfNotNull(
                     lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
@@ -2213,6 +2347,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Expr.ListLit -> e.items.forEach { go(it) }
             is Expr.Call -> {
                 val callee = e.callee
+                // A functor's call is the module it makes.
+                lifted[e]?.let { into += it }
                 when {
                     callee is Expr.Member && e.resolved is CallRef.Builtin -> go(callee.target)
                     // Once checked, a method call is to the one extension it resolved to.
@@ -2789,12 +2925,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             e.resolved = NameRef.Builtin(ocaml)
             return type
         }
-        // A module following a handled effect's spec is a handler.
+        // A module following a handled effect's spec is a handler; following another, a value of it.
         lookupModule(e.name, null)?.let { m ->
             moduleSpecs[m.name]?.takeIf { isEffect(it) }?.let { spec ->
                 e.resolved = NameRef.Handler(m, spec)
                 return moduleHandler(m, spec)
             }
+            val (spec, type) = moduleValue(m, e.pos)
+            e.resolved = NameRef.Module(m, spec)
+            return type
         }
         throw CompileError(e.pos, "unknown name '${e.name}'${importHint(e.name)}")
     }
@@ -2949,6 +3088,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun inferCall(e: Expr.Call, expected: Type?, scope: Scope): Type {
         val callee = e.callee
+        lifted[e]?.let { name ->
+            val m = modules.getValue(name)
+            val (spec, type) = moduleValue(m, e.pos)
+            e.resolved = CallRef.Module(m, spec)
+            return type
+        }
         // A declared function, by name or through its module, is called with its parameters' names.
         val global = when (callee) {
             is Expr.Name -> if (scope.lookup(callee.name) == null) lookupGlobal(callee.name, callee.pos) else null
@@ -3104,6 +3249,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         if (receiver !is Type.Con) return null
+        // What a module given as a value has, as its spec says.
+        if (receiver.name.startsWith(Type.MODULE)) {
+            val spec = specs.getValue(receiver.name.removePrefix(Type.MODULE))
+            val value = spec.values.firstOrNull { it.name == member.name } ?: return null
+            return MemberRef.OfModule(spec, value) to u.instantiate(specSchemes.getValue(spec).getValue(value.name))
+        }
         val record = records[receiver.name] ?: return null
         val index = record.fields.indexOfFirst { it.name == member.name }
         if (index < 0) return null
@@ -3133,6 +3284,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 e.resolved = MemberRef.Operation(spec, op)
                 return operationValue(spec, op, e.pos)
             }
+        }
+        // `reporting.Quiet`: a module through its package, as a value.
+        moduleOf(e, scope)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) } != true }?.let { m ->
+            val (spec, type) = moduleValue(m, e.pos)
+            e.resolved = MemberRef.Module(m, spec)
+            return type
         }
         val receiver = infer(e.target, null, scope).prune()
         field(e, receiver, scope)?.let { (ref, type) ->

@@ -993,6 +993,47 @@ class CompilerTest {
     }
 
     @Test
+    fun `a module is a value of the spec it follows`() {
+        val source = """
+            spec Reporting { shown(line: String): Boolean = true }
+            module Everything : Reporting {}
+            module Quiet : Reporting { shown(line: String): Boolean = line.startsWith("!") }
+
+            spec Plugin {
+              name(): String
+              tasks(project: String): List<String>
+            }
+            module Docs : Plugin {
+              name(): String = "docs"
+              tasks(project: String): List<String> = ["docs ${'$'}project"]
+            }
+            module Tests(R: Reporting = Everything) : Plugin {
+              name(): String = "tests"
+              tasks(project: String): List<String> = ["test ${'$'}project", "! check ${'$'}project"].filter(line -> R.shown(line))
+            }
+
+            // A module, and what functors make, called where they're wanted.
+            plugins: List<Plugin> = [Docs, Tests(), Tests(R = Quiet)]
+
+            @Console main() = plugins.forEach(p -> println("${'$'}{p.name()}: ${'$'}{p.tasks("shop").joinToString(", ")}"))
+        """.trimIndent()
+        assertEquals("docs: docs shop\ntests: test shop, ! check shop\ntests: ! check shop\n", run(source))
+        assertContains(compile(source), "(module Docs : Plugin)")
+
+        val specs = source.substringBefore("// A module")
+        assertContains(error(specs + "module Plain { x = 1 }\nv = Plain"), "Plain is a module, which is a value only of a spec it follows: module Plain : Spec { ... }")
+        assertContains(error(specs + "v: List<Plugin> = [Tests]"), "Tests is a functor; give it modules first: Tests(...)")
+        assertContains(error(specs + "spec Sized { type T }\nf(s: Sized): Int = 1"), "Sized has types of its own, T, which a value of it couldn't say")
+        assertContains(error(specs + "f(c: Console): Int = 1"), "'Console' is an effect")
+        // A value shows only its spec, so what it does must be what the spec says it may.
+        assertContains(
+            error(specs + "module Loud : Reporting {\n  @Console shown(line: String): Boolean = {\n    println(line)\n    true\n  }\n}\nr: Reporting = Loud"),
+            "Loud can't be a Reporting value: its shown does @Console",
+        )
+        assertContains(error(specs + "p: Plugin = Docs\nx = p.missing()"), "Plugin has no method 'missing'")
+    }
+
+    @Test
     fun `spec type arguments say what a functor's parameter's types are`() {
         val source = File("examples/monads.fk").readText()
         assertEquals("", run(source))
@@ -1596,6 +1637,9 @@ class CompilerTest {
             // A spec with a default, whose code a program's module that follows it has, and a generic module.
             write("units/uk/m4xy/units/Measure.fk", "spec Measure {\n  type T\n  amount(m: T): Int\n  doubled(m: T): Int = amount(m) * 2\n}")
             write("units/uk/m4xy/units/Boxes.fk", "module Boxes<E> {\n  type M<A> = Result<A, E>\n  ok<A>(x: A): Result<A, E> = Ok(x)\n}")
+            // A spec whose modules are values, and a function that takes one.
+            write("units/uk/m4xy/units/Pricing.fk", "spec Pricing {\n  label(): String\n}")
+            write("units/uk/m4xy/units/Pricings.fk", "module Pricings {\n  labelled(p: Pricing): String = \"[${'$'}{p.label()}]\"\n}")
             write("units/uk/m4xy/units/helpers.fk", "@Ask greeting(): String = \"hello ${'$'}{ask(\"name\")}\"\nexternal double(x: Int): Int = \"x * 2\"")
             write(
                 "units/uk/m4xy/units/Moneys.fk",
@@ -1645,6 +1689,8 @@ class CompilerTest {
             write("money/uk/m4xy/money/Code.fk", "type Code private(value: String)")
             // A functor whose module has a default, which a program gets without naming it.
             write("money/uk/m4xy/money/Ranked.fk", "module Ranked(O: Ordered = ByPence) {\n  higher(a: O.T, b: O.T): O.T = if (O.compare(a, b) >= 0) a else b\n}")
+            // A spec in units, a functor that follows it here, and a program that makes it a value.
+            write("money/uk/m4xy/money/Sale.fk", "import uk.m4xy.units.Pricing\n\nmodule Sale(O: Ordered = ByPence) : Pricing {\n  label(): String = \"sale\"\n}")
             val money = File(dir, "lib/money").apply { mkdirs() }
             File(money, "uk_m4xy_money.ml").writeText(
                 compileLibrary(listOf("uk.m4xy.money"), listOf(File(dir, "money")), listOf(File(units, "interface")), "Uk_m4xy_money", File(money, "interface")),
@@ -1686,6 +1732,7 @@ class CompilerTest {
                   println(attempt { w.spend(Money(100)).balance.pounds() }.getOrElse("?"))
                   println("${'$'}{ByPence.compare(Money(3), Money(1))}")
                   println("${'$'}{Richest.higher(Money(3), Money(9))}")
+                  println(Pricings.labelled(Sale()))
                 }
 
                 module Richest = Ranked()
@@ -1702,7 +1749,7 @@ class CompilerTest {
             process.waitFor(30, TimeUnit.SECONDS)
             assertEquals(
                 "Ok(42)\ntotal: £4.25 (Money(pence=425))\nquadrupled: £17.00 (Money(pence=1700))\nCircle(radius=2.0) 42 Money(pence=0)\nhello world (name)\n" +
-                    "failed: max can't spend £9.00\n£4.00\n2\nMoney(pence=9)\n",
+                    "failed: max can't spend £9.00\n£4.00\n2\nMoney(pence=9)\n[sale]\n",
                 output,
             )
 

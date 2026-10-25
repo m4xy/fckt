@@ -378,6 +378,9 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
      * The spec [module] follows, as written from here: `Ordered`, or for `Ordered<Int>`,
      * `Ordered with type t = int`.
      */
+    /** [m] as a value of [spec]: `(module Quiet : Reporting)`. */
+    private fun packed(m: Decl.Module, spec: Decl.Spec): Gen = Gen.Lit("(module ${ref(m.name, ::moduleName)} : ${ref(spec.name) { it }})")
+
     private fun specText(module: String, spec: Decl.Spec): String {
         val fixed = spec.types.mapNotNull { t ->
             program.fixedTypes["$module.${t.name}"]?.let { alias ->
@@ -683,8 +686,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"; "Nothing" -> helper(NOTHING)
             "Char" -> "int"; "Byte" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"; "Result" -> "result"
+            // A module that follows a spec, as a value.
+            else -> if (name.startsWith(Type.MODULE)) "(module ${ref(name.removePrefix(Type.MODULE)) { it }})"
             // A spec's own type, inside its module type.
-            else -> if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
+            else if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
         }
         return when (args.size) {
             0 -> base
@@ -810,6 +815,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 is NameRef.Local -> if (r.isVar) apply { ident("!"); ident(r.ocamlName) } else ident(r.ocamlName)
                 is NameRef.Operation -> gen(operationValue(r.spec, r.operation))
                 is NameRef.Handler -> gen(moduleHandler(r.module, r.spec))
+                is NameRef.Module -> gen(packed(r.module, r.spec))
                 is NameRef.Global -> if (r.decl.external != null) gen(externalValue(r.decl)) else ident(ref(r.decl.name, ::snake))
                 is NameRef.Builtin -> {
                     if (r.ocaml == ASSERT || r.ocaml == ASSERT_EQUALS) throw CompileError(e.pos, "${r.ocaml} must be called")
@@ -858,6 +864,9 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                     }
                 }
                 is MemberRef.Builtin -> gen(builtin(r.method, e.target, emptyList()))
+                is MemberRef.Module -> gen(packed(r.module, r.spec))
+                // What a module given as a value has: taken out of it, as its spec says it is.
+                is MemberRef.OfModule -> gen(Gen.Match(Gen.Src(e.target), listOf("(module Value : ${ref(r.spec.name) { it }})" to Gen.Id("Value.${snake(r.value.name)}"))))
             }
             is Expr.Binary -> {
                 val r = e.resolved!!
@@ -955,6 +964,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             return gen(perform(operation.first, operation.second, (e.resolved as CallRef.Function).order.map { Gen.Src(e.args[it].value) }))
         }
         when (val r = e.resolved!!) {
+            is CallRef.Module -> gen(packed(r.module, r.spec))
             is CallRef.Handler -> gen(
                 Gen.Ann(
                     Gen.Record(r.spec.values.mapIndexed { i, op -> snake(op.name) to answering(op, Gen.Src(e.args[r.order[i]].value), r.resumes[i]) }),
@@ -1408,7 +1418,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         is Type.Con -> showCon(t.name.removePrefix(Type.ABSTRACT), ocamlArgs(t.name, t.args).map { show(it, at) })
     }
 
-    private fun showCon(name: String, args: List<Gen>): Gen = when (name) {
+    private fun showCon(name: String, args: List<Gen>): Gen = if (name.startsWith(Type.MODULE)) {
+        // A module as a value shows its spec, as a function shows <fun>.
+        Gen.Fun(listOf("_"), Gen.Str("<${Type.displayName(name).substringAfterLast('.')}>"))
+    } else when (name) {
         Type.TUPLE -> {
             val names = args.indices.map { "x$it" }
             Gen.Fun(
