@@ -1231,10 +1231,10 @@ class CompilerTest {
         fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
         try {
             write("src/pricing/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = items.fold(0, (a, b) -> a + b)\n}\n")
-            // A test library's runner, as fk-tests's is, with what fckt --test calls.
+            // What tests are written with, and, apart, what runs them, with what fckt --test calls.
             write("lib/check/Test.fk", "annotation type Test\n")
             write(
-                "lib/check/Runner.fk",
+                "lib/runs/Runner.fk",
                 """
                 module Runner {
                   type Outcome { Passed, Failed, Skipped }
@@ -1264,7 +1264,7 @@ class CompilerTest {
             write("test/support.fk", "two(): Int = 2\n")
             write("test/own.fk", "main() = println(\"own\")\n")
             val roots = listOf(File(dir, "src"), File(dir, "lib"))
-            val ml = compileTests(test, "check.Runner", roots, emptyList())
+            val ml = compileTests(test, "check.Test", "runs.Runner", roots, emptyList())
             assertEquals(
                 "files.fk\n  passed missing\nprices.fk\n  passed sums\n  FAILED empty: prices.fk line 5: expected:<1> but was:<0>\n" +
                     "  FAILED divides: Division_by_zero\n  FAILED fails: on purpose\n3 failed\n",
@@ -1273,11 +1273,14 @@ class CompilerTest {
             assertEquals("files.fk\nprices.fk\n  passed sums\n0 failed\n", runOcaml(ml, listOf("sums")))
             write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
             write("test/unmarked.fk", "@Test d() = Unit\n")
-            val errors = assertFailsWith<CompileError> { compileTests(test, "check.Runner", roots, emptyList()) }.errors.map { it.message }
+            write("test/sneaky.fk", "import check.Test\nimport runs.Runner\n@Test e() = Unit\n")
+            val errors = assertFailsWith<CompileError> { compileTests(test, "check.Test", "runs.Runner", roots, emptyList()) }.errors.map { it.message }
             assertEquals(
                 listOf(
                     "a test is run from outside its file, so it can't be private", "a test takes no parameters, as it's run as b()",
-                    "a test is a function, run as c(): write c() = ...", "a test is marked with the runner's Test: import check.Test",
+                    "a test is a function, run as c(): write c() = ...",
+                    "runs runs the tests, so they can't use it: a test uses what it's written with, as check.Test",
+                    "a test is marked with check.Test: import check.Test",
                 ),
                 errors,
             )

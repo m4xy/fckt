@@ -7,7 +7,7 @@ import kotlin.system.exitProcess
 
 private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [-L <interface>]... [--separate] [--import <name>]... [-o <file.ml>]
        fckt --library <interface> -o <file.ml> [-I <dir>]... [-L <interface>]... <package>...
-       fckt --test <dir> --runner <module> [-I <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
+       fckt --test <dir> --marker <annotation> --runner <module> [-I <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
        fckt --standard -o <file.ml>
        fckt --version
 
@@ -23,9 +23,9 @@ separately: with --separate, or -L, it's linked with the standard library compil
 which fckt --standard writes as fckt_std.ml, and with each library -L names. fckt --library
 compiles packages as a library, to the OCaml module -o names, and writes the interface that
 programs using it are checked against to <interface>; a library's public functions say their
-types. fckt --test compiles the tests in a folder, its functions marked @Test, to one program that
-runs each with the runner a test library has, --runner uk.m4xy.fktests.Testing for fk-tests's.
-Building projects is kiln's job."""
+types. fckt --test compiles the tests in a folder, its functions marked with --marker's annotation,
+uk.m4xy.fktests.Test for fk-tests's, to one program that runs each with --runner's module,
+uk.m4xy.fktestsrunner.Testing for fk-tests-runner's. Building projects is kiln's job."""
 
 fun main(args: Array<String>) {
     var input: String? = null
@@ -35,6 +35,7 @@ fun main(args: Array<String>) {
     var separate = false
     var test: String? = null
     var runner: String? = null
+    var marker: String? = null
     val dirs = mutableListOf<File>()
     val libraries = mutableListOf<File>()
     val imports = mutableListOf<String>()
@@ -57,6 +58,7 @@ fun main(args: Array<String>) {
             "--library" -> library = args.getOrNull(i++) ?: usage()
             "--test" -> test = args.getOrNull(i++) ?: usage()
             "--runner" -> runner = args.getOrNull(i++) ?: usage()
+            "--marker" -> marker = args.getOrNull(i++) ?: usage()
             "--standard" -> standard = true
             "--separate" -> separate = true
             else -> when {
@@ -80,7 +82,7 @@ fun main(args: Array<String>) {
                 System.err.println("fckt: no such folder: $test")
                 exitProcess(2)
             }
-            write(output ?: File(dir, "tests.ml").path, dir.path) { compileTests(dir.absoluteFile, runner ?: usage(), dirs, libraries, imports, separate) }
+            write(output ?: File(dir, "tests.ml").path, dir.path) { compileTests(dir.absoluteFile, marker ?: usage(), runner ?: usage(), dirs, libraries, imports, separate) }
         }
         library != null -> {
             val target = output ?: usage()
