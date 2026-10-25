@@ -1066,7 +1066,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             currentPath = a.path
             currentFile = a.pos.file
             checkFieldNames(a.fields.map { it.name to it.pos })
-            annotationFields[a] = a.fields.map { resolveMeta(it.type) }
+            annotationFields[a] = a.fields.map { if (it.isVararg) Type.list(resolveMeta(it.type)) else resolveMeta(it.type) }
         }
         currentPath = emptyList()
         currentFile = null
@@ -1467,8 +1467,23 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             },
         )
         a.decl = decl
-        val order = argOrder(a.args.map { it.name to it.value.pos }, decl.fields.map { it.name }, a.pos, "@${a.name}")
-        annotationFields.getValue(decl).forEachIndexed { i, type -> checkMeta(a.args[order[i]].value, type) }
+        val types = annotationFields.getValue(decl)
+        val vararg = decl.fields.lastOrNull()?.takeIf { it.isVararg }
+        if (vararg == null) {
+            val order = argOrder(a.args.map { it.name to it.value.pos }, decl.fields.map { it.name }, a.pos, "@${a.name}")
+            types.forEachIndexed { i, type -> checkMeta(a.args[order[i]].value, type) }
+            return
+        }
+        // Its items are what's given in order after the other fields, or, by its name, the list.
+        val fixed = decl.fields.size - 1
+        val inOrder = a.args.takeWhile { it.name == null }
+        val listed = a.args.firstOrNull { it.name == vararg.name }
+        if (listed != null && inOrder.size > fixed) throw CompileError(listed.value.pos, "'${vararg.name}' is passed twice")
+        val others = inOrder.take(fixed) + a.args.drop(inOrder.size).filter { it !== listed }
+        val order = argOrder(others.map { it.name to it.value.pos }, decl.fields.dropLast(1).map { it.name }, a.pos, "@${a.name}")
+        types.dropLast(1).forEachIndexed { i, type -> checkMeta(others[order[i]].value, type) }
+        if (listed != null) checkMeta(listed.value, types.last())
+        else inOrder.drop(fixed).forEach { checkMeta(it.value, (types.last().prune() as Type.Con).args[0]) }
     }
 
     /** Checks [m] is what an argument of [expected] can be, and sets what it refers to. */

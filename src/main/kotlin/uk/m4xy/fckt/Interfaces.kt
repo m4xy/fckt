@@ -163,6 +163,7 @@ internal object Interfaces {
         buildString {
             annotations(f.annotations, this)
             if (f.isVar) append("var ")
+            if (f.isVararg) append("vararg ")
             append(f.name).append(": ").append(type(f.type))
             if (f.default != null) append(" = compiled")
         }

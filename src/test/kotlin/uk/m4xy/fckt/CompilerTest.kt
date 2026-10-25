@@ -1398,7 +1398,7 @@ class CompilerTest {
         fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
         try {
             write("lib/check/Test.fk", "annotation type Test\n")
-            write("lib/check/Fixtures.fk", "@Propagates @Repeatable annotation type Fixtures(fixtures: List<Function>)\n")
+            write("lib/check/Fixtures.fk", "@Propagates @Repeatable annotation type Fixtures(vararg fixtures: Function)\n")
             writeRunner(::write)
             write(
                 "test/counts.fk",
@@ -1425,11 +1425,11 @@ class CompilerTest {
 
                 @Test plain() = assert(true)
 
-                @Fixtures([counting])
+                @Fixtures(counting)
                 module Counting {
                   @Test @Tally once() = assertEquals(1, count())
 
-                  @Test @Fixtures([noisy]) @Tally twice() = {
+                  @Test @Fixtures(noisy) @Tally twice() = {
                     count()
                     assertEquals(2, count())
                   }
@@ -1452,17 +1452,34 @@ class CompilerTest {
             fun errors() = assertFailsWith<CompileError> { tests() }.errors.joinToString("\n") { it.message.orEmpty() }
             val counts = File(test, "counts.fk").readText()
             // A fixture runs the test: it takes it, and is seen from outside its file.
-            File(test, "counts.fk").writeText(counts.replace("@Fixtures([noisy])", "@Fixtures([plain])"))
+            File(test, "counts.fk").writeText(counts.replace("@Fixtures(noisy)", "@Fixtures(plain)"))
             assertContains(errors(), "a fixture takes what it runs, as its one parameter: plain<A>(test: () -> A): A")
             File(test, "counts.fk").writeText(counts.replace("@Console noisy", "private @Console noisy"))
             assertContains(errors(), "noisy runs a test from outside its file, so it can't be private")
-            File(test, "counts.fk").writeText(counts.replace("@Fixtures([noisy])", "@Fixtures([nothing])"))
+            File(test, "counts.fk").writeText(counts.replace("@Fixtures(noisy)", "@Fixtures(nothing)"))
             assertContains(errors(), "unknown function 'nothing'")
             File(test, "counts.fk").writeText(counts.replace("module Counting {", "private module Counting {"))
             assertContains(errors(), "a section is run from outside its file, so it can't be private")
         } finally {
             dir.deleteRecursively()
         }
+    }
+
+    @Test
+    fun `an annotation's last field can be vararg, given its items in order`() {
+        val routes = "annotation type Routes(prefix: String, vararg handlers: Function)\nf(x: Int): Int = x\ng(x: Int): Int = x\n"
+        // Its items in order, none, or by its name, the list.
+        compile(routes + "@Routes(\"/a\", f, g)\nmain() = Unit")
+        compile(routes + "@Routes(\"/a\")\nmain() = Unit")
+        compile(routes + "@Routes(\"/a\", handlers = [f, g])\nmain() = Unit")
+        compile(routes + "@Routes(prefix = \"/a\", handlers = [f])\nmain() = Unit")
+        assertContains(error(routes + "@Routes(\"/a\", f, handlers = [g])\nmain() = Unit"), "'handlers' is passed twice")
+        assertContains(error(routes + "@Routes(\"/a\", f, nothing)\nmain() = Unit"), "unknown function 'nothing'")
+        assertContains(error(routes + "@Routes(\"/a\", [f])\nmain() = Unit"), "this should be a function, by name")
+        assertContains(error(routes + "@Routes(f)\nmain() = Unit"), "expected String but found (Int) -> Int")
+        assertContains(error("annotation type A(vararg a: Int, b: Int)"), "only an annotation's last field can be vararg")
+        assertContains(error("type R(vararg a: Int)"), "only an annotation's last field can be vararg")
+        assertContains(error("annotation type A(vararg a: Int = 1)"), "a vararg field is a list of what it's given, so it has no default")
     }
 
     @Test
@@ -1749,6 +1766,7 @@ class CompilerTest {
             ocamlc(File(std, "fckt_std.ml"))
 
             write("units/uk/m4xy/units/Money.fk", "type Money(pence: Int)")
+            write("units/uk/m4xy/units/Tagged.fk", "annotation type Tagged(vararg tags: String)")
             write("units/uk/m4xy/units/Shape.fk", "type Shape {\n  Circle(radius: Float),\n  Square(side: Float),\n}")
             write("units/uk/m4xy/units/Ask.fk", "effect Ask {\n  ask(question: String): String\n}")
             // A spec with a default, whose code a program's module that follows it has, and a generic module.
@@ -1779,6 +1797,7 @@ class CompilerTest {
             assertContains(moneys, "  sum(items: List<Money>, start: Money = compiled): Money\n")
             assertContains(moneys, "  @Console report(m: Money, label: String = compiled): Unit\n")
             assertFalse("pad" in moneys)
+            assertContains(File(units, "interface/uk/m4xy/units/Tagged.fki").readText(), "annotation type Tagged(vararg tags: String)")
             assertContains(File(units, "interface/uk/m4xy/units/Measure.fki").readText(), "  doubled(m: T): Int = amount(m) * 2\n}")
             assertContains(File(units, "interface/uk/m4xy/units/Boxes.fki").readText(), "module Boxes<E> {\n  type M<A> = Result<A, E>\n  ok<A>(x: A): Result<A, E>\n}")
             assertEquals("Uk_m4xy_units\n", File(units, "interface/unit").readText())
@@ -1828,6 +1847,7 @@ class CompilerTest {
                 import uk.m4xy.money.*
                 import uk.m4xy.money.Wallets.*
 
+                @Tagged("units", "pence")
                 module Pence : Measure {
                   type T = Money
                   amount(m: Money): Int = m.pence

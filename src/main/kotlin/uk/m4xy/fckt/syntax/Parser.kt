@@ -126,7 +126,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
             if (at(T.LT)) throw error("an annotation has no type parameters: its fields say what it refers to, like Type or Case<T>")
             if (at(T.LBRACE) || at(T.ASSIGN)) throw error("an annotation is a record: annotation type $name(field: Type)")
             val fields = if (accept(T.LPAREN) != null) {
-                (if (at(T.RPAREN)) emptyList() else fieldList(pos)).also { expect(T.RPAREN, "')'") }
+                (if (at(T.RPAREN)) emptyList() else fieldList(pos, varargs = true)).also { expect(T.RPAREN, "')'") }
             } else {
                 emptyList()
             }
@@ -455,14 +455,25 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         return names
     }
 
-    /** `a: A, b: B`, or a single unnamed `A`, which is named `value`. */
-    private fun fieldList(declPos: Pos): List<FieldDef> {
+    /**
+     * `a: A, b: B`, or a single unnamed `A`, which is named `value`. With [varargs], an annotation's,
+     * the last can be `vararg`.
+     */
+    private fun fieldList(declPos: Pos, varargs: Boolean = false): List<FieldDef> {
         val fields = mutableListOf<FieldDef>()
         while (!at(T.RPAREN)) {
             val annotations = annotations()
             // `var balance: Int`: a field that can be changed. `var` is a keyword only here.
             val isVar = at(T.IDENT) && peek.text == "var" && peekAt(1).kind == T.IDENT && peekAt(2).kind == T.COLON
             if (isVar) next()
+            // `vararg fixtures: Function`: an annotation's last field, given its items in order.
+            val varargPos = peek.pos
+            val isVararg = at(T.IDENT) && peek.text == "vararg" && peekAt(1).kind == T.IDENT && peekAt(2).kind == T.COLON
+            if (isVararg) {
+                next()
+                if (!varargs) throw error("only an annotation's last field can be vararg", varargPos)
+                if (fields.any { it.isVararg }) throw error("only an annotation's last field can be vararg", fields.first { it.isVararg }.pos)
+            }
             val pos = peek.pos
             if (at(T.IDENT) && peekAt(1).kind == T.COLON) {
                 val name = next().text
@@ -470,7 +481,8 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 val type = type()
                 // `version: String = "0.1.0"`: what it is when a constructor call leaves it out.
                 val default = if (accept(T.ASSIGN) != null) expr() else null
-                fields += FieldDef(pos, name, type, annotations, isVar, default)
+                if (isVararg && default != null) throw error("a vararg field is a list of what it's given, so it has no default: none is an empty list", pos)
+                fields += FieldDef(pos, name, type, annotations, isVar, default, isVararg)
             } else {
                 fields += FieldDef(pos, "", type(), annotations)
             }
@@ -482,6 +494,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
             return listOf(fields.single().copy(name = "value"))
         }
         if (fields.isEmpty()) throw error("a type needs at least one field", declPos)
+        fields.dropLast(1).firstOrNull { it.isVararg }?.let { throw error("only an annotation's last field can be vararg", it.pos) }
         return fields
     }
 

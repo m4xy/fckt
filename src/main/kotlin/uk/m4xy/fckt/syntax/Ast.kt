@@ -63,6 +63,8 @@ data class FieldDef(
     val annotations: List<Annotation> = emptyList(),
     val isVar: Boolean = false,
     val default: Expr? = null,
+    /** `vararg fixtures: Function`: an annotation's last field, a list of [type], given its items in order. */
+    val isVararg: Boolean = false,
 )
 
 /** A parameter; with a [default] (`greeting: String = "hello"`), a call can leave it out. */

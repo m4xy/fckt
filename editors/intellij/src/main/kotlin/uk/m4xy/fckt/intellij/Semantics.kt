@@ -474,7 +474,7 @@ fun semantics(text: String, neighbours: Map<String, Role> = emptyMap()): List<Sp
             name == "import" && next?.kind == TokKind.IDENT && (prev == null || !sameLine(prev, t)) -> Role.KEYWORD
             name == "as" && next?.kind == TokKind.IDENT && importLine(t) -> Role.KEYWORD
             (name == "opaque" || name == "annotation") && word(next) == "type" -> Role.KEYWORD
-            name == "var" && next?.kind == TokKind.IDENT && sameLine(t, next) -> Role.KEYWORD
+            (name == "var" || name == "vararg") && next?.kind == TokKind.IDENT && sameLine(t, next) -> Role.KEYWORD
             name == "external" && next != null && (next.kind == TokKind.IDENT || next.kind == TokKind.LPAREN || word(next) == "type") &&
                 (prev == null || !sameLine(prev, t) || word(prev) == "private") -> Role.KEYWORD
             name == "by" && prev != null && sameLine(prev, t) && (prev.kind == TokKind.IDENT || prev.kind == TokKind.RPAREN) &&
