@@ -2011,7 +2011,32 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 throw CompileError(main.pos, "main does @${spec.simpleName}, but nothing handles it: run it in a handler, like ${spec.simpleName}(...) { ... }")
             }
         }
-        return specs.values.filter { isEffect(it) && it.values.isNotEmpty() }.mapNotNull { spec -> defaultHandler(spec)?.let { spec to it } }
+        val defaults = specs.values.filter { isEffect(it) && it.values.isNotEmpty() }.mapNotNull { spec -> defaultHandler(spec)?.let { spec to it } }
+        return insideOut(defaults)
+    }
+
+    /**
+     * [defaults] from the innermost out, each inside the effects its operations, or its handler's,
+     * say they do: as Http's handler connects through @Network, which must then be handled around
+     * it. Where they say they do each other, they stay as they are.
+     */
+    private fun insideOut(defaults: List<Pair<Decl.Spec, Decl.Module>>): List<Pair<Decl.Spec, Decl.Module>> {
+        // What each says it does: its operations, as the effect has them and as its handler does.
+        val does = defaults.associate { (spec, module) ->
+            val handling = spec.values.flatMap { op ->
+                specEffects(spec, op) + globals["${module.name}.${op.name}"]?.let { effectsOf(it.annotations, it.path, it.pos) }.orEmpty()
+            }
+            spec.name to handling.toSet() + effectsOf(module.annotations, module.path, module.pos) - spec.name
+        }
+        val ordered = mutableListOf<Pair<Decl.Spec, Decl.Module>>()
+        var left = defaults
+        while (left.isNotEmpty()) {
+            // What none of those left does: nothing left needs it handled around it.
+            val inner = left.filter { (spec, _) -> left.none { (other, _) -> spec.name in does.getValue(other.name) } }.ifEmpty { left }
+            ordered += inner
+            left = left - inner.toSet()
+        }
+        return ordered
     }
 
     /**

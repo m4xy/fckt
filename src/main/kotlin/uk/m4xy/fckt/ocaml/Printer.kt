@@ -160,7 +160,8 @@ object Printer {
         "infix" -> infix(n)
         "lambda" -> {
             val head = "fun ${n.list("params").joinToString(" ")} ->"
-            val body = expr(n.children.single(), ctx)
+            // A match it ends with would swallow the cases after it where it's one.
+            val body = sub(n.children.single(), 0, ctx)
             if ('\n' !in body && head.length + body.length < WIDTH) "$head $body" else "$head\n${indent(body)}"
         }
         "let-in" -> {
@@ -175,7 +176,7 @@ object Printer {
                 if ('\n' !in value && head.length + value.length + 2 < WIDTH) out.append("$head = $value")
                 else out.append("$head =\n${indent(value)}\n")
             }
-            out.append(if (out.endsWith("\n")) "in\n" else " in\n").append(expr(n.children.last(), ctx)).toString()
+            out.append(if (out.endsWith("\n")) "in\n" else " in\n").append(sub(n.children.last(), 0, ctx)).toString()
         }
         "sequence" -> n.children.mapIndexed { i, child ->
             if (i == n.children.lastIndex) sub(child, 0, ctx) else sub(child, 0)

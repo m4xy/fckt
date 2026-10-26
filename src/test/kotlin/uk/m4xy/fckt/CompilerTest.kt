@@ -2182,6 +2182,38 @@ class CompilerTest {
     }
 
     @Test
+    fun `a default handler that does another effect runs inside that effect's`() {
+        // Greeting's default speaks through Voice, so main handles Voice around Greeting.
+        val source = """
+            @HandledBy(Speaker) effect Voice { say(text: String): Unit }
+            module Speaker : Voice { @Console say(text: String): Unit = println(text) }
+            @Voice @HandledBy(Greeter) effect Greeting { greet(name: String): Unit }
+            module Greeter : Greeting { @Voice greet(name: String): Unit = say("hello " + name) }
+            main() = greet("there")
+        """.trimIndent()
+        assertEquals("hello there\n", run(source))
+    }
+
+    @Test
+    fun `a branch that ends in a when, after a value it names, keeps the branches after it`() {
+        val source = """
+            describe(x: Option<Int>, flag: Boolean): String = when (x) {
+              Some(n) if n > 0 -> {
+                doubled = n * 2
+                when (flag) {
+                  true -> "big " + doubled.toString()
+                  false -> "small " + doubled.toString()
+                }
+              }
+              _ if flag -> "flagged"
+              _ -> "other"
+            }
+            main() = println([describe(Some(2), true), describe(None, true), describe(None, false), describe(Some(0), false)].joinToString(" "))
+        """.trimIndent()
+        assertEquals("big 4 flagged other other\n", run(source))
+    }
+
+    @Test
     fun `a type whose cases carry nothing has its values, in order, and each its name`() {
         val source = """
             type Level { Debug, Info, Warn }
