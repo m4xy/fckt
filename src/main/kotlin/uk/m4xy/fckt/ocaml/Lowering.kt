@@ -332,7 +332,8 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         return ordered.flatMap { node ->
             currentPath = path
             when (node) {
-                is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems)))
+                is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems))) +
+                    if (node.name in hidden) listOf(StructureChild.ModuleDef(ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(outerAlias(node.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(moduleName(node.simpleName))))) else emptyList()
                 is Decl.Spec -> StructureElement.build<Unit> {
                     moduleType(node.simpleName) { specItems(node) }
                     if (node in program.effects) handledEffect(node)
@@ -543,6 +544,8 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 functorParams(inner)?.let { params = it }
                 signatureItems(inner)
             }
+            // Its alias, where one of its name further in hides it, as the structure has.
+            if (inner.name in hidden) sigModule(outerAlias(inner.simpleName)) { this.alias = moduleName(inner.simpleName) }
             currentPath = path
         }
         for (type in types) {
@@ -588,8 +591,32 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         val parts = full.split('.')
         val module = parts.dropLast(1)
         val common = module.zip(currentPath).takeWhile { (a, b) -> a == b }.size
+        // Where a module of the same name nearer here hides the one it starts from, its alias.
+        module.getOrNull(common)?.let { first ->
+            val outer = module.take(common + 1).joinToString(".")
+            val nearer = (common + 1..currentPath.size).any { k -> (currentPath.take(k) + first).joinToString(".").let { it != outer && it in moduleNames } }
+            if (nearer && outer in hidden) return (listOf(outerAlias(first)) + module.drop(common + 1).map(::moduleName) + transform(parts.last())).joinToString(".")
+        }
         return (module.drop(common).map(::moduleName) + transform(parts.last())).joinToString(".")
     }
+
+    /** Every module's full name. */
+    private val moduleNames: Set<String> by lazy { program.root.filterIsInstance<Decl.Module>().flatMap { modulesIn(it) }.map { it.name }.toSet() }
+
+    /**
+     * The modules that one of the same name, further inside the module they're in, hides from the
+     * code in it, as uk.m4xy.kiln.fckt hides fckt, the standard library's, in uk.m4xy.kiln: each
+     * has an alias beside it, which that code names it by.
+     */
+    private val hidden: Set<String> by lazy {
+        moduleNames.filter { t ->
+            val parent = t.substringBeforeLast('.', "")
+            moduleNames.any { u -> u != t && u.substringAfterLast('.') == t.substringAfterLast('.') && u.count { it == '.' } > t.count { it == '.' } && (parent.isEmpty() || u.startsWith("$parent.")) }
+        }.toSet()
+    }
+
+    /** The alias of a module [name] that another of its name may hide. */
+    private fun outerAlias(name: String) = "Fk_outer_" + moduleName(name)
 
     /** A module's OCaml name, which must be capitalised: a package's folder, `geometry`, is `Geometry`. */
     private fun moduleName(name: String) = name.replaceFirstChar { it.uppercaseChar() }

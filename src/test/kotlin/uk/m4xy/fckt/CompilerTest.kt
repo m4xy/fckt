@@ -2129,6 +2129,24 @@ class CompilerTest {
     }
 
     @Test
+    fun `a package named as one further out still names that one`() {
+        assumeTrue(ocaml != null, "ocaml isn't installed")
+        val dir = kotlin.io.path.createTempDirectory("fckt-hidden").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent() + "\n")
+        try {
+            write("util/Word.fk", "type Word(text: String)")
+            write("util/Words.fk", "module Words {\n  shout(w: Word): String = w.text.uppercase()\n}")
+            // app.util, which OCaml would take app's code's util to be.
+            write("app/util/Local.fk", "module Local {\n  here: Int = 1\n}")
+            write("app/Shouting.fk", "import util.Words\nimport util.Word\nimport app.util.Local\n\nmodule Shouting {\n  loud(text: String): String = Words.shout(Word(text)) + \"\${Local.here}\"\n}")
+            write("main.fk", "import app.Shouting\nmain() = assertEquals(\"HI1\", Shouting.loud(\"hi\"))")
+            assertEquals("", runOcaml(compile(File(dir, "main.fk"), listOf(dir))))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a folder given twice, however it's written, is one folder`() {
         val dir = kotlin.io.path.createTempDirectory("fckt-twice").toFile()
         try {
