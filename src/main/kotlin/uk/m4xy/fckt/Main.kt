@@ -9,6 +9,7 @@ private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [--other-projec
        fckt --library <interface> -o <file.ml> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... <package>...
        fckt --test <dir> --marker <annotation> --runner <module> [--fixtures <annotation>] [--runner-tests] [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
        fckt --core -o <file.ml>
+       fckt --declarations <file.fk>
        fckt --std-path
        fckt --version
 
@@ -36,7 +37,9 @@ uk.m4xy.fktests.api.Test for fk-tests's, to one program that runs each with --ru
 uk.m4xy.fktests.runner.Runner for fk-tests-runner's; in modules, they're in sections. With
 --fixtures, a test runs inside the functions that annotation lists on it, and on its sections:
 uk.m4xy.fktests.api.Fixtures for fk-tests's. Tests can't use the runner, unless they're its own:
---runner-tests. Building projects is kiln's job."""
+--runner-tests. fckt --declarations prints the names a file declares at its top level, a line
+each, as it reads them, without checking them: what a build tool needs to know of a script it
+adds to. Building projects is kiln's job."""
 
 fun main(args: Array<String>) {
     var input: String? = null
@@ -79,6 +82,21 @@ fun main(args: Array<String>) {
             "--fixtures" -> fixtures = args.getOrNull(i++) ?: usage()
             "--core" -> core = true
             "--no-std" -> noStd = true
+            "--declarations" -> {
+                val file = File(args.getOrNull(i++) ?: usage())
+                if (!file.isFile) {
+                    System.err.println("fckt: no such file: ${file.path}")
+                    exitProcess(2)
+                }
+                val decls = try {
+                    uk.m4xy.fckt.syntax.Parser.parse(file.readText(), file.path).decls
+                } catch (e: CompileError) {
+                    for (error in e.errors) System.err.println(error.toString())
+                    exitProcess(1)
+                }
+                decls.forEach { println(it.simpleName) }
+                exitProcess(0)
+            }
             "--std-path" -> {
                 println(shippedStd()?.path ?: run { System.err.println("fckt: this fckt has no standard library beside it"); exitProcess(2) })
                 exitProcess(0)

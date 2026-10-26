@@ -1257,7 +1257,8 @@ class CompilerTest {
         val specs = source.substringBefore("// A module")
         assertContains(error(specs + "module Plain { x = 1 }\nv = Plain"), "Plain is a module, which is a value only of a spec it follows: module Plain : Spec { ... }")
         assertContains(error(specs + "v: List<Plugin> = [Tests]"), "Tests is a functor; give it modules first: Tests(...)")
-        assertContains(error(specs + "spec Sized { type T }\nf(s: Sized): Int = 1"), "Sized has types of its own, T, which a value of it couldn't say")
+        assertContains(error(specs + "spec Sized { type T }\nf(s: Sized): Int = 1"), "a Sized value says what its T is, in order: Sized<T>")
+        assertContains(error(specs + "spec Boxed { type B<A> }\nf(s: Boxed<Int>): Int = 1"), "Boxed's B takes type parameters, so a value of Boxed can't say what it is yet")
         assertContains(error(specs + "f(c: Console): Int = 1"), "'Console' is an effect")
         // A value shows only its spec, so what it does must be what the spec says it may.
         assertContains(
@@ -1265,6 +1266,54 @@ class CompilerTest {
             "Loud can't be a Reporting value: its shown does @Console",
         )
         assertContains(error(specs + "p: Plugin = Docs\nx = p.missing()"), "Plugin has no method 'missing'")
+    }
+
+    @Test
+    fun `a value of a spec with types of its own says what they are`() {
+        val source = """
+            spec Format {
+              type T
+              of(value: T): String
+              read(text: String): Result<T, String>
+              both<B>(other: B, value: T): (B, T) = (other, value)
+            }
+
+            type Point(x: Int, y: Int)
+
+            module PointText : Format {
+              type T = Point
+              of(value: Point): String = "${'$'}{value.x},${'$'}{value.y}"
+              read(text: String): Result<Point, String> = when (text.split(",")) {
+                [x, y] -> Ok(Point(x.toInt(), y.toInt()))
+                else -> Error("not a point: ${'$'}text")
+              }
+            }
+
+            module Upper : Format {
+              type T = String
+              of(value: String): String = value.uppercase()
+              read(text: String): Result<String, String> = Ok(text.lowercase())
+            }
+
+            // Written once, for any format, whatever its T.
+            readsBack<A>(format: Format<A>, value: A): Boolean = format.read(format.of(value)) == Ok(value)
+
+            main() = {
+              assert(readsBack(PointText, Point(1, 2)))
+              assert(readsBack(Upper, "shout"))
+              assert(!readsBack(Upper, "Shout"))
+              formats: List<Format<Point>> = [PointText]
+              assertEquals(["3,4"], formats.map { it.of(Point(3, 4)) })
+              assertEquals(("a", Point(5, 6)), PointText.both("a", Point(5, 6)))
+              f: Format<String> = Upper
+              assertEquals((1, "x"), f.both(1, "x"))
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+        assertContains(compile(source), "(module PointText : Format with type t = PointText.t)")
+        val specs = source.substringBefore("// Written once")
+        assertContains(error(specs + "f: Format<String> = PointText"), "Point")
+        assertContains(error(specs + "f(format: Format): Int = 1"), "a Format value says what its T is, in order: Format<T>")
     }
 
     @Test
@@ -2057,6 +2106,21 @@ class CompilerTest {
             assertContains(tax.message!!, "'tax' is internal to its project")
             val whole = assertFailsWith<CompileError> { compile(File(till, "whole.fk"), listOf(till), others = listOf(shop)) }
             assertContains(whole.message!!, "'Rounding' is internal to its project")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `a folder given twice, however it's written, is one folder`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-twice").toFile()
+        try {
+            File(dir, "src/p").mkdirs()
+            File(dir, "src/p/answer.fk").writeText("answer: Int = 42\n")
+            File(dir, "src/main.fk").writeText("import p.answer\nmain() = assertEquals(42, answer)\n")
+            val src = File(dir, "src")
+            compile(File(src, "main.fk"), listOf(src, File(dir, "src/../src"), src.absoluteFile))
+            compile(File(src, "main.fk"), listOf(src), others = listOf(File(dir, "src/p/..")))
         } finally {
             dir.deleteRecursively()
         }

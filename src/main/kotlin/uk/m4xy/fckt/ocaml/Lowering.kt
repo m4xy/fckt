@@ -390,8 +390,25 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
      * The spec [module] follows, as written from here: `Ordered`, or for `Ordered<Int>`,
      * `Ordered with type t = int`.
      */
-    /** [m] as a value of [spec]: `(module Quiet : Reporting)`. */
-    private fun packed(m: Decl.Module, spec: Decl.Spec): Gen = Gen.Lit("(module ${ref(m.name, ::moduleName)} : ${ref(spec.name) { it }})")
+    /** [m] as a value of [spec]: `(module Quiet : Reporting)`, or, with its types, `(module PointText : Format with type t = PointText.t)`. */
+    private fun packed(m: Decl.Module, spec: Decl.Spec): Gen {
+        val module = ref(m.name, ::moduleName)
+        return Gen.Lit("(module $module : ${packageType(spec, spec.types.map { "$module.${snake(it.name)}" })})")
+    }
+
+    /** A value of [spec]'s type, `Format with type t = point`: its own types as [args] say they are. */
+    private fun packageType(spec: Decl.Spec, args: List<String>): String =
+        ref(spec.name) { it } + spec.types.zip(args).joinToString("") { (t, arg) -> "${if (t == spec.types.first()) " with" else " and"} type ${snake(t.name)} = $arg" }
+
+    /**
+     * [value] of a value of [spec], which has types of its own: taken out of it by a function of its
+     * own, in which they're locally abstract, as OCaml won't take a module apart whose type has type
+     * variables in it, as a `Format<A>`'s may.
+     */
+    private fun memberOfValue(spec: Decl.Spec, value: String): Gen {
+        val names = spec.types.indices.map { "fk_t$it" }
+        return Gen.Lit("(let open_value ${names.joinToString(" ") { "(type $it)" }} (m : (module ${packageType(spec, names)})) = let module Value = (val m) in Value.$value in open_value)")
+    }
 
     private fun specText(module: String, spec: Decl.Spec): String {
         val fixed = spec.types.mapNotNull { t ->
@@ -703,7 +720,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"; "Nothing" -> helper(NOTHING)
             "Char" -> "int"; "Byte" -> "char"; "List" -> "list"; "Option" -> "option"; "Lazy" -> "Lazy.t"; "Result" -> "result"
             // A module that follows a spec, as a value.
-            else -> if (name.startsWith(Type.MODULE)) "(module ${ref(name.removePrefix(Type.MODULE)) { it }})"
+            else -> if (name.startsWith(Type.MODULE)) {
+                val spec = program.specTypes.keys.firstOrNull { it.name == name.removePrefix(Type.MODULE) }
+                return if (spec == null || spec.types.isEmpty()) "(module ${ref(name.removePrefix(Type.MODULE)) { it }})" else "(module ${packageType(spec, args.map { it.first })})"
+            }
             // A spec's own type, inside its module type.
             else if (name.startsWith(Type.SPEC_TYPE)) snake(name.removePrefix(Type.SPEC_TYPE)) else ref(name.removePrefix(Type.ABSTRACT), ::snake)
         }
@@ -882,7 +902,9 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 is MemberRef.Builtin -> gen(builtin(r.method, e.target, emptyList()))
                 is MemberRef.Module -> gen(packed(r.module, r.spec))
                 // What a module given as a value has: taken out of it, as its spec says it is.
-                is MemberRef.OfModule -> gen(Gen.Match(Gen.Src(e.target), listOf("(module Value : ${ref(r.spec.name) { it }})" to Gen.Id("Value.${snake(r.value.name)}"))))
+                is MemberRef.OfModule ->
+                    if (r.spec.types.isNotEmpty()) gen(Gen.App(memberOfValue(r.spec, snake(r.value.name)), listOf(Gen.Src(e.target))))
+                    else gen(Gen.Match(Gen.Src(e.target), listOf("(module Value : ${ref(r.spec.name) { it }})" to Gen.Id("Value.${snake(r.value.name)}"))))
             }
             // A type's own operator: the call it is.
             is Expr.Binary -> if (e.call != null) gen(Gen.Src(e.call!!)) else {

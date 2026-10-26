@@ -870,17 +870,23 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun lookupGlobal(name: String, pos: Pos?) = find(name, globals, pos)
     private fun lookupModule(name: String, pos: Pos?) = find(name, modules, pos)
 
-    /** Whether a module that follows [spec] can be a value of it: it has no types of its own. */
-    private fun valueSpec(spec: Decl.Spec): Boolean = !isEffect(spec) && spec.types.isEmpty() && spec.typeParams.isEmpty()
+    /** Whether a module that follows [spec] can be a value of it: its types, if it has any, take no type parameters. */
+    private fun valueSpec(spec: Decl.Spec): Boolean = !isEffect(spec) && spec.types.all { it.typeParams.isEmpty() } && spec.typeParams.isEmpty()
 
-    /** The type of a module that follows [spec], as a value: `Plugin`. */
-    private fun moduleType(spec: Decl.Spec, pos: Pos): Type {
+    /**
+     * The type of a module that follows [spec], as a value: `Plugin`; or, for a spec with types of
+     * its own, what they are, in order, as [args]: `Format<Point>`.
+     */
+    private fun moduleType(spec: Decl.Spec, pos: Pos, args: List<Type>): Type {
         if (isEffect(spec)) throw CompileError(pos, "'${spec.simpleName}' is an effect: a function does it, written @${spec.simpleName}, and a handler answers it; no value has its type")
-        if (spec.types.isNotEmpty()) {
-            throw CompileError(pos, "${spec.simpleName} has types of its own, ${spec.types.joinToString { it.name }}, which a value of it couldn't say, so it can't be a value's type yet")
+        spec.types.firstOrNull { it.typeParams.isNotEmpty() }?.let {
+            throw CompileError(pos, "${spec.simpleName}'s ${it.name} takes type parameters, so a value of ${spec.simpleName} can't say what it is yet")
         }
         if (spec.typeParams.isNotEmpty()) throw CompileError(pos, "${spec.simpleName} takes type parameters, so it can't be a value's type yet")
-        return Type.Con(Type.MODULE + spec.name)
+        if (args.size != spec.types.size) {
+            throw CompileError(pos, "a ${spec.simpleName} value says what its ${spec.types.joinToString(", ") { it.name }} ${if (spec.types.size == 1) "is" else "are"}, in order: ${spec.simpleName}<${spec.types.joinToString(", ") { it.name }}>")
+        }
+        return Type.Con(Type.MODULE + spec.name, args)
     }
 
     /**
@@ -892,7 +898,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (m.name in parameterModules) throw CompileError(pos, "${m.simpleName} is a functor's module, which can't be a value yet")
         val spec = moduleSpecs[m.name]
             ?: throw CompileError(pos, "${m.simpleName} is a module, which is a value only of a spec it follows: module ${m.simpleName} : Spec { ... }")
-        val type = moduleType(spec, pos)
+        // What its own types are: Point, for a Format whose T is.
+        val type = moduleType(spec, pos, spec.types.map { t -> typeOf(typeDecl("${m.name}.${t.name}") ?: throw CompileError(pos, "${m.simpleName} doesn't say what its ${t.name} is"), emptyList()) })
         for (value in spec.values) {
             val decl = globals["${m.name}.${value.name}"] ?: continue
             val done = (globalType(decl) as? Type.Fn)?.let { Type.effectNames(it.effects) }.orEmpty()
@@ -1253,8 +1260,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     typeOf(it, args)
                 }
                 ?: find(ref.name, specs, null)?.let { spec ->
-                    arity(0)
-                    moduleType(spec, ref.pos).also { typeNames[ref] = Type.MODULE + spec.name }
+                    moduleType(spec, ref.pos, args).also { typeNames[ref] = Type.MODULE + spec.name }
                 }
                 ?: find(ref.name, annotationTypes, null)?.let {
                     throw CompileError(ref.pos, "'${ref.name}' is an annotation, written @${ref.name}(...) before a declaration; no value has its type")
@@ -3441,7 +3447,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (receiver.name.startsWith(Type.MODULE)) {
             val spec = specs.getValue(receiver.name.removePrefix(Type.MODULE))
             val value = spec.values.firstOrNull { it.name == member.name } ?: return null
-            return MemberRef.OfModule(spec, value) to u.instantiate(specSchemes.getValue(spec).getValue(value.name))
+            // With the spec's own types as the value says they are.
+            val type = specView(u.instantiate(specSchemes.getValue(spec).getValue(value.name)), emptyMap()) { name, _ -> receiver.args[spec.types.indexOfFirst { it.name == name }] }
+            return MemberRef.OfModule(spec, value) to type
         }
         val record = records[receiver.name] ?: return null
         val index = record.fields.indexOfFirst { it.name == member.name }

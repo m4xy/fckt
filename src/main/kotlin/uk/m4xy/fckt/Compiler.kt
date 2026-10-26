@@ -402,17 +402,23 @@ private fun withUses(text: String, decls: List<Decl>): List<Pair<Decl, Set<Strin
  * OCaml module. Names are matched against what's in a folder, so `ratios.fk` is never taken for `Ratios.fk`.
  */
 private class Packages(
-    private val own: List<File>,
+    own: List<File>,
     private val entry: File?,
     private val libraries: List<Library> = emptyList(),
     private val standardUnit: String? = null,
     /** A standard library file's text, by its path, in place of what's bundled: as an editor has it. */
     private val standardText: Pair<String, String>? = null,
     /** Other projects' sources, compiled with the program, whose internal declarations it doesn't see. */
-    private val others: List<File> = emptyList(),
+    others: List<File> = emptyList(),
 ) {
+    /** The program's own folders, each once, however it was given: src, and src's full path, are one folder. */
+    private val own: List<File> = own.distinctBy { it.canonicalFile }
+
+    /** Other projects' folders, each once, and none of the program's own. */
+    private val others: List<File> = others.distinctBy { it.canonicalFile }.filter { o -> this.own.none { it.canonicalFile == o.canonicalFile } }
+
     /** The folders packages are in: the program's own project's, and others'. */
-    private val roots: List<File> = own + others
+    private val roots: List<File> = this.own + this.others
 
     private val listings = mutableMapOf<List<String>, List<File>>()
 
