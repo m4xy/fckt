@@ -110,6 +110,7 @@ private class Scope(val parent: Scope?) {
 class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private val projectOf = file.projectOf
     private val importsFor = file.importsFor
+    private val apart = file.apart
 
     private val u = Unifier()
 
@@ -651,6 +652,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** For a name that isn't found: the imports that would bring in one of that name, if any would. */
     private fun importHint(name: String?): String {
+        apart[name]?.let { return "; $it declares it, but it has a main of its own, so it's a program apart from this one" }
         val imports = name?.let(importsFor).orEmpty()
         return if (imports.isEmpty()) "" else "; " + imports.joinToString(", or ") { "import $it" } + " has one"
     }

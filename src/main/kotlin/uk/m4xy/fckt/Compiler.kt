@@ -609,13 +609,18 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
         .map { Import(Pos(1, 1, file), it.removeSuffix(".*").split('.'), wildcard = it.endsWith(".*")) }
 
     fun packageContents(pkg: List<String>) = contents.getOrPut(pkg) { mutableListOf() }
+    // What the files beside the program's that are programs apart declare.
+    val apart = mutableMapOf<String, String>()
 
     // A file with a main is a program of its own, so what it declares isn't its package's.
     fun declsOf(pkg: List<String>) = packageDecls.getOrPut(pkg) {
         packages.declarationFiles(pkg).flatMap { source ->
             val code = source.read()
             val parsed = source.parse(code)
-            if (parsed.decls.any { it is Decl.Function && it.name == "main" }) return@flatMap emptyList()
+            if (parsed.decls.any { it is Decl.Function && it.name == "main" }) {
+                if (pkg.isEmpty()) parsed.decls.forEach { apart.putIfAbsent(it.name, source.path ?: "a file") }
+                return@flatMap emptyList()
+            }
             imports[source.path] = parsed.imports[source.path].orEmpty() + defaults(source.path)
             withUses(code, parsed.decls).map { (d, uses) -> Triple(d, uses, source) }
         }
@@ -809,7 +814,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
     // Every package on the way to one with contents has a module too.
     for (pkg in contents.keys.toList()) for (n in 1 until pkg.size) packageContents(pkg.take(n))
     val all = withSpecs(copyEffects(tree(emptyList()) + main.decls, linkedImports), linkedImports)
-    return Linked(SourceFile(all, linkedImports, packages::projectOf, packages::importsFor), all.takeLast(main.decls.size))
+    return Linked(SourceFile(all, linkedImports, packages::projectOf, packages::importsFor, apart), all.takeLast(main.decls.size))
 }
 
 /**

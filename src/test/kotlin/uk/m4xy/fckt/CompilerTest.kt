@@ -2112,6 +2112,23 @@ class CompilerTest {
     }
 
     @Test
+    fun `what a file beside the program declares is the program's, unless it has a main of its own`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-apart").toFile()
+        try {
+            File(dir, "build.fk").writeText("project: String = \"shop\"\n")
+            File(dir, "main.fk").writeText("main() = assertEquals(\"shop\", project)\n")
+            compile(File(dir, "main.fk"), listOf(dir))
+            File(dir, "build.fk").writeText("project: String = \"shop\"\nmain() = Unit\n")
+            assertContains(
+                assertFailsWith<CompileError> { compile(File(dir, "main.fk"), listOf(dir)) }.message!!,
+                "unknown name 'project'; ${File(dir, "build.fk").path} declares it, but it has a main of its own, so it's a program apart from this one",
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a folder given twice, however it's written, is one folder`() {
         val dir = kotlin.io.path.createTempDirectory("fckt-twice").toFile()
         try {
