@@ -927,6 +927,11 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                     }
                 }
                 is MemberRef.Builtin -> gen(builtin(r.method, e.target, emptyList()))
+                is MemberRef.Values -> {
+                    val case = (e.type!!.prune() as Type.Con).args.single()
+                    gen(Gen.ListOf(r.cases.map { construct(it, case, emptyList()) }))
+                }
+                is MemberRef.CaseName -> gen(Gen.Match(Gen.Src(e.target), r.cases.map { barePattern(it) to Gen.Str(it.name) }))
                 is MemberRef.Module -> gen(packed(r.module, r.spec))
                 // What a module given as a value has: taken out of it, as its spec says it is.
                 is MemberRef.OfModule ->
@@ -1231,6 +1236,12 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     /** A shared case's tag, named after the sealed type that declares it, in the functor if it's a copy: `Alphabet_A`. */
     private fun tagName(origin: Decl.Sealed, variant: VariantDef) =
         "${(program.copyOrigins[origin.name] ?: origin.name).replace('.', '_')}_${variant.name}"
+
+    /** A case that carries nothing, as a pattern. */
+    private fun barePattern(ref: ConstructorRef.Variant): String {
+        val origin = ref.sealed!!
+        return if (origin.name in program.polymorphic) "`" + tagName(origin, ref.variant!!) else ctorName(ref)
+    }
 
     /** An ordinary constructor as written from here: `Circle` inside Shapes, `Shapes.Circle` outside. */
     private fun ctorName(ref: ConstructorRef.Variant): String =

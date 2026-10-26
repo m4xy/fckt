@@ -2182,6 +2182,24 @@ class CompilerTest {
     }
 
     @Test
+    fun `a type whose cases carry nothing has its values, in order, and each its name`() {
+        val source = """
+            type Level { Debug, Info, Warn }
+            type Alphabet { A, B, E }
+            type Vowel { Alphabet.A, Alphabet.E }
+            main() = {
+              println(Level.values.map { it.name }.joinToString(" "))
+              println(Info.name)
+              println(Vowel.values.map { it.name }.joinToString(" "))
+            }
+        """.trimIndent()
+        assertEquals("Debug Info Warn\nInfo\nA E\n", run(source))
+        assertContains(error("type Shape { Dot, Circle(radius: Int) }\nshapes = Shape.values"), "only a type whose cases carry nothing has values and name, and Shape's Circle carries radius")
+        // A type's own name for a case is its own.
+        assertEquals("loud\n", run("type Level { Debug, Loud }\nLevel.name: String = \"loud\"\nmain() = println(Loud.name)"))
+    }
+
+    @Test
     fun `a library is compiled once, and programs are checked against its interface`() {
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val dir = kotlin.io.path.createTempDirectory("fckt-libraries").toFile()

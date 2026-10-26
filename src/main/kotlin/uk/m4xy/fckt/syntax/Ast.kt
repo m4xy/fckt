@@ -660,6 +660,12 @@ sealed interface MemberRef {
     /** `Alphabet.A`: a case named through its sealed type. */
     data class Case(val ref: ConstructorRef) : MemberRef
 
+    /** `Level.values`: every case of a type whose cases carry nothing, in the order it declares them. */
+    data class Values(val cases: List<ConstructorRef.Variant>) : MemberRef
+
+    /** `level.name`: the name of the case a value of such a type is, as `"Debug"`. */
+    data class CaseName(val cases: List<ConstructorRef.Variant>) : MemberRef
+
     /** `reporting.Quiet`: a module named through its package, as a value of the spec it follows. */
     data class Module(val module: Decl.Module, val spec: Decl.Spec) : MemberRef
 

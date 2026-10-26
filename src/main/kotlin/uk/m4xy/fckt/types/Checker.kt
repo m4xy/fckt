@@ -3471,6 +3471,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             return globalType(it)
         }
         qualifiedCase(e, scope)?.let { qualifier ->
+            caseValues(e, qualifier)?.let { return it }
             val shape = constructor(e.name, expected, e.pos, asValue = true, qualifier = qualifier)
                 ?: throw CompileError(e.pos, "$qualifier has no '${e.name}'")
             e.resolved = MemberRef.Case(shape.ref)
@@ -3507,8 +3508,34 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             e.resolved = MemberRef.Builtin(it.translation)
             return it.result
         }
+        // `level.name`: which case it is, as its name, when no case carries anything.
+        if (e.name == "name") sealedName(receiver)?.let { sealeds.getValue(it) }?.takeIf { s -> caseDecls.getValue(s.name).all { it.fields.isEmpty() } }?.let { sealed ->
+            e.resolved = MemberRef.CaseName(bareCases(sealed, e.pos))
+            return Type.Con("String")
+        }
         if (receiver is Type.Var) throw CompileError(e.pos, "can't tell what '${e.name}' is: the receiver's type isn't known here; annotate it")
         throw noField(e, receiver)
+    }
+
+    /**
+     * `Level.values`: every case of [qualifier], a type whose cases carry nothing, in the order it
+     * declares them; null when [qualifier] isn't such a type, or [e] names one of its cases.
+     */
+    private fun caseValues(e: Expr.Member, qualifier: String): Type? {
+        if (e.name != "values") return null
+        val sealed = lookupSealed(qualifier, null) ?: return null
+        if (caseDecls.getValue(sealed.name).any { it.name == e.name }) return null
+        e.resolved = MemberRef.Values(bareCases(sealed, e.pos))
+        return Type.Con("List", listOf(Type.Con(sealed.name, sealed.typeParams.map { u.fresh() })))
+    }
+
+    /** [sealed]'s cases, which carry nothing, as `values` and `name` need them to. */
+    private fun bareCases(sealed: Decl.Sealed, pos: Pos): List<ConstructorRef.Variant> {
+        val cases = caseDecls.getValue(sealed.name)
+        cases.firstOrNull { it.fields.isNotEmpty() }?.let {
+            throw CompileError(pos, "only a type whose cases carry nothing has values and name, and ${sealed.simpleName}'s ${it.name} carries ${it.fields.joinToString(", ") { f -> f.name }}")
+        }
+        return cases.map { ConstructorRef.Variant(it.origin, it.variant, it.name) }
     }
 
     /** That [receiver] has no field [e] names; if some of its cases do, which, and how to get at it. */
