@@ -18,8 +18,8 @@ module Sets {
   Set<A>.contains(item: A): Boolean = this.items.containsKey(item)
 
   // It with item, or without it.
-  Set<A>.plus(item: A): Set<A> = Set(this.items.put(item, Unit))
-  Set<A>.minus(item: A): Set<A> = Set(this.items.remove(item))
+  operator Set<A>.plus(item: A): Set<A> = Set(this.items.put(item, Unit))
+  operator Set<A>.minus(item: A): Set<A> = Set(this.items.remove(item))
   // The items in either, in both, or in it but not other: through the trees, not an item at a time.
   Set<A>.union(other: Set<A>): Set<A> = Set(this.items.putAll(other.items))
   Set<A>.intersect(other: Set<A>): Set<A> = Set(this.items.intersectKeys(other.items))

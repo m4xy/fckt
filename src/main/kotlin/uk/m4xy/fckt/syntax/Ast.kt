@@ -171,6 +171,8 @@ sealed interface Decl {
         val property: Boolean = false,
         val external: String? = null,
         override val annotations: List<Annotation> = emptyList(),
+        /** `operator Set<A>.plus(other: Set<A>)`: what `+` on a Set calls, as [OPERATOR_METHODS] names it. */
+        val isOperator: Boolean = false,
     ) : Decl {
         /** The name it's called by: `second` for `List$second`. */
         val methodName: String get() = simpleName.substringAfter('$')
@@ -396,9 +398,15 @@ sealed class Expr {
 
     class Binary(override val pos: Pos, val op: String, val left: Expr, val right: Expr) : Expr() {
         var resolved: BinaryRef? = null
+
+        /** Set instead when the operator is [left]'s type's own: `a + b` is `a.plus(b)`. */
+        var call: Call? = null
     }
 
-    class Unary(override val pos: Pos, val op: String, val operand: Expr) : Expr()
+    class Unary(override val pos: Pos, val op: String, val operand: Expr) : Expr() {
+        /** Set when the operator is [operand]'s type's own: `-a` is `a.unaryMinus()`. */
+        var call: Call? = null
+    }
 
     /**
      * `target = value`, as a statement: changes a `var` local or a record's `var` field. `x += 1`
@@ -658,6 +666,13 @@ sealed interface MemberRef {
 
     data class Builtin(val method: uk.m4xy.fckt.types.Builtin) : MemberRef
 }
+
+/**
+ * The method an operator calls on a type that has it as its own, an `operator` extension: `a + b`
+ * is `a.plus(b)`, and `-a` is `a.unaryMinus()`. Numbers, strings and lists have theirs built in.
+ */
+val OPERATOR_METHODS = mapOf("+" to "plus", "-" to "minus", "*" to "times", "/" to "div", "%" to "rem")
+const val UNARY_MINUS = "unaryMinus"
 
 /** How a binary operator was typed: the OCaml operator and which operands need int→float. */
 data class BinaryRef(val ocamlOp: String, val promoteLeft: Boolean, val promoteRight: Boolean)

@@ -155,6 +155,17 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 is Decl.Spec -> d.copy(isInternal = true)
             }
         }
+        // `operator Set<A>.plus(...)`: what `+` on a Set calls. A soft keyword, as internal is.
+        if (at(T.IDENT) && peek.text == "operator" && peekAt(1).kind !in setOf(T.LPAREN, T.COLON, T.ASSIGN, T.DOT, T.LT)) {
+            val at = next().pos
+            val d = decl() as? Decl.Function ?: throw CompileError(at, "only a function can be an operator")
+            val arity = if (d.methodName == UNARY_MINUS) 0 else if (d.methodName in OPERATOR_METHODS.values) 1 else {
+                throw CompileError(d.pos, "there's no operator '${d.methodName}': an operator is one of ${(OPERATOR_METHODS.values + UNARY_MINUS).joinToString(", ")}")
+            }
+            if (!d.extension) throw CompileError(d.pos, "an operator is a type's, so it's an extension: operator Type.${d.methodName}(...)")
+            if (d.params.orEmpty().size - 1 != arity) throw CompileError(d.pos, "${d.methodName} takes ${if (arity == 0) "no parameters" else "one parameter, the right-hand side"}")
+            return d.copy(isOperator = true)
+        }
         if (accept(T.PRIVATE) != null) {
             if (at(T.IDENT) && peek.text == "internal") throw error("a private declaration is hidden already; it can't also be internal")
             if (at(T.IDENT) && peek.text == "opaque") throw error("a private type is hidden already; it can't also be opaque")

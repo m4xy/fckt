@@ -866,6 +866,62 @@ class CompilerTest {
     }
 
     @Test
+    fun `a type's operators are its operator extensions`() {
+        val source = """
+            type Money(pence: Int)
+
+            // Used before they're declared, and from another module.
+            module Tills {
+              total(items: List<Money>): Money = items.fold(Money(0)) { sum, m -> sum + m }
+              owed(paid: Money, price: Money): Money = -(paid - price)
+            }
+
+            module Moneys {
+              operator Money.plus(other: Money): Money = Money(this.pence + other.pence)
+              operator Money.minus(other: Money): Money = Money(this.pence - other.pence)
+              operator Money.times(n: Int): Money = Money(this.pence * n)
+              operator Money.div(n: Int): Money = Money(this.pence / n)
+              operator Money.rem(n: Int): Money = Money(this.pence % n)
+              operator Money.unaryMinus(): Money = Money(-this.pence)
+            }
+
+            main() = {
+              assertEquals(Money(350), Tills.total([Money(100), Money(250)]))
+              assertEquals(Money(30), Tills.owed(Money(100), Money(130)))
+              // As numbers' do: * before +, and left to right.
+              assertEquals(Money(700), Money(100) + Money(200) * 3)
+              assertEquals(Money(25), Money(100) / 4 - Money(0))
+              assertEquals(Money(1), Money(7) % 2)
+              var m = Money(5)
+              m += Money(1)
+              assertEquals(Money(6), m)
+              // Numbers', strings' and lists' are as they were.
+              assertEquals(7, 3 + 4)
+              assertEquals("ab", "a" + "b")
+              assertEquals([1, 2], [1] + [2])
+              assertEquals(setOf([1, 2]), setOf([1]) + 2 - 3)
+              assertEquals(setOf([2]), setOf([1, 2]) - 1)
+            }
+        """
+        assertEquals("", run(source))
+    }
+
+    @Test
+    fun `an operator is an extension marked operator, of one of the operators' names`() {
+        fun error(source: String) = assertFailsWith<CompileError> { compile(source.trimIndent()) }.message!!
+        assertContains(
+            error("type Money(pence: Int)\nMoney.plus(other: Money): Money = Money(this.pence + other.pence)\nmain() = assertEquals(Money(2), Money(1) + Money(1))"),
+            "its plus isn't an operator; mark it operator",
+        )
+        assertContains(error("type Money(pence: Int)\nmain() = assertEquals(Money(2), Money(1) * 2)"), "'*' can't be applied to Money and Int: there's no operator times")
+        assertContains(error("type Money(pence: Int)\noperator Money.add(other: Money): Money = this\nmain() = Unit"), "there's no operator 'add'")
+        assertContains(error("type Money(pence: Int)\noperator plus(a: Money, b: Money): Money = a\nmain() = Unit"), "an operator is a type's, so it's an extension")
+        assertContains(error("type Money(pence: Int)\noperator Money.plus(): Money = this\nmain() = Unit"), "plus takes one parameter")
+        // A soft keyword: still a name.
+        assertEquals("", run("operator(n: Int): Int = n\nmain() = assertEquals(1, operator(1))"))
+    }
+
+    @Test
     fun `sets hold each item once, in order, equal by their items`() {
         val source = """
             main() = {
@@ -2007,6 +2063,26 @@ class CompilerTest {
     }
 
     @Test
+    fun `a spec's default names what it does where the spec is, in a module elsewhere that follows it`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-spec-defaults").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent() + "\n")
+        try {
+            write("src/testing/Root.fk", "type Root(folder: String)")
+            write("src/testing/Configuration.fk", "spec Configuration {\n  roots(): List<Root> = [Root(\"test\")]\n  extra(): List<String> = []\n}")
+            write("src/testing/Runs.fk", "module Runs {\n  folders(roots: List<Root>): List<String> = roots.map { it.folder }\n}")
+            // Root is beside Configuration, but not imported here, where the default is copied.
+            write("src/main.fk", "import testing.Configuration\nimport testing.Runs\nmodule Mine : Configuration {\n  extra(): List<String> = [\"more\"]\n}\nmain() = assertEquals([\"test\", \"more\"], Runs.folders(Mine.roots()) + Mine.extra())")
+            val src = File(dir, "src")
+            compile(File(src, "main.fk"), listOf(src))
+            // What the module itself has sees only what its own file does.
+            write("src/main.fk", "import testing.Configuration\nmodule Mine : Configuration {\n  extra(): List<String> = [Root(\"x\").folder]\n}\nmain() = assertEquals([\"x\"], Mine.extra())")
+            assertContains(assertFailsWith<CompileError> { compile(File(src, "main.fk"), listOf(src)) }.message!!, "Root")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a library is compiled once, and programs are checked against its interface`() {
         assumeTrue(ocaml != null, "ocaml isn't installed")
         val dir = kotlin.io.path.createTempDirectory("fckt-libraries").toFile()
@@ -2039,6 +2115,7 @@ class CompilerTest {
 
                 module Moneys {
                   zero: Money = Money(0)
+                  operator Money.plus(other: Money): Money = Money(this.pence + other.pence)
                   Money.pounds(): String = "£${'$'}{this.pence / 100}.${'$'}{pad(this.pence % 100)}"
                   sum(items: List<Money>, start: Money = zero): Money = items.fold(start, (a, b) -> Money(a.pence + b.pence))
                   twice<A>(f: (A) -> A, x: A): A = f(f(x))
@@ -2062,6 +2139,8 @@ class CompilerTest {
             assertFalse("pad" in moneys)
             // A method's receiver's type parameters are the receiver's, as reading it finds them again.
             assertContains(moneys, "  List<A>.second(): Option<A>\n")
+            // An operator is still one.
+            assertContains(moneys, "  operator Money.plus(other: Money): Money\n")
             // Nor what's internal: no other project sees it.
             assertFalse("pence(" in moneys)
             assertFalse(File(units, "interface/uk/m4xy/units/Rounding.fki").exists())
@@ -2082,7 +2161,7 @@ class CompilerTest {
                 module Wallets {
                   open(owner: String): Wallet = Wallet(owner, zero)
                   Wallet.balance: Money = this.cash
-                  Wallet.deposit(amount: Money): Wallet = Wallet(this.owner, sum([this.cash, amount]))
+                  Wallet.deposit(amount: Money): Wallet = Wallet(this.owner, this.cash + amount)
                   @Fail Wallet.spend(amount: Money): Wallet =
                     if (amount.pence > this.cash.pence) fail("${'$'}{this.owner} can't spend ${'$'}{amount.pounds()}")
                     else Wallet(this.owner, Money(this.cash.pence - amount.pence))

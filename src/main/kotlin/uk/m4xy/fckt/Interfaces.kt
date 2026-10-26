@@ -126,6 +126,7 @@ internal object Interfaces {
             }
             is Decl.Alias -> out.append("type ").append(d.name).append(typeParams(d.typeParams)).append(" = ").append(type(d.target))
             is Decl.Function -> {
+                if (d.isOperator) out.append("operator ")
                 if (d.external != null) out.append("external ")
                 val params = if (d.extension) {
                     out.append(receiver(d.params!!.first().type!!)).append('.')

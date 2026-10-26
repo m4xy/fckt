@@ -4,6 +4,8 @@ import uk.m4xy.fckt.ocaml.snake
 import uk.m4xy.fckt.syntax.Annotation
 import uk.m4xy.fckt.syntax.Application
 import uk.m4xy.fckt.syntax.Arg
+import uk.m4xy.fckt.syntax.OPERATOR_METHODS
+import uk.m4xy.fckt.syntax.UNARY_MINUS
 import uk.m4xy.fckt.syntax.BinaryRef
 import uk.m4xy.fckt.syntax.CallRef
 import uk.m4xy.fckt.syntax.CompileError
@@ -475,12 +477,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         } catch (e: CompileError) {
             errors += e
         }
-        for (group in groups) {
+        val checked = groups.flatMap { group ->
             try {
                 checkGroup(group)
             } catch (e: CompileError) {
                 errors += e
                 failed(group)
+                listOf(group)
             }
         }
         for (app in applications.keys) recover { checkArgumentTypes(app) }
@@ -502,7 +505,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return Program(
             records = records.values.toList(),
             sealeds = sealeds.values.toList(),
-            groups = groups.filter { g -> g.decls.none { it.external != null } },
+            groups = checked.filter { g -> g.decls.none { it.external != null } },
             ambiguousLabels = labelCounts.filterValues { it > 1 }.keys,
             ambiguousConstructors = variantsByName.mapValues { (_, v) -> v.filter { it.first.name !in copyOrigins } }
                 .filterValues { v -> v.size > 1 && v.any { it.first.name !in polymorphic } }.keys,
@@ -676,6 +679,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return (currentPath.size downTo depth).toList() + if (full) listOf(0) else emptyList()
     }
 
+    /**
+     * The spec whose default is being checked, if one is: in a module that follows it, written in
+     * another file, the spec's, which is the current file, as the default is written there.
+     */
+    private fun copiedFrom(): Decl.Spec? {
+        val module = modules[currentPath.joinToString(".")] ?: return null
+        if (module.isPackage || module.pos.file == currentFile || enclosingApplication(currentPath) != null) return null
+        val spec = moduleSpecs[module.name] ?: return null
+        // Its own default, or one of a spec it builds on.
+        return if (spec.pos.file == currentFile) spec else specs.values.firstOrNull { it.pos.file == currentFile }
+    }
+
     /** Whether the current module is [path] or inside it. */
     private fun inside(path: List<String>) = currentPath.take(path.size) == path
 
@@ -749,6 +764,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             currentPath = applications.getValue(app).first.name.split('.') + currentPath.drop(app.split('.').size)
             try {
                 find(name, table, pos)?.takeIf { d -> parameterModules.none { d.name == it || d.name.startsWith("$it.") } }?.let { return it }
+            } finally {
+                currentPath = saved
+            }
+        }
+        // A spec's default, in a module that follows it, names what it names where the spec is:
+        // TestRoot, beside TestConfiguration, in a build script's module that follows it.
+        copiedFrom()?.let { spec ->
+            val saved = currentPath
+            currentPath = spec.path
+            try {
+                find(name, table, pos)?.let { return it }
             } finally {
                 currentPath = saved
             }
@@ -949,8 +975,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 is Expr.StringLit -> x.parts.filterIsInstance<StringPart.Interpolated>().map { it.expr }
                 is Expr.ListLit -> x.items
                 is Expr.Member -> listOf(x.target)
-                is Expr.Binary -> listOf(x.left, x.right)
-                is Expr.Unary -> listOf(x.operand)
+                is Expr.Binary -> x.call?.let { listOf(it) } ?: listOf(x.left, x.right)
+                is Expr.Unary -> x.call?.let { listOf(it) } ?: listOf(x.operand)
                 is Expr.Assign -> listOf(x.target, x.value)
                 is Expr.Lambda -> listOf(x.body)
                 is Expr.Pipe -> listOf(x.value, x.function)
@@ -2411,6 +2437,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 if (ref.startsWith(".")) return@flatMap (extensions[ref.drop(1)].orEmpty().filter { visible(it) && inScope(it) } + defaultsUsed(ref.drop(1))).also { found ->
                     guessed += found.filter { it.extension && onlyAsPackageMate(it) == true }
                 }
+                // An operator, which may be a type's own.
+                if (ref.startsWith("operator ")) return@flatMap extensions[ref.removePrefix("operator ")].orEmpty().filter { it.isOperator && visible(it) && inScope(it) }.also { found ->
+                    guessed += found.filter { onlyAsPackageMate(it) == true }
+                }
                 // A method's name may be any extension of that name.
                 // A module used as a handler or a value: its functions.
                 (lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) || valueSpec(it) } == true }
@@ -2467,11 +2497,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 if (!known) into += ".${e.name}"
                 dotted(e, null)?.takeIf { it.substringBefore('.') !in bound }?.let { into += it } // possibly Module.member
             }
-            is Expr.Binary -> {
+            // Once checked, an operator that's its operand's type's own is the call it was made;
+            // before, it may be any such operator.
+            is Expr.Binary -> e.call?.let { go(it) } ?: run {
                 go(e.left)
                 go(e.right)
+                if (e.resolved == null) OPERATOR_METHODS[e.op]?.let { into += "operator $it" }
             }
-            is Expr.Unary -> go(e.operand)
+            is Expr.Unary -> e.call?.let { go(it) } ?: run {
+                go(e.operand)
+                if (e.op == "-" && e.type == null) into += "operator $UNARY_MINUS"
+            }
             is Expr.Assign -> {
                 go(e.target)
                 go(e.value)
@@ -2540,11 +2576,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     // ---- Functions ----
 
-    private fun checkGroup(group: FunctionGroup) {
+    /**
+     * Checks [group]: then, as what each calls is known, the groups it is. `xs.map(f)` in a function
+     * called map looked as if it might call itself, and two types' operators, `+` in each, as if
+     * they might call each other.
+     */
+    private fun checkGroup(group: FunctionGroup): List<FunctionGroup> {
         checkGroupIn(group)
-        // `xs.map(f)` in a function called map looked like it might call itself; now it's known.
-        val only = group.decls.singleOrNull()
-        if (group.recursive && only != null && only !in refsOf(only)) group.recursive = false
+        if (!group.recursive) return listOf(group)
+        val calls = group.decls.associateWith { d -> refsOf(d).filter { it in group.decls } }
+        return stronglyConnected(group.decls) { calls.getValue(it) }.map { c -> FunctionGroup(c, c.size > 1 || c[0] in calls.getValue(c[0])) }
     }
 
     private fun checkGroupIn(group: FunctionGroup) {
@@ -2953,6 +2994,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /** Infers [e]'s type; [expected], if known, guides lambdas, literals and constructors. */
     private fun infer(e: Expr, expected: Type?, scope: Scope): Type {
+        if (e in inferredOperands) return e.type!!
         var type = inferInner(e, expected, scope)
         // A call that gives Nothing never returns, so it fits wherever it is.
         if (e is Expr.Call && type.prune() == Type.NOTHING) {
@@ -3009,9 +3051,13 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             "!" -> Type.BOOLEAN.also { check(e.operand, Type.BOOLEAN, scope) }
             else -> {
                 val t = infer(e.operand, expected, scope).prune()
-                if (t is Type.Var) u.unify(t, Type.INT)
-                if (t.prune() != Type.INT && t.prune() != Type.FLOAT) throw CompileError(e.pos, "can't negate a $t")
-                t
+                // A type's own minus: its unaryMinus.
+                if (ownsOperators(t) && methodsFor(UNARY_MINUS, t).any { it.isOperator }) operatorCall(e.op, e.pos, e.operand, UNARY_MINUS, emptyList(), scope).let { (call, type) -> e.call = call; type }
+                else {
+                    if (t is Type.Var) u.unify(t, Type.INT)
+                    if (t.prune() != Type.INT && t.prune() != Type.FLOAT) throw CompileError(e.pos, "can't negate a $t" + if (ownsOperators(t)) ": ${noOperator(e.op, UNARY_MINUS, t)}" else "")
+                    t
+                }
             }
         }
         is Expr.Lambda -> inferLambda(e, expected, scope)
@@ -3524,6 +3570,36 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun isNumeric(t: Type) = t == Type.INT || t == Type.FLOAT
 
+    /** Operands inferred before their operator was found to be their type's own, so not again. */
+    private val inferredOperands: MutableSet<Expr> = java.util.Collections.newSetFromMap(java.util.IdentityHashMap())
+
+    /** Whether [t] is a type whose operators are its own, as Set's: not a number's, a string's or a list's. */
+    private fun ownsOperators(t: Type) = t is Type.Con && !isNumeric(t) && t != Type.STRING && t.name != "List"
+
+    /** The extensions named [method] here that a [t] could be given to: an operator, or not. */
+    private fun methodsFor(method: String, t: Type) = extensions[method].orEmpty().filter { visible(it) && inScope(it) && fit(receiverType(it), t) != null }
+
+    /** Why [op] can't be applied to [t], a type that owns its operators, as its [method]. */
+    private fun noOperator(op: String, method: String, t: Type): String =
+        if (methodsFor(method, t).isNotEmpty()) "its $method isn't an operator; mark it operator to use '$op' for it"
+        else "there's no operator $method${methodImportHint(method, t)}"
+
+    /**
+     * `a + b` where a's type has its own `+`, as `a.plus(b)`: the call, to an `operator` extension
+     * of [method], given [args], and what it gives.
+     */
+    private fun operatorCall(op: String, pos: Pos, operand: Expr, method: String, args: List<Expr>, scope: Scope): Pair<Expr.Call, Type> {
+        val type = operand.type!!.prune()
+        inferredOperands += operand
+        val call = Expr.Call(pos, Expr.Member(pos, operand, method), args.map { Arg(null, it) })
+        val result = infer(call, null, scope)
+        val decl = (call.resolved as? CallRef.Extension)?.decl
+        if (decl == null || !decl.isOperator) {
+            throw CompileError(pos, "'$op' can't be applied to $type: its $method isn't an operator; mark it operator to use '$op' for it")
+        }
+        return call to result
+    }
+
     private fun inferBinary(e: Expr.Binary, scope: Scope): Type {
         when (e.op) {
             "&&", "||" -> {
@@ -3543,6 +3619,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
         }
         var l = infer(e.left, null, scope).prune()
+        // A type's own operator: a Set's +, as its plus.
+        val method = OPERATOR_METHODS[e.op]
+        if (method != null && ownsOperators(l) && methodsFor(method, l).any { it.isOperator }) return operatorCall(e.op, e.pos, e.left, method, listOf(e.right), scope).let { (call, type) -> e.call = call; type }
         var r = infer(e.right, l.takeIf { it !is Type.Var }, scope).prune()
         val arithmetic = e.op in setOf("+", "-", "*", "/", "%")
 
@@ -3580,7 +3659,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             e.resolved = BinaryRef(op, float && l == Type.INT, float && r == Type.INT)
             return if (arithmetic) (if (float) Type.FLOAT else Type.INT) else Type.BOOLEAN
         }
-        if (arithmetic) throw CompileError(e.pos, "'${e.op}' can't be applied to $l and $r")
+        if (arithmetic) throw CompileError(e.pos, "'${e.op}' can't be applied to $l and $r" + if (method != null && ownsOperators(l)) ": ${noOperator(e.op, method, l)}" else "")
         expect(r, l, e.right.pos)
         e.resolved = BinaryRef(e.op, false, false)
         return Type.BOOLEAN

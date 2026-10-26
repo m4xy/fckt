@@ -2,4 +2,6 @@
 module Digests {
   // Its MD5 digest, as 32 hex digits: to tell texts apart, not to keep them secret.
   external String.md5(): String = "(fun t -> Digest.to_hex (Digest.string t)) this"
+  // The same, of bytes, as a program's.
+  external Bytes.md5(): String = "(fun t -> Digest.to_hex (Digest.string t)) this"
 }

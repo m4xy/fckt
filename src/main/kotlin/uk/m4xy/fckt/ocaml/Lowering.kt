@@ -781,7 +781,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         } + e.args.map { it.value }
         is Expr.Tuple -> e.elements
         is Expr.ListLit -> e.items.map { if (it is Expr.Spread) it.list else it }
-        is Expr.Binary -> if (e.op == "&&" || e.op == "||") emptyList() else listOf(e.left, e.right)
+        is Expr.Binary -> e.call?.let { runInOrder(it) } ?: if (e.op == "&&" || e.op == "||") emptyList() else listOf(e.left, e.right)
         is Expr.StringLit -> e.parts.filterIsInstance<StringPart.Interpolated>().map { it.expr }
         else -> emptyList()
     }
@@ -794,8 +794,8 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         is Expr.Call -> e.resolved !is CallRef.Construct || e.args.any { runs(it.value) }
         is Expr.Tuple -> e.elements.any(::runs)
         is Expr.ListLit -> e.items.any { runs(if (it is Expr.Spread) it.list else it) }
-        is Expr.Binary -> runs(e.left) || runs(e.right)
-        is Expr.Unary -> runs(e.operand)
+        is Expr.Binary -> e.call != null || runs(e.left) || runs(e.right)
+        is Expr.Unary -> e.call != null || runs(e.operand)
         is Expr.If -> runs(e.condition) || runs(e.then) || runs(e.otherwise)
         else -> true
     }
@@ -884,13 +884,15 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 // What a module given as a value has: taken out of it, as its spec says it is.
                 is MemberRef.OfModule -> gen(Gen.Match(Gen.Src(e.target), listOf("(module Value : ${ref(r.spec.name) { it }})" to Gen.Id("Value.${snake(r.value.name)}"))))
             }
-            is Expr.Binary -> {
+            // A type's own operator: the call it is.
+            is Expr.Binary -> if (e.call != null) gen(Gen.Src(e.call!!)) else {
                 val r = e.resolved!!
                 fun side(x: Expr, promote: Boolean): Gen = if (promote) Gen.App(Gen.Id("float_of_int"), listOf(Gen.Src(x))) else Gen.Src(x)
                 if (r.ocamlOp == "Float.rem") gen(Gen.App(Gen.Id("Float.rem"), listOf(side(e.left, r.promoteLeft), side(e.right, r.promoteRight))))
                 else gen(Gen.Op(r.ocamlOp, side(e.left, r.promoteLeft), side(e.right, r.promoteRight)))
             }
             is Expr.Unary -> when {
+                e.call != null -> gen(Gen.Src(e.call!!))
                 e.op == "!" -> apply { ident("not"); expr(e.operand) }
                 e.operand is Expr.IntLit || e.operand is Expr.FloatLit -> {
                     val float = e.type?.prune() == Type.FLOAT

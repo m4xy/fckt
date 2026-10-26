@@ -13,7 +13,7 @@ enum class TokKind {
 /** A token from [start] to [end]; [nested] if it's inside a string, where lexing can't restart. */
 data class Tok(val kind: TokKind, val start: Int, val end: Int, val nested: Boolean)
 
-/** Words that are keywords wherever they appear. `spec`, `external`, `opaque`, `internal`, `annotation` and `by` are keywords only in place. */
+/** Words that are keywords wherever they appear. `spec`, `external`, `opaque`, `internal`, `operator`, `annotation` and `by` are keywords only in place. */
 val KEYWORDS = setOf("type", "module", "private", "when", "if", "else", "is", "true", "false", "this")
 
 /**

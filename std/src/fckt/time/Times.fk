@@ -5,8 +5,8 @@ module Times {
   Instant.until(later: Instant): Duration = Duration(later.millis - this.millis)
 
   // The instant d after this.
-  Instant.plus(d: Duration): Instant = Instant(this.millis + d.millis)
+  operator Instant.plus(d: Duration): Instant = Instant(this.millis + d.millis)
 
   // The two durations together.
-  Duration.plus(other: Duration): Duration = Duration(this.millis + other.millis)
+  operator Duration.plus(other: Duration): Duration = Duration(this.millis + other.millis)
 }

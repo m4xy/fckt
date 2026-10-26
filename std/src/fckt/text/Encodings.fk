@@ -6,7 +6,7 @@ module Encodings {
   // The byte at index: bytes[i].
   external Bytes.get(index: Int): Byte = "String.get this index"
   external Bytes.toList(): List<Byte> = "(fun s -> List.of_seq (String.to_seq s)) this"
-  external Bytes.plus(other: Bytes): Bytes = "this ^ other"
+  operator external Bytes.plus(other: Bytes): Bytes = "this ^ other"
   external bytesOf(values: List<Byte>): Bytes = "(fun v -> String.of_seq (List.to_seq v)) values"
 
   // The text as UTF-8, as fckt's strings are.
