@@ -147,7 +147,7 @@ class FcktErrorAnnotator : ExternalAnnotator<FcktErrorAnnotator.Input, FcktError
         if (entry.extension == "fki") return null
         return try {
             val paths = pathsOf(entry)
-            compile(input.text, entry, paths.roots, libraries = paths.libraries)
+            compile(input.text, entry, paths.roots, libraries = paths.libraries, others = paths.others)
             null
         } catch (e: CompileError) {
             Found(input.text, e)

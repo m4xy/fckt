@@ -87,7 +87,7 @@ class IdeTest : BasePlatformTestCase() {
     }
 
     fun `test hovering over a name shows its type and what it does`() {
-        myFixture.configureByText("f.fk", "@Console gr<caret>eet(name: String) = println(name)\nmain() = Unit")
+        myFixture.configureByText("f.fk", "import fckt.io.Console\n@Console gr<caret>eet(name: String) = println(name)\nmain() = Unit")
         val leaf = myFixture.file.findElementAt(myFixture.caretOffset)!!
         val doc = FcktDocumentationProvider().generateHoverDoc(leaf, leaf)!!
         assertTrue(doc, "greet(name: String): Unit" in doc && "does @Console" in doc)

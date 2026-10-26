@@ -1,11 +1,13 @@
 import fckt.text.Bytes
 import fckt.text.Encodings.*
+import fckt.effects.Fail
+import fckt.effects.Failure.attempt
 
 // Reading and writing a little at a time, through @Reader and @Writer: files, and what other
 // programs print.
 module Channels {
   // Writes text and a line's end.
-  @Writer writeLine(text: String) = write("$text\n")
+  @Writer writeLine(text: String): Unit = write("$text\n")
 
   // Each line that's left, in order.
   @Reader forEachLine(f: (String) -> Unit): Unit = when (nextLine()) {
@@ -57,10 +59,10 @@ module Channels {
     private external outputBytes(output: OutputHandle, bytes: Bytes): Unit = "Out_channel.output_string output bytes"
     private external closeIn(input: InputHandle): Unit = "In_channel.close input"
     private external closeOut(output: OutputHandle): Unit = "Out_channel.close output"
-    readLineFrom(input: InputHandle) = inputLine(input)
-    readFrom(input: InputHandle, count: Int) = inputBytes(input, count)
-    writeTo(output: OutputHandle, bytes: Bytes) = outputBytes(output, bytes)
-    closeInput(input: InputHandle) = closeIn(input)
-    closeOutput(output: OutputHandle) = closeOut(output)
+    readLineFrom(input: InputHandle): Option<String> = inputLine(input)
+    readFrom(input: InputHandle, count: Int): Bytes = inputBytes(input, count)
+    writeTo(output: OutputHandle, bytes: Bytes): Unit = outputBytes(output, bytes)
+    closeInput(input: InputHandle): Unit = closeIn(input)
+    closeOutput(output: OutputHandle): Unit = closeOut(output)
   }
 }

@@ -114,29 +114,38 @@ when they fail, giving the line and, for `assertEquals`, both values. `[a, b]` i
 machine, so it goes as far as Kotlin's `Long`, about ±4.6 × 10¹⁸, not 2³¹; past that it wraps,
 as OCaml's does. There's no `Long`: an `Int` is one. Methods such as `map`, `filter`, `fold`, `sum`,
 `size`, `getOrElse` and `toInt`, and functions such as `max` and `sqrt`, are externals in the
-standard library, which every file imports; only `toString`, `joinToString`, `assert` and
-`assertEquals` are built in.
+core, which every file has; only `toString`, `joinToString`, `assert` and `assertEquals` are built
+in.
 
-## Standard library
+## The core and the standard library
 
-`src/main/resources/std` is written in fckt, in the package `fckt`, laid out as any program's
-packages are: each capitalised file declares one module, type, spec or effect. Functions are in
-modules, by what they're for. Every file imports what the language relies on, the console, failing,
-and the methods on built-in types, as Kotlin imports `kotlin.*`; everything else is imported as any
-other package is. Only what a program uses goes into its OCaml, and a program's own declarations
-take the place of what it imports.
+The language's core, in the package `fckt.lang`, is in the compiler, under
+`src/main/resources/std`: what fckt itself relies on, and the methods on its built-in types. Every
+file has it, as Kotlin's has `kotlin.*`. A program's own declarations take the place of the
+core's, and only what a program uses of it goes into its OCaml.
 
-| | |
+The standard library, everything else, is a library of its own, `fckt:std`, in `std/`: a kiln
+project, written in fckt, whose packages are under `fckt` too, laid out as any program's are. A
+file imports what it uses of it, as it would any library's, `import fckt.io.Console` for
+`println`, and an unknown name says what to import: `unknown name 'println'; import
+fckt.io.Console has one`. Importing anything from a module brings its methods with it, as a type's
+come with it. fckt's distribution has its source, in the folder `fckt --std-path` says, which fckt
+compiles a program with, as another project's, and kiln compiles once and gives every project.
+
+| The core, `fckt.lang` | |
 | --- | --- |
-| `fckt.lang` | Imported into every file: the annotations the language gives meaning to (`Meta`, `Repeatable`, `Propagates`, `Encapsulates`, `HandledBy`, `Effect`), the effects it tracks (`Mutating`, `Pure`), `spec Monad`, which builds on `spec Applicative`, and `Functions` (`identity`, `error`). |
-| `fckt.io.Console`, `fckt.io.Terminal` | Imported into every file: the effect `Console` (`print`, `println`, `readLine`), and `Terminal`, the module `main` handles it with. |
-| `fckt.effects.Fail`, `fckt.effects.Failure` | Imported into every file: `fail(reason)`, `attempt { ... }`, and `Failure.Crash`, which stops `main` with the reason. |
-| `fckt.collections.Maps` | Imported into every file: `Map<K, V>`, Kotlin's maps, which never change. `mapOf([("a", 1)])`, `emptyMap()` and `toMap()` make one; `m["a"]` and `get` give an `Option`; `put`, `remove` and `putAll` make another; `keys`, `values` and `entries` are in the keys' order; and `filter`, `mapValues`, `getOrElse`, `containsKey` and more. Two maps with the same entries are equal. On lists, `groupBy`, `associateBy`, `associateWith` and `associate` make maps. |
-| `fckt.collections.Sets` | Imported into every file: `Set<A>`, items each once, in order, kept in a `Map`. `setOf([3, 1])`, `emptySet()` and `toSet()` make one; `contains`; `plus(item)` and `minus(item)` make another; `union`, `intersect` and `subtract`; `toList()`, `filter`, `map`, `any` and the like. Two sets with the same items are equal, and one shows as `[1, 3]`. |
-| `fckt.collections.Lists`, `fckt.text.Strings`, `fckt.math.Maths`, `fckt.Options`, `fckt.Results` | Imported into every file: the methods on lists, Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNull`, `getOrNull`, `count`, `mapNotNull`, `flatten`, `partition`, `chunked`, `minOrNull`, `maxByOrNull` and more; on strings and characters, with `substring`, `indexOf`, `lastIndexOf`, `split`, `replace`, `contains`, `take`, `drop`, `removePrefix`, `removeSuffix`, `substringBefore`, `substringAfterLast`, `padStart` and `lines`, which take text (`split(",")`), and `toList()`, `code`, `toChar()`, `isDigit()`, `isLetter()` and `isWhitespace()`; `toByte()` and `toInt()` for bytes; numbers' `max`, `sqrt`, `sin` and conversions; and on `Option` and `Result`, with `filter`, `orElse { ... }`, `toList()` and `forEach`, and on lists `mapResult { ... }` and `foldResult(initial) { ... }`, which stop at the first `Error`. |
+| `fckt.lang` | The annotations the language gives meaning to (`Meta`, `Repeatable`, `Propagates`, `Encapsulates`, `HandledBy`, `Effect`), the effects it tracks (`Mutating`, `Pure`), `spec Monad`, which builds on `spec Applicative`, and `Functions` (`identity`, `error`). |
+| `fckt.lang.Lists`, `Strings`, `Maths`, `Options`, `Results`, `Lazies` | The methods on the built-in types: on lists, Kotlin's `map`, `filter`, `fold`, `zip`, `distinct`, `sorted`, `sortedBy`, `take`, `drop`, `lastOrNone`, `getOrNone`, `count`, `mapNotNull`, `flatten`, `partition`, `chunked`, `minOrNone`, `maxByOrNone` and more; on strings and characters, with `substring`, `indexOf`, `lastIndexOf`, `split`, `replace`, `contains`, `take`, `drop`, `removePrefix`, `removeSuffix`, `substringBefore`, `substringAfterLast`, `padStart` and `lines`, which take text (`split(",")`), and `toList()`, `code`, `toChar()`, `isDigit()`, `isLetter()` and `isWhitespace()`; `toByte()` and `toInt()` for bytes; numbers' `max`, `sqrt`, `sin` and conversions; and on `Option` and `Result`, with `filter`, `orElse { ... }`, `toList()` and `forEach`, and on lists `mapResult { ... }` and `foldResult(initial) { ... }`, which stop at the first `Error`; and on lazy values, `lazy(~e)` and `.value`. |
+
+| The standard library, `fckt:std` | |
+| --- | --- |
+| `fckt.io.Console`, `fckt.io.Terminal` | The effect `Console` (`print`, `println`, `readLine`), and `Terminal`, the module `main` handles it with. |
+| `fckt.effects.Fail`, `fckt.effects.Failure` | `fail(reason)`, `attempt { ... }`, and `Failure.Crash`, which stops `main` with the reason. |
+| `fckt.collections.Maps` | `Map<K, V>`, Kotlin's maps, which never change. `mapOf([("a", 1)])`, `emptyMap()` and `toMap()` make one; `m["a"]` and `get` give an `Option`; `put`, `remove` and `putAll` make another; `keys`, `values` and `entries` are in the keys' order; and `filter`, `mapValues`, `getOrElse`, `containsKey` and more. Two maps with the same entries are equal. On lists, `groupBy`, `associateBy`, `associateWith` and `associate` make maps. |
+| `fckt.collections.Sets` | `Set<A>`, items each once, in order, kept in a `Map`. `setOf([3, 1])`, `emptySet()` and `toSet()` make one; `contains`; `plus(item)` and `minus(item)` make another; `union`, `intersect` and `subtract`; `toList()`, `filter`, `map`, `any` and the like. Two sets with the same items are equal, and one shows as `[1, 3]`. |
 | `fckt.effects.Yielding`, `fckt.effects.Generators` | `Yielding<A>`, and `sequence { ... }`, which makes a lazy `fckt.collections.Stream<A>`, read with `fckt.collections.Streams`' `take`. |
 | `fckt.collections.Array`, `fckt.collections.Arrays` | OCaml's arrays: `arrayOf(size, value)`, `xs[i]`, `xs[i] = v`. |
-| `fckt.values.Mutable`, `fckt.values.Lazies` | `Mutable<A>(var value: A)`; `lazy(~e)` and `.value`. |
+| `fckt.values.Mutable` | `Mutable<A>(var value: A)`. |
 | `fckt.monads` | The monads, each a module to run blocks in: `Options { x by half(n); x + 1 }`, which, as `Lists` does, follows `Monad`; `Results<E>`, a `Monad` for any error type; `Lists`, for every combination, with `guard`; and `Validated<E>`, an `Applicative` with `Validation<A, E> { Valid, Invalid }`, which keeps every error. |
 | `fckt.io` | Files, folders and other programs, as the effects `FileSystem` and `Process`, which `main` does for real and a test can answer itself. A `Path` says where: `path("src/main.fk")` or `"src".toPath()`, always tidied, so `a//b/./c/..` is `a/b`. `Paths` takes one apart without looking at the disk: `name`, `extension`, `nameWithoutExtension`, `parent`, `names`, `resolve("x")`, `withExtension("ml")`, `relativeTo(base)`. A path says nothing of whether anything's there; `Files` asks and acts: `path.exists()`, `isDirectory()`, `readText()`, `readBytes()`, `readLines()`, `writeText(text)`, `appendText(text)`, `writeBytes(bytes)`, `listFiles()`, `makeDirs()`, `delete()`, `copyTo(target)` and `copyRecursively(target)`; what can't be done fails with why. `path.reading { ... }`, `writing { ... }` and `appending { ... }` open a file around a block, which reads it with `nextLine()`, `nextBytes(n)`, or `Channels`' `forEachLine { ... }`, `remainingLines()` and `remainingText()`, or writes with `write`, `writeLine` and `writeBytes`, and close it after, even if the block fails; only the block can use it, so nothing uses it once it's closed. `Processes.streaming(command, args) { forEachLine(...) }` runs a program and reads what it prints as it prints it, giving an `Exit(code, value)`; `run(command, args)` gives everything it printed; `runAttached(command, args)` runs one with this program's terminal and gives its exit code; `env(name)` and `setEnv(name, value)` read and set the environment, `executable()` is the program's own file, and `exit(code)` ends it. `path.lastModified()`, `path.canonical()`, where it really is, `workingDirectory()` and `changeDirectory(folder)` ask `FileSystem`. Each effect's real handler is its module's `Local`, as `Files.Local`. A program using `Process` needs OCaml's `unix` library, which `fckt` says when it writes one. |
 | `fckt.time` | Time, as the effect `Clock` (`now()`), which `main` answers with `SystemClock`, the system's, and a test can answer itself: `Instant`, a moment, and `Duration`, in milliseconds; `Times` has `start.until(end)` and `plus`. |
@@ -174,24 +183,26 @@ when it's installed.
 
 ### Compiling separately
 
-A program's `.ml` normally has in it what it uses of the standard library and of its packages. A
-library can instead be compiled once, and the programs that use it checked against its interface
-and linked with its OCaml:
+A program's `.ml` normally has in it what it uses of the core, the standard library and its
+packages. A library can instead be compiled once, and the programs that use it checked against its
+interface and linked with its OCaml, as the standard library is:
 
 ```sh
-fckt --standard -o fckt_std.ml                    # the whole standard library, as the module Fckt_std
-fckt --library units -o uk_m4xy_units.ml -I src uk.m4xy.units
-fckt main.fk -L units -o main.ml                  # uk.m4xy.units is Uk_m4xy_units's
-ocamlopt -I +unix unix.cmxa fckt_std.cmx uk_m4xy_units.cmx main.ml -o main
+fckt --core -o fckt_core.ml                       # the core, as the module Fckt_core
+fckt --library std -o fckt_std.ml --no-std -I "$(fckt --std-path)" fckt.collections fckt.io ...
+fckt --library units -o uk_m4xy_units.ml --no-std -L std -I src uk.m4xy.units
+fckt main.fk --no-std -L std -L units -o main.ml  # uk.m4xy.units is Uk_m4xy_units's
+ocamlopt -I +unix unix.cmxa fckt_core.cmx fckt_std.cmx uk_m4xy_units.cmx main.ml -o main
 ```
 
 `--library <folder>` compiles the packages named to the OCaml module `-o` names, and writes the
 library's interface to the folder: each file's public declarations, not its private or internal ones, without their code, as
 `.fki` files, `sum(items: List<Money>, start: Money = compiled): Money`. Its public functions and
 values say their types, so a program's types never depend on code that isn't there. `-L <folder>`
-uses a library through its interface, and `--separate`, which `-L` implies, uses the standard
-library compiled on its own, rather than putting what's used of it in the program; the program and
-its libraries then share one standard library, as handling a library's effects needs.
+uses a library through its interface, and `--separate`, which `-L` implies, uses the core compiled
+on its own, rather than putting what's used of it in the program; the program and its libraries
+then share one core and one standard library, as handling a library's effects needs. `--no-std`
+leaves out the standard library's source, for one given with `-L`, or none.
 `--other-project <dir>` gives a folder of packages as `-I` does, but as another project's, compiled
 with the program from source, whose internal declarations it doesn't see.
 `fckt --version` says which fckt it is, down to its build, as OCaml compiled by one fckt can't be

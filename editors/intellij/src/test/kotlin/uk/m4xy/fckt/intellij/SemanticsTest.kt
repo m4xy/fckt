@@ -1,6 +1,6 @@
 package uk.m4xy.fckt.intellij
 
-import uk.m4xy.fckt.standardLibrary
+import uk.m4xy.fckt.coreSource
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -125,8 +125,8 @@ class SemanticsTest {
         // The checker's choice: total for a list of Ints, and for one of Floats.
         assertEquals(listOf("here:21"), goto("extensions", 42, "total"))
         assertEquals(listOf("here:22"), goto("extensions", 43, "total"))
-        // The standard library's externals, which every file imports.
-        val fold = standardLibrary("fckt/collections/Lists")!!.lines().indexOfFirst { "List<A>.fold" in it } + 1
+        // The core's externals, which every file imports.
+        val fold = coreSource("fckt/lang/Lists")!!.lines().indexOfFirst { "List<A>.fold" in it } + 1
         assertEquals(listOf("Lists.fk:$fold"), goto("extensions", 21, "fold"))
         // Through modules, each segment to its own: Shapes.Units.twice
         assertEquals(listOf("here:19"), goto("modules", 47, "Shapes", 1))
@@ -165,9 +165,10 @@ class SemanticsTest {
             semantics(text, neighbourRoles(file.parentFile, file))
             declarations(text, file)
         }
-        // The standard library's files, which a search goes through too, and the built-ins'.
-        for (name in uk.m4xy.fckt.STANDARD_MODULES + "builtins") {
-            val text = standardSource("std/$name.fk")!!
+        // The core's files, which a search goes through too, the built-ins', and the standard library's.
+        val std = java.io.File(System.getProperty("fckt.std")).walk().filter { it.isFile && it.extension == "fk" }.map { it.readText() }.toList()
+        for (text in uk.m4xy.fckt.CORE_MODULES.map { standardSource("${uk.m4xy.fckt.CORE_PATH}$it.fk")!! } + standardSource(BUILTINS)!! + std) {
+            val name = text.lines().first()
             assertEquals(text.length, scan(text).sumOf { it.end - it.start }, name)
             semantics(text)
             declarations(text, null)

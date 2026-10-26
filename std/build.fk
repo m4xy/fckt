@@ -1,0 +1,4 @@
+// fckt:std, the standard library: a library of its own, beside the compiler, whose core it builds
+// on. fckt's distribution has its source, which kiln compiles once and gives every project; this
+// build checks it on its own.
+project = Project(name = "std", group = "fckt", version = "0.1.0", standardLibrary = false)

@@ -1,5 +1,4 @@
 import fckt.collections.Stream
-import fckt.values.Lazies.*
 
 // Values worked out one at a time, as they're asked for.
 module Generators {

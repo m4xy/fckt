@@ -48,15 +48,16 @@ internal object Interfaces {
     /** The text of the file being written, for its specs. */
     private var source = ""
 
-    /** [d] as the source has it: from where it starts to the brace that closes it. */
+    /** [d] as the source has it: from its first annotation, or where it starts, to the brace that closes it. */
     private fun verbatim(d: Decl): String {
         val lineStarts = mutableListOf(0).apply { source.forEachIndexed { i, c -> if (c == '\n') add(i + 1) } }
         fun offset(pos: Pos) = lineStarts[pos.line - 1] + pos.col - 1
+        val start = (d.annotations.map { it.pos }.filter { it.file == d.pos.file } + d.pos).minBy { offset(it) }
         val tokens = Lexer(source, Pos(1, 1, null)).tokenize().dropWhile { it.pos.line < d.pos.line || (it.pos.line == d.pos.line && it.pos.col < d.pos.col) }
         var depth = 0
         for (t in tokens.dropWhile { it.kind != T.LBRACE }) {
             if (t.kind == T.LBRACE) depth++
-            if (t.kind == T.RBRACE && --depth == 0) return source.substring(offset(d.pos), offset(t.pos) + 1)
+            if (t.kind == T.RBRACE && --depth == 0) return source.substring(offset(start), offset(t.pos) + 1)
         }
         error("a spec's braces don't close")
     }
@@ -132,7 +133,9 @@ internal object Interfaces {
                 } else {
                     d.params
                 }
-                out.append(d.methodName).append(typeParams(d.typeParams))
+                // Not the receiver's type parameters, which reading it finds again, as in List<A>.toSet().
+                val own = if (d.extension) d.typeParams - namesIn(d.params!!.first().type!!) else d.typeParams
+                out.append(d.methodName).append(typeParams(own))
                 params?.let { ps -> out.append(ps.joinToString(", ", "(", ")") { param(it) }) }
                 d.returnType?.let { out.append(": ").append(type(it)) }
                 if (d.external != null) out.append(" = ").append(string(d.external))
@@ -154,6 +157,14 @@ internal object Interfaces {
             is Decl.Spec -> out.append(if (effect != null) "effect " else "spec ").append(d.name).append(" = ").append(type(d.copyOf!!))
         }
         out.append('\n')
+    }
+
+    /** The plain names in [t], which are a receiver's type parameters where they aren't types. */
+    private fun namesIn(t: TypeRef): Set<String> = when (t) {
+        is TypeRef.Named -> if (t.args.isEmpty()) setOf(t.name) else t.args.flatMap { namesIn(it) }.toSet()
+        is TypeRef.Tuple -> t.elements.flatMap { namesIn(it) }.toSet()
+        is TypeRef.Function -> (t.params + t.result).flatMap { namesIn(it) }.toSet()
+        is TypeRef.Effects -> emptySet()
     }
 
     /** An extension's receiver, which a function type or tuple is in parentheses for. */

@@ -2,6 +2,8 @@
 // and so must every function that calls it, so one that says nothing is pure. An effect is
 // declared with `effect Name`: the standard library declares @Console, which println has, and a
 // program can declare its own.
+import fckt.io.Console
+
 
 @Console greet(name: String) = println("hello $name")
 

@@ -28,6 +28,10 @@ application {
     applicationName = "fckt"
 }
 
+// The standard library, fckt:std, goes beside fckt, in std: a library of its own, which fckt
+// compiles a program with unless told --no-std, and kiln compiles once for every project.
+distributions { main { contents { from("std") { into("std"); exclude("build", ".kiln") } } } }
+
 tasks.test { useJUnitPlatform() }
 
 // fckt --version reads it.

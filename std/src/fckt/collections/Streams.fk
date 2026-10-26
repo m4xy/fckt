@@ -1,4 +1,3 @@
-import fckt.values.Lazies.*
 
 // Reading streams.
 module Streams {

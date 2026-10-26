@@ -18,6 +18,7 @@ class ProjectTest {
     private fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent() + "\n")
 
     private val main = """
+        import fckt.io.Console
         import pricing.Prices
         import uk.m4xy.units.Moneys
 
@@ -35,7 +36,7 @@ class ProjectTest {
         val file = File(dir, "shop/src/main.fk").apply { writeText(main) }
 
         assertEquals(listOf(File(dir, "shop/src").canonicalPath), pathsOf(file).roots.map { it.canonicalPath })
-        uk.m4xy.fckt.compile(main, file, pathsOf(file).roots, libraries = pathsOf(file).libraries)
+        uk.m4xy.fckt.compile(main, file, pathsOf(file).roots, libraries = pathsOf(file).libraries, others = pathsOf(file).others)
         val found = declarations(main, file)
         val pence = main.indexOf("pence(")
         assertEquals(listOf("Moneys.fki:2"), found[pence]?.map { "${File(it.file!!).name}:${it.pos.line}" })

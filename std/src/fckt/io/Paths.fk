@@ -24,7 +24,7 @@ module Paths {
   Path.names: List<String> = this.value.split("/").filter { !it.isEmpty() && it != "." }
 
   // The last of its names, main.fk for src/main.fk, or "" if it has none.
-  Path.name: String = this.names.lastOrNull().getOrElse("")
+  Path.name: String = this.names.lastOrNone().getOrElse("")
 
   // What its name ends with after the last dot, fk for main.fk; "" for Makefile or .gitignore.
   Path.extension: String = {

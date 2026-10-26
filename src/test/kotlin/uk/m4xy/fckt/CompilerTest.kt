@@ -18,6 +18,12 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+/** The standard library, fckt:std, as its source. */
+private val STD = File("std/src")
+
+/** What the tests' own programs import, beside the core. */
+private val TEST_IMPORTS = listOf("fckt.io.Console", "fckt.effects.Fail", "fckt.effects.Failure.*", "fckt.collections.Maps.*", "fckt.collections.Sets.*")
+
 class CompilerTest {
     private val ocaml: String? = System.getenv("PATH").orEmpty().split(File.pathSeparator)
         .map { File(it, "ocaml") }.firstOrNull { it.canExecute() }?.path
@@ -25,6 +31,18 @@ class CompilerTest {
 
     /** Compiles [source], runs the OCaml with the toplevel, and returns its standard output. */
     private fun run(source: String, args: List<String> = emptyList(), dir: File? = null): String = runOcaml(compile(source), args, dir)
+
+    /**
+     * [source] to OCaml, with the standard library from std/src, and what most tests use of it
+     * imported, as each test is about something else: an example says its imports itself.
+     */
+    private fun compile(source: String): String = uk.m4xy.fckt.compile(source, TEST_IMPORTS, listOf(STD))
+
+    /** An example, as it is: with only what it imports, and the standard library. */
+    private fun example(source: String): String = uk.m4xy.fckt.compile(source, others = listOf(STD))
+
+    /** Runs an example, as it is. */
+    private fun runExample(source: String, args: List<String> = emptyList()): String = runOcaml(example(source), args)
 
     /** Runs [ml] with the OCaml toplevel, in [dir] if given, and returns its standard output. */
     private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null, env: Map<String, String> = emptyMap(), code: Int = 0): String {
@@ -73,7 +91,7 @@ class CompilerTest {
             paid 1250 for order-1
 
             """.trimIndent(),
-            run(source),
+            runExample(source),
         )
     }
 
@@ -89,7 +107,7 @@ class CompilerTest {
                 val args = source.lines().firstOrNull { it.startsWith("// args:") }
                     ?.removePrefix("// args:")?.trim()?.split(" ") ?: emptyList()
                 val expected = File(file.path.removeSuffix(".fk") + ".out").takeIf { it.exists() }?.readText() ?: ""
-                assertEquals(expected, run(source, args))
+                assertEquals(expected, runExample(source, args))
             }
         }
 
@@ -122,7 +140,7 @@ class CompilerTest {
 
     @Test
     fun `records, types with cases and when`() {
-        val ml = compile(File("examples/orders.fk").readText())
+        val ml = example(File("examples/orders.fk").readText())
         assertContains(ml, "type user_id = { value : string }")
         assertContains(ml, "| Success of { order_id : string; total : money }")
         assertContains(ml, "| Some \"X\" -> int_of_float (float_of_int subtotal *. 0.1)")
@@ -296,7 +314,7 @@ class CompilerTest {
 
     @Test
     fun `types can share cases`() {
-        assertEquals("", run(File("examples/shared-cases.fk").readText()))
+        assertEquals("", runExample(File("examples/shared-cases.fk").readText()))
     }
 
     @Test
@@ -313,7 +331,7 @@ class CompilerTest {
 
     @Test
     fun `modules group declarations and hide private ones`() {
-        assertEquals("", run(File("examples/modules.fk").readText()))
+        assertEquals("", runExample(File("examples/modules.fk").readText()))
     }
 
     @Test
@@ -347,8 +365,8 @@ class CompilerTest {
     @Test
     fun `annotations are checked, then compiled away`() {
         val source = File("examples/annotations.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         listOf("Route", "Pure", "Codec", "route", "pure", "codec").forEach { assertFalse(it in ml, it) }
         // Every declaration in it, but main.
         val header = source.substringBefore("@Route(\"/hello\"")
@@ -380,7 +398,7 @@ class CompilerTest {
 
     @Test
     fun `a function says what it does besides work out its result`() {
-        assertEquals("hello fckt\nhello Ada\nhello Grace\ntotal: 3\nhi, there\ntransferred 10\n", run(File("examples/effects.fk").readText()))
+        assertEquals("hello fckt\nhello Ada\nhello Grace\ntotal: 3\nhi, there\ntransferred 10\n", runExample(File("examples/effects.fk").readText()))
         fun program(source: String) = error("$source\nmain() = assert(true)")
         assertContains(program("greet(n: String) = println(n)"), "'greet' does @Console, so it must say so: @Console greet(...)")
         // What a function declares is what it may do: doing less is fine.
@@ -413,8 +431,8 @@ class CompilerTest {
     @Test
     fun `vars change, and changing one someone else can see is an effect`() {
         val source = File("examples/mutation.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "mutable balance : int")
         assertContains(ml, "let n = ref 0 in")
         val account = "type Account(owner: String, var balance: Int)\n"
@@ -440,8 +458,8 @@ class CompilerTest {
     @Test
     fun `arrays, and types OCaml implements, indexed with get and set`() {
         val source = File("examples/arrays.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "Array.set xs 0 (Array.get xs 0 * 2)")
         assertContains(ml, "Buffer.add_string b word")
         fun program(source: String) = error("$source\nmain() = assert(true)")
@@ -456,7 +474,7 @@ class CompilerTest {
     @Test
     fun `annotations pass on what they carry, and a module's effects pass to what's in it`() {
         val ordering = File("examples/ordering.fk").readText()
-        assertEquals("UPSERT INTO orders ...\nSELECT * FROM orders WHERE id = 'order-1'\nUPSERT INTO orders ...\n", run(ordering))
+        assertEquals("UPSERT INTO orders ...\nSELECT * FROM orders WHERE id = 'order-1'\nUPSERT INTO orders ...\n", runExample(ordering))
         // What a repository does underneath stays inside it: its callers see @Persistence, not @Console.
         val withoutMain = ordering.substringBefore("main() =")
         fun ordering(source: String) = error("$withoutMain$source\nmain() = assert(true)")
@@ -728,9 +746,9 @@ class CompilerTest {
               assertEquals([3, 1, 2], xs.distinct())
               assertEquals([1, 1, 2, 3, 3], xs.sorted())
               assertEquals([3, 3, 2, 1, 1], xs.sortedDescending())
-              assertEquals(Some(1), xs.lastOrNull())
-              assertEquals(Some(2), xs.getOrNull(2))
-              assertEquals(None, xs.getOrNull(-1))
+              assertEquals(Some(1), xs.lastOrNone())
+              assertEquals(Some(2), xs.getOrNone(2))
+              assertEquals(None, xs.getOrNone(-1))
               assertEquals(2, xs.count(x -> x == 3))
               assertEquals([(1, "a"), (2, "b")], [1, 2, 3].zip(["a", "b"]))
               assertEquals([(0, "a"), (1, "b")], ["a", "b"].withIndex())
@@ -740,8 +758,8 @@ class CompilerTest {
               assertEquals([[1, 2], [3, 4], [5]], [1, 2, 3, 4, 5].chunked(2))
               assertEquals([(3, 1), (1, 2)], xs.take(3).zipWithNext())
               assertEquals(([3, 2, 3], [1, 1]), xs.partition(x -> x > 1))
-              assertEquals((Some(1), Some(3)), (xs.minOrNull(), xs.maxOrNull()))
-              assertEquals(Some("a"), [Person("a", 30), Person("b", 20)].maxByOrNull(p -> p.age).map(p -> p.name))
+              assertEquals((Some(1), Some(3)), (xs.minOrNone(), xs.maxOrNone()))
+              assertEquals(Some("a"), [Person("a", 30), Person("b", 20)].maxByOrNone(p -> p.age).map(p -> p.name))
               assertEquals([1, 2, 3], [[1], [], [2, 3]].flatten())
               assertEquals(([3, 1], [3, 1, 2]), (xs.takeLast(2), xs.dropLast(2)))
               assertEquals([1, 3], ["1", "x", "3"].mapNotNull(s -> s.toIntOrNone()))
@@ -757,7 +775,7 @@ class CompilerTest {
     @Test
     fun `a lambda takes a tuple apart, and a call can say its function's type arguments`() {
         val source = """
-            List<A>.firstAs<B>(f: (A) -> B): Option<B> = this.firstOrNull().map(f)
+            List<A>.firstAs<B>(f: (A) -> B): Option<B> = this.firstOrNone().map(f)
             main() = {
               pairs = [("a", 1), ("b", 2)]
               assertEquals(["a1", "b2"], pairs.map((k, v) -> k + v.toString()))
@@ -774,7 +792,7 @@ class CompilerTest {
             }
         """.trimIndent()
         assertEquals("", run(source))
-        fun error(code: String) = assertFailsWith<CompileError> { compile("List<A>.firstAs<B>(f: (A) -> B): Option<B> = this.firstOrNull().map(f)\ntype Box<A>(item: A)\nmain() = $code") }.message
+        fun error(code: String) = assertFailsWith<CompileError> { compile("List<A>.firstAs<B>(f: (A) -> B): Option<B> = this.firstOrNone().map(f)\ntype Box<A>(item: A)\nmain() = $code") }.message
         assertContains(error("[(1, 2)].map((a, b, c) -> a)").orEmpty(), "this function is given a tuple of 2, so it takes 2 parameters, not 3")
         assertContains(error("emptyMap<String>()").orEmpty(), "'emptyMap' takes 2 type arguments, not 1")
         assertContains(error("[1].firstAs<Int, Int>(x -> x)").orEmpty(), "'firstAs' takes 1 type argument, not 2")
@@ -917,7 +935,7 @@ class CompilerTest {
 
     @Test
     fun `a handler can resume the rest of the block now, later, or never`() {
-        assertEquals("a: started\nb: started\na: finished\nb: finished\n", run(File("examples/resume.fk").readText()))
+        assertEquals("a: started\nb: started\na: finished\nb: finished\n", runExample(File("examples/resume.fk").readText()))
         val fail = "effect Fail { fail(reason: String): Nothing }\neffect Choose { choose(): Boolean }\n"
         fun program(source: String) = error("$fail$source")
         // Nothing can't be answered, or resumed with.
@@ -935,8 +953,8 @@ class CompilerTest {
     @Test
     fun `a handled effect's operations are answered by whatever handles it`() {
         val source = File("examples/handlers.fk").readText()
-        assertEquals("from the terminal\n", run(source))
-        val ml = compile(source)
+        assertEquals("from the terminal\n", runExample(source))
+        val ml = example(source)
         assertContains(ml, "| Console_println : string -> unit Effect.t")
         assertContains(ml, "| effect (Clock_now ()), k -> h.now (fun v -> Effect.Deep.continue k v)")
         val clock = "effect Clock { now(): Int }\neffect Yielding<A> { yield(value: A): Unit }\n"
@@ -987,8 +1005,8 @@ class CompilerTest {
     @Test
     fun `opaque types are abstract outside their module`() {
         val source = File("examples/specs.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "module type Counter = sig\n  type t\n  val show_t : t -> string\n  val zero : t")
         assertContains(ml, "val pop : 'a s -> ('a * 'a s) option")
         assertContains(ml, "module Tally : sig\n  type t\n  val show_t : t -> string\n  val zero : t\n  val inc : t -> t")
@@ -1068,8 +1086,8 @@ class CompilerTest {
     @Test
     fun `functors make modules from modules`() {
         val source = File("examples/functors.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "module SortedSet (M : Ordered) : sig")
         assertContains(ml, "module IntSet = SortedSet (IntOrder)")
         // Set is opaque, so only SortedSet's functions make one, in order.
@@ -1196,8 +1214,8 @@ class CompilerTest {
     @Test
     fun `spec type arguments say what a functor's parameter's types are`() {
         val source = File("examples/monads.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "module Options = struct\n  type 'a m = 'a option")
         assertContains(ml, "module Results = struct\n  type 'a m = ('a, string) result")
         val monad = "spec Monad {\n  type M<A>\n  pure<A>(x: A): M<A>\n}\n"
@@ -1231,7 +1249,7 @@ class CompilerTest {
 
     @Test
     fun `a module's block binds with by`() {
-        val ml = compile(File("examples/monads.fk").readText())
+        val ml = example(File("examples/monads.fk").readText())
         assertContains(ml, "let ( let* ) = Options.bind in\n  let* h = half n in\n  let* q = half h in\n  Options.pure q")
         assertContains(ml, "let ( let* ) = M.bind in")
         assertContains(ml, "let* (a, b) = p in")
@@ -1252,8 +1270,8 @@ class CompilerTest {
     @Test
     fun `a module without bind runs its by lines together`() {
         val source = File("examples/independent-steps.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "let ( let+ ) = Validated.map in\n  let ( and+ ) = Validated.product in")
         assertContains(ml, "let+ n = check_name trimmed\n  and+ a = check_age age\n  and+ e = check_email email in")
         assertContains(ml, "let+ n = check_name name in\n  String.uppercase_ascii n")
@@ -1266,17 +1284,17 @@ class CompilerTest {
     }
 
     @Test
-    fun `the standard library comes in when it's used`() {
+    fun `the core and the standard library come in when they're used`() {
         val source = File("examples/stdlib.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "module Options = struct")
         assertContains(ml, "module type Monad = sig")
         // Only what's used: Monad, with Applicative, which it builds on, but no Streams; and nothing at
         // all for a program that uses none of it.
         assertTrue("Streams" !in ml)
-        assertTrue("module" !in compile("main() = assertEquals(1, 1)"))
-        assertTrue("module type" !in compile("import fckt.monads.Validation\nv(): Validation<Int, String> = Valid(1)\nmain() = assert(v() == Valid(1))"))
+        assertTrue("module" !in example("main() = assertEquals(1, 1)"))
+        assertTrue("module type" !in example("import fckt.monads.Validation\nv(): Validation<Int, String> = Valid(1)\nmain() = assert(v() == Valid(1))"))
         // The program's own declarations take the place of the library's.
         assertEquals("", run("module Options { one() = 1 }\nmain() = assertEquals(1, Options.one())"))
         assertEquals("", run("type Validation { Valid }\nmain() = assert(Valid == Valid)"))
@@ -1288,10 +1306,30 @@ class CompilerTest {
     }
 
     @Test
+    fun `every file has the core, and imports the standard library as any library`() {
+        // The methods on the built-in types need no import.
+        assertEquals("", runOcaml(example("main() = assertEquals([2, 1], [2, 1, 2].distinct().filter { it > 0 })")))
+        // What the standard library has does, and an unknown name says where it is.
+        val missing = assertFailsWith<CompileError> { example("main() = println(\"hi\")") }.toString()
+        assertContains(missing, "unknown name 'println'; import fckt.io.Console has one")
+        assertContains(assertFailsWith<CompileError> { example("f(): Map<Int, Int> = emptyMap()") }.toString(), "unknown type 'Map'; import fckt.collections.Maps.Map has one")
+        assertEquals("hi\n", runOcaml(example("import fckt.io.Console\nmain() = println(\"hi\")")))
+        // A module's methods come with anything imported from it, as a type's do with it.
+        assertEquals("", runOcaml(example("import fckt.collections.Sets.Set\nimport fckt.collections.Sets.setOf\nmain() = assert(setOf([1]).plus(2).contains(2))")))
+        assertContains(
+            assertFailsWith<CompileError> { example("import fckt.collections.Maps.*\nmain() = assert([1].toSet().isEmpty())") }.toString(),
+            "List<Int> has no method 'toSet'; import fckt.collections.Sets.* has one",
+        )
+        // A library's code is its own: a program's Error is no part of it.
+        assertEquals("", runOcaml(example("import fckt.effects.Failure.attempt\nimport fckt.effects.Fail\ntype Outcome { Fine, Error(why: String) }\n" +
+            "main() = {\n  r: Result<Int, String> = attempt { fail(\"no\") }\n  assertEquals(\"Error(no)\", r.toString())\n}")))
+    }
+
+    @Test
     fun `extensions are chosen by their receiver's type`() {
         val source = File("examples/extensions.fk").readText()
-        assertEquals("", run(source))
-        val ml = compile(source)
+        assertEquals("", runExample(source))
+        val ml = example(source)
         assertContains(ml, "let list_int_total (this : int list) : int =")
         assertContains(ml, "let tuple_swap (this : 'a * 'b) : 'b * 'a =")
         // Externals are their OCaml, at each use; as a value, a function of their parameters.
@@ -1495,7 +1533,7 @@ class CompilerTest {
             write("test/support.fk", "two(): Int = 2\n")
             write("test/own.fk", "main() = println(\"own\")\n")
             val roots = listOf(File(dir, "src"), File(dir, "lib"))
-            val ml = compileTests(test, "check.Test", "runs.Runner", roots, emptyList())
+            val ml = compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), TEST_IMPORTS, others = listOf(STD))
             assertEquals(
                 "files.fk\n  passed missing at line 6\nprices.fk\n  passed sums at line 4\n  FAILED empty: prices.fk line 5: expected:<1> but was:<0>\n" +
                     "  FAILED divides: Division_by_zero\n  FAILED fails: on purpose\n3 failed\n",
@@ -1504,12 +1542,12 @@ class CompilerTest {
             assertEquals("files.fk\nprices.fk\n  passed sums at line 4\n0 failed\n", runOcaml(ml, listOf("sums")))
             // The runner's own tests use it.
             write("test/runner.fk", "import check.Test\nimport runs.plan.Case\n@Test casesAreValues() = assert(Case(\"a.fk\", [], \"b\", 1, () -> Unit).line == 1)\n")
-            assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), runnerTests = true), listOf("casesAreValues")), "  passed casesAreValues")
+            assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), TEST_IMPORTS, runnerTests = true, others = listOf(STD)), listOf("casesAreValues")), "  passed casesAreValues")
             File(test, "runner.fk").delete()
             write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
             write("test/unmarked.fk", "@Test d() = Unit\n")
             write("test/sneaky.fk", "import check.Test\nimport runs.plan.Case\n@Test e() = Unit\n")
-            val errors = assertFailsWith<CompileError> { compileTests(test, "check.Test", "runs.Runner", roots, emptyList()) }.errors.map { it.message }
+            val errors = assertFailsWith<CompileError> { compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), TEST_IMPORTS, others = listOf(STD)) }.errors.map { it.message }
             assertEquals(
                 listOf(
                     "a test is run from outside its file, so it can't be private", "a test takes no parameters, as it's run as b()",
@@ -1609,7 +1647,7 @@ class CompilerTest {
             )
             val test = File(dir, "test")
             val roots = listOf(File(dir, "lib"))
-            fun tests() = compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), fixtures = "check.Fixtures")
+            fun tests() = compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), TEST_IMPORTS, fixtures = "check.Fixtures", others = listOf(STD))
             assertEquals(
                 "counts.fk\n  passed plain at line 21\n  passed Counting.once at line 25\n  (noisy)\n  passed Counting.twice at line 27\n  passed Counting.Deeper.deep at line 33\n0 failed\n",
                 runOcaml(tests()),
@@ -1731,7 +1769,7 @@ class CompilerTest {
             // Not used, so never read, though it doesn't compile.
             write("unused.fk", "bad(): Int = \"x\"\n")
             val main = File(dir, "main.fk")
-            fun compileMain(source: String) = main.writeText(source).let { compile(main, listOf(dir, lib)) }
+            fun compileMain(source: String) = main.writeText(source).let { compile(main, listOf(dir, lib), others = listOf(STD)) }
             fun errorIn(source: String) = assertFailsWith<CompileError> { compileMain(source) }.toString()
             val ml = compileMain(
                 """
@@ -1759,7 +1797,7 @@ class CompilerTest {
             assertContains(errorIn("import geometry.Nope\nmain() = Unit"), "geometry has no 'Nope'")
             assertContains(errorIn("import nowhere.Thing\nmain() = Unit"), "import nowhere.Thing names no package")
             assertContains(errorIn("import geometry.secret\nmain() = assertEquals(1, secret())"), "'secret' is private to")
-            assertContains(errorIn("main() = assertEquals(Some(1), Options.pure(1))"), "unknown name 'Options'; it's in the standard library: import fckt.Options")
+            assertContains(errorIn("main() = assertEquals(Some(1), Options.pure(1))"), "unknown name 'Options'; import fckt.monads.Options has one")
             // .* brings in all of a package, or of a module; as renames; two imports' names clash only where used.
             write("geometry/Units.fk", "module Units {\n  mm(m: Float): Float = m * 1000.0\n}\n")
             write("shop/Items.fk", "module Items {\n  type Shape(name: String)\n}\n")
@@ -1785,8 +1823,8 @@ class CompilerTest {
     }
 
     @TestFactory
-    fun `examples don't pick up their neighbours`() = File("examples").walk().filter { it.extension == "fk" }.map { file ->
-        DynamicTest.dynamicTest(file.path) { assertEquals(compile(file.readText()), compile(file, listOf(file.parentFile))) }
+    fun `examples import what they use, and don't pick up their neighbours`() = File("examples").walk().filter { it.extension == "fk" }.map { file ->
+        DynamicTest.dynamicTest(file.path) { assertEquals(example(file.readText()), compile(file, listOf(file.parentFile), others = listOf(STD))) }
     }.toList()
 
     @Test
@@ -1930,15 +1968,15 @@ class CompilerTest {
     }
 
     @Test
-    fun `a standard library file open in an editor is checked as part of the standard library`() {
-        val maps = File("src/main/resources/std/fckt/collections/Maps.fk")
-        // Not as a program beside the standard library's own copy of it, whose methods it'd clash with.
-        compile(maps.readText(), maps, listOf(maps.parentFile))
-        val broken = maps.readText().replace("Map<K, V>.isEmpty(): Boolean = this.size == 0", "Map<K, V>.isEmpty(): Boolean = this.size == \"0\"")
-        val error = assertFailsWith<CompileError> { compile(broken, maps, listOf(maps.parentFile)) }
+    fun `a core file open in an editor is checked as part of the core`() {
+        val lists = File("src/main/resources/std/fckt/lang/Lists.fk")
+        // Not as a program beside the core's own copy of it, whose methods it'd clash with.
+        compile(lists.readText(), lists, listOf(lists.parentFile))
+        val broken = lists.readText().replace("List<A>.isNotEmpty(): Boolean = !this.isEmpty()", "List<A>.isNotEmpty(): Boolean = \"no\"")
+        val error = assertFailsWith<CompileError> { compile(broken, lists, listOf(lists.parentFile)) }
         // Its errors are the file's own, as the editor has it.
         assertEquals(null, error.pos?.file)
-        assertContains(error.message!!, "expected Int but found String")
+        assertContains(error.message!!, "expected Boolean but found String")
     }
 
     @Test
@@ -1948,16 +1986,16 @@ class CompilerTest {
         try {
             write("shop/src/shop/Prices.fk", "module Prices {\n  total(items: List<Int>): Int = Rounding.whole(items.sum())\n  internal tax(n: Int): Int = n / 5\n}")
             write("shop/src/shop/Rounding.fk", "internal module Rounding {\n  whole(n: Int): Int = n\n}")
-            write("shop/src/main.fk", "import shop.*\nmain() = println(Prices.tax(Rounding.whole(10)).toString())")
+            write("shop/src/main.fk", "import shop.*\nmain() = assertEquals(2, Prices.tax(Rounding.whole(10)))")
             val shop = File(dir, "shop/src")
             // In its own project, it's as any other declaration.
             compile(File(shop, "main.fk"), listOf(shop))
             // As in the project's tests, a root of its own, given as the program's.
-            write("shop/test/checks.fk", "import shop.*\nmain() = println(Rounding.whole(Prices.tax(10)).toString())")
+            write("shop/test/checks.fk", "import shop.*\nmain() = assertEquals(2, Rounding.whole(Prices.tax(10)))")
             compile(File(dir, "shop/test/checks.fk"), listOf(File(dir, "shop/test"), shop))
             // In another, built with the shop's sources as another project's, it's not there to use.
-            write("till/src/main.fk", "import shop.*\nmain() = println(Prices.tax(10).toString())")
-            write("till/src/whole.fk", "import shop.*\nmain() = println(Rounding.whole(10).toString())")
+            write("till/src/main.fk", "import shop.*\nmain() = assertEquals(2, Prices.tax(10))")
+            write("till/src/whole.fk", "import shop.*\nmain() = assertEquals(10, Rounding.whole(10))")
             val till = File(dir, "till/src")
             val tax = assertFailsWith<CompileError> { compile(File(till, "main.fk"), listOf(till), others = listOf(shop)) }
             assertContains(tax.message!!, "'tax' is internal to its project")
@@ -1974,9 +2012,14 @@ class CompilerTest {
         val dir = kotlin.io.path.createTempDirectory("fckt-libraries").toFile()
         fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent() + "\n")
         try {
-            val std = File(dir, "std").apply { mkdirs() }
-            File(std, "fckt_std.ml").writeText(compileStandardLibrary())
-            ocamlc(File(std, "fckt_std.ml"))
+            val core = File(dir, "core").apply { mkdirs() }
+            File(core, "fckt_core.ml").writeText(compileCore())
+            ocamlc(File(core, "fckt_core.ml"))
+            // The standard library, a library like the others here, compiled with the core.
+            val std = File(dir, "lib/std").apply { mkdirs() }
+            val stdPackages = File(STD, "fckt").listFiles()!!.filter { it.isDirectory }.map { "fckt.${it.name}" }.sorted()
+            File(std, "fckt_std.ml").writeText(compileLibrary(stdPackages, listOf(STD), emptyList(), "Fckt_std", File(std, "interface")))
+            ocamlc(File(std, "fckt_std.ml"), core)
 
             write("units/uk/m4xy/units/Money.fk", "type Money(pence: Int)")
             write("units/uk/m4xy/units/Tagged.fk", "annotation type Tagged(vararg tags: String)")
@@ -1992,11 +2035,14 @@ class CompilerTest {
             write(
                 "units/uk/m4xy/units/Moneys.fk",
                 """
+                import fckt.io.Console
+
                 module Moneys {
                   zero: Money = Money(0)
                   Money.pounds(): String = "£${'$'}{this.pence / 100}.${'$'}{pad(this.pence % 100)}"
                   sum(items: List<Money>, start: Money = zero): Money = items.fold(start, (a, b) -> Money(a.pence + b.pence))
                   twice<A>(f: (A) -> A, x: A): A = f(f(x))
+                  List<A>.second(): Option<A> = this.drop(1).firstOrNone()
                   @Console report(m: Money, label: String = "total"): Unit = println("${'$'}label: ${'$'}{m.pounds()} (${'$'}m)")
                   private pad(n: Int): String = if (n < 10) "0${'$'}n" else "${'$'}n"
                   internal pence(m: Money): Int = Rounding.whole(m.pence)
@@ -2005,13 +2051,17 @@ class CompilerTest {
             )
             write("units/uk/m4xy/units/Rounding.fk", "internal module Rounding {\n  whole(n: Int): Int = n\n}")
             val units = File(dir, "lib/units").apply { mkdirs() }
-            File(units, "uk_m4xy_units.ml").writeText(compileLibrary(listOf("uk.m4xy.units"), listOf(File(dir, "units")), emptyList(), "Uk_m4xy_units", File(units, "interface")))
-            ocamlc(File(units, "uk_m4xy_units.ml"), std)
+            File(units, "uk_m4xy_units.ml").writeText(
+                compileLibrary(listOf("uk.m4xy.units"), listOf(File(dir, "units")), listOf(File(std, "interface")), "Uk_m4xy_units", File(units, "interface")),
+            )
+            ocamlc(File(units, "uk_m4xy_units.ml"), core, std)
             // The interface is the declarations without their code, or what's private.
             val moneys = File(units, "interface/uk/m4xy/units/Moneys.fki").readText()
             assertContains(moneys, "  sum(items: List<Money>, start: Money = compiled): Money\n")
             assertContains(moneys, "  @Console report(m: Money, label: String = compiled): Unit\n")
             assertFalse("pad" in moneys)
+            // A method's receiver's type parameters are the receiver's, as reading it finds them again.
+            assertContains(moneys, "  List<A>.second(): Option<A>\n")
             // Nor what's internal: no other project sees it.
             assertFalse("pence(" in moneys)
             assertFalse(File(units, "interface/uk/m4xy/units/Rounding.fki").exists())
@@ -2025,6 +2075,7 @@ class CompilerTest {
             write(
                 "money/uk/m4xy/money/Wallets.fk",
                 """
+                import fckt.effects.Fail
                 import uk.m4xy.units.Money
                 import uk.m4xy.units.Moneys.*
 
@@ -2049,17 +2100,19 @@ class CompilerTest {
             write("money/uk/m4xy/money/Labels.fk", "module Labels {\n  sale: String = \"sale\"\n}")
             val money = File(dir, "lib/money").apply { mkdirs() }
             File(money, "uk_m4xy_money.ml").writeText(
-                compileLibrary(listOf("uk.m4xy.money"), listOf(File(dir, "money")), listOf(File(units, "interface")), "Uk_m4xy_money", File(money, "interface")),
+                compileLibrary(listOf("uk.m4xy.money"), listOf(File(dir, "money")), listOf(File(std, "interface"), File(units, "interface")), "Uk_m4xy_money", File(money, "interface")),
             )
-            ocamlc(File(money, "uk_m4xy_money.ml"), std, units)
+            ocamlc(File(money, "uk_m4xy_money.ml"), core, std, units)
             assertContains(File(money, "interface/uk/m4xy/money/Ranked.fki").readText(), "module Ranked(O: Ordered = ByPence) {")
 
             val main = File(dir, "shop/main.fk")
             fun compileMain(source: String) = main.apply { parentFile.mkdirs() }.writeText(source.trimIndent()).let {
-                compileSeparately(main, listOf(main.parentFile), listOf(File(units, "interface"), File(money, "interface")))
+                compileSeparately(main, listOf(main.parentFile), listOf(File(std, "interface"), File(units, "interface"), File(money, "interface")))
             }
             val ml = compileMain(
                 """
+                import fckt.io.Console
+                import fckt.effects.Failure.attempt
                 import uk.m4xy.units.*
                 import uk.m4xy.units.Moneys.*
                 import uk.m4xy.money.*
@@ -2090,17 +2143,20 @@ class CompilerTest {
                   println("${'$'}{ByPence.compare(Money(3), Money(1))}")
                   println("${'$'}{Richest.higher(Money(3), Money(9))}")
                   println(Pricings.labelled(Sale()))
+                  assertEquals(Some(2), [1, 2].second())
                 }
 
                 module Richest = Ranked()
                 """,
             )
-            assertContains(ml, "module Fckt = Fckt_std.Fckt")
+            // The core and the standard library are each compiled once, not into the program: fckt.io is the library's.
+            assertContains(ml, "module Io = Fckt_std.Fckt.Io")
+            assertFalse("module Lang = struct" in ml)
             assertContains(ml, "module Units = Uk_m4xy_units.Uk.M4xy.Units")
             assertFalse("pad" in ml)
             val program = File(main.parentFile, "main.ml").apply { writeText(ml) }
-            val process = ProcessBuilder(ocaml, "-I", "+unix", "-I", std.path, "-I", units.path, "-I", money.path, "unix.cma",
-                File(std, "fckt_std.cmo").path, File(units, "uk_m4xy_units.cmo").path, File(money, "uk_m4xy_money.cmo").path, program.path)
+            val process = ProcessBuilder(ocaml, "-I", "+unix", "-I", core.path, "-I", std.path, "-I", units.path, "-I", money.path, "unix.cma",
+                File(core, "fckt_core.cmo").path, File(std, "fckt_std.cmo").path, File(units, "uk_m4xy_units.cmo").path, File(money, "uk_m4xy_money.cmo").path, program.path)
                 .redirectErrorStream(true).start()
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)

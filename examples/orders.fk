@@ -1,3 +1,5 @@
+import fckt.io.Console
+
 type Money(Int)
 type UserId(value: String)
 type Order(id: String, user: UserId, items: List<Money>)

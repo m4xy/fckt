@@ -28,7 +28,7 @@ import java.io.File
 fun hovers(text: String, entry: File?): Map<Int, String> {
     val checked = try {
         val paths = pathsOf(entry)
-        analyse(text, entry, paths.roots, paths.libraries)
+        analyse(text, entry, paths.roots, paths.libraries, paths.others)
     } catch (e: Exception) {
         return emptyMap()
     } catch (e: StackOverflowError) {

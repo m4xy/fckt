@@ -8,10 +8,33 @@ import java.io.File
  * the project's `.kiln/paths` when it compiles it; and, in `.kiln/scopes`, a file each, folders
  * whose files see libraries too, as a plugin's tests see what they're written with.
  */
-class Paths(val roots: List<File>, val libraries: List<File>)
+class Paths(val roots: List<File>, val libraries: List<File>, val others: List<File> = emptyList())
 
 /** The [Paths] for [file], from the nearest folder above it with a `build.fk`. */
-fun pathsOf(file: File?): Paths {
+fun pathsOf(file: File?): Paths = withStd(ownPaths(file))
+
+/**
+ * [paths], with the standard library, fckt:std, as another project's source: unless kiln gives it
+ * already, compiled, as one of the libraries, as it does in a project it's built; or it's the
+ * standard library's own project, whose source has its packages.
+ */
+private fun withStd(paths: Paths): Paths {
+    val compiled = paths.libraries.any { File(it, "unit").takeIf { u -> u.isFile }?.readText()?.trim() == "Fckt_std" }
+    val own = paths.roots.any { File(it, "fckt").isDirectory }
+    return if (compiled || own) paths else Paths(paths.roots, paths.libraries, paths.others + listOfNotNull(bundledStd()))
+}
+
+/** The standard library's source, which the plugin has beside it, or, in its tests, the fckt.std property says. */
+fun bundledStd(): File? =
+    (System.getProperty("fckt.std")?.let(::File) ?: pluginFolder()?.resolve("std"))?.takeIf { it.isDirectory }
+
+private fun pluginFolder(): File? = try {
+    com.intellij.ide.plugins.PluginManagerCore.getPlugin(com.intellij.openapi.extensions.PluginId.getId("uk.m4xy.fckt"))?.pluginPath?.toFile()
+} catch (e: Throwable) {
+    null
+}
+
+private fun ownPaths(file: File?): Paths {
     val own = listOfNotNull(file?.parentFile)
     val project = generateSequence(file?.absoluteFile?.parentFile) { it.parentFile }.firstOrNull { File(it, "build.fk").isFile }
         ?: return Paths(own, emptyList())

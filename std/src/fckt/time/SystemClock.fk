@@ -2,5 +2,5 @@
 // when the system's is set: fine for how long a test took, not for timing to the millisecond.
 module SystemClock : Clock {
   private external currentMillis(u: Unit): Int = "(fun _ -> int_of_float (Unix.gettimeofday () *. 1000.)) u"
-  now() = Instant(currentMillis(Unit))
+  now(): Instant = Instant(currentMillis(Unit))
 }

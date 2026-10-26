@@ -602,7 +602,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 continue
             }
             // Only the methods a program uses come from the standard library, which may not build its opaque types.
-            val partly = !forSignature && decl.isOpaque && decl.pos.file?.startsWith("std/") == true
+            val partly = !forSignature && decl.isOpaque && decl.pos.file?.startsWith(uk.m4xy.fckt.CORE_PATH) == true
             when (decl) {
                 is Decl.Record -> typeDef(snake(decl.simpleName)) {
                     if (partly) partlyUsed = true
@@ -1169,7 +1169,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             }
             val name = ctorName(ref)
             val value = when {
-                variant == null -> Gen.Ctor(name, args.singleOrNull())
+                variant == null -> Gen.Ctor(builtinCtor(name), args.singleOrNull())
                 variant.fields.isEmpty() -> Gen.Ctor(name, null)
                 else -> Gen.Ctor(name, Gen.Record(variant.fields.map { snake(it.name) }.zip(args)))
             }
@@ -1275,11 +1275,18 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         }
     }
 
+    /** Option's and Result's cases that a type of the program's also has: OCaml's own, by its full name, where both are. */
+    private val shadowedBuiltins: Set<String> =
+        program.sealeds.flatMap { s -> s.variants.map { it.name } }.filter { it in setOf("Some", "None", "Ok", "Error") }.toSet()
+
+    /** Option's or Result's case [name], as OCaml has it here: `Stdlib.Error`, where a type of the program's has an Error too. */
+    private fun builtinCtor(name: String): String = if (name in shadowedBuiltins) "Stdlib.$name" else name
+
     private fun ordinaryPattern(p: Pattern.Constructor, args: List<String>?, ref: ConstructorRef): String = when (ref) {
         is ConstructorRef.Record -> args?.let { recordPattern(ref.decl.fields.map { it.name }, it, labelPrefix(ref.decl)) } ?: "_"
         is ConstructorRef.Variant -> when {
             // Option's and Result's: Some, None, Ok and Error.
-            ref.variant == null -> if (ref.name == "None") "None" else "${ref.name} ${args?.single()?.let(::atomPattern) ?: "_"}"
+            ref.variant == null -> if (ref.name == "None") builtinCtor("None") else "${builtinCtor(ref.name)} ${args?.single()?.let(::atomPattern) ?: "_"}"
             ref.variant.fields.isEmpty() -> ctorName(ref)
             args != null -> "${ctorName(ref)} ${recordPattern(ref.variant.fields.map { it.name }, args)}"
             else -> "${ctorName(ref)} ${p.castVar ?: "_"}"

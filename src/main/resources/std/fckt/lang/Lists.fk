@@ -2,7 +2,6 @@
 module Lists {
   external List<A>.size: Int = "List.length this"
   external List<A>.isEmpty(): Boolean = "List.is_empty this"
-  external List<A>.firstOrNull(): Option<A> = "List.nth_opt this 0"
   external List<A>.map<B>(f: (A) -> B): List<B> = "List.map f this"
   external List<A>.filter(f: (A) -> Boolean): List<A> = "List.filter f this"
   external List<A>.flatMap<B>(f: (A) -> List<B>): List<B> = "List.concat_map f this"
@@ -22,8 +21,13 @@ module Lists {
   external List<A>.drop(n: Int): List<A> = "List.drop n this"
   external List<A>.mapIndexed<B>(f: (Int, A) -> B): List<B> = "List.mapi f this"
   external List<A>.sortedWith(comparison: (A, A) -> Int): List<A> = "List.stable_sort comparison this"
-  List<A>.lastOrNull(): Option<A> = this.reversed().firstOrNull()
-  List<A>.getOrNull(index: Int): Option<A> = if (index < 0) None else this.drop(index).firstOrNull()
+  List<A>.lastOrNone(): Option<A> = this.reversed().firstOrNone()
+  List<A>.getOrNone(index: Int): Option<A> = if (index < 0) None else this.drop(index).firstOrNone()
+  // Its one item, if it has exactly one.
+  List<A>.singleOrNone(): Option<A> = when (this) {
+    [a] -> Some(a)
+    else -> None
+  }
   List<A>.count(f: (A) -> Boolean): Int = this.filter(f).size
   List<A>.withIndex(): List<(Int, A)> = this.mapIndexed { i, a -> (i, a) }
 
@@ -52,6 +56,21 @@ module Lists {
     else -> []
   }
 
+
+  // Each item once, where it first appears: sorted by item, then by where each was, so that the
+  // same items are together with the first of them first; the first of each kept; then put back in
+  // the order they were.
+  List<A>.distinct(): List<A> = {
+    byItem = this.withIndex().map { i, a -> (a, i) }.sorted()
+    firsts = byItem.fold([]) { kept, entry ->
+      (a, _) = entry
+      when (kept) {
+        [(b, _), *_] -> if (a == b) kept else [entry, *kept]
+        [] -> [entry]
+      }
+    }
+    firsts.map { a, i -> (i, a) }.sorted().map { _, a -> a }
+  }
 
   // Smallest first, by OCaml's ordering of values: numbers, then strings, then fields in order.
   List<A>.sorted(): List<A> = this.sortedWith(compareValues)
@@ -103,10 +122,20 @@ module Lists {
 
   // The smallest or largest item, or the one with the smallest or largest key, if there are any;
   // the first, of those that tie.
-  List<A>.minOrNull(): Option<A> = this.sorted().firstOrNull()
-  List<A>.maxOrNull(): Option<A> = this.sortedWith { a, b -> compareValues(b, a) }.firstOrNull()
-  List<A>.minByOrNull<K>(key: (A) -> K): Option<A> = this.sortedBy(key).firstOrNull()
-  List<A>.maxByOrNull<K>(key: (A) -> K): Option<A> = this.sortedByDescending(key).firstOrNull()
+  List<A>.minOrNone(): Option<A> = this.minByOrNone { it }
+  List<A>.maxOrNone(): Option<A> = this.maxByOrNone { it }
+  List<A>.minByOrNone<K>(key: (A) -> K): Option<A> = this.bestBy(key) { a, b -> compareValues(a, b) < 0 }
+  List<A>.maxByOrNone<K>(key: (A) -> K): Option<A> = this.bestBy(key) { a, b -> compareValues(a, b) > 0 }
+
+  // The item whose key beats every other's, in one pass: the first, of those that tie.
+  private List<A>.bestBy<K>(key: (A) -> K, beats: (K, K) -> Boolean): Option<A> = when (this) {
+    [] -> None
+    [a, *rest] -> Some(rest.fold((a, key(a))) { best, b ->
+      (_, bestKey) = best
+      k = key(b)
+      if (beats(k, bestKey)) (b, k) else best
+    }).map { best, _ -> best }
+  }
   List<A>.sortedByDescending<K>(key: (A) -> K): List<A> = this.sortedWith { a, b -> compareValues(key(b), key(a)) }
 
   // [(key, value), ...].lookup(key): the value of the first pair with that key.

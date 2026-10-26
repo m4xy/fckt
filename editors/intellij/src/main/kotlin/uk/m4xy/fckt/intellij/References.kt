@@ -86,15 +86,15 @@ object Resolver {
 
     private val LOG = Logger.getInstance(Resolver::class.java)
 
-    /** The name element [target] is at: in [from], another file, or the standard library. */
+    /** The name element [target] is at: in [from], another file, or the core. */
     fun element(from: FcktFile, target: Target): PsiElement? {
         // A package: its folder.
-        if (target.file != null && !target.file.startsWith("std/") && File(target.file).isDirectory) {
+        if (target.file != null && !target.file.startsWith(uk.m4xy.fckt.CORE_PATH) && File(target.file).isDirectory) {
             return LocalFileSystem.getInstance().findFileByPath(target.file)?.let { PsiManager.getInstance(from.project).findDirectory(it) }
         }
         val file: PsiFile = when {
             target.file == null -> from
-            target.file.startsWith("std/") -> StandardFiles.psi(from.project, target.file) ?: return null
+            target.file.startsWith(uk.m4xy.fckt.CORE_PATH) -> StandardFiles.psi(from.project, target.file) ?: return null
             else -> LocalFileSystem.getInstance().findFileByPath(target.file)?.let { PsiManager.getInstance(from.project).findFile(it) } ?: return null
         }
         if (target.name.isEmpty()) return file

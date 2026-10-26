@@ -3,6 +3,7 @@ import fckt.io.Paths.*
 import fckt.text.Bytes
 import fckt.text.Encodings.*
 import fckt.time.Instant
+import fckt.effects.Fail
 
 // Reading and writing files and folders, through @FileSystem: path.readText(),
 // path.writeText(text), dir.listFiles() and the rest.
@@ -64,20 +65,20 @@ module Files {
 
   // The files and folders of the machine the program runs on, which main uses.
   module Local : FileSystem {
-    tryReadBytes(path: Path) = read(path.value)
-    tryWriteBytes(path: Path, bytes: Bytes, append: Boolean) = write(path.value, bytes, append)
-    tryCopy(source: Path, target: Path) = copy(source.value, target.value)
-    exists(path: Path) = fileExists(path.value)
-    isDirectory(path: Path) = directory(path.value)
-    tryListFiles(path: Path) = list(path.value).map { names -> names.map { path.resolve(it) } }
-    tryMakeDirs(path: Path) = mkdirs(path.value)
-    tryDelete(path: Path) = remove(path.value)
-    tryOpenForReading(path: Path) = openIn(path.value)
-    tryOpenForWriting(path: Path, append: Boolean) = openOut(path.value, append)
-    tryLastModified(path: Path) = modified(path.value).map { Instant(it) }
-    tryCanonical(path: Path) = realPath(path.value).map { it.toPath() }
-    workingDirectory() = currentDirectory(Unit).toPath()
-    tryChangeDirectory(path: Path) = changeTo(path.value)
+    tryReadBytes(path: Path): Result<Bytes, String> = read(path.value)
+    tryWriteBytes(path: Path, bytes: Bytes, append: Boolean): Result<Unit, String> = write(path.value, bytes, append)
+    tryCopy(source: Path, target: Path): Result<Unit, String> = copy(source.value, target.value)
+    exists(path: Path): Boolean = fileExists(path.value)
+    isDirectory(path: Path): Boolean = directory(path.value)
+    tryListFiles(path: Path): Result<List<Path>, String> = list(path.value).map { names -> names.map { path.resolve(it) } }
+    tryMakeDirs(path: Path): Result<Unit, String> = mkdirs(path.value)
+    tryDelete(path: Path): Result<Unit, String> = remove(path.value)
+    tryOpenForReading(path: Path): Result<InputHandle, String> = openIn(path.value)
+    tryOpenForWriting(path: Path, append: Boolean): Result<OutputHandle, String> = openOut(path.value, append)
+    tryLastModified(path: Path): Result<Instant, String> = modified(path.value).map { Instant(it) }
+    tryCanonical(path: Path): Result<Path, String> = realPath(path.value).map { it.toPath() }
+    workingDirectory(): Path = currentDirectory(Unit).toPath()
+    tryChangeDirectory(path: Path): Result<Unit, String> = changeTo(path.value)
 
     private external read(path: String): Result<Bytes, String> =
       "(fun p -> try Ok (In_channel.with_open_bin p In_channel.input_all) with Sys_error e -> Error e) path"

@@ -1,8 +1,8 @@
 package uk.m4xy.fckt.intellij
 
-import uk.m4xy.fckt.STANDARD_MODULES
+import uk.m4xy.fckt.CORE_MODULES
 import uk.m4xy.fckt.moduleName
-import uk.m4xy.fckt.standardLibrary
+import uk.m4xy.fckt.coreSource
 import uk.m4xy.fckt.syntax.Arg
 import uk.m4xy.fckt.syntax.Branch
 import uk.m4xy.fckt.syntax.Decl
@@ -102,12 +102,16 @@ private fun rolesOf(text: String): Map<String, Role> {
     return roles
 }
 
-/** The standard library's names: what each of its files declares, a module or what's in it, or a type, spec or effect. */
+/**
+ * The core's names and the standard library's: what each of their files declares, a module or
+ * what's in it, or a type, spec or effect.
+ */
 private val STANDARD_ROLES: Map<String, Role> by lazy {
     val roles = mutableMapOf<String, Role>()
-    for (name in STANDARD_MODULES) {
-        val text = standardLibrary(name) ?: continue
-        val simple = name.substringAfterLast('/')
+    val files = CORE_MODULES.map { it.substringAfterLast('/') to coreSource(it) } +
+        bundledStd()?.walk()?.filter { it.isFile && it.extension == "fk" }?.map { it.nameWithoutExtension to it.readText() }.orEmpty()
+    for ((simple, text) in files) {
+        if (text == null) continue
         if (Regex("\\bmodule $simple\\b").containsMatchIn(text)) roles[simple] = Role.OBJECT
         roles += rolesOf(text)
     }

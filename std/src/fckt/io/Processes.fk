@@ -1,5 +1,7 @@
 import fckt.io.Channels.*
 import fckt.io.Paths.*
+import fckt.effects.Fail
+import fckt.effects.Failure.attempt
 
 // Running other programs, through @Process.
 module Processes {
@@ -23,13 +25,13 @@ module Processes {
 
   // The programs of the machine the program runs on, which main uses.
   module Local : Process {
-    tryStart(command: String, args: List<String>) = open(command, args)
-    waitFor(output: InputHandle) = close(output)
-    runAttached(command: String, args: List<String>) = system(command, args)
-    env(name: String) = getenv(name)
-    setEnv(name: String, value: String) = putenv(name, value)
-    executable() = executableName(Unit).toPath()
-    exit(code: Int) = stop(code)
+    tryStart(command: String, args: List<String>): Result<InputHandle, String> = open(command, args)
+    waitFor(output: InputHandle): Int = close(output)
+    runAttached(command: String, args: List<String>): Int = system(command, args)
+    env(name: String): Option<String> = getenv(name)
+    setEnv(name: String, value: String): Unit = putenv(name, value)
+    executable(): Path = executableName(Unit).toPath()
+    exit(code: Int): Nothing = stop(code)
 
     private external open(command: String, args: List<String>): Result<InputHandle, String> =
       "(fun c a -> try Ok (Unix.open_process_in (Filename.quote_command c a ^ \" 2>&1\")) with Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)) command args"

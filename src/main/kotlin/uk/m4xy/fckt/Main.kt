@@ -8,7 +8,8 @@ import kotlin.system.exitProcess
 private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [--import <name>]... [-o <file.ml>]
        fckt --library <interface> -o <file.ml> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... <package>...
        fckt --test <dir> --marker <annotation> --runner <module> [--fixtures <annotation>] [--runner-tests] [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
-       fckt --standard -o <file.ml>
+       fckt --core -o <file.ml>
+       fckt --std-path
        fckt --version
 
 Transpiles a fckt program to OCaml. A folder is a package, under the program's directory or one
@@ -16,12 +17,18 @@ given with -I; a capitalised file is a module, Ratios.fk declaring module Ratios
 one holds its package's declarations. A file uses its package's by name, and others' by importing
 them: import geometry.Shapes. --import imports into each of the program's files, as if they said
 so: --import kiln.* for a build script. --other-project gives a folder as -I does, of another
-project's packages, whose internal declarations the program's own files don't see. Without -o, writes next to the input with a .ml
-extension; with -o -, writes to standard output.
+project's packages, whose internal declarations the program's own files don't see. Without -o,
+writes next to the input with a .ml extension; with -o -, writes to standard output.
 
-The OCaml has what the program uses of the standard library in it, unless it's compiled
-separately: with --separate, or -L, it's linked with the standard library compiled on its own,
-which fckt --standard writes as fckt_std.ml, and with each library -L names. fckt --library
+Every file has the core, fckt.lang: what the language relies on, and the methods on its built-in
+types. The standard library, fckt:std, is a library like any other, whose packages a file imports:
+import fckt.io.Console. Its source is beside fckt, in the folder fckt --std-path says, and a
+program is compiled with it, as another project's, unless told --no-std, as kiln does, which
+compiles it once and gives it with -L.
+
+The OCaml has what the program uses of the core in it, unless it's compiled separately: with
+--separate, or -L, it's linked with the core compiled on its own, which fckt --core writes as
+fckt_core.ml, and with each library -L names. fckt --library
 compiles packages as a library, to the OCaml module -o names, and writes the interface that
 programs using it are checked against to <interface>; a library's public functions say their
 types. fckt --test compiles the tests in a folder, its functions marked with --marker's annotation,
@@ -35,7 +42,8 @@ fun main(args: Array<String>) {
     var input: String? = null
     var output: String? = null
     var library: String? = null
-    var standard = false
+    var core = false
+    var noStd = false
     var separate = false
     var test: String? = null
     var runner: String? = null
@@ -69,7 +77,12 @@ fun main(args: Array<String>) {
             "--marker" -> marker = args.getOrNull(i++) ?: usage()
             "--runner-tests" -> runnerTests = true
             "--fixtures" -> fixtures = args.getOrNull(i++) ?: usage()
-            "--standard" -> standard = true
+            "--core" -> core = true
+            "--no-std" -> noStd = true
+            "--std-path" -> {
+                println(shippedStd()?.path ?: run { System.err.println("fckt: this fckt has no standard library beside it"); exitProcess(2) })
+                exitProcess(0)
+            }
             "--separate" -> separate = true
             else -> when {
                 arg.startsWith("-") -> usage()
@@ -84,8 +97,11 @@ fun main(args: Array<String>) {
         packages.add(0, input)
         input = null
     }
+    // The standard library, fckt:std, from beside this fckt: another project's packages, as kiln gives
+    // it compiled, with --no-std, instead.
+    if (!noStd) shippedStd()?.let { others += it }
     when {
-        standard -> write(output ?: usage(), "the standard library") { compileStandardLibrary() }
+        core -> write(output ?: usage(), "the core") { compileCore() }
         test != null -> {
             val dir = File(test)
             if (!dir.isDirectory) {
@@ -116,6 +132,12 @@ fun main(args: Array<String>) {
             }
         }
     }
+}
+
+/** The standard library's packages, which an installed fckt has beside its lib folder, in std/src. */
+private fun shippedStd(): File? {
+    val jar = File(object {}.javaClass.protectionDomain.codeSource.location.toURI())
+    return jar.parentFile?.parentFile?.resolve("std/src")?.takeIf { it.isDirectory }
 }
 
 /** Compiles, and writes the OCaml to [target], or standard output for `-`; errors go to standard error, naming their files, or [what]. */

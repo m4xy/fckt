@@ -1,4 +1,3 @@
-import fckt.values.Lazies.*
 
 // 7 Lazy expressions
 // lazy(~e) computes e the first time .value is read, and remembers it, like Kotlin's lazy.

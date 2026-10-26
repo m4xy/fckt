@@ -6,6 +6,6 @@ module Failure {
   // How main handles @Fail: stops the program, with the reason on standard error.
   module Crash : Fail {
     private external stop(reason: String): Nothing = "(fun r -> prerr_endline r; exit 1) reason"
-    fail(reason: String) = stop(reason)
+    fail(reason: String): Nothing = stop(reason)
   }
 }

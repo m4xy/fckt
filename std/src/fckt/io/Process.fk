@@ -1,3 +1,5 @@
+import fckt.effects.Fail
+
 // Runs other programs, and reads the environment. What they print is read through @Channel.
 @Fail @Channel @HandledBy(Processes.Local) effect Process {
   // Starts command with args, without a shell, with what it prints, and its errors, to read.

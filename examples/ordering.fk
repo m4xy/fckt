@@ -3,6 +3,8 @@
 // marked @Repository: whatever one does underneath, Postgres or a list in memory, its callers see
 // only @Persistence, as a Kotlin use case sees only the repository's interface. A use case is a
 // functor that takes its repositories, and configurations make one with real or fake ones.
+import fckt.io.Console
+
 
 import fckt.monads.Results
 import fckt.values.Mutable
@@ -92,7 +94,7 @@ module PostgresOrders : OrderRepository {
   rows: Mutable<List<Ordering.Order>> = Mutable([])
   @Console @Mutating find(id: Ordering.OrderId) = {
     println("SELECT * FROM orders WHERE id = '$id'")
-    rows.value.filter { it.id == id }.firstOrNull()
+    rows.value.filter { it.id == id }.firstOrNone()
   }
   @Console @Mutating save(order: Ordering.Order) = {
     println("UPSERT INTO orders ...")
@@ -102,7 +104,7 @@ module PostgresOrders : OrderRepository {
 
 module InMemoryOrders : OrderRepository {
   rows: Mutable<List<Ordering.Order>> = Mutable([])
-  @Mutating find(id: Ordering.OrderId) = rows.value.filter { it.id == id }.firstOrNull()
+  @Mutating find(id: Ordering.OrderId) = rows.value.filter { it.id == id }.firstOrNone()
   @Mutating save(order: Ordering.Order) = {
     rows.value = [order, *rows.value.filter { it.id != order.id }]
   }

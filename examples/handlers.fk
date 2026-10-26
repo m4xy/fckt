@@ -1,4 +1,6 @@
 import fckt.effects.Yielding
+import fckt.io.Console
+import fckt.io.Terminal
 
 // Handled effects: an effect with operations. Declaring one makes its operations callable by
 // name, and calling one does the effect, as calling println does @Console. Whatever handles the

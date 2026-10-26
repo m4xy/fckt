@@ -107,6 +107,7 @@ private class Scope(val parent: Scope?) {
  */
 class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private val projectOf = file.projectOf
+    private val importsFor = file.importsFor
 
     private val u = Unifier()
 
@@ -239,7 +240,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         currentFile = f.pos.file
         checkDistinct(f.params.map { it.name to it.pos })
         functorParams[f.name] = f.params.map { p ->
-            val spec = find(p.spec.name, specs, p.spec.pos) ?: throw CompileError(p.spec.pos, "unknown spec '${p.spec.name}'")
+            val spec = find(p.spec.name, specs, p.spec.pos) ?: throw CompileError(p.spec.pos, "unknown spec '${p.spec.name}'${importHint(p.spec.name)}")
             val name = "${f.name}.${p.name}"
             if (name in modules) throw CompileError(p.pos, "${f.simpleName} has a module named ${p.name} already")
             val types = spec.types.map { Decl.Record(p.pos, "$name.${it.name}", it.typeParams, emptyList()) }
@@ -645,9 +646,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
     }
 
-    /** For a name that isn't found but is one of the standard library's modules: how to import it. */
-    private fun importHint(name: String?): String =
-        name?.takeIf { "${uk.m4xy.fckt.STANDARD_PACKAGE}/$it" in uk.m4xy.fckt.STANDARD_MODULES }?.let { "; it's in the standard library: import ${uk.m4xy.fckt.STANDARD_PACKAGE}.$it" }.orEmpty()
+    /** For a name that isn't found: the imports that would bring in one of that name, if any would. */
+    private fun importHint(name: String?): String {
+        val imports = name?.let(importsFor).orEmpty()
+        return if (imports.isEmpty()) "" else "; " + imports.joinToString(", or ") { "import $it" } + " has one"
+    }
 
     /** Whether [d] is directly in a package, the program's or a folder's, rather than in a module. */
     private fun inPackage(d: Decl): Boolean = d.path.isEmpty() || modules[d.path.joinToString(".")]?.isPackage == true
@@ -679,8 +682,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     /** Whether [d], and every module around it, can be seen from the current module. */
     private fun visible(d: Decl): Boolean = whyHidden(d) == null
 
+    /**
+     * Whether [d] is the program's own, at its top level, and the current file isn't: the core's,
+     * or another project's, which a program's declarations are no part of, as its Error is no
+     * library's. Not its modules, which it gives a library's functors, or follows a library's specs with.
+     */
+    private fun foreign(d: Decl): Boolean =
+        d.path.isEmpty() && d !is Decl.Module && projectOf(d.pos.file) == "program" && projectOf(currentFile) != "program"
+
     /** Why [d] can't be seen from the current module, or null if it can. */
     private fun whyHidden(d: Decl): String? {
+        if (foreign(d)) return "'${d.simpleName}' is the program's own, which other projects' code can't see"
         if (d.isInternal && projectOf(d.pos.file) != projectOf(currentFile)) return "'${d.simpleName}' is internal to its project, ${projectOf(d.pos.file)}"
         if (d.isPrivate && !inside(d.path)) return "'${d.simpleName}' is private to ${d.path.joinToString(".").ifEmpty { "this file" }}"
         // Private in a package, out of any module: private to its file, as in Kotlin.
@@ -721,6 +733,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun <D : Decl> find(name: String, table: Map<String, D>, pos: Pos?): D? {
         for (n in reach(name)) {
             val d = table[canonical((currentPath.take(n) + name).joinToString("."))] ?: continue
+            if (foreign(d)) continue
             val hidden = whyHidden(d)
             if (hidden != null) {
                 if (pos == null) continue
@@ -1020,7 +1033,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val ref = m.spec ?: continue
             currentPath = m.path
             currentFile = m.pos.file
-            val spec = find(ref.name, specs, ref.pos) ?: throw CompileError(ref.pos, "unknown spec '${ref.name}'")
+            val spec = find(ref.name, specs, ref.pos) ?: throw CompileError(ref.pos, "unknown spec '${ref.name}'${importHint(ref.name)}")
             if (ref.args.isNotEmpty() && m.name !in parameterModules) {
                 throw CompileError(ref.args.first().pos, "${m.simpleName} says what its types are in its body, so write just : ${spec.simpleName}; type arguments are for a functor's parameters, like F(M: ${spec.simpleName}<...>)")
             }
@@ -1221,7 +1234,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     throw CompileError(ref.pos, "'${ref.name}' is an annotation, written @${ref.name}(...) before a declaration; no value has its type")
                 }
                 ?: typeParams["@" + ref.name]?.let { throw CompileError(ref.pos, "'${ref.name}' is an effect parameter, written @${ref.name}, as in @${ref.name} () -> Unit") }
-                ?: throw CompileError(ref.pos, if (ref.name == "_") "'_' only marks a spec type's parameters, as in Monad<Result<_, String>>" else "unknown type '${ref.name}'")
+                ?: throw CompileError(ref.pos, if (ref.name == "_") "'_' only marks a spec type's parameters, as in Monad<Result<_, String>>" else "unknown type '${ref.name}'${importHint(ref.name)}")
         }
     }
 
@@ -1467,7 +1480,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (find(a.name, records, null) != null || find(a.name, sealeds, null) != null) {
                 "'${a.name}' isn't an annotation; declare one with annotation type ${a.name.substringAfterLast('.')}(...)"
             } else {
-                "unknown annotation '${a.name}'"
+                "unknown annotation '${a.name}'${importHint(a.name)}"
             },
         )
         a.decl = decl
@@ -1744,7 +1757,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      * or carry one. A generic effect has its type arguments: `@Yielding<Int> () -> Unit`.
      */
     private fun effectLabels(annotations: List<Annotation>): List<Type.Con> = annotations.flatMap { a ->
-        val decl = annotationType(a, currentPath) ?: throw CompileError(a.pos, "unknown effect '${a.name}'")
+        val decl = annotationType(a, currentPath) ?: throw CompileError(a.pos, "unknown effect '${a.name}'${importHint(a.name)}")
         a.decl = decl
         if (decl is Decl.Spec && a.typeArgs.isNotEmpty()) return@flatMap listOf(Type.Con(decl.name, a.typeArgs.map { resolve(it) }))
         effectsOf(listOf(a), currentPath, a.pos).map { Type.Con(it) }.ifEmpty {
@@ -2307,15 +2320,44 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     // ---- Dependency order ----
 
-    /** Of the functions each one's body may use, those it was only taken to because of a `.name`. */
+    /**
+     * Whether the current file can call the extension [d] by its method's name: it's the core's, or
+     * its file's, or in the package the file is in, as its modules are; or the file imports its
+     * module, or anything in it, as its type, whose methods come with it.
+     */
+    private fun inScope(d: Decl.Function): Boolean = onlyAsPackageMate(d) != null
+
+    /**
+     * Whether [d] is in scope here only as a method of a module beside the file's in its package,
+     * which the file doesn't import: true; in scope otherwise, false; or not, null.
+     */
+    private fun onlyAsPackageMate(d: Decl.Function): Boolean? {
+        if (d.pos.file == currentFile || d.pos.file?.startsWith(uk.m4xy.fckt.CORE_PATH) == true) return false
+        val module = d.path.joinToString(".")
+        val here = currentPath.joinToString(".")
+        if (module.isEmpty() || here == module || here.startsWith("$module.")) return false
+        if (fileImports[currentFile].orEmpty().any { i -> i.path.joinToString(".").let { it == module || it.startsWith("$module.") } }) return false
+        val pkg = (modules[module]?.takeIf { !it.isPackage }?.let { d.path.dropLast(1) } ?: d.path).joinToString(".")
+        return if (here == pkg || here.startsWith("$pkg.")) true else null
+    }
+
+    /** For a method that isn't in scope here, but one of a module's that fits would be: the imports that bring it in. */
+    private fun methodImportHint(name: String, receiver: Type): String {
+        val linked = extensions[name].orEmpty().filter { visible(it) && !inScope(it) && fit(receiverType(it), receiver) != null }.map { it.path.joinToString(".") }
+        // Or, of the modules not brought in at all, those that declare a method of that name.
+        val modules = linked.ifEmpty { importsFor(name).filter { it.endsWith(".$name") }.map { it.removeSuffix(".$name") } }.distinct()
+        return if (modules.isEmpty()) "" else "; " + modules.joinToString(", or ") { "import $it.*" } + " has one"
+    }
+
+    /** Of the functions each one's body may use, those it was taken to only because a `.name` might be a package-mate's method. */
     private val guessedRefs = mutableMapOf<Decl.Function, Set<Decl.Function>>()
 
     private fun dependencyGroups(): List<FunctionGroup> {
         val decls = globals.values.filter { it !in parameterMembers }
         val deps = decls.associateWith { decl -> refsOf(decl).also { uses[decl] = it }.filter { it !in parameterMembers } }
         // A call between modules goes one way, as OCaml's modules can't call each other: so where
-        // only `.name`s, which may be any extension of that name, join functions of different
-        // modules into a group, they're taken as the other modules' extensions they may be, not as calls.
+        // `.name`s that are only maybe a package-mate's methods join functions of different
+        // modules into a group, they're taken as what they may be, not as calls.
         val certain = decls.associateWith { decl ->
             val guessed = guessedRefs[decl].orEmpty()
             deps.getValue(decl).filter { it !in guessed || it.path == decl.path }
@@ -2364,8 +2406,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val guessed = mutableSetOf<Decl.Function>()
             val named = mutableSetOf<Decl.Function>()
             return refs.flatMap { ref ->
-                // After a dot, only an extension of that name.
-                if (ref.startsWith(".")) return@flatMap (extensions[ref.drop(1)].orEmpty().filter { visible(it) } + defaultsUsed(ref.drop(1))).also { guessed += it }
+                // After a dot, only an extension of that name; one only of a module beside it, which
+                // isn't imported, is taken for a call least surely.
+                if (ref.startsWith(".")) return@flatMap (extensions[ref.drop(1)].orEmpty().filter { visible(it) && inScope(it) } + defaultsUsed(ref.drop(1))).also { found ->
+                    guessed += found.filter { it.extension && onlyAsPackageMate(it) == true }
+                }
                 // A method's name may be any extension of that name.
                 // A module used as a handler or a value: its functions.
                 (lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) || valueSpec(it) } == true }
@@ -3331,7 +3376,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             return fn.result
         }
         if (receiver is Type.Var) throw CompileError(member.pos, "can't tell what '${member.name}' is: the receiver's type isn't known here; annotate it")
-        throw CompileError(member.pos, "$receiver has no method '${member.name}'")
+        throw CompileError(member.pos, "$receiver has no method '${member.name}'${methodImportHint(member.name, receiver)}")
     }
 
     /** A record field, or a field of the variant a variable was narrowed to by `is`. */
@@ -3428,13 +3473,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      * type fits, or the most specific, as `List<Int>.sum` is over `List<A>.sum`.
      */
     private fun extension(member: Expr.Member, receiver: Type): Decl.Function? {
-        val candidates = extensions[member.name].orEmpty().filter { visible(it) }
+        val candidates = extensions[member.name].orEmpty().filter { visible(it) && inScope(it) }
         // As in Kotlin, the receiver's type must be known to choose; the caller says so if it isn't.
         if (candidates.isEmpty() || receiver.prune() is Type.Var) return null
         val fitting = candidates.mapNotNull { d -> fit(receiverType(d), receiver)?.let { d to it } }
         if (fitting.isEmpty()) return null
         val best = fitting.maxOf { it.second }
-        val chosen = fitting.filter { it.second == best }
+        // As one's own declarations come before what's imported: the core's, which every file has, last.
+        val chosen = fitting.filter { it.second == best }.let { tied ->
+            tied.filter { (d, _) -> d.pos.file?.startsWith(uk.m4xy.fckt.CORE_PATH) != true }.ifEmpty { tied }
+        }
         chosen.singleOrNull()?.let { return it.first }
         throw CompileError(
             member.pos,

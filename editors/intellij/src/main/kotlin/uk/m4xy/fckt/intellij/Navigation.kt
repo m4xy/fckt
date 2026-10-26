@@ -1,11 +1,12 @@
 package uk.m4xy.fckt.intellij
 
 import uk.m4xy.fckt.DEFAULT_IMPORTS
-import uk.m4xy.fckt.STANDARD_FILES
-import uk.m4xy.fckt.STANDARD_MODULES
+import uk.m4xy.fckt.CORE_FILES
+import uk.m4xy.fckt.CORE_PATH
+import uk.m4xy.fckt.CORE_MODULES
 import uk.m4xy.fckt.analyse
 import uk.m4xy.fckt.moduleName
-import uk.m4xy.fckt.standardLibrary
+import uk.m4xy.fckt.coreSource
 import uk.m4xy.fckt.syntax.Annotation
 import uk.m4xy.fckt.syntax.CallRef
 import uk.m4xy.fckt.syntax.ConstructorRef
@@ -26,18 +27,19 @@ import uk.m4xy.fckt.types.Type
 import java.io.File
 
 /**
- * Where a name is declared: in [file] (null for the file being edited, a path, or `std/...` for the
- * standard library), at the first [name] from [pos] on. An empty [name] is the file itself.
+ * Where a name is declared: in [file] (null for the file being edited, a path, or `core:...` for the
+ * core), at the first [name] from [pos] on. An empty [name] is the file itself.
  */
 data class Target(val file: String?, val pos: Pos, val name: String)
 
 /** Where the compiler's built-in types and functions are described: never compiled, only read. */
-const val BUILTINS = "std/builtins.fk"
+const val BUILTINS = CORE_PATH + "fckt/builtins.fk"
 
-/** The standard library's source, by the path its positions name, or the built-ins' description. */
+/** The core's source, by the path its positions name, or the built-ins' description. */
 fun standardSource(path: String): String? =
     if (path == BUILTINS) Target::class.java.getResourceAsStream("/fckt/builtins.fk")?.use { it.reader().readText() }
-    else standardLibrary(path.removePrefix("std/").removeSuffix(".fk"))
+    else if (path.startsWith(CORE_PATH)) coreSource(path.removePrefix(CORE_PATH).removeSuffix(".fk"))
+    else null
 
 /** The offset of the [name] token at or after [pos] in [text], or of [pos] if there's none nearby. */
 fun offsetOf(text: String, pos: Pos, name: String): Int {
@@ -86,7 +88,7 @@ fun declarations(text: String, entry: File?): Map<Int, List<Target>> {
 
     // Everything the checker resolved.
     val paths = pathsOf(entry)
-    val checked = try { analyse(text, entry, paths.roots, paths.libraries) } catch (e: Exception) { null } catch (e: StackOverflowError) { null }
+    val checked = try { analyse(text, entry, paths.roots, paths.libraries, paths.others) } catch (e: Exception) { null } catch (e: StackOverflowError) { null }
     if (checked != null) Resolutions(text, checked.program, ::put, ::of).decls(checked.decls)
 
     // What's left, by name, in the scopes the compiler would look in.
@@ -121,7 +123,7 @@ fun declarations(text: String, entry: File?): Map<Int, List<Target>> {
  */
 fun importTargets(text: String, entry: File?): Map<Int, Target> {
     val imports = try { Parser.parse(text).imports[null].orEmpty() } catch (e: Exception) { return emptyMap() }
-    val roots = pathsOf(entry).let { it.roots + it.libraries }
+    val roots = pathsOf(entry).let { it.roots + it.others + it.libraries }
     val idents = scan(text).filter { it.kind == TokKind.IDENT }
     val found = mutableMapOf<Int, Target>()
     for (import in imports) {
@@ -140,22 +142,18 @@ fun importTargets(text: String, entry: File?): Map<Int, Target> {
 private fun importPath(path: List<String>, roots: List<File>): List<Target?> {
     val targets = mutableListOf<Target?>()
     var folders = roots
-    // The standard library's package so far, `fckt` or `fckt/io`, which has no folders.
+    // The core's package so far, `fckt` or `fckt/lang`, which has no folders of its own.
     var std: String? = null
     var i = 0
-    // Packages, while the names are folders: `fckt` is the standard library's.
+    // Packages, while the names are folders, or the core's: `fckt` is both, the core's and the standard library's.
     while (i < path.size && path[i][0].isLowerCase()) {
         val name = path[i]
-        val stdNext = (if (i == 0) name else std?.let { "$it/$name" })?.takeIf { pkg -> STANDARD_FILES.any { it.startsWith("$pkg/") } }
-        if (stdNext != null) {
-            std = stdNext
-            targets += null
-            i++
-            continue
-        }
+        val prefix = path.take(i + 1).joinToString("/")
+        val inCore = CORE_FILES.any { it.startsWith("$prefix/") }
         val next = folders.map { File(it, name) }.filter { it.isDirectory }
-        if (next.isEmpty() || std != null) break
-        targets += Target(next.first().path, Pos(1, 1), "")
+        if (!inCore && next.isEmpty()) break
+        std = prefix.takeIf { inCore && next.isEmpty() }
+        targets += next.firstOrNull()?.let { Target(it.path, Pos(1, 1), "") }
         folders = next
         i++
     }
@@ -163,11 +161,11 @@ private fun importPath(path: List<String>, roots: List<File>): List<Target?> {
     // A module's file, or a declaration of one of the package's lower-case files.
     val name = path[i]
     val (file, text) = if (std != null) {
-        val inPackage = STANDARD_FILES.filter { it.substringBeforeLast('/') == std }
+        val inPackage = CORE_FILES.filter { it.substringBeforeLast('/') == std }
         val found = inPackage.firstOrNull { it == "$std/$name.fk" }
             ?: inPackage.filter { it.substringAfterLast('/')[0].isLowerCase() }
-                .firstOrNull { f -> parseOrNull(standardSource("std/$f").orEmpty(), "std/$f")?.any { it.name == name || (it is Decl.Function && it.methodName == name) } == true }
-        found?.let { "std/$it" }.let { it to it?.let(::standardSource) }
+                .firstOrNull { f -> parseOrNull(standardSource(CORE_PATH + f).orEmpty(), CORE_PATH + f)?.any { it.name == name || (it is Decl.Function && it.methodName == name) } == true }
+        found?.let { CORE_PATH + it }.let { it to it?.let(::standardSource) }
     } else {
         // A program's file, or a library's interface's.
         val f = folders.flatMap { it.listFiles().orEmpty().toList() }.firstOrNull { it.isFile && (it.name == "$name.fk" || it.name == "$name.fki") }
@@ -706,11 +704,11 @@ private class Reach {
             // What every file imports: everything in these modules and packages, and these declarations.
             for (import in DEFAULT_IMPORTS) {
                 val path = import.removeSuffix(".*").replace('.', '/')
-                val files = STANDARD_MODULES.filter { it == path || (import.endsWith(".*") && it.substringBeforeLast('/') == path) }
-                for (name in files) reach.parse(standardSource("std/$name.fk"), "std/$name.fk")?.let { reach.names(it, "std/$name.fk", reach.prelude) }
+                val files = CORE_MODULES.filter { it == path || (import.endsWith(".*") && it.substringBeforeLast('/') == path) }
+                for (name in files) reach.parse(standardSource("$CORE_PATH$name.fk"), "$CORE_PATH$name.fk")?.let { reach.names(it, "$CORE_PATH$name.fk", reach.prelude) }
             }
             reach.parse(standardSource(BUILTINS), BUILTINS)?.let { reach.names(it, BUILTINS, reach.prelude) }
-            for (name in STANDARD_MODULES) reach.module(name.substringAfterLast('/'), "std/$name.fk", standardSource("std/$name.fk"))
+            for (name in CORE_MODULES) reach.module(name.substringAfterLast('/'), "$CORE_PATH$name.fk", standardSource("$CORE_PATH$name.fk"))
             return reach
         }
     }

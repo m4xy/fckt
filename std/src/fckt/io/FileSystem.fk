@@ -1,5 +1,6 @@
 import fckt.text.Bytes
 import fckt.time.Instant
+import fckt.effects.Fail
 
 // Reads and writes files and folders. A relative path is from the folder the program runs in.
 // What can't be done, such as reading a file that isn't there, fails with why: Files'

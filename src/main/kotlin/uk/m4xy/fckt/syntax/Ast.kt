@@ -279,6 +279,8 @@ data class SourceFile(
     val imports: Map<String?, List<Import>> = emptyMap(),
     /** The project a file is in, by its path, null for the program's own: internal declarations are seen only in theirs. */
     val projectOf: (String?) -> String = { "program" },
+    /** For a name that isn't found, the imports that would bring in one of it: `fckt.io.Console` for println. */
+    val importsFor: (String) -> List<String> = { emptyList() },
 )
 
 /**

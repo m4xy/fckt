@@ -59,4 +59,11 @@ dependencies {
     intellijPlatform { testFramework(TestFrameworkType.Platform) }
 }
 
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    // The standard library's source, which the plugin has beside it when it's installed.
+    systemProperty("fckt.std", rootProject.file("std/src").path)
+}
+
+// The standard library's source goes beside the plugin, in std, for files outside a kiln project.
+tasks.prepareSandbox { from(rootProject.file("std/src")) { into(intellijPlatform.projectName.map { "$it/std" }) } }

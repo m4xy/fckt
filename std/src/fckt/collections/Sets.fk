@@ -1,3 +1,5 @@
+import fckt.collections.Maps.*
+
 // Kotlin's sets: items, each once. Imported into every file. A set never changes: plus and minus
 // make another. Its items are in order, smallest first, as a map's keys are, and two sets with the
 // same items are equal.
@@ -32,15 +34,6 @@ module Sets {
   Set<A>.filter(f: (A) -> Boolean): Set<A> = Set(this.items.filterKeys(f))
   // What f makes of each item, in order: a list, as Kotlin's is, as two items may make the same.
   Set<A>.map<B>(f: (A) -> B): List<B> = this.toList().map(f)
-
-  // Each item once, where it first appears: with the items seen in a set, not looked for in a list.
-  List<A>.distinct(): List<A> = {
-    (_, kept) = this.fold((emptySet(), [])) { seen, a ->
-      (set, items) = seen
-      if (set.contains(a)) seen else (set.plus(a), [a, *items])
-    }
-    kept.reversed()
-  }
 
   // As Kotlin shows a set: [a, b].
   Set<A>.toString(showA: (A) -> String): String = "[" + this.toList().map(showA).joinToString(", ") + "]"

@@ -1,8 +1,10 @@
 import fckt.collections.Streams.*
 import fckt.effects.Generators.*
 import fckt.effects.Yielding
-import fckt.values.Lazies.*
 import fckt.values.Mutable
+import fckt.effects.Fail
+import fckt.effects.Failure.attempt
+import fckt.io.Console
 
 // Handlers that choose whether to resume. A function answering an operation may take one more
 // parameter, resume: the rest of the handled block, waiting at the call. Calling it carries on

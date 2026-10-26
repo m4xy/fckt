@@ -1,4 +1,6 @@
 // Every construct fckt has, for checking the highlighting.
+import fckt.io.Console
+
 /* A block
    comment */
 type Box<T>(value: T)
