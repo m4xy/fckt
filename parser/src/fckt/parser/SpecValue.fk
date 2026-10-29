@@ -1,0 +1,11 @@
+// name<A>(parameters): R, or name: T, in a spec, with a default, what a module that leaves it out
+// has.
+type SpecValue(
+  at: Position,
+  name: String,
+  typeParameters: List<String>,
+  parameters: Option<List<Parameter>>,
+  valueType: TypeRef,
+  annotations: List<Annotation>,
+  default: Option<Expression>,
+)

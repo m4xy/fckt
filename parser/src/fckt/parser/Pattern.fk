@@ -1,0 +1,15 @@
+// What a when's branch matches.
+type Pattern {
+  // _
+  Wildcard(at: Position),
+  // a name, which takes what's there
+  NamePattern(at: Position, name: String),
+  // 1, "text", 'c', true, -2
+  ConstantPattern(at: Position, expression: Expression),
+  // (p, q): a tuple, or a record's fields in order
+  TuplePattern(at: Position, elements: List<Pattern>),
+  // [], [a, b], [head, *tail]
+  ListPattern(at: Position, elements: List<Pattern>, rest: Option<Pattern>),
+  // Some(x), Shape.Circle, None, or with check, is Circle
+  CasePattern(at: Position, name: String, arguments: Option<List<Pattern>>, check: Boolean, qualifier: Option<String>),
+}

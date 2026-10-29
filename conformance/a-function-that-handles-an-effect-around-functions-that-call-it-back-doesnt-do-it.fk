@@ -1,0 +1,20 @@
+import fckt.io.Console
+
+effect Rejecting {
+  reject(message: String): Nothing
+}
+
+// Checked before what it calls, which call it back: it handles their Rejecting, so it doesn't do it.
+startsList(depth: Int): Boolean = trying { list(depth) }.isSome()
+
+// list and item read each other; startsList looks ahead, trying to read a list, which rejects if
+// it can't, and stops there.
+@Rejecting list(depth: Int): Int = if (depth > 3) reject("too deep") else item(depth + 1) + 1
+
+@Rejecting item(depth: Int): Int = if (startsList(depth)) list(depth) else 0
+
+trying<A>(block: @Rejecting () -> A): Option<A> = Rejecting(reject = (_, _) -> None) { Some(block()) }
+
+main() = println("${startsList(0)} ${startsList(4)}")
+
+// prints: true false

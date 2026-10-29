@@ -7,7 +7,6 @@ import uk.m4xy.fckt.syntax.Lexer
 import uk.m4xy.fckt.syntax.RawPart
 import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.syntax.Token
-import java.io.File
 import kotlin.test.assertEquals
 
 /**
@@ -16,31 +15,18 @@ import kotlin.test.assertEquals
  * among them.
  */
 class LexerTest {
-    private val sources = listOf("conformance", "src/main/resources/std", "std/src", "examples", "symbols/src", "parser/src")
-        .flatMap { File(it).walk().filter { f -> f.isFile && f.extension == "fk" }.sortedBy { f -> f.path }.toList() }
-
-    /** What fckt.parser's Lexer makes of each source, by its path: tokens.fk run over all of them at once. */
-    private val written: Map<String, String> by lazy {
-        val ml = compile(File("src/test/fckt/tokens.fk"), listOf(File("parser/src")), others = listOf(File("std/src")))
-        val out = File.createTempFile("tokens", ".txt")
-        try {
-            Ocaml.run(ml, listOf(out.path) + sources.map { it.path })
-            out.readText()
-        } finally {
-            out.delete()
-        }.split(Regex("^# ", RegexOption.MULTILINE)).drop(1)
-            .associate { it.substringBefore('\n') to it.substringAfter('\n') }
-    }
+    /** What fckt.parser's Lexer makes of each source, by its path. */
+    private val written: Map<String, String> by lazy { SelfHosted.written("tokens.fk") }
 
     @TestFactory
-    fun `fckt's lexer, written in fckt, splits each source as this one does`() = sources.map { file ->
+    fun `fckt's lexer, written in fckt, splits each source as this one does`() = SelfHosted.sources.map { file ->
         DynamicTest.dynamicTest(file.path) { assertEquals(described(file.readText()), written[file.path]) }
     }
 
     /** As tokens.fk writes them. */
     private fun described(source: String): String = try {
         Lexer(source).tokenize().joinToString("") { t ->
-            "${t.pos.line}:${t.pos.col} ${KINDS.getValue(t.kind)} ${quoted(t.text)}" + parts(t) + "\n"
+            "${t.pos.line}:${t.pos.col} ${KINDS.getValue(t.kind)} ${SelfHosted.quoted(t.text)}" + parts(t) + "\n"
         }
     } catch (e: CompileError) {
         "error ${e.pos!!.line}:${e.pos!!.col} ${e.message}\n"
@@ -48,12 +34,10 @@ class LexerTest {
 
     private fun parts(t: Token): String = t.parts.joinToString("") {
         when (it) {
-            is RawPart.Text -> " text ${quoted(it.text)}"
-            is RawPart.Code -> " code ${quoted(it.source)} ${it.pos.line}:${it.pos.col}"
+            is RawPart.Text -> " text ${SelfHosted.quoted(it.text)}"
+            is RawPart.Code -> " code ${SelfHosted.quoted(it.source)} ${it.pos.line}:${it.pos.col}"
         }
     }
-
-    private fun quoted(text: String) = "\"" + text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"") + "\""
 
     private companion object {
         /** This lexer's kinds, by fckt.parser's names for them. */

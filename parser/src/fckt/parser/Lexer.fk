@@ -6,9 +6,10 @@ import fckt.collections.Arrays.*
 // or another break, nor before a line that starts with . or |>, and not before a }, which ends its
 // line's statement itself.
 module Lexer {
-  // The source's tokens, the last of them End; or why it can't be split.
-  tokens(source: String): Result<List<Token>, SyntaxError> = {
-    scan = Scan(source.toList().toArray(), 0, 1, 1, [], [])
+  // The source's tokens, the last of them End; or why it can't be split. A source that's part of
+  // another, as what a string interpolates, starts where it is, from.
+  tokens(source: String, from: Position = Position(1, 1)): Result<List<Token>, SyntaxError> = {
+    scan = Scan(source.toList().toArray(), 0, from.line, from.column, [], [])
     Rejecting(reject = (at, message, _) -> Error(SyntaxError(at, message))) { Ok(all(scan)) }
   }
 

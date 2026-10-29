@@ -310,10 +310,11 @@ annotation, `@<name>(<field> = <value>, ...)`; or a list, `[...]`, or tuple, `(.
 ### fckt in fckt
 
 [fckt.parser](parser) is fckt's source read as this compiler reads it, written in fckt, toward a
-compiler that compiles itself. So far it's the lexer: `Lexer.tokens(source)` gives each `Token`,
-its `Kind`, text and `Position`, a string's parts, and the `End`; or a `SyntaxError`. `LexerTest`
-holds it to this compiler's lexer, token for token, over the conformance cases, the core, std, the
-examples, and these libraries, its own source among them.
+compiler that compiles itself. `Lexer.tokens(source)` splits a source into `Token`s, and
+`Parser.parse(source)` reads them as a `SourceFile`, its imports and declarations as written, or
+gives each `SyntaxError`. `LexerTest` and `ParserTest` hold them to this compiler's lexer and
+parser, token for token and declaration for declaration, over the conformance cases, the core,
+std, the examples, and these libraries, their own source among them.
 
 ## Building a project
 

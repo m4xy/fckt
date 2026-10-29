@@ -1,0 +1,2 @@
+// A module given to a functor, for its next parameter or the one named.
+type ModuleArgument(name: Option<String>, value: TypeRef)

@@ -1,0 +1,2 @@
+// @Name, @Name(arguments), or a generic effect's @Yielding<Int>.
+type Annotation(at: Position, name: String, arguments: List<AnnotationArgument>, typeArguments: List<TypeRef>)

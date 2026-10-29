@@ -1,0 +1,8 @@
+// A type as written: Name<A, B>; (A, B) -> R, maybe with what calling it does, @Console (String) ->
+// Unit; a tuple, (A, B); or effects alone, @Console, as an effect parameter's argument.
+type TypeRef {
+  NamedType(at: Position, name: String, arguments: List<TypeRef>),
+  FunctionType(at: Position, parameters: List<TypeRef>, result: TypeRef, effects: List<Annotation>),
+  TupleType(at: Position, elements: List<TypeRef>),
+  EffectsType(at: Position, effects: List<Annotation>),
+}

@@ -1,0 +1,8 @@
+// What an annotation's argument can be: a constant; a name, maybe qualified, with type arguments,
+// List<User>, or arguments of its own, Route("/a", greet); or a list or tuple of them.
+type AnnotationValue {
+  Constant(expression: Expression),
+  Reference(at: Position, name: String, typeArguments: Option<List<TypeRef>>, arguments: Option<List<AnnotationArgument>>),
+  ValueList(at: Position, items: List<AnnotationValue>),
+  ValueTuple(at: Position, items: List<AnnotationValue>),
+}

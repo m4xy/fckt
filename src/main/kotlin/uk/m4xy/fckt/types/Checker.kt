@@ -190,6 +190,14 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private val schemes = mutableMapOf<Decl.Function, Scheme>()
     private val provisional = mutableMapOf<Decl.Function, Type>()
+
+    /**
+     * How the others in its recursive group see a function that says what it does: as doing that,
+     * as an external is seen, rather than sharing what its body turns out to do. Otherwise the
+     * group's functions, calling each other, would all do what any does, so one that handles an
+     * effect around a call to another, as a parser backtracking does, would still be taken to do it.
+     */
+    private val viewed = mutableMapOf<Decl.Function, Type>()
     private var typeParams: Map<String, Type> = emptyMap()
 
     /** While checking a spec, its own types and how many parameters each takes. */
@@ -2721,6 +2729,20 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 }
             }
         }
+        // Only where functions call each other: one that only calls itself shares only its own.
+        // A @Mutating one is taken, as an external is, to change what any of its parameters holds.
+        if (group.decls.size > 1) for (decl in group.decls) {
+            val inside = provisional.getValue(decl) as? Type.Fn ?: continue
+            if (!seenAsDeclared(decl)) continue
+            // Its parameters are its own: a function given for one does what it does there.
+            val row = u.fresh()
+            val declared = allowed(decl)
+            val regions = inside.params.flatMap { regionsIn(it) }.filterIsInstance<Type.Var>().distinct()
+            val changes = if (MUTATING in declared && regions.isNotEmpty()) regions.map { Type.Con(MUTATING, listOf(it)) } else emptyList()
+            val labels = declared.filter { it != MUTATING || changes.isEmpty() }.map { Type.Con(it) } + changes
+            u.unify(row, Type.row(labels, u.fresh()))
+            viewed[decl] = Type.Fn(inside.params, inside.result, row)
+        }
         for (decl in group.decls) {
             typeParams = declaredParams.getValue(decl)
             val type = provisional.getValue(decl)
@@ -2788,6 +2810,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 if (t !is Type.Var || !seen.add(t)) throw CompileError(decl.pos, "type parameter $name of '${decl.name}' is always $t here")
             }
             fun seen(t: Type) = (if (t is Type.Fn) Type.Fn(t.params, t.result, done.getValue(decl)) else t).zonk()
+            viewed.remove(decl)
             val type = seen(provisional.remove(decl)!!)
             // A top-level value lives as long as the program, and so do the values it holds.
             if (decl.params == null) regionsIn(type).forEach { if (it is Type.Var) u.unify(it, Type.GLOBAL) }
@@ -2895,6 +2918,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun failed(group: FunctionGroup) {
         for (decl in group.decls) {
             provisional.remove(decl)
+            viewed.remove(decl)
             if (decl in schemes) continue
             // A function of as many parameters, taking and giving anything, and doing anything.
             val type = decl.params?.let { ps -> Type.Fn(ps.map { u.fresh() }, u.fresh(), u.fresh()) } ?: u.fresh()
@@ -2909,8 +2933,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     private fun globalType(decl: Decl.Function): Type {
         if (!inside(decl.path)) outsideSchemes[decl]?.let { return u.instantiate(it) }
-        return provisional[decl] ?: u.instantiate(schemes[decl] ?: error("${decl.name} used before it was checked"))
+        return viewed[decl] ?: provisional[decl] ?: u.instantiate(schemes[decl] ?: error("${decl.name} used before it was checked"))
     }
+
+    /**
+     * Whether [decl]'s group sees it as doing what it says, [viewed]: a function whose effects are
+     * its own to say, so not main, a default value's, one a functor made, one of a functor's, nor
+     * one with an effect parameter, which does what it's given.
+     */
+    private fun seenAsDeclared(decl: Decl.Function): Boolean =
+        decl.name != "main" && "\$default\$" !in decl.simpleName && decl.external == null && decl.body !is Expr.Compiled &&
+            enclosingApplication(decl.path) == null && parameterEffects(decl.path).isEmpty() && decl.typeParams.none { it.startsWith("@") } &&
+            declaredLabels(decl.annotations, decl.path).none { it.args.isNotEmpty() }
 
     /** The calls whose type arguments a function took. */
     private val typed = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Expr.Call, Boolean>())

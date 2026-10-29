@@ -1,0 +1,2 @@
+// Functor(Module, Name = Module): a functor given modules.
+type Application(functor: TypeRef, arguments: List<ModuleArgument>)

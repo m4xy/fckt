@@ -1,0 +1,2 @@
+// M: Spec in a functor's parameters, with the module it's given if an application leaves it out.
+type ModuleParameter(at: Position, name: String, spec: TypeRef, default: Option<TypeRef>)

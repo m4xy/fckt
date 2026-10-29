@@ -1,0 +1,5 @@
+// A piece of a string: text as it is, or what's interpolated.
+type TemplatePart {
+  TemplateText(text: String),
+  Interpolation(expression: Expression),
+}

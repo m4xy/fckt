@@ -1,0 +1,2 @@
+// Owner.Case among a type's cases: a case another type declares.
+type CaseRef(at: Position, owner: String, caseName: String)

@@ -1,0 +1,2 @@
+// A file: what it imports, and what it declares.
+type SourceFile(imports: List<Import>, declarations: List<Declaration>)

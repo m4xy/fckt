@@ -32,7 +32,13 @@ application {
 // compiles a program with unless told --no-std, and kiln compiles once for every project.
 distributions { main { contents { from("std") { into("std"); exclude("build", ".kiln") } } } }
 
-tasks.test { useJUnitPlatform() }
+tasks.test {
+    useJUnitPlatform()
+    // What the tests read besides their classes: a change to a case, std or fckt.parser runs them again.
+    listOf("conformance", "std/src", "examples", "symbols/src", "parser/src", "src/test/fckt").forEach {
+        inputs.dir(it).withPropertyName("sources:$it").withPathSensitivity(PathSensitivity.RELATIVE)
+    }
+}
 
 // fckt --version reads it.
 tasks.jar { manifest { attributes("Implementation-Version" to project.version) } }

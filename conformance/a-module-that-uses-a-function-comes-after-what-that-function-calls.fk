@@ -1,0 +1,24 @@
+import fckt.io.Console
+
+type Counter(var n: Int)
+
+@Mutating bump(c: Counter): Unit = {
+  c.n += 1
+}
+
+@Mutating counted(c: Counter): Int = {
+  bump(c)
+  c.n
+}
+
+// Uses counted, which pulls it in ahead of bump, which it calls.
+module Twice {
+  @Mutating twice(c: Counter): Int = {
+    counted(c)
+    counted(c)
+  }
+}
+
+main() = println(Twice.twice(Counter(0)).toString())
+
+// prints: 2

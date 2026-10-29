@@ -1,0 +1,2 @@
+// type Name<A> in a spec: a type each module that follows it says.
+type SpecType(at: Position, name: String, typeParameters: List<String>)

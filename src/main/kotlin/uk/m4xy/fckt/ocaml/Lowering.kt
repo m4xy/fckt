@@ -311,8 +311,11 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                     modules.filter { m -> names.any { insideOf(m, it) } }
                 }
                 is uk.m4xy.fckt.types.FunctionGroup -> {
+                    // A group comes after the groups and modules here that it uses, so a module
+                    // that pulls it in ahead of others doesn't leave it before what it calls.
                     val used = node.decls.flatMap { program.uses[it].orEmpty() }
-                    modules.filter { m -> used.any { insideOf(m, it.name) } }
+                    groups.filter { g -> g !== node && g.decls.any { it in used } } +
+                        modules.filter { m -> used.any { insideOf(m, it.name) } }
                 }
                 else -> {
                     // A type comes after the modules whose types it uses.
@@ -1661,37 +1664,37 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         if (NOTHING in helpers) types { typeDef(NOTHING) { alias = "|" } }
         if (helpers.any { it != NOTHING }) let(false) {
             if ("fk_show_float" in helpers) {
-                // Like Kotlin: the shortest form that reads back as the same number, always with a
-                // decimal point (1.0 where OCaml's string_of_float prints "1.").
+                // Like Kotlin's toString: the shortest digits that read back as the same number,
+                // always with a digit after the point; from 10^-3 up to 10^7 written out, 0.001 and
+                // 1234567.0, and otherwise in scientific notation, 1.0E-6 and 1.2E10.
                 binding("fk_show_float") {
                     params = listOf("f")
-                    letIn("shortest") {
-                        params = listOf("digits")
-                        rec = true
-                        letIn("s") {
-                            apply { ident("Printf.sprintf"); literal("\"%.*g\""); ident("digits"); ident("f") }
-                            ifThenElse {
-                                infix("||") {
-                                    infix(">=") { ident("digits"); literal("17") }
-                                    infix("=") { apply { ident("float_of_string"); ident("s") }; ident("f") }
-                                }
-                                ident("s")
-                                apply { ident("shortest"); infix("+") { ident("digits"); literal("1") } }
-                            }
-                        }
-                        letIn("s") {
-                            apply { ident("shortest"); literal("15") }
-                            ifThenElse {
-                                apply {
-                                    ident("String.exists")
-                                    lambda(listOf("c")) { apply { ident("String.contains"); literal("\".eni\""); ident("c") } }
-                                    ident("s")
-                                }
-                                ident("s")
-                                infix("^") { ident("s"); literal("\".0\"") }
-                            }
-                        }
-                    }
+                    literal(
+                        """
+                        if Float.is_nan f then "NaN"
+                        else if f = Float.infinity then "Infinity"
+                        else if f = Float.neg_infinity then "-Infinity"
+                        else if f = 0.0 then (if 1.0 /. f < 0.0 then "-0.0" else "0.0")
+                        else
+                          let rec shortest p = let s = Printf.sprintf "%.*e" (p - 1) (Float.abs f) in if p >= 17 || float_of_string s = Float.abs f then s else shortest (p + 1) in
+                          let s = shortest 1 in
+                          let i = String.index s 'e' in
+                          let digits = String.concat "" (String.split_on_char '.' (String.sub s 0 i)) in
+                          let exponent = String.sub s (i + 1) (String.length s - i - 1) in
+                          let e = int_of_string (if exponent.[0] = '+' then String.sub exponent 1 (String.length exponent - 1) else exponent) in
+                          let n = String.length digits in
+                          let a = Float.abs f in
+                          let body =
+                            if a >= 1e-3 && a < 1e7 then
+                              if e >= 0 then
+                                (if n > e + 1 then String.sub digits 0 (e + 1) else digits ^ String.make (e + 1 - n) '0') ^ "." ^
+                                  (if n > e + 1 then String.sub digits (e + 1) (n - e - 1) else "0")
+                              else "0." ^ String.make (- e - 1) '0' ^ digits
+                            else String.sub digits 0 1 ^ "." ^ (if n > 1 then String.sub digits 1 (n - 1) else "0") ^ "E" ^ string_of_int e
+                          in
+                          (if f < 0.0 then "-" else "") ^ body
+                        """.trimIndent(),
+                    )
                 }
             }
             if ("fk_show_char" in helpers) {

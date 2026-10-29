@@ -1,0 +1,3 @@
+// A when's branch: the patterns its subject may match, or, in a when without one, its condition;
+// neither for else; and a guard, if n > 0, that must hold too.
+type Branch(at: Position, patterns: List<Pattern>, condition: Option<Expression>, body: Expression, guard: Option<Expression>)

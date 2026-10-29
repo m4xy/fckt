@@ -1,0 +1,2 @@
+// A case a type with cases declares: Name, or Name(fields).
+type CaseDefinition(at: Position, name: String, fields: List<Field>, annotations: List<Annotation>)

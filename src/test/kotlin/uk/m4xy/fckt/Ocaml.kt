@@ -17,7 +17,8 @@ internal object Ocaml {
         val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
         try {
             val libraries = ocamlLibraries(ml).flatMap { listOf("-I", "+$it", "$it.cma") }
-            val process = ProcessBuilder(listOf(path, "-w", "+a-4-9-27-40-41-42-44-45-70", "-warn-error", "+8") + libraries + file.path + args)
+            // Not 30: records fckt declares together can share a field's name, which it tells apart by type.
+            val process = ProcessBuilder(listOf(path, "-w", "+a-4-9-27-30-40-41-42-44-45-70", "-warn-error", "+8") + libraries + file.path + args)
                 .directory(dir).redirectErrorStream(true).apply { environment().putAll(env) }.start()
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor(30, TimeUnit.SECONDS)

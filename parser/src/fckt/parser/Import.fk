@@ -1,0 +1,2 @@
+// import geometry.Shapes, import geometry.Shapes.area as size, or import geometry.*.
+type Import(at: Position, path: List<String>, wildcard: Boolean, alias: Option<String>)

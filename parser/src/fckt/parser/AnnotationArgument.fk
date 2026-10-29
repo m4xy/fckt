@@ -1,0 +1,2 @@
+// An annotation's argument, by position, or by name.
+type AnnotationArgument(name: Option<String>, value: AnnotationValue)

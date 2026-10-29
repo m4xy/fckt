@@ -1,0 +1,2 @@
+// A function's or lambda's parameter, its type if it's written, and its default if it has one.
+type Parameter(at: Position, name: String, parameterType: Option<TypeRef>, annotations: List<Annotation> = [], default: Option<Expression> = None)

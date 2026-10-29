@@ -1,0 +1,37 @@
+// An expression, as written.
+type Expression {
+  IntConstant(at: Position, value: Int),
+  FloatConstant(at: Position, value: Float),
+  BooleanConstant(at: Position, value: Boolean),
+  CharConstant(at: Position, value: Char),
+  StringTemplate(at: Position, parts: List<TemplatePart>),
+  Name(at: Position, name: String),
+  // (a, b)
+  Tuple(at: Position, elements: List<Expression>),
+  // [a, *rest]
+  ListOf(at: Position, items: List<Expression>),
+  // *rest, in a list
+  Spread(at: Position, list: Expression),
+  // callee<T>(arguments); xs[i] is xs.get(i)
+  Call(at: Position, callee: Expression, arguments: List<Argument>, typeArguments: List<TypeRef>),
+  // target.name
+  Member(at: Position, target: Expression, name: String),
+  Binary(at: Position, operator: String, left: Expression, right: Expression),
+  Unary(at: Position, operator: String, operand: Expression),
+  // target = value, as a statement; x += 1 is x = x + 1
+  Assign(at: Position, target: Expression, value: Expression),
+  // x -> body, (a, b) -> body, or ~body, which ignores its arguments
+  Lambda(at: Position, parameters: List<Parameter>, body: Expression, ignoresArguments: Boolean),
+  // value |> function
+  Pipe(at: Position, value: Expression, function: Expression),
+  // if (condition) then else otherwise; without an else, otherwise is Unit
+  If(at: Position, condition: Expression, then: Expression, otherwise: Expression, hasElse: Boolean),
+  When(at: Position, subject: Option<Expression>, branches: List<Branch>),
+  // { statements; result }; one that ends with name = value, which may change a var, has that
+  // last among its statements, and Unit for its result
+  Block(at: Position, statements: List<Statement>, result: Expression, endsInBinding: Boolean),
+  // Module { ... }: a block run in a module
+  Monadic(at: Position, monad: Expression, block: Expression),
+  // handler { ... }, or a function given its last argument as a block, with its parameters
+  Handle(at: Position, handler: Expression, block: Expression, parameters: Option<List<Parameter>>),
+}

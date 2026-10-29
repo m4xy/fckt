@@ -1,0 +1,10 @@
+// A declaration: its name, as written, who sees it, whether it's an opaque type, its annotations,
+// and what it defines.
+type Declaration(
+  at: Position,
+  name: String,
+  definition: Definition,
+  visibility: Visibility = Public,
+  opaque: Boolean = false,
+  annotations: List<Annotation> = [],
+)

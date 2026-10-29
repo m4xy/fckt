@@ -1,0 +1,143 @@
+import fckt.io.Paths.*
+import fckt.io.Files.*
+import fckt.parser.*
+
+// Writes to the first argument what fckt.parser's Parser reads each other file as, for ParserTest
+// to set beside what fckt's own parser makes of it: "# file", then each import and declaration, a
+// line each, as an S-expression, or "error line:column message" for each error.
+main(args: List<String>) = when (args) {
+  [] -> Unit
+  [out, *files] -> path(out).writeText(files.map { file ->
+    "# $file\n" + when (Parser.parse(path(file).readText())) {
+      Ok(SourceFile(imports, declarations)) -> (imports.map { importOf(it) } + declarations.map { declarationOf(it) }).map { "$it\n" }.joinToString("")
+      Error(errors) -> errors.map { "error ${at(it.at)} ${it.message}\n" }.joinToString("")
+    }
+  }.joinToString(""))
+}
+
+at(p: Position): String = "${p.line}:${p.column}"
+
+quoted(text: String): String = "\"" + text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"") + "\""
+
+listOf(items: List<String>): String = "[" + items.joinToString(" ") + "]"
+
+strings(items: List<String>): String = listOf(items.map { quoted(it) })
+
+optional(o: Option<String>): String = o.getOrElse("_")
+
+importOf(i: Import): String = "(Import ${at(i.at)} ${strings(i.path)} ${i.wildcard} ${optional(i.alias.map { quoted(it) })})"
+
+declarationOf(d: Declaration): String =
+  "(Declaration ${at(d.at)} ${quoted(d.name)} ${d.visibility.name} ${d.opaque} ${listOf(d.annotations.map { annotationOf(it) })} ${definitionOf(d.definition)})"
+
+definitionOf(d: Definition): String = when (d) {
+  RecordDefinition(typeParameters, fields, privateConstructor, annotation, external) ->
+    "(Record ${strings(typeParameters)} ${listOf(fields.map { fieldOf(it) })} $privateConstructor $annotation ${optional(external.map { quoted(it) })})"
+  CasesDefinition(typeParameters, cases, caseRefs, includes) ->
+    "(Cases ${strings(typeParameters)} ${listOf(cases.map { caseOf(it) })} ${listOf(caseRefs.map { caseRefOf(it) })} ${listOf(includes.map { typeOf(it) })})"
+  AliasDefinition(typeParameters, target) -> "(Alias ${strings(typeParameters)} ${typeOf(target)})"
+  FunctionDefinition(typeParameters, receiver, parameters, result, body, external, operator) ->
+    "(Function ${strings(typeParameters)} ${optional(receiver.map { typeOf(it) })} ${optional(parameters.map { ps -> listOf(ps.map { parameterOf(it) }) })} ${optional(result.map { typeOf(it) })} ${expressionOf(body)} ${optional(external.map { quoted(it) })} $operator)"
+  ModuleDefinition(declarations, spec, parameters, application, typeParameters) ->
+    "(Module ${listOf(declarations.map { declarationOf(it) })} ${optional(spec.map { typeOf(it) })} ${listOf(parameters.map { moduleParameterOf(it) })} ${optional(application.map { applicationOf(it) })} ${strings(typeParameters)})"
+  SpecDefinition(types, values, typeParameters, copyOf, parents) ->
+    "(Spec ${listOf(types.map { specTypeOf(it) })} ${listOf(values.map { specValueOf(it) })} ${strings(typeParameters)} ${optional(copyOf.map { typeOf(it) })} ${listOf(parents.map { typeOf(it) })})"
+}
+
+fieldOf(f: Field): String =
+  "(Field ${at(f.at)} ${quoted(f.name)} ${typeOf(f.fieldType)} ${listOf(f.annotations.map { annotationOf(it) })} ${f.variable} ${optional(f.default.map { expressionOf(it) })} ${f.vararg})"
+
+parameterOf(p: Parameter): String =
+  "(Parameter ${at(p.at)} ${quoted(p.name)} ${optional(p.parameterType.map { typeOf(it) })} ${listOf(p.annotations.map { annotationOf(it) })} ${optional(p.default.map { expressionOf(it) })})"
+
+caseOf(c: CaseDefinition): String = "(Case ${at(c.at)} ${quoted(c.name)} ${listOf(c.fields.map { fieldOf(it) })} ${listOf(c.annotations.map { annotationOf(it) })})"
+
+caseRefOf(c: CaseRef): String = "(CaseRef ${at(c.at)} ${quoted(c.owner)} ${quoted(c.caseName)})"
+
+moduleParameterOf(p: ModuleParameter): String = "(ModuleParameter ${at(p.at)} ${quoted(p.name)} ${typeOf(p.spec)} ${optional(p.default.map { typeOf(it) })})"
+
+applicationOf(a: Application): String =
+  "(Application ${typeOf(a.functor)} ${listOf(a.arguments.map { "(ModuleArgument ${optional(it.name.map { n -> quoted(n) })} ${typeOf(it.value)})" })})"
+
+specTypeOf(t: SpecType): String = "(SpecType ${at(t.at)} ${quoted(t.name)} ${strings(t.typeParameters)})"
+
+specValueOf(v: SpecValue): String =
+  "(SpecValue ${at(v.at)} ${quoted(v.name)} ${strings(v.typeParameters)} ${optional(v.parameters.map { ps -> listOf(ps.map { parameterOf(it) }) })} ${typeOf(v.valueType)} ${listOf(v.annotations.map { annotationOf(it) })} ${optional(v.default.map { expressionOf(it) })})"
+
+annotationOf(a: Annotation): String =
+  "(Annotation ${at(a.at)} ${quoted(a.name)} ${listOf(a.arguments.map { annotationArgumentOf(it) })} ${listOf(a.typeArguments.map { typeOf(it) })})"
+
+annotationArgumentOf(a: AnnotationArgument): String = "(AnnotationArgument ${optional(a.name.map { quoted(it) })} ${annotationValueOf(a.value)})"
+
+annotationValueOf(v: AnnotationValue): String = when (v) {
+  Constant(e) -> "(Constant ${expressionOf(e)})"
+  Reference(p, name, typeArguments, arguments) ->
+    "(Reference ${at(p)} ${quoted(name)} ${optional(typeArguments.map { ts -> listOf(ts.map { typeOf(it) }) })} ${optional(arguments.map { xs -> listOf(xs.map { annotationArgumentOf(it) }) })})"
+  ValueList(p, items) -> "(ValueList ${at(p)} ${listOf(items.map { annotationValueOf(it) })})"
+  ValueTuple(p, items) -> "(ValueTuple ${at(p)} ${listOf(items.map { annotationValueOf(it) })})"
+}
+
+typeOf(t: TypeRef): String = when (t) {
+  NamedType(p, name, arguments) -> "(NamedType ${at(p)} ${quoted(name)} ${listOf(arguments.map { typeOf(it) })})"
+  FunctionType(p, parameters, result, effects) ->
+    "(FunctionType ${at(p)} ${listOf(parameters.map { typeOf(it) })} ${typeOf(result)} ${listOf(effects.map { annotationOf(it) })})"
+  TupleType(p, elements) -> "(TupleType ${at(p)} ${listOf(elements.map { typeOf(it) })})"
+  EffectsType(p, effects) -> "(EffectsType ${at(p)} ${listOf(effects.map { annotationOf(it) })})"
+}
+
+expressionOf(e: Expression): String = when (e) {
+  IntConstant(p, value) -> "(Int ${at(p)} $value)"
+  FloatConstant(p, value) -> "(Float ${at(p)} $value)"
+  BooleanConstant(p, value) -> "(Boolean ${at(p)} $value)"
+  CharConstant(p, value) -> "(Char ${at(p)} ${value.code})"
+  StringTemplate(p, parts) -> "(String ${at(p)} ${listOf(parts.map { templatePartOf(it) })})"
+  Name(p, name) -> "(Name ${at(p)} ${quoted(name)})"
+  Tuple(p, elements) -> "(Tuple ${at(p)} ${listOf(elements.map { expressionOf(it) })})"
+  ListOf(p, items) -> "(List ${at(p)} ${listOf(items.map { expressionOf(it) })})"
+  Spread(p, list) -> "(Spread ${at(p)} ${expressionOf(list)})"
+  Call(p, callee, arguments, typeArguments) ->
+    "(Call ${at(p)} ${expressionOf(callee)} ${listOf(arguments.map { argumentOf(it) })} ${listOf(typeArguments.map { typeOf(it) })})"
+  Member(p, target, name) -> "(Member ${at(p)} ${expressionOf(target)} ${quoted(name)})"
+  Binary(p, operator, left, right) -> "(Binary ${at(p)} ${quoted(operator)} ${expressionOf(left)} ${expressionOf(right)})"
+  Unary(p, operator, operand) -> "(Unary ${at(p)} ${quoted(operator)} ${expressionOf(operand)})"
+  Assign(p, target, value) -> "(Assign ${at(p)} ${expressionOf(target)} ${expressionOf(value)})"
+  Lambda(p, parameters, body, ignoresArguments) ->
+    "(Lambda ${at(p)} ${listOf(parameters.map { parameterOf(it) })} ${expressionOf(body)} $ignoresArguments)"
+  Pipe(p, value, function) -> "(Pipe ${at(p)} ${expressionOf(value)} ${expressionOf(function)})"
+  If(p, condition, then, otherwise, hasElse) ->
+    "(If ${at(p)} ${expressionOf(condition)} ${expressionOf(then)} ${expressionOf(otherwise)} $hasElse)"
+  When(p, subject, branches) -> "(When ${at(p)} ${optional(subject.map { expressionOf(it) })} ${listOf(branches.map { branchOf(it) })})"
+  Block(p, statements, result, endsInBinding) ->
+    "(Block ${at(p)} ${listOf(statements.map { statementOf(it) })} ${expressionOf(result)} $endsInBinding)"
+  Monadic(p, monad, block) -> "(Monadic ${at(p)} ${expressionOf(monad)} ${expressionOf(block)})"
+  Handle(p, handler, block, parameters) ->
+    "(Handle ${at(p)} ${expressionOf(handler)} ${expressionOf(block)} ${optional(parameters.map { ps -> listOf(ps.map { parameterOf(it) }) })})"
+}
+
+templatePartOf(part: TemplatePart): String = when (part) {
+  TemplateText(text) -> "(Text ${quoted(text)})"
+  Interpolation(e) -> "(Interpolated ${expressionOf(e)})"
+}
+
+argumentOf(a: Argument): String = "(Argument ${optional(a.name.map { quoted(it) })} ${expressionOf(a.value)})"
+
+branchOf(b: Branch): String =
+  "(Branch ${at(b.at)} ${listOf(b.patterns.map { patternOf(it) })} ${optional(b.condition.map { expressionOf(it) })} ${expressionOf(b.body)} ${optional(b.guard.map { expressionOf(it) })})"
+
+statementOf(s: Statement): String = when (s) {
+  Binding(p, name, parameters, valueType, value, variable) ->
+    "(Binding ${at(p)} ${quoted(name)} ${optional(parameters.map { ps -> listOf(ps.map { parameterOf(it) }) })} ${optional(valueType.map { typeOf(it) })} ${expressionOf(value)} $variable)"
+  Evaluation(p, e) -> "(Evaluation ${at(p)} ${expressionOf(e)})"
+  Destructuring(p, pattern, value) -> "(Destructuring ${at(p)} ${patternOf(pattern)} ${expressionOf(value)})"
+  Bind(p, pattern, value) -> "(Bind ${at(p)} ${patternOf(pattern)} ${expressionOf(value)})"
+}
+
+patternOf(p: Pattern): String = when (p) {
+  Wildcard(w) -> "(Wildcard ${at(w)})"
+  NamePattern(w, name) -> "(NamePattern ${at(w)} ${quoted(name)})"
+  ConstantPattern(w, e) -> "(ConstantPattern ${at(w)} ${expressionOf(e)})"
+  TuplePattern(w, elements) -> "(TuplePattern ${at(w)} ${listOf(elements.map { patternOf(it) })})"
+  ListPattern(w, elements, rest) -> "(ListPattern ${at(w)} ${listOf(elements.map { patternOf(it) })} ${optional(rest.map { patternOf(it) })})"
+  CasePattern(w, name, arguments, check, qualifier) ->
+    "(CasePattern ${at(w)} ${quoted(name)} ${optional(arguments.map { ps -> listOf(ps.map { patternOf(it) }) })} $check ${optional(qualifier.map { quoted(it) })})"
+}
