@@ -1,0 +1,58 @@
+import fckt.collections.Maps.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// Which types' values can change, so have regions: where a value lives, so that changing one is
+// changing its region, which a function must say it does if anyone else can see it. A record, or a
+// type with a case, with a var field can change, and so can an OCaml type, whose own functions say
+// whether they change it; then, until there are no more, each type whose fields hold one that can.
+module Regions {
+  regioned(namespace: Namespace): List<String> = {
+    table = namespace.table
+    records = table.records.toList().map { _, s -> s }
+    caseTypes = table.caseTypes.toList().map { _, s -> s }
+    changing = records.filter { r ->
+      when (r.declaration.definition) {
+        RecordDefinition(_, fields, _, _, external) -> external.isSome() || fields.any { it.variable }
+        else -> false
+      }
+    } + caseTypes.filter { s -> fieldsOf(s).any { it.variable } }
+    holding(records + caseTypes, changing.map { it.name }, namespace)
+  }
+
+  // The names found so far, with each type whose fields hold one of them, until no more are found.
+  private holding(types: List<Symbol>, found: List<String>, namespace: Namespace): List<String> = {
+    more = types.filter { t -> !found.contains(t.name) && fieldsOf(t).any { holds(it.fieldType, Place(t.file, t.path), found, namespace) } }
+    if (more.isEmpty()) found else holding(types, found + more.map { it.name }, namespace)
+  }
+
+  // A record's fields, or a type with cases' own cases' fields.
+  private fieldsOf(s: Symbol): List<Field> = when (s.declaration.definition) {
+    RecordDefinition(_, fields, _, _, _) -> fields
+    CasesDefinition(_, cases, _, _) -> cases.flatMap { it.fields }
+    else -> []
+  }
+
+  // Whether a value of the written type holds one of the types found. A function isn't a value that
+  // changes, whatever it takes or gives.
+  private holds(t: TypeRef, place: Place, found: List<String>, namespace: Namespace): Boolean = when (t) {
+    FunctionType(_, _, _, _) -> false
+    EffectsType(_, _) -> false
+    TupleType(_, elements) -> elements.any { holds(it, place, found, namespace) }
+    NamedType(_, name, arguments) -> arguments.any { holds(it, place, found, namespace) } || isHolding(name, place, found, namespace)
+  }
+
+  // Whether the type of that name is one found, or an alias for a type that holds one.
+  private isHolding(name: String, place: Place, found: List<String>, namespace: Namespace): Boolean = {
+    declared = Lookups.found(Lookups.record(name, place, namespace, Skipping))
+      .orElse { Lookups.found(Lookups.caseType(name, place, namespace, Skipping)) }
+    when (declared) {
+      Some(d) -> found.contains(d.name)
+      None -> when (Lookups.found(Lookups.alias(name, place, namespace, Skipping)).map { it.declaration.definition }) {
+        Some(AliasDefinition(_, target)) -> holds(target, place, found, namespace)
+        else -> false
+      }
+    }
+  }
+}

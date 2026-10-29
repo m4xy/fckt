@@ -17,12 +17,16 @@ module Unification {
     (Effects(r), Variable(w)) -> unifyRows(r, Row([], Some(w)))
     (Variable(v), _) -> bind(v, y)
     (_, Variable(w)) -> bind(w, x)
-    (Parameter(n), Parameter(m)) -> n == m
+    (TypeParameter(n), TypeParameter(m)) -> n == m
     // Regions are only checked where both types have one.
     (Named(n, xs, xRegion), Named(m, ys, yRegion)) -> n == m && unifyAll(xs, ys) && when (xRegion, yRegion) {
       (Some(p), Some(q)) -> unify(p, q)
       else -> true
     }
+    (Abstract(n, xs), Abstract(m, ys)) -> n == m && unifyAll(xs, ys)
+    (SpecOwnType(n, xs), SpecOwnType(m, ys)) -> n == m && unifyAll(xs, ys)
+    (ModuleValue(n, xs), ModuleValue(m, ys)) -> n == m && unifyAll(xs, ys)
+    (Handler(n, xs), Handler(m, ys)) -> n == m && unifyAll(xs, ys)
     (TupleOf(xs), TupleOf(ys)) -> unifyAll(xs, ys)
     (FunctionOf(xs, xResult, xEffects), FunctionOf(ys, yResult, yEffects)) ->
       unifyAll(xs, ys) && unify(xResult, yResult) && unifyRows(xEffects, yEffects)

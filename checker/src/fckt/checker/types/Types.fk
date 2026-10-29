@@ -63,8 +63,12 @@ module Types {
   // down: what it means outside the solving that found it.
   @Solving resolvedFully(t: Type): Type = when (resolved(t)) {
     Variable(v) -> Variable(v)
-    Parameter(name) -> Parameter(name)
+    TypeParameter(name) -> TypeParameter(name)
     Named(name, arguments, region) -> Named(name, arguments.map { resolvedFully(it) }, region.map { resolvedFully(it) })
+    Abstract(name, arguments) -> Abstract(name, arguments.map { resolvedFully(it) })
+    SpecOwnType(name, arguments) -> SpecOwnType(name, arguments.map { resolvedFully(it) })
+    ModuleValue(spec, arguments) -> ModuleValue(spec, arguments.map { resolvedFully(it) })
+    Handler(effect, arguments) -> Handler(effect, arguments.map { resolvedFully(it) })
     TupleOf(elements) -> TupleOf(elements.map { resolvedFully(it) })
     FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { resolvedFully(it) }, resolvedFully(result), resolvedRowFully(effects))
     Effects(row) -> Effects(resolvedRowFully(row))
@@ -94,6 +98,14 @@ module Types {
     }
   }
 
+  // A type that stands for effects, as a row: what it's been found to be, or, while it's unknown,
+  // whatever it turns out to be.
+  @Solving asRow(t: Type): Row = when (resolved(t)) {
+    Effects(row) -> flattened(row)
+    Variable(v) -> Row([], Some(v))
+    else -> pure
+  }
+
   // The full names of the effects in the row.
   @Solving effectNames(row: Row): List<String> = flattened(row).labels.map { it.name }
 
@@ -120,7 +132,7 @@ module Types {
 
   @Solving private variablesInto(t: Type, found: List<TypeVariable>): List<TypeVariable> = when (resolved(t)) {
     Variable(v) -> if (found.contains(v)) found else found + [v]
-    Parameter(_) -> found
+    TypeParameter(_) -> found
     Named(_, arguments, region) -> {
       inArguments = arguments.fold(found) { acc, a -> variablesInto(a, acc) }
       when (region) {
@@ -128,6 +140,10 @@ module Types {
         None -> inArguments
       }
     }
+    Abstract(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
+    SpecOwnType(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
+    ModuleValue(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
+    Handler(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
     TupleOf(elements) -> elements.fold(found) { acc, e -> variablesInto(e, acc) }
     FunctionOf(parameters, result, effects) ->
       rowVariablesInto(effects, variablesInto(result, parameters.fold(found) { acc, p -> variablesInto(p, acc) }))
@@ -153,8 +169,12 @@ module Types {
   // The type with each unknown the mapping has replaced by what it maps it to.
   @Solving substitute(t: Type, mapping: Map<TypeVariable, Type>): Type = when (resolved(t)) {
     Variable(v) -> mapping.getOrDefault(v, Variable(v))
-    Parameter(name) -> Parameter(name)
+    TypeParameter(name) -> TypeParameter(name)
     Named(name, arguments, region) -> Named(name, arguments.map { substitute(it, mapping) }, region.map { substitute(it, mapping) })
+    Abstract(name, arguments) -> Abstract(name, arguments.map { substitute(it, mapping) })
+    SpecOwnType(name, arguments) -> SpecOwnType(name, arguments.map { substitute(it, mapping) })
+    ModuleValue(spec, arguments) -> ModuleValue(spec, arguments.map { substitute(it, mapping) })
+    Handler(effect, arguments) -> Handler(effect, arguments.map { substitute(it, mapping) })
     TupleOf(elements) -> TupleOf(elements.map { substitute(it, mapping) })
     FunctionOf(parameters, result, effects) ->
       FunctionOf(parameters.map { substitute(it, mapping) }, substitute(result, mapping), substituteRow(effects, mapping))

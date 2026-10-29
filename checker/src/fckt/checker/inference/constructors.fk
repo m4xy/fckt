@@ -1,0 +1,240 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// Constructors: a record's, a case's, or one of the language's own cases. A qualifier says where to
+// look: a type with cases, Alphabet.A, or a module, Ratios.Ratio or Shapes.Circle. Where what's
+// expected is a type with cases that has a case of the name, that's the one meant, so a case's name
+// that several types use is told apart by what's wanted. Building is false in patterns, which may
+// take apart a record they couldn't build.
+
+@Inferring constructorShape(
+  name: String,
+  hint: Option<Type>,
+  at: Position,
+  asValue: Boolean,
+  qualifier: Option<String>,
+  building: Boolean,
+  scope: Scope,
+  context: Context,
+): Option<ConstructorShape> = {
+  namespace = context.environment.definitions.namespace
+  qualifierType = qualifier.flatMap { q -> refusing(Lookups.caseType(q, context.place, namespace, Refusing), at, context) }
+  qualifierType.forEach { t -> if (Conversion.isAbstractHere(t, context.place)) abandon(opaque(t, at, context)) else Unit }
+  qualifierModule = when ((qualifier, qualifierType)) {
+    (Some(q), None) -> refusing(Lookups.moduleNamed(q, context.place, namespace, Refusing), at, context)
+    else -> None
+  }
+  if (qualifier.isSome() && qualifierType.isNone() && qualifierModule.isNone()) None
+  else {
+    record = when ((qualifier, qualifierModule)) {
+      (_, Some(m)) -> namespace.table.records.get("${Symbols.moduleName(m)}.$name").map { r ->
+        when (Visibility.whyHidden(r, context.place, namespace.table)) {
+          Some(why) -> abandon(Globals.problem(context, at, why))
+          None -> r
+        }
+      }
+      (None, _) -> refusing(Lookups.record(name, context.place, namespace, Refusing), at, context)
+      else -> None
+    }
+    when (record) {
+      Some(r) -> Some(recordShape(r, at, building, context))
+      None -> caseShape(name, hint, at, asValue, qualifier, qualifierType, qualifierModule, context)
+    }
+  }
+}
+
+// What a lookup found, giving up if it refused.
+@Abandoning private refusing<A>(lookup: Lookup<A>, at: Position, context: Context): Option<A> = when (lookup) {
+  Found(a) -> Some(a)
+  Refused(why) -> abandon(Globals.problem(context, at, why))
+  NotFound -> None
+}
+
+// That an opaque type can't be built or looked into outside its module.
+opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
+  owner = s.path.joinToString(".")
+  Globals.problem(context, at, "${Symbols.simpleName(s)} is opaque outside $owner: only $owner can build one or look into it")
+}
+
+@Inferring private recordShape(r: Symbol, at: Position, building: Boolean, context: Context): ConstructorShape = {
+  own = Symbols.simpleName(r)
+  if (Conversion.isAbstractHere(r, context.place)) abandon(opaque(r, at, context)) else Unit
+  when (r.declaration.definition) {
+    RecordDefinition(typeParameters, fields, privateConstructor, _, external) -> {
+      if (external.isSome()) abandon(Globals.problem(context, at, "$own is an OCaml type, made by its functions, not by $own(...)")) else Unit
+      if (building && privateConstructor && !Visibility.isInside(context.place, r.path)) {
+        abandon(Globals.problem(context, at, "$own's constructor is private to ${r.path.joinToString(".")}"))
+      } else Unit
+      arguments = typeParameters.map { Variable(fresh()) }
+      definitions = context.environment.definitions
+      region = Conversion.newRegion(r, definitions)
+      ConstructorShape(RecordConstructor(r), fields.map { it.name }, Conversion.recordFields(r, arguments, region, definitions), Named(r.name, arguments, region))
+    }
+    else -> abandon(Globals.problem(context, at, "$own isn't a record"))
+  }
+}
+
+// A case of the name: Ok and Error, where a Result is wanted; Some and None; one of the qualifying
+// type's; one of the expected type's; one imported by name; or the one case of that name that can
+// be seen from here, inside its module or through the qualifying one.
+@Inferring private caseShape(
+  name: String,
+  hint: Option<Type>,
+  at: Position,
+  asValue: Boolean,
+  qualifier: Option<String>,
+  qualifierType: Option<Symbol>,
+  qualifierModule: Option<ModuleSymbol>,
+  context: Context,
+): Option<ConstructorShape> = {
+  hinted = hint.map { resolved(it) }
+  wantsResult = when (hinted) {
+    Some(Named("Result", _, _)) -> true
+    Some(FunctionOf(_, result, _)) -> isNamed(resolved(result), "Result")
+    else -> false
+  }
+  if (qualifier.isNone() && wantsResult && (name == "Ok" || name == "Error")) resultCase(name)
+  else if (qualifier.isNone() && name == "Some") {
+    a = Variable(fresh())
+    Some(ConstructorShape(BuiltinCase("Some"), ["value"], [a], optionOf(a)))
+  } else if (qualifier.isNone() && name == "None") Some(ConstructorShape(BuiltinCase("None"), [], [], optionOf(Variable(fresh()))))
+  else {
+    hintedType = when (hinted) {
+      Some(Named(n, _, _)) -> Some(n)
+      Some(FunctionOf(_, result, _)) if asValue -> when (resolved(result)) {
+        Named(n, _, _) -> Some(n)
+        else -> None
+      }
+      else -> None
+    }.flatMap { n -> caseTypeNamed(n, context) }
+    allCases = context.environment.definitions.cases
+    found = when (qualifierType) {
+      Some(t) -> when (allCases.getOrDefault(t.name, []).filter { it.definition.name == name }) {
+        [c] -> Some(c)
+        [] -> abandon(Globals.problem(context, at, "${Symbols.simpleName(t)} has no case '$name'"))
+        else -> abandon(Globals.problem(context, at, "${Symbols.simpleName(t)} has several cases named '$name'"))
+      }
+      None -> when (hintedType.map { h -> allCases.getOrDefault(h.name, []).filter { it.definition.name == name } }.getOrElse([])) {
+        [c] -> Some(c)
+        else -> visibleCase(name, at, qualifier, qualifierModule, context)
+      }
+    }
+    when (found) {
+      None -> if (qualifier.isNone()) resultCase(name) else None
+      Some(c) -> {
+        // The type it builds: the expected type with cases if that has the case, else the one named.
+        home = hintedType.filter { h -> allCases.getOrDefault(h.name, []).any { Cases.same(it, c) } }
+          .orElse { qualifierType }
+          .getOrElse(c.origin)
+        arguments = Cases.typeParametersOf(home).map { Variable(fresh()) }
+        definitions = context.environment.definitions
+        region = Conversion.newRegion(home, definitions)
+        fieldTypes = Conversion.casesWithFields(home, arguments, region, definitions).find { info, _ -> Cases.same(info, c) }.map { _, types -> types }.getOrElse([])
+        Some(ConstructorShape(
+          CaseConstructor(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition)),
+          c.definition.fields.map { it.name },
+          fieldTypes,
+          Named(home.name, arguments, region),
+        ))
+      }
+    }
+  }
+}
+
+// The one case of the name that can be seen from here: imported by name, or, unqualified, inside
+// its type's module, or, through a module, that module's.
+@Inferring private visibleCase(name: String, at: Position, qualifier: Option<String>, qualifierModule: Option<ModuleSymbol>, context: Context): Option<CaseInfo> = {
+  viaImport = if (qualifier.isNone()) importedCase(name, context) else None
+  candidates = when (viaImport) {
+    Some(c) -> [c]
+    None -> context.environment.casesByName.getOrDefault(name, []).filter { c ->
+      Globals.visible(c.owner, context) && !Conversion.isAbstractHere(c.owner, context.place) && when (qualifierModule) {
+        Some(m) -> c.owner.path == Symbols.moduleName(m).split(".")
+        None -> Visibility.isInside(context.place, c.owner.path)
+      }
+    }
+  }
+  when (candidates) {
+    [] -> None
+    [c] -> context.environment.definitions.cases.getOrDefault(c.owner.name, []).find { info ->
+      info.origin.name == c.owner.name && info.definition.name == c.definition.name
+    }
+    [first, *_] -> abandon(Globals.problem(context, at,
+      "'$name' is a case of ${candidates.map { Symbols.simpleName(it.owner) }.joinToString(" and ")}; write ${Symbols.simpleName(first.owner)}.$name, or annotate the expected type"))
+  }
+}
+
+// The case the name means through the file's imports, as Round does with import
+// geometry.Shape.Circle as Round.
+private importedCase(name: String, context: Context): Option<CaseSymbol> =
+  when (Names.importedNames(name, context.place, context.environment.definitions.namespace)) {
+    [full] -> context.environment.definitions.namespace.table.cases.get(full).filter { c ->
+      Globals.visible(c.owner, context) && !Conversion.isAbstractHere(c.owner, context.place)
+    }
+    else -> None
+  }
+
+// Ok(value) or Error(error), building a Result.
+@Solving private resultCase(name: String): Option<ConstructorShape> = {
+  value = Variable(fresh())
+  error = Variable(fresh())
+  when (name) {
+    "Ok" -> Some(ConstructorShape(BuiltinCase("Ok"), ["value"], [value], resultOf(value, error)))
+    "Error" -> Some(ConstructorShape(BuiltinCase("Error"), ["error"], [error], resultOf(value, error)))
+    else -> None
+  }
+}
+
+// Alphabet.A, Ratios.Ratio or Shapes.Circle: what qualifies a constructor, if the target names a
+// type with cases or a module, and not a value.
+@Inferring qualifiedCase(target: Expression, scope: Scope, context: Context): Option<String> = {
+  namespace = context.environment.definitions.namespace
+  when (dottedUnbound(target, scope)) {
+    None -> None
+    Some(qualifier) -> {
+      isValue = when (target) {
+        Name(_, _) -> Lookups.found(Globals.find(qualifier, context, Skipping)).isSome()
+        else -> false
+      }
+      if (isValue) None
+      else if (Lookups.found(Lookups.caseType(qualifier, context.place, namespace, Skipping)).isSome() ||
+        Lookups.found(Lookups.moduleNamed(qualifier, context.place, namespace, Skipping)).isSome()) Some(qualifier)
+      else None
+    }
+  }
+}
+
+// The dotted name an expression spells, unless it starts with a local.
+dottedUnbound(e: Expression, scope: Scope): Option<String> = References.dotted(e).filter { d ->
+  Scopes.lookup(scope, d.split(".").firstOrNone().getOrElse(d)).isNone()
+}
+
+// The module an expression names, if it names one: Ratios, or Shapes.Inner.
+@Abandoning moduleNamedBy(e: Expression, scope: Scope, context: Context): Option<ModuleSymbol> = when (dottedUnbound(e, scope)) {
+  None -> None
+  Some(name) -> {
+    isValue = when (e) {
+      Name(_, _) -> Lookups.found(Globals.find(name, context, Skipping)).isSome()
+      else -> false
+    }
+    if (isValue) None
+    else refusing(Lookups.moduleNamed(name, context.place, context.environment.definitions.namespace, Refusing), Defaults.positionOf(e), context)
+  }
+}
+
+// Ratios.make: a function or value in a module, named through it.
+@Abandoning moduleMember(at: Position, target: Expression, name: String, scope: Scope, context: Context): Option<Symbol> =
+  moduleNamedBy(target, scope, context).flatMap { m ->
+    context.environment.functions.get("${Symbols.moduleName(m)}.$name").map { s ->
+      when (Visibility.whyHidden(s, context.place, context.environment.definitions.namespace.table)) {
+        Some(why) -> abandon(Globals.problem(context, at, why))
+        None -> s
+      }
+    }
+  }

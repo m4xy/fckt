@@ -1,0 +1,61 @@
+import fckt.collections.Maps.*
+import fckt.checker.coverage.*
+import fckt.checker.diagnostics.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// when, with a subject, whose branches' patterns it's matched against, or without, whose branches'
+// conditions are tried in turn. It's what its branches are, joined, or what's expected of each.
+
+@Inferring inferWhen(at: Position, subject: Option<Expression>, branches: List<Branch>, expected: Option<Type>, scope: Scope, context: Context): Type = {
+  wanted = known(expected)
+  bodies = when (subject) {
+    None -> {
+      if (branches.isEmpty() || branches.lastOrNone().map { it.condition.isSome() }.getOrElse(true)) {
+        abandon(Globals.problem(context, at, "a 'when' without a subject needs an 'else' branch"))
+      } else Unit
+      branches.map { branch ->
+        branch.condition.forEach { check(it, boolean, scope, context) }
+        branchBody(branch.body, wanted, scope, context)
+      }
+    }
+    Some(s) -> {
+      subjectType = infer(s, None, scope, context).t
+      checked = branches.map { branch -> checkBranch(branch, s, subjectType, wanted, scope, context) }
+      covered = branches.zip(checked).filter { branch, _ -> branch.guard.isNone() }.flatMap { _, c -> c.matches }
+      cover(PendingWhen(context.place.file.source.path, at, covered, subjectType))
+      checked.map { c -> c.body }
+    }
+  }
+  when (wanted) {
+    Some(t) -> t
+    None -> join(bodies.mapNotNull { it }, at, context)
+  }
+}
+
+// A branch's body, checked against what's expected, or, with nothing expected, what it is, to join
+// with the others.
+@Inferring private branchBody(body: Expression, wanted: Option<Type>, scope: Scope, context: Context): Option<(Expression, Typed)> = when (wanted) {
+  Some(t) -> {
+    check(body, t, scope, context)
+    None
+  }
+  None -> Some((body, infer(body, None, scope, context)))
+}
+
+// A branch of a when with a subject: its patterns, which a branch of several can't bind names in;
+// its guard, which sees what they bound; and its body. With what it matches, for coverage; a branch
+// with no patterns is the else, which matches anything.
+@Inferring private checkBranch(branch: Branch, subject: Expression, subjectType: Type, wanted: Option<Type>, scope: Scope, context: Context): CheckedBranch = {
+  if (branch.patterns.size > 1 && branch.patterns.any { References.namesIn(it).isNotEmpty() }) {
+    abandon(Globals.problem(context, branch.at, "a branch with several patterns can't bind names"))
+  } else Unit
+  (inner, matches) = branch.patterns.fold((Scopes.inside(scope), [])) { acc, p ->
+    (s, found) = acc
+    checked = checkPattern(p, subjectType, s, Some(subject), context)
+    (checked.scope, found + checked.matches)
+  }
+  branch.guard.forEach { check(it, boolean, inner, context) }
+  CheckedBranch(branchBody(branch.body, wanted, inner, context), if (branch.patterns.isEmpty()) [Coverage.anything] else matches)
+}

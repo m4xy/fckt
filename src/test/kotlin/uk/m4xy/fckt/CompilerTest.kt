@@ -1272,7 +1272,41 @@ class CompilerTest {
     }
 
     @Test
-    fun `folders are packages, and capitalised files are modules`() {
+    fun `a package's type can hold a type of a package inside it`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
+        try {
+            write("shop/items/Item.fk", "type Item(name: String)\n")
+            // A private declaration gives the package a signature, which must show Item before Order.
+            write("shop/Order.fk", "import shop.items.Item\n\ntype Order(items: List<Item>)\n")
+            write("shop/totals.fk", "private secret(): Int = 1\n\ncount(o: Order): Int = o.items.size + secret() - 1\n")
+            val main = File(dir, "main.fk")
+            main.writeText("import shop.*\nimport shop.items.Item\n\nmain() = assertEquals(2, count(Order([Item(\"a\"), Item(\"b\")])))\n")
+            assertEquals("", runOcaml(compile(main, listOf(dir), others = listOf(STD))))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+        fun `functions in different files that call each other each read their types with their own file's imports`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
+        try {
+            write("shapes/Circle.fk", "type Circle(radius: Int)\n")
+            // Each calls the other, and only the second imports what its type names.
+            write("walk/ping.fk", "ping(n: Int): Int = if (n == 0) 0 else pong(n - 1).radius\n")
+            write("walk/pong.fk", "import shapes.Circle\n\npong(n: Int): Circle = Circle(ping(n))\n")
+            val main = File(dir, "main.fk")
+            main.writeText("import walk.*\n\nmain() = assertEquals(0, ping(3))\n")
+            assertEquals("", runOcaml(compile(main, listOf(dir), others = listOf(STD))))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+        fun `folders are packages, and capitalised files are modules`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         val lib = File(dir.parentFile, dir.name + "-lib").apply { mkdir() }
         fun write(path: String, text: String, root: File = dir) = File(root, path).apply { parentFile.mkdirs() }.writeText(text)

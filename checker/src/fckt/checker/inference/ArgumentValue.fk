@@ -1,0 +1,9 @@
+import fckt.parser.*
+
+// What an argument is: an expression written in the call; a block written after it, as its last,
+// with the parameters it names, if any; or, for one left out, a call to its default's function.
+type ArgumentValue {
+  WrittenValue(expression: Expression),
+  TrailingBlock(at: Position, parameters: Option<List<Parameter>>, block: Expression),
+  DefaultValue(at: Position, function: String),
+}

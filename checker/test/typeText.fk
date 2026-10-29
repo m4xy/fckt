@@ -10,7 +10,7 @@ import fckt.checker.types.TypeText.*
   assertEquals("List<Option<String>>", shown(listOf(optionOf(string))))
   assertEquals("(Int, Char)", shown(TupleOf([int, char])))
   assertEquals("(Int, String) -> Boolean", shown(FunctionOf([int, string], boolean, pure)))
-  assertEquals("A", shown(Parameter("A")))
+  assertEquals("A", shown(TypeParameter("A")))
 }
 
 @Test namesUnknownsInTheOrderTheyreMet() = Solutions.solving {

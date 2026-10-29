@@ -47,7 +47,7 @@ class NamesTest {
             packages.flatMap { p ->
                 listOf("package", p.root.dir.path, if (p.root.own) "own" else "other", p.name, p.root.uses.joinToString(",") { it.path }.ifEmpty { "-" })
             }
-        SelfHosted.written("names.fk", arguments, listOf(File("parser/src"), File("checker/src")))
+        SelfHosted.written("checker.fk", listOf("names") + arguments, listOf(File("parser/src"), File("checker/src")))
     }
 
     @TestFactory
@@ -57,6 +57,7 @@ class NamesTest {
             val program = analysed(file.readText(), emptyList(), listOf(std))
             // What a program that doesn't compile names isn't compared yet.
             assumeTrue(program != null, "it doesn't compile")
+            assertEquals(null, written["errors ${file.path}"], "errors")
             assertEquals(described(program!!, null), written[file.path])
         }
     }
@@ -65,7 +66,7 @@ class NamesTest {
     fun `in each package, fckt's checker takes each type's name to mean what this one does`() = packages.map { pkg ->
         DynamicTest.dynamicTest("${pkg.root.dir.path}: ${pkg.name}") {
             val program = analysed("import ${pkg.name}.*\n", if (pkg.root.own) listOf(pkg.root.dir) else emptyList(), listOf(std) + pkg.root.uses + if (pkg.root.own) emptyList() else listOf(pkg.root.dir))
-            assertEquals(null, written[pkg.name], "errors")
+            assertEquals(null, written["errors ${pkg.name}"], "errors")
             for (file in pkg.files) assertEquals(described(program!!, file.path), written[file.path], file.path)
         }
     }

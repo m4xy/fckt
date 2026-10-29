@@ -1,0 +1,167 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.*
+
+// Fitting what's found to what's wanted. A value can be used where its own type is wanted, or, for
+// a type with cases, where one that has all of its cases is: a Vowel where an Alphabet is wanted.
+// Lists, options, results, lazy values and tuples of such are used the same way.
+
+// The built-in types whose values can be widened inside them: a List<Vowel> is a List<Alphabet>.
+private covariant: List<String> = ["List", "Option", "Lazy", "Result"]
+
+// Gives up: what's found isn't what's wanted.
+@Abandoning mismatch(at: Position, expected: String, actual: String, context: Context): Nothing =
+  abandon(Globals.problem(context, at, "type mismatch: expected $expected but found $actual"))
+
+// That actual is expected, solving what's needed for it to be.
+@Inferring expect(actual: Type, expected: Type, at: Position, context: Context): Unit = {
+  shownActual = TypeText.shown(actual)
+  shownExpected = TypeText.shown(expected)
+  if (!unify(actual, expected)) mismatch(at, shownExpected, shownActual, context) else Unit
+}
+
+// That the expression can be used where the type is wanted.
+@Inferring check(e: Expression, expected: Type, scope: Scope, context: Context): Unit =
+  assign(e, infer(e, Some(expected), scope, context), expected, context)
+
+// That what the expression was found to be can be used where the type is wanted: it's the same, or
+// a type with cases that's part of it, or it spells out a case the wanted type has.
+@Inferring assign(e: Expression, typed: Typed, expected: Type, context: Context): Unit =
+  if (takesOnCase(typed, expected, context)) Unit
+  else {
+    before = TypeText.shown(typed.t)
+    wanted = TypeText.shown(expected)
+    if (!isSubtype(typed.t, expected, context)) mismatch(Defaults.positionOf(e), wanted, before, context) else Unit
+  }
+
+// Whether the case the expression spells out is one the wanted type with cases has: Alphabet.E is a
+// Vowel where a Vowel is wanted.
+@Solving @Abandoning private takesOnCase(typed: Typed, expected: Type, context: Context): Boolean = when ((typed.spelled, resolved(expected))) {
+  (Some(c), Named(name, arguments, region)) -> when (caseTypeNamed(name, context)) {
+    Some(target) if caseTypeOf(typed.t, context) != Some(name) ->
+      Conversion.casesWithFields(target, arguments, region, context.environment.definitions).any { info, _ -> isCase(info, c) }
+    else -> false
+  }
+  else -> false
+}
+
+// Whether the case is the one the symbol names.
+isCase(info: CaseInfo, c: CaseSymbol): Boolean = info.origin.name == c.owner.name && info.definition.name == c.definition.name
+
+// The type with cases of that full name, if it is one.
+caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environment.definitions.namespace.table.caseTypes.get(name)
+
+// The full name of the type with cases a type is, if it is one.
+@Solving caseTypeOf(t: Type, context: Context): Option<String> = when (resolved(t)) {
+  Named(name, _, _) if caseTypeNamed(name, context).isSome() -> Some(name)
+  else -> None
+}
+
+// Whether a value of sub can be used as a sup, solving unknowns as needed.
+@Solving @Abandoning isSubtype(sub: Type, sup: Type, context: Context): Boolean = when ((resolved(sub), resolved(sup))) {
+  (Variable(_), y) -> unify(sub, y)
+  (x, Variable(_)) -> unify(x, sup)
+  (Named(n, xs, _), Named(m, ys, _)) if n == m && covariant.contains(n) -> xs.size == ys.size && allSubtypes(xs, ys, context)
+  (TupleOf(xs), TupleOf(ys)) -> xs.size == ys.size && allSubtypes(xs, ys, context)
+  (Named(n, _, _), Named(m, _, _)) if n == m -> unify(sub, sup)
+  (Named(n, xs, xRegion), Named(m, ys, yRegion)) if caseTypeNamed(n, context).isSome() && caseTypeNamed(m, context).isSome() ->
+    isCaseSubset(Named(n, xs, xRegion), Named(m, ys, yRegion), context)
+  (FunctionOf(xs, x, xEffects), FunctionOf(ys, y, yEffects)) ->
+    xs.size == ys.size && allSubtypes(ys, xs, context) && isSubtype(x, y, context) && isSubEffects(xEffects, yEffects)
+  (Named(_, _, _), _) -> false
+  (_, Named(_, _, _)) -> false
+  (x, y) -> unify(x, y)
+}
+
+@Solving @Abandoning private allSubtypes(xs: List<Type>, ys: List<Type>, context: Context): Boolean = when ((xs, ys)) {
+  ([x, *moreX], [y, *moreY]) -> isSubtype(x, y, context) && allSubtypes(moreX, moreY, context)
+  else -> true
+}
+
+// Whether a function that does x can be used where one that does y is wanted: x is within y.
+@Solving isSubEffects(x: Row, y: Row): Boolean = {
+  flat = flattened(x)
+  unifyRows(if (flat.rest.isNone()) Row(flat.labels, Some(fresh())) else x, y)
+}
+
+// Whether every case of the type with cases x is a case of y, with the same fields' types.
+@Solving @Abandoning isCaseSubset(x: Type, y: Type, context: Context): Boolean = when ((x, y)) {
+  (Named(n, xs, xRegion), Named(m, ys, yRegion)) -> {
+    // The same value, so the same region.
+    sameRegion = when ((xRegion, yRegion)) {
+      (Some(p), Some(q)) -> unify(p, q)
+      else -> true
+    }
+    definitions = context.environment.definitions
+    when ((caseTypeNamed(n, context), caseTypeNamed(m, context))) {
+      (Some(xType), Some(yType)) if sameRegion -> {
+        theirs = Conversion.casesWithFields(yType, ys, yRegion, definitions)
+        Conversion.casesWithFields(xType, xs, xRegion, definitions).all { entry ->
+          (c, types) = entry
+          when (theirs.find { other, _ -> Cases.same(other, c) }) {
+            Some((_, theirTypes)) -> types.zip(theirTypes).all { a, b -> unify(a, b) }
+            None -> false
+          }
+        }
+      }
+      else -> false
+    }
+  }
+  else -> false
+}
+
+// The type of several branches' results together, each of which is used as it. Where they're
+// different types with cases, it's the smallest declared type with cases that has all their cases:
+// if (c) Alphabet.A else Digit.Zero is a Symbol if type Symbol { Alphabet.A, Digit.Zero } is declared.
+@Inferring join(branches: List<(Expression, Typed)>, at: Position, context: Context): Type = {
+  types = branches.map { _, typed -> typed.t }
+  withCases = types.mapNotNull { t -> caseTypeOf(t, context).map { name -> (name, resolved(t)) } }
+  result = if (withCases.map { name, _ -> name }.distinct().size <= 1) types.firstOrNone().getOrElse(Variable(fresh()))
+    else smallestWithAll(branches, withCases, at, context)
+  branches.forEach { e, typed -> assign(e, typed, result, context) }
+  result
+}
+
+// The smallest type with cases, of the branches' or any declared without type parameters, that has
+// every case the branches need: just the one a branch spells out, or all of a branch's type's.
+@Inferring private smallestWithAll(branches: List<(Expression, Typed)>, withCases: List<(String, Type)>, at: Position, context: Context): Type = {
+  allCases = context.environment.definitions.cases
+  needed = branches.flatMap { _, typed ->
+    when (typed.spelled) {
+      Some(c) -> allCases.getOrDefault(c.owner.name, []).filter { isCase(it, c) }.take(1)
+      None -> caseTypeOf(typed.t, context).map { allCases.getOrDefault(it, []) }.getOrElse([])
+    }
+  }
+  covers = (name: String) -> needed.all { n -> allCases.getOrDefault(name, []).any { Cases.same(it, n) } }
+  size = (name: String) -> allCases.getOrDefault(name, []).size
+  fromBranches = withCases.filter { name, _ -> covers(name) }.minByOrNone { name, _ -> size(name) }.map { _, t -> t }
+  declared = () -> context.environment.definitions.namespace.table.caseTypes.toList()
+    .filter { name, s -> Cases.typeParametersOf(s).isEmpty() && covers(name) }
+    .minByOrNone { name, _ -> size(name) }
+    .map { name, _ -> Named(name, [], None) }
+  when (fromBranches.orElse(declared)) {
+    Some(t) -> t
+    None -> {
+      shown = needed.distinctBy { "${it.origin.name}.${it.definition.name}" }.map { "${it.origin.name}.${it.definition.name}" }.joinToString(", ")
+      abandon(Globals.problem(context, at, "no type has all of $shown; declare one that does, or annotate the type"))
+    }
+  }
+}
+
+// That no name but _ is declared twice among the names: the second of the first that is, is wrong.
+@Abandoning checkDistinct(names: List<(String, Position)>, context: Context): Unit = {
+  named = names.filter { name, _ -> name != "_" }
+  firstRepeated = named.map { name, _ -> name }.distinct().find { name -> named.count { n, _ -> n == name } > 1 }
+  when (firstRepeated) {
+    Some(name) -> when (named.filter { n, _ -> n == name }) {
+      [_, (_, second), *_] -> abandon(Globals.problem(context, second, "'$name' is declared twice"))
+      else -> Unit
+    }
+    None -> Unit
+  }
+}

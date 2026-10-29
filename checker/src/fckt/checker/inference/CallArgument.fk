@@ -1,0 +1,2 @@
+// An argument as a call is checked with it: given by name or in order.
+type CallArgument(name: Option<String>, value: ArgumentValue)

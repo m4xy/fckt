@@ -1,0 +1,307 @@
+import fckt.collections.Maps.*
+import fckt.checker.annotations.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// What a type as written is, as a Type: its names resolved where it's written, its aliases
+// expanded, and its regions and rows of effects made.
+module Conversion {
+  // The written type as a Type.
+  @Solving @Abandoning typeOf(t: TypeRef, context: TypeContext, definitions: Definitions): Type = when (t) {
+    // A parameter's @Fail () -> A may do Fail and more, which calling it passes on: attempt {
+    // println("x"); fail("y") } is @Console where it's called.
+    FunctionType(_, parameters, result, effects) -> FunctionOf(
+      parameters.map { typeOf(it, context, definitions) },
+      typeOf(result, context, definitions),
+      if (effects.isEmpty()) context.arrowEffects.getOrElse(pure)
+      else rowOf(effects, context.arrowEffects.isSome(), false, context, definitions),
+    )
+    EffectsType(_, effects) -> Effects(rowOf(effects, false, true, context, definitions))
+    TupleType(_, elements) -> TupleOf(elements.map { typeOf(it, context, definitions) })
+    NamedType(at, name, arguments) -> namedType(at, name, arguments, arguments.map { typeOf(it, context, definitions) }, context, definitions)
+  }
+
+  @Solving @Abandoning private namedType(
+    at: Position,
+    name: String,
+    written: List<TypeRef>,
+    arguments: List<Type>,
+    context: TypeContext,
+    definitions: Definitions,
+  ): Type = when (context.typeParameters.get(name)) {
+    Some(parameter) -> {
+      checkArity(name, 0, arguments, at, context)
+      parameter
+    }
+    None -> when (context.specTypes.get(name)) {
+      Some(arity) -> {
+        checkArity(name, arity, arguments, at, context)
+        SpecOwnType(name, arguments)
+      }
+      None -> builtinOrDeclared(at, name, written, arguments, context, definitions)
+    }
+  }
+
+  @Solving @Abandoning private builtinOrDeclared(
+    at: Position,
+    name: String,
+    written: List<TypeRef>,
+    arguments: List<Type>,
+    context: TypeContext,
+    definitions: Definitions,
+  ): Type = when (Types.builtins.get(name)) {
+    Some(arity) -> {
+      checkArity(name, arity, arguments, at, context)
+      Named(if (name == "Double") "Float" else name, arguments, None)
+    }
+    None -> when (TypeNames.meaning(name, scopeOf(context), definitions.namespace)) {
+      Found(DeclaredType(symbol)) -> {
+        parameters = typeParametersOf(symbol)
+        given = withEffectArguments(name, written, parameters, arguments, context)
+        checkArity(name, parameters.size, given, at, context)
+        declared(symbol, given, context, definitions)
+      }
+      Found(SpecModuleType(spec)) -> moduleType(spec, at, arguments, context, definitions)
+      Found(_) -> abandon(problem(context, at, "unknown type '$name'"))
+      Refused(why) -> abandon(problem(context, at, why))
+      NotFound -> abandon(problem(context, at, "unknown type '$name'"))
+    }
+  }
+
+  // The type of a module that follows the spec, as a value: Plugin; or, for a spec with types of its
+  // own, with what they are, in order: Format<Point>.
+  @Abandoning moduleType(spec: Symbol, at: Position, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type = {
+    own = Symbols.simpleName(spec)
+    (types, typeParameters) = when (spec.declaration.definition) {
+      SpecDefinition(ts, _, ps, _, _) -> (ts, ps)
+      else -> ([], [])
+    }
+    if (Annotations.isEffect(spec, definitions.namespace)) {
+      abandon(problem(context, at, "'$own' is an effect: a function does it, written @$own, and a handler answers it; no value has its type"))
+    } else Unit
+    types.find { it.typeParameters.isNotEmpty() }.forEach { t ->
+      abandon(problem(context, at, "$own's ${t.name} takes type parameters, so a value of $own can't say what it is yet"))
+    }
+    if (typeParameters.isNotEmpty()) abandon(problem(context, at, "$own takes type parameters, so it can't be a value's type yet")) else Unit
+    if (arguments.size != types.size) {
+      names = types.map { it.name }.joinToString(", ")
+      abandon(problem(context, at, "a $own value says what its $names ${if (types.size == 1) "is" else "are"}, in order: $own<$names>"))
+    } else Unit
+    ModuleValue(spec.name, arguments)
+  }
+
+  // What TypeNames needs of the context: the names of the type parameters in scope.
+  private scopeOf(context: TypeContext): TypeScope =
+    TypeScope(context.place, context.typeParameters.toList().map { name, _ -> name }, [])
+
+  @Abandoning private checkArity(name: String, arity: Int, arguments: List<Type>, at: Position, context: TypeContext): Unit =
+    if (arguments.size == arity) Unit
+    else abandon(problem(context, at, "'$name' takes $arity type argument${if (arity == 1) "" else "s"}, not ${arguments.size}"))
+
+  // The arguments written for a type whose parameters these are, with what goes to its effect
+  // parameters: effects, as in Queue<@Console>, and, for any left out, anything, as Queue is.
+  @Solving @Abandoning private withEffectArguments(
+    name: String,
+    written: List<TypeRef>,
+    parameters: List<String>,
+    arguments: List<Type>,
+    context: TypeContext,
+  ): List<Type> = {
+    effectParameters = parameters.count { it.startsWith("@") }
+    writtenEffects = written.any { isEffectsRef(it) }
+    if (effectParameters == 0 && !writtenEffects) arguments
+    else if (arguments.size == parameters.size) {
+      parameters.zip(written).forEach { parameter, given ->
+        if (parameter.startsWith("@") && !isEffectsRef(given))
+          abandon(problem(context, positionOf(given), "$name's ${parameter.removePrefix("@")} is effects, like $name<@Console>, not a type"))
+        else if (!parameter.startsWith("@") && isEffectsRef(given))
+          abandon(problem(context, positionOf(given), "$name's $parameter is a type, not effects"))
+        else Unit
+      }
+      arguments
+    } else if (arguments.size != parameters.size - effectParameters || writtenEffects) arguments
+    else interleaved(parameters, arguments)
+  }
+
+  // A type for each parameter: the next of the arguments for a type parameter, anything for an
+  // effect parameter.
+  @Solving private interleaved(parameters: List<String>, arguments: List<Type>): List<Type> = when (parameters) {
+    [] -> []
+    [p, *rest] ->
+      if (p.startsWith("@")) [Variable(fresh()), *interleaved(rest, arguments)]
+      else when (arguments) {
+        [a, *more] -> [a, *interleaved(rest, more)]
+        [] -> []
+      }
+  }
+
+  private isEffectsRef(t: TypeRef): Boolean = when (t) {
+    EffectsType(_, _) -> true
+    else -> false
+  }
+
+  positionOf(t: TypeRef): Position = when (t) {
+    NamedType(at, _, _) -> at
+    FunctionType(at, _, _, _) -> at
+    TupleType(at, _) -> at
+    EffectsType(at, _) -> at
+  }
+
+  // The type parameters a type declaration declares.
+  typeParametersOf(symbol: Symbol): List<String> = when (symbol.declaration.definition) {
+    RecordDefinition(typeParameters, _, _, _, _) -> typeParameters
+    CasesDefinition(typeParameters, _, _, _) -> typeParameters
+    AliasDefinition(typeParameters, _) -> typeParameters
+    else -> []
+  }
+
+  // The declared type applied to the arguments, as seen from the context's place, with a region
+  // if its values can change.
+  @Solving @Abandoning declared(symbol: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
+    withRegion(symbol, seenFrom(symbol, arguments, context, definitions), context, definitions)
+
+  @Solving @Abandoning private seenFrom(symbol: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
+    if (isAbstractHere(symbol, context.place)) outside(symbol, arguments, context, definitions)
+    else when (symbol.declaration.definition) {
+      AliasDefinition(_, _) -> expand(symbol, arguments, context, definitions)
+      else -> Named(symbol.name, arguments, None)
+    }
+
+  // Whether the type can be named here but not seen into: an opaque type outside its module.
+  isAbstractHere(symbol: Symbol, place: Place): Boolean = symbol.declaration.opaque && !Visibility.isInside(place, symbol.path)
+
+  // An opaque type, outside its module: a record or type with cases keeps its name, with only
+  // what's in it hidden; an alias is abstract, not what it stands for.
+  @Solving @Abandoning private outside(symbol: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
+    when (symbol.declaration.definition) {
+      AliasDefinition(_, _) -> Abstract(symbol.name, arguments)
+      else -> Named(symbol.name, arguments, None)
+    }
+
+  // The type, of the declaration, with a region if its values can change: the one it's in, or its own.
+  @Solving private withRegion(symbol: Symbol, t: Type, context: TypeContext, definitions: Definitions): Type = when (t) {
+    Named(name, arguments, None) if definitions.regioned.contains(symbol.name) ->
+      Named(name, arguments, Some(context.region.getOrElse(Variable(fresh()))))
+    else -> t
+  }
+
+  // A new region for a value of the type being made, if its values can change.
+  @Solving newRegion(symbol: Symbol, definitions: Definitions): Option<Type> =
+    if (definitions.regioned.contains(symbol.name)) Some(Variable(fresh())) else None
+
+  // What the alias stands for, applied to the arguments; its target means what it does where it's
+  // written. In module Results<E>, type M<A> = Result<A, E> has the E of what uses it there;
+  // elsewhere, any.
+  @Solving @Abandoning expand(alias: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
+    when (alias.declaration.definition) {
+      AliasDefinition(typeParameters, target) ->
+        if (context.expanding.contains(alias.name)) {
+          abandon(Diagnostic(alias.file.source.path, alias.declaration.at, "type '${Symbols.simpleName(alias)}' is defined in terms of itself"))
+        } else {
+          inModule = Visibility.isInside(context.place, alias.path)
+          moduleParameters = moduleTypeParameters(alias.path, definitions).map { p ->
+            (p, if (inModule) context.typeParameters.getOrElse(p) { Variable(fresh()) } else Variable(fresh()))
+          }
+          inner = TypeContext(
+            Place(alias.file, alias.path),
+            (moduleParameters + typeParameters.zip(arguments)).toMap(),
+            context.region,
+            context.arrowEffects,
+            context.expanding + [alias.name],
+          )
+          typeOf(target, inner, definitions)
+        }
+      else -> Named(alias.name, arguments, None)
+    }
+
+  // The type parameters of the module at the path: E, for module Results<E>.
+  moduleTypeParameters(path: List<String>, definitions: Definitions): List<String> =
+    when (definitions.namespace.table.modules.get(path.joinToString("."))) {
+      Some(DeclaredModule(Symbol(_, _, Declaration(_, _, ModuleDefinition(_, _, _, _, typeParameters), _, _, _), _))) -> typeParameters
+      else -> []
+    }
+
+  // ---- Effects ----
+
+  // The row the annotations say: the effects they name, and an effect parameter's, whose rest is
+  // its own. Without one, open leaves room for more. A row of effects alone may be pure, which
+  // names no effect.
+  @Solving @Abandoning rowOf(annotations: List<Annotation>, open: Boolean, pure: Boolean, context: TypeContext, definitions: Definitions): Row = {
+    (parameters, named) = annotations.partition { context.typeParameters.containsKey("@${it.name}") }
+    when (parameters) {
+      [_, second, *_] -> abandon(problem(context, second.at, "effects can name only one effect parameter"))
+      else -> Unit
+    }
+    labels = labelsOf(named, context, definitions).filter { !pure || it.name != "fckt.lang.Pure" }
+    when (parameters) {
+      [parameter, *_] -> {
+        own = rowOfType(context.typeParameters.getOrElse("@${parameter.name}") { Effects(Types.pure) })
+        Row((labels + own.labels).distinct(), own.rest)
+      }
+      [] -> Row(labels, if (open) Some(fresh()) else None)
+    }
+  }
+
+  // An effect parameter's row: what it's been found to be, or, while unknown, any.
+  @Solving private rowOfType(t: Type): Row = when (resolved(t)) {
+    Effects(row) -> flattened(row)
+    Variable(v) -> Row([], Some(v))
+    else -> Types.pure
+  }
+
+  // The effects a function type's annotations say it has, @Io (String) -> Unit: each must be, or
+  // carry, one. A generic effect has its type arguments: @Yielding<Int> () -> Unit.
+  @Solving @Abandoning private labelsOf(annotations: List<Annotation>, context: TypeContext, definitions: Definitions): List<EffectLabel> =
+    annotations.flatMap { a ->
+      namespace = definitions.namespace
+      when (Annotations.declarationOf(a, context.place, namespace)) {
+        None -> abandon(problem(context, a.at, "unknown effect '${a.name}'"))
+        Some(declaration) if Symbols.isSpec(declaration) && a.typeArguments.isNotEmpty() ->
+          [EffectLabel(declaration.name, a.typeArguments.map { typeOf(it, context, definitions) })]
+        Some(_) -> when (Annotations.effectsOf([a], context.place, a.at, namespace)) {
+          [] -> abandon(problem(context, a.at, "'${a.name}' isn't an effect; declare one with effect ${a.name.split(".").lastOrNone().getOrElse(a.name)}"))
+          effects -> effects.map { EffectLabel(it, []) }
+        }
+      }
+    }
+
+  // ---- Fields ----
+
+  // The types of a record's fields, for its type arguments, holding values in the region.
+  @Solving @Abandoning recordFields(record: Symbol, arguments: List<Type>, region: Option<Type>, definitions: Definitions): List<Type> =
+    when (record.declaration.definition) {
+      RecordDefinition(typeParameters, fields, _, _, _) -> {
+        context = TypeContext(Place(record.file, record.path), typeParameters.zip(arguments).toMap(), region)
+        fields.map { typeOf(it.fieldType, context, definitions) }
+      }
+      else -> []
+    }
+
+  // The types of a case's fields, as the type with cases whose parameters are given has it, for
+  // that type's arguments: an included case's in terms of the type it's included from, given the
+  // type arguments it's included with.
+  @Solving @Abandoning caseFields(c: CaseInfo, parameters: List<String>, arguments: List<Type>, region: Option<Type>, definitions: Definitions): List<Type> =
+    when (c.source) {
+      OwnCase -> {
+        context = TypeContext(Place(c.origin.file, c.origin.path), parameters.zip(arguments).toMap(), region)
+        c.definition.fields.map { typeOf(it.fieldType, context, definitions) }
+      }
+      NamedCase(from) -> caseFields(from, [], [], region, definitions)
+      IncludedCase(included, written, place, from) -> {
+        context = TypeContext(place, parameters.zip(arguments).toMap(), region)
+        caseFields(from, Cases.typeParametersOf(included), written.map { typeOf(it, context, definitions) }, region, definitions)
+      }
+    }
+
+  // The cases of the type with cases, each with its fields' types for the type's arguments.
+  @Solving @Abandoning casesWithFields(caseType: Symbol, arguments: List<Type>, region: Option<Type>, definitions: Definitions): List<(CaseInfo, List<Type>)> =
+    definitions.cases.getOrDefault(caseType.name, []).map { c ->
+      (c, caseFields(c, Cases.typeParametersOf(caseType), arguments, region, definitions))
+    }
+
+  private problem(context: TypeContext, at: Position, message: String): Diagnostic = Diagnostic(context.place.file.source.path, at, message)
+}

@@ -23,8 +23,8 @@ import fckt.checker.types.Unification.*
   assert(!unify(listOf(int), optionOf(int)))
   assert(!unify(TupleOf([int, int]), TupleOf([int])))
   assert(!unify(FunctionOf([int], int, pure), FunctionOf([], int, pure)))
-  assert(!unify(Parameter("A"), Parameter("B")))
-  assert(unify(Parameter("A"), Parameter("A")))
+  assert(!unify(TypeParameter("A"), TypeParameter("B")))
+  assert(unify(TypeParameter("A"), TypeParameter("A")))
 }
 
 @Test noTypeHoldsItself() = Solutions.solving {

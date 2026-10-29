@@ -1,0 +1,250 @@
+import fckt.collections.Maps.*
+import fckt.checker.coverage.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// Patterns: what a value of a type is matched against, binding names in a scope. is Circle, on a
+// local, lets what's matched read the case's fields; is Vowel, naming a type with cases rather than
+// a case, finds the subject to be one of its cases.
+
+@Inferring checkPattern(p: Pattern, t: Type, scope: Scope, subject: Option<Expression>, context: Context): CheckedPattern = when (p) {
+  Wildcard(_) -> CheckedPattern(scope, [Coverage.anything])
+  NamePattern(at, name) ->
+    if (Scopes.bindsHere(scope, name)) abandon(Globals.problem(context, at, "'$name' is bound twice in this pattern"))
+    else CheckedPattern(Scopes.bind(scope, name, Local(t)), [Coverage.anything])
+  ConstantPattern(_, e) -> {
+    check(e, t, scope, context)
+    CheckedPattern(scope, [constantMatches(e)])
+  }
+  TuplePattern(at, elements) -> checkTuplePattern(at, elements, t, scope, context)
+  ListPattern(at, elements, rest) -> {
+    element = Variable(fresh())
+    expect(listOf(element), t, at, context)
+    (afterElements, elementMatches) = checkEach(elements, elements.map { element }, scope, context)
+    (afterRest, restMatches) = when (rest) {
+      Some(r) -> {
+        checked = checkPattern(r, listOf(element), afterElements, None, context)
+        (checked.scope, checked.matches)
+      }
+      // Without a rest, the list ends there.
+      None -> (afterElements, [Matches(Some(EmptyList), [])])
+    }
+    // [a, b, *rest] is a, then b, then rest.
+    CheckedPattern(afterRest, elementMatches.reversed().fold(restMatches) { tails, options ->
+      options.flatMap { head -> tails.map { tail -> Matches(Some(NonEmptyList), [head, tail]) } }
+    })
+  }
+  CasePattern(at, name, arguments, isCheck, qualifier) -> checkCasePattern(at, name, arguments, isCheck, qualifier, t, scope, subject, context)
+}
+
+// Each pattern checked against its type in turn, binding into one scope, with what each matches.
+@Inferring private checkEach(patterns: List<Pattern>, types: List<Type>, scope: Scope, context: Context): (Scope, List<List<Matches>>) =
+  patterns.zip(types).fold((scope, [])) { acc, entry ->
+    (s, found) = acc
+    (p, t) = entry
+    checked = checkPattern(p, t, s, None, context)
+    (checked.scope, found + [checked.matches])
+  }
+
+// (p, q): a tuple's elements, or a record's fields in the order it declares them, like a Kotlin
+// data class's.
+@Inferring private checkTuplePattern(at: Position, elements: List<Pattern>, t: Type, scope: Scope, context: Context): CheckedPattern = {
+  table = context.environment.definitions.namespace.table
+  record = when (resolved(t)) {
+    Named(name, arguments, region) -> table.records.get(name).map { r -> (r, arguments, region) }
+    else -> None
+  }
+  when (record) {
+    Some((r, arguments, region)) -> {
+      if (Conversion.isAbstractHere(r, context.place)) abandon(opaque(r, at, context)) else Unit
+      fields = recordFieldsOf(r)
+      if (elements.size != fields.size) abandon(Globals.problem(context, at, "${r.name} has ${fields.size} fields, not ${elements.size}")) else Unit
+      (after, matches) = checkEach(elements, Conversion.recordFields(r, arguments, region, context.environment.definitions), scope, context)
+      CheckedPattern(after, product(matches).map { Matches(Some(RecordShape(r.name)), it) })
+    }
+    None -> {
+      parts = elements.map { Variable(fresh()) }
+      expect(TupleOf(parts), t, at, context)
+      (after, matches) = checkEach(elements, parts, scope, context)
+      CheckedPattern(after, product(matches).map { Matches(Some(TupleShape(elements.size)), it) })
+    }
+  }
+}
+
+// Case(p, q), Case, or is Case: a case of the subject's type with cases, through its type or module
+// if it's qualified, or any constructor.
+@Inferring private checkCasePattern(
+  at: Position,
+  name: String,
+  arguments: Option<List<Pattern>>,
+  isCheck: Boolean,
+  qualifier: Option<String>,
+  t: Type,
+  scope: Scope,
+  subject: Option<Expression>,
+  context: Context,
+): CheckedPattern = {
+  namespace = context.environment.definitions.namespace
+  subjectType = when (resolved(t)) {
+    Named(n, typeArguments, region) -> caseTypeNamed(n, context).map { s -> (s, typeArguments, region) }
+    else -> None
+  }
+  // is Vowel, naming a type with cases rather than one of the subject's cases, narrows the subject.
+  target = if (!isCheck) None else {
+    full = (qualifier.toList() + [name]).joinToString(".")
+    isCase = qualifier.isNone() && subjectType.map { st, _, _ -> context.environment.definitions.cases.getOrDefault(st.name, []).any { it.definition.name == name } }.getOrElse(false)
+    if (isCase) None else Lookups.found(Lookups.caseType(full, context.place, namespace, Skipping))
+  }
+  when (target) {
+    Some(caseType) -> narrow(at, name, caseType, resolved(t), scope, subject, context)
+    None -> {
+      shape = when (subjectType) {
+        Some((st, typeArguments, region)) -> subjectCase(at, name, qualifier, st, typeArguments, region, context)
+        None -> when (constructorShape(name, Some(t), at, false, qualifier, false, scope, context)) {
+          Some(s) -> {
+            expect(s.result, t, at, context)
+            s
+          }
+          None -> abandon(Globals.problem(context, at, "unknown type or variant '$name'"))
+        }
+      }
+      (after, fieldMatches) = when (arguments) {
+        Some(args) -> {
+          if (args.size != shape.fieldTypes.size) abandon(Globals.problem(context, at, "'$name' has ${shape.fieldTypes.size} fields, not ${args.size}")) else Unit
+          checkEach(args, shape.fieldTypes, scope, context)
+        }
+        None ->
+          if (!isCheck && shape.fieldTypes.isNotEmpty()) abandon(Globals.problem(context, at, "'$name' has fields: match them with $name(...) or use 'is $name'"))
+          else (scope, shape.fieldTypes.map { [Coverage.anything] })
+      }
+      CheckedPattern(narrowedTo(shape, isCheck, after, subject, context), product(fieldMatches).map { Matches(Some(shapeOf(shape)), it) })
+    }
+  }
+}
+
+// The case of the subject's type the pattern names, so that Alphabet.A matches a Vowel: through its
+// type, or through a module, one of the types with cases in it.
+@Inferring private subjectCase(at: Position, name: String, qualifier: Option<String>, st: Symbol, typeArguments: List<Type>, region: Option<Type>, context: Context): ConstructorShape = {
+  namespace = context.environment.definitions.namespace
+  allCases = context.environment.definitions.cases
+  qualifierCases = qualifier.map { q ->
+    when (Lookups.caseType(q, context.place, namespace, Refusing)) {
+      Found(s) -> {
+        if (Conversion.isAbstractHere(s, context.place)) abandon(opaque(s, at, context)) else Unit
+        allCases.getOrDefault(s.name, [])
+      }
+      Refused(why) -> abandon(Globals.problem(context, at, why))
+      NotFound -> when (Lookups.moduleNamed(q, context.place, namespace, Refusing)) {
+        Found(m) -> allCases.toList().filter { typeName, _ -> typeName.split(".").dropLast(1).joinToString(".") == Symbols.moduleName(m) }.flatMap { _, cs -> cs }
+        Refused(why) -> abandon(Globals.problem(context, at, why))
+        NotFound -> abandon(Globals.problem(context, at, "unknown type or module '$q'"))
+      }
+    }
+  }
+  matches = Conversion.casesWithFields(st, typeArguments, region, context.environment.definitions).filter { c, _ ->
+    c.definition.name == name && qualifierCases.map { qs -> qs.any { Cases.same(it, c) } }.getOrElse(true)
+  }
+  when (matches) {
+    [(c, fieldTypes)] -> ConstructorShape(
+      CaseConstructor(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition)),
+      c.definition.fields.map { it.name },
+      fieldTypes,
+      Named(st.name, typeArguments, region),
+    )
+    [] -> abandon(Globals.problem(context, at, "${st.name} has no case '${qualifier.map { "$it." }.getOrElse("")}$name'"))
+    [(first, _), *_] -> abandon(Globals.problem(context, at,
+      "${st.name} has several cases named '$name'; qualify it, as in ${first.origin.name}.$name"))
+  }
+}
+
+// The scope after is Variant on a local: the local, narrowed to the case, so what's matched can read
+// its fields.
+@Solving private narrowedTo(shape: ConstructorShape, isCheck: Boolean, scope: Scope, subject: Option<Expression>, context: Context): Scope =
+  when ((isCheck, shape.constructor, subject)) {
+    (true, CaseConstructor(c), Some(Name(_, local))) if shape.fieldTypes.isNotEmpty() -> when (Scopes.lookup(scope, local)) {
+      Some(existing) -> Scopes.bind(scope, local, Local(existing.t, existing.region,
+        Some(Narrowing(c.definition.name, c.definition.fields, shape.fieldNames.zip(shape.fieldTypes).toMap(), isShared(c.owner.name, context))),
+        existing.hides))
+      None -> scope
+    }
+    else -> scope
+  }
+
+// Whether a type with cases shares cases with another: it takes one of another's, or another takes
+// one of its.
+isShared(name: String, context: Context): Boolean = context.environment.definitions.cases.toList().any { owner, cs ->
+  cs.any { c -> c.origin.name != owner && (owner == name || c.origin.name == name) }
+}
+
+// is Vowel: the subject is one of Vowel's cases, which must all be cases of the subject's type.
+@Inferring private narrow(at: Position, name: String, target: Symbol, subjectType: Type, scope: Scope, subject: Option<Expression>, context: Context): CheckedPattern = {
+  subjectCaseType = when (subjectType) {
+    Named(n, _, _) if caseTypeNamed(n, context).isSome() -> subjectType
+    _ -> abandon(Globals.problem(context, at, "'is $name' needs the subject to be a type with cases, not ${TypeText.shown(subjectType)}"))
+  }
+  narrowed = Named(target.name, Cases.typeParametersOf(target).map { Variable(fresh()) }, Conversion.newRegion(target, context.environment.definitions))
+  allCases = context.environment.definitions.cases
+  if (!isCaseSubset(narrowed, subjectCaseType, context)) {
+    subjectName = when (subjectCaseType) {
+      Named(n, _, _) -> n
+      else -> ""
+    }
+    missing = allCases.getOrDefault(target.name, []).filter { c -> allCases.getOrDefault(subjectName, []).none { Cases.same(it, c) } }
+    abandon(Globals.problem(context, at,
+      "${target.name} isn't part of $subjectName: $subjectName has no ${missing.map { "${it.origin.name}.${it.definition.name}" }.joinToString(", ")}"))
+  } else Unit
+  narrowedScope = when (subject) {
+    Some(Name(_, local)) -> when (Scopes.lookup(scope, local)) {
+      Some(existing) -> Scopes.bind(scope, local, Local(narrowed, existing.region, None, existing.hides))
+      None -> scope
+    }
+    else -> scope
+  }
+  CheckedPattern(narrowedScope, allCases.getOrDefault(target.name, []).map { c ->
+    Matches(Some(CaseShape(c.origin.name, c.definition.name)), c.definition.fields.map { Coverage.anything })
+  })
+}
+
+// What a constructor builds, as coverage sees it.
+private shapeOf(shape: ConstructorShape): Shape = when (shape.constructor) {
+  RecordConstructor(record) -> RecordShape(record.name)
+  CaseConstructor(c) -> CaseShape(c.owner.name, c.definition.name)
+  BuiltinCase(name) -> CaseShape("", name)
+}
+
+// What a constant matches, as written.
+constantMatches(e: Expression): Matches = when (e) {
+  BooleanConstant(_, value) -> Matches(Some(BooleanShape(value)), [])
+  else -> Matches(Some(LiteralShape(constantText(e))), [])
+}
+
+private constantText(e: Expression): String = when (e) {
+  IntConstant(_, value) -> "$value"
+  FloatConstant(_, value) -> "$value"
+  CharConstant(_, value) -> "'$value'"
+  StringTemplate(_, parts) -> "\"" + parts.map { p ->
+    when (p) {
+      TemplateText(text) -> text
+      Interpolation(_) -> "$"
+    }
+  }.joinToString("") + "\""
+  Unary(_, operator, operand) -> operator + constantText(operand)
+  else -> "?"
+}
+
+// Every way of choosing one from each of the lists.
+product(choices: List<List<Matches>>): List<List<Matches>> =
+  choices.fold([[]]) { acc, options -> acc.flatMap { prefix -> options.map { prefix + [it] } } }
+
+// Whether a pattern matches anything of its type: only names, _, and tuples of them.
+irrefutable(p: Pattern): Boolean = when (p) {
+  NamePattern(_, _) -> true
+  Wildcard(_) -> true
+  TuplePattern(_, elements) -> elements.all { irrefutable(it) }
+  else -> false
+}

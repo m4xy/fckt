@@ -1,0 +1,15 @@
+import fckt.parser.Position
+import fckt.parser.Pattern
+import fckt.checker.types.Type
+
+// How far checking a block has got: the names it binds so far; in a module's block, the type of
+// what's left of it; without a bind, each by line's types so far, and those whose names aren't
+// bound yet, and where the first line after them is; and whether its last line so far changed a var.
+type BlockSoFar(
+  scope: Scope,
+  rest: Type,
+  steps: List<(Type, Type)>,
+  pending: List<(Position, Pattern, Type)>,
+  after: Option<Position>,
+  assigned: Boolean,
+)

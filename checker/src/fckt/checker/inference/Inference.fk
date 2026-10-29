@@ -1,0 +1,90 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.*
+
+// The type of every function and value in a program: worked out a group at a time, each group after
+// those it uses, each whatever the others' errors, so that a program's errors are found together.
+module Inference {
+  // Each function's and value's type, in the order they're written, and every error found. Where a
+  // group can't be checked, its functions may be anything, so what uses them is checked without
+  // more errors about them. With coverage, each when must cover every value of its subject.
+  @Solving @Reporting @Abandoning functionTypes(definitions: Definitions, coverage: Boolean): List<CheckedFunction> = {
+    checkTypeDeclarations(definitions)
+    environment = Environments.of(definitions)
+    groups = Groups.ordered(environment.orderedFunctions, environment)
+    known = groups.fold(environment.known) { k, group ->
+      checking = Environment(environment.definitions, environment.functions, environment.orderedFunctions, environment.extensions,
+        environment.casesByName, environment.moduleSpecs, environment.specTypes, environment.operations, k)
+      when (Diagnostics.attempting { checkGroup(group, checking, coverage) }) {
+        Ok(checked) -> checked
+        Error(diagnostic) -> {
+          report(diagnostic)
+          failed(group, k)
+        }
+      }
+    }
+    checkMain(environment, known)
+    environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s) } }
+  }
+
+  // Every type declaration's fields' types, and every alias's, so a wrong one is reported where it's
+  // written, whether or not anything uses it; and no type with two fields of a name.
+  @Solving @Abandoning private checkTypeDeclarations(definitions: Definitions): Unit = {
+    table = definitions.namespace.table
+    table.declarations.filter { Symbols.isAlias(it) }.forEach { a ->
+      Conversion.expand(a, Conversion.typeParametersOf(a).map { TypeParameter(it) }, TypeContext(Place(a.file, a.path), emptyMap()), definitions)
+      Unit
+    }
+    table.declarations.forEach { d ->
+      when (d.declaration.definition) {
+        RecordDefinition(typeParameters, fields, _, false, _) -> {
+          checkFieldNames(d, fields)
+          Conversion.recordFields(d, typeParameters.map { TypeParameter(it) }, None, definitions)
+          Unit
+        }
+        CasesDefinition(typeParameters, cases, _, includes) -> {
+          context = TypeContext(Place(d.file, d.path), typeParameters.map { p -> (p, TypeParameter(p)) }.toMap())
+          cases.forEach { c ->
+            checkFieldNames(d, c.fields)
+            c.fields.forEach { f ->
+              Conversion.typeOf(f.fieldType, context, definitions)
+              Unit
+            }
+          }
+          includes.forEach { i ->
+            Conversion.typeOf(i, context, definitions)
+            Unit
+          }
+        }
+        else -> Unit
+      }
+    }
+  }
+
+  @Abandoning private checkFieldNames(d: Symbol, fields: List<Field>): Unit = fields.forEachIndexed { i, f ->
+    if (fields.take(i).any { it.name == f.name }) abandon(Diagnostic(d.file.source.path, f.at, "field '${f.name}' is declared twice")) else Unit
+  }
+
+  // That main, if there is one, takes nothing or the program's arguments, and gives Unit.
+  @Solving @Reporting private checkMain(environment: Environment, known: Known): Unit =
+    when ((environment.functions.get("main"), known.schemes.get("main"))) {
+      (Some(main), Some(scheme)) -> {
+        problem = (message: String) -> report(Diagnostic(main.file.source.path, main.declaration.at, message))
+        when (resolved(scheme.template)) {
+          FunctionOf(parameters, result, _) ->
+            if (parameters.size > 1 || (parameters.size == 1 && !unify(parameters.firstOrNone().getOrElse(unit), listOf(string))))
+              problem("main must be declared as main() = ... or main(args: List<String>) = ...")
+            else if (!unify(result, unit)) problem("main must return Unit, not ${TypeText.shown(result)}")
+            else Unit
+          _ -> problem("main must be declared as main() = ... or main(args: List<String>) = ...")
+        }
+      }
+      else -> Unit
+    }
+}

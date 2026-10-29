@@ -1,0 +1,7 @@
+import fckt.checker.diagnostics.Abandoning
+import fckt.checker.types.Solving
+
+// What working out an expression's type does: it solves unknowns, gives up at an error, does what
+// the code it's checking does, so that the function or lambda around it does too, and hands on
+// each when to be checked for covering every value.
+@Solving @Abandoning @Doing @Covering annotation type Inferring

@@ -1,0 +1,13 @@
+import fckt.collections.Maps.*
+import fckt.checker.types.*
+
+// What's known of the functions checked so far, by full name: each one's type, generic in its own
+// unknowns, with the unknown each of its declared type parameters became, for a call that gives
+// them; and, while a group is checked, what each of its functions is taken to be: as it's being
+// worked out, provisional, or, to the others in its group, as it says it is, viewed.
+type Known(
+  schemes: Map<String, Scheme>,
+  typeParameterVariables: Map<String, Map<String, TypeVariable>>,
+  provisional: Map<String, Type>,
+  viewed: Map<String, Type>,
+)

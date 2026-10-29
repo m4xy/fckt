@@ -1,0 +1,12 @@
+import fckt.parser.SpecValue
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.Type
+
+// What receiver.name reads, where it's a field: a record's field; a field of the case a local was
+// found to be, by is; or a value of what a module given as a value has, as its spec says. Each with
+// its type.
+type FieldReference {
+  RecordField(record: Symbol, t: Type),
+  NarrowedField(narrowing: Narrowing, t: Type),
+  ModuleMember(spec: Symbol, value: SpecValue, t: Type),
+}

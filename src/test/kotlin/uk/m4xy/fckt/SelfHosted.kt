@@ -22,7 +22,7 @@ internal object SelfHosted {
         val ml = compile(File("src/test/fckt/$driver"), with, others = listOf(File("std/src")))
         val out = File.createTempFile("written", ".txt")
         return try {
-            Ocaml.run(ml, listOf(out.path) + arguments)
+            Ocaml.runNative(ml, listOf(out.path) + arguments)
             out.readText()
         } finally {
             out.delete()

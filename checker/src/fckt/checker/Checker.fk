@@ -1,18 +1,41 @@
 import fckt.checker.diagnostics.*
 import fckt.checker.sources.*
 import fckt.checker.resolution.*
+import fckt.checker.definitions.*
+import fckt.checker.expansion.*
+import fckt.checker.inference.*
+import fckt.checker.types.*
 
-// Checking a program: reading the files it uses, then working out what its names mean, each stage
-// from what the one before found. Each error is reported, and checking goes as far as it can.
+// Checking a program: reading the files it uses, filling in what its declarations say, working out
+// what its names mean, then what type everything is, each stage from what the one before found. Each error is reported, and checking goes as far as it can.
 module Checker {
   // What each type's name written in each file the program uses means, file by file, the
   // program's own first, and every error found on the way.
   typeNames(entry: SourceText, tree: SourceTree): (List<ResolvedFile>, List<Diagnostic>) = Diagnostics.collecting {
-    workspace = Loader.load(entry, tree)
     resolved = Diagnostics.recovering {
+      workspace = Expansion.expanded(Loader.load(entry, tree))
       namespace = Resolution.namespace(workspace)
-      workspace.files.map { file -> ResolvedFile(file, Resolution.resolvedTypes(file, namespace)) }
+      workspace.files.map { file -> ResolvedFile(file, Resolution.resolvedTypes(file, namespace, workspace.borrowed)) }
     }
     resolved.getOrElse([])
+  }
+
+  // The program, checked, as far as it can be, and every error found. With coverage, each when
+  // must cover every value of its subject, as it must for a program to compile; tools that only
+  // want to know what names mean needn't ask.
+  check(entry: SourceText, tree: SourceTree, coverage: Boolean): (Option<CheckedProgram>, List<Diagnostic>) = {
+    (checked, errors) = checking(entry, tree, coverage)
+    (checked, Diagnostics.ordered(errors))
+  }
+
+  private checking(entry: SourceText, tree: SourceTree, coverage: Boolean): (Option<CheckedProgram>, List<Diagnostic>) = Diagnostics.collecting {
+    Solutions.solving {
+      Diagnostics.recovering {
+        workspace = Expansion.expanded(Loader.load(entry, tree))
+        namespace = Resolution.namespace(workspace)
+        definitions = Definitions(namespace, Cases.all(namespace), Regions.regioned(namespace))
+        CheckedProgram(workspace, Inference.functionTypes(definitions, coverage))
+      }
+    }
   }
 }

@@ -1,0 +1,7 @@
+import fckt.parser.Annotation
+import fckt.checker.symbols.Symbol
+
+// An annotation as it reaches what it's on: the annotation type or effect it names, the annotation
+// as written, and the annotation types it came through, outermost first: none, if it's written on
+// what it's on.
+type Reached(declaration: Symbol, annotation: Annotation, via: List<Symbol>)

@@ -1,0 +1,5 @@
+import fckt.checker.coverage.Matches
+
+// A pattern, checked: the scope with what it binds, and what it matches, for coverage: several for
+// is Vowel, which matches each of Vowel's cases.
+type CheckedPattern(scope: Scope, matches: List<Matches>)

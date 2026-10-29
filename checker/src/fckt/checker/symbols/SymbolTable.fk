@@ -1,7 +1,8 @@
 import fckt.collections.Maps.*
 
 // Every declaration in the files a program is checked with, each kind by full name, as names are
-// looked up in one kind at a time: a type, a spec, a function, a module.
+// looked up in one kind at a time: a type, a spec, a function, a module; and all of them, but
+// packages, in the order they're written, which is the order they're checked in.
 type SymbolTable(
   modules: Map<String, ModuleSymbol>,
   records: Map<String, Symbol>,
@@ -15,4 +16,5 @@ type SymbolTable(
   // Functions and values, extensions among them.
   functions: Map<String, Symbol>,
   cases: Map<String, CaseSymbol>,
+  declarations: List<Symbol>,
 )

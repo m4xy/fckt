@@ -1,0 +1,7 @@
+import fckt.parser.CaseDefinition
+import fckt.checker.symbols.Symbol
+
+// A case of a type with cases, as that type has it: the type that declares it, its origin, the case
+// as declared there, and how the type has it. Two types that have the same case share it: a value
+// of it is a value of both.
+type CaseInfo(origin: Symbol, definition: CaseDefinition, source: CaseSource)

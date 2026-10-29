@@ -1,0 +1,61 @@
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// What a function's declaration says of it: an extension's receiver is its first parameter, this,
+// as it's called with it; one with a receiver and no parameters of its own is a property, as
+// String.length is; one with neither is a value.
+module Signatures {
+  typeParametersOf(s: Symbol): List<String> = when (s.declaration.definition) {
+    FunctionDefinition(typeParameters, _, _, _, _, _, _) -> typeParameters
+    else -> []
+  }
+
+  receiverOf(s: Symbol): Option<TypeRef> = when (s.declaration.definition) {
+    FunctionDefinition(_, receiver, _, _, _, _, _) -> receiver
+    else -> None
+  }
+
+  isExtension(s: Symbol): Boolean = receiverOf(s).isSome()
+
+  // The parameters written in its parentheses, if it has them.
+  writtenParametersOf(s: Symbol): Option<List<Parameter>> = when (s.declaration.definition) {
+    FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters
+    else -> None
+  }
+
+  // What it's called with: an extension's receiver, this, then its parameters; none, for a value.
+  parametersOf(s: Symbol): Option<List<Parameter>> = when (receiverOf(s)) {
+    Some(receiver) -> Some([Parameter(s.declaration.at, "this", Some(receiver)), *writtenParametersOf(s).getOrElse([])])
+    None -> writtenParametersOf(s)
+  }
+
+  // Whether it's called: a function, or an extension; not a value.
+  isFunction(s: Symbol): Boolean = parametersOf(s).isSome()
+
+  // An extension with no parameters of its own: x.length, not x.length().
+  isProperty(s: Symbol): Boolean = isExtension(s) && writtenParametersOf(s).isNone()
+
+  resultOf(s: Symbol): Option<TypeRef> = when (s.declaration.definition) {
+    FunctionDefinition(_, _, _, result, _, _, _) -> result
+    else -> None
+  }
+
+  bodyOf(s: Symbol): Option<Expression> = when (s.declaration.definition) {
+    FunctionDefinition(_, _, _, _, body, _, _) -> Some(body)
+    else -> None
+  }
+
+  // An external's OCaml, whose type and effects are trusted to be what it says.
+  isExternal(s: Symbol): Boolean = when (s.declaration.definition) {
+    FunctionDefinition(_, _, _, _, _, external, _) -> external.isSome()
+    else -> false
+  }
+
+  isOperator(s: Symbol): Boolean = when (s.declaration.definition) {
+    FunctionDefinition(_, _, _, _, _, _, operator) -> operator
+    else -> false
+  }
+
+  // The name it's called by: an extension's method's, map for List$map.
+  methodName(s: Symbol): String = s.declaration.name
+}

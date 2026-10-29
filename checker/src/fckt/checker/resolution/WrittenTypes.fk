@@ -6,14 +6,17 @@ import fckt.parser.*
 // it can name where it's written: the module it's in, the type parameters around it, and, in a
 // spec, the spec's own types.
 module WrittenTypes {
-  inFile(file: LoadedFile, namespace: Namespace): List<WrittenType> =
-    inDeclarations(file.declarations, Place(file, file.package), [], namespace)
+  // Each type's name written in the file: not in what a module there borrows from its spec, which
+  // is written in the spec's file, by its full name in borrowed.
+  inFile(file: LoadedFile, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
+    inDeclarations(file.declarations, Place(file, file.package), [], namespace, borrowed)
 
   // The declarations' types, in modules whose type parameters are those given, as Results<E>'s E.
-  private inDeclarations(declarations: List<Declaration>, place: Place, moduleTypeParameters: List<String>, namespace: Namespace): List<WrittenType> =
-    declarations.flatMap { inDeclaration(it, place, moduleTypeParameters, namespace) }
+  private inDeclarations(declarations: List<Declaration>, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
+    declarations.filter { d -> !borrowed.containsKey((place.path + [d.name]).joinToString(".")) }
+      .flatMap { inDeclaration(it, place, moduleTypeParameters, namespace, borrowed) }
 
-  private inDeclaration(d: Declaration, place: Place, moduleTypeParameters: List<String>, namespace: Namespace): List<WrittenType> = when (d.definition) {
+  private inDeclaration(d: Declaration, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> = when (d.definition) {
     // An annotation's fields can refer to what only the compiler knows, Type, Module<Spec>, Case<T>.
     RecordDefinition(typeParameters, fields, _, true, _) -> fields.flatMap { inMetaTypeRef(it.fieldType, TypeScope(place, typeParameters, []), namespace) }
     RecordDefinition(typeParameters, fields, _, _, _) -> inFields(fields, TypeScope(place, typeParameters, []))
@@ -22,15 +25,16 @@ module WrittenTypes {
       cases.flatMap { inFields(it.fields, scope) } + includes.flatMap { inTypeRef(it, scope) }
     }
     AliasDefinition(typeParameters, target) -> inTypeRef(target, TypeScope(place, moduleTypeParameters + typeParameters, []))
+    // A function in a module with type parameters takes them too, as expansion has it.
     FunctionDefinition(typeParameters, receiver, parameters, result, body, _, _) -> {
-      scope = TypeScope(place, moduleTypeParameters + typeParameters, [])
+      scope = TypeScope(place, typeParameters, [])
       receiver.toList().flatMap { inTypeRef(it, scope) } +
         parameters.getOrElse([]).flatMap { inParameter(it, scope) } +
         result.toList().flatMap { inTypeRef(it, scope) } +
         inExpression(body, scope)
     }
     ModuleDefinition(declarations, _, _, _, typeParameters) ->
-      inDeclarations(declarations, Place(place.file, place.path + [d.name]), moduleTypeParameters + typeParameters, namespace)
+      inDeclarations(declarations, Place(place.file, place.path + [d.name]), moduleTypeParameters + typeParameters, namespace, borrowed)
     SpecDefinition(_, values, typeParameters, _, _) -> {
       scope = TypeScope(place, typeParameters, Specs.ownTypes(d, place, namespace))
       values.flatMap { v ->

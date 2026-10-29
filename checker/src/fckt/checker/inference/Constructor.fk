@@ -1,0 +1,9 @@
+import fckt.checker.symbols.*
+
+// What builds a value: a record's constructor, a declared case, or one of the language's own cases,
+// Some, None, Ok and Error.
+type Constructor {
+  RecordConstructor(record: Symbol),
+  CaseConstructor(c: CaseSymbol),
+  BuiltinCase(name: String),
+}

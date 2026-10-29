@@ -1,0 +1,6 @@
+import fckt.checker.sources.Workspace
+import fckt.checker.inference.CheckedFunction
+
+// A program, checked: the files it's checked with, and the type of each of its functions and
+// values, in the order they're written.
+type CheckedProgram(workspace: Workspace, functions: List<CheckedFunction>)

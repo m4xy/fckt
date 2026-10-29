@@ -1,0 +1,18 @@
+import fckt.collections.Maps.*
+import fckt.checker.resolution.Place
+import fckt.checker.types.*
+
+// What a written type means where it's written: the place, which decides what its names mean; what
+// each type parameter in scope there stands for; while converting a type's fields, the region of
+// the value they're in, which what they hold shares; while converting a function's parameters'
+// types, its own row, which a function type written there without effects shares, so map(xs, f)
+// does what f does; the aliases being expanded, none of which can be in its own expansion; and, in
+// a spec, its own types, with how many type parameters each takes.
+type TypeContext(
+  place: Place,
+  typeParameters: Map<String, Type>,
+  region: Option<Type> = None,
+  arrowEffects: Option<Row> = None,
+  expanding: List<String> = [],
+  specTypes: Map<String, Int> = emptyMap(),
+)

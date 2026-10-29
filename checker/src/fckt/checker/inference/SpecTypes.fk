@@ -1,0 +1,7 @@
+import fckt.collections.Maps.*
+import fckt.checker.types.*
+
+// What a spec says each of its values is, each generic in its spec's type parameters, its own,
+// and the rest of what it may do; with the unknowns that stand for the spec's type parameters, in
+// order, which an effect's operations are first generic in.
+type SpecTypes(values: Map<String, Scheme>, parameters: List<TypeVariable>)

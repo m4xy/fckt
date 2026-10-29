@@ -1,0 +1,294 @@
+import fckt.collections.Maps.*
+import fckt.checker.annotations.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.*
+
+// Handled effects: calling an operation does its effect; a handler, made from a function for each
+// operation or a module that follows the effect's spec, answers them around a block, which then
+// doesn't do it. A block after a call that isn't a handler is the call's last argument.
+
+// handler { block }, or a function given its last argument as a block, as in Kotlin: sequence {
+// ... } is sequence(~{ ... }), and retry(3) { ... } is retry(3, ~{ ... }).
+@Inferring inferHandle(
+  at: Position,
+  handler: Expression,
+  block: Expression,
+  parameters: Option<List<Parameter>>,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = {
+  blockArgument = CallArgument(None, TrailingBlock(Defaults.positionOf(block), parameters, block))
+  makesHandler = when (handler) {
+    Call(_, Name(_, name), _, _) -> Scopes.lookup(scope, name).isNone() && Lookups.found(Globals.find(name, context, Skipping)).isNone() &&
+      effectSpecNamed(name, context).isSome()
+    else -> false
+  }
+  when (handler) {
+    // A method: path.reading { ... }, xs.fold(0) { ... }.
+    Member(_, _, _) -> inferCall(at, handler, [blockArgument], [], expected, scope, context)
+    Call(_, Member(memberAt, target, name), arguments, typeArguments) if startsLowerCase(name) ->
+      inferCall(at, Member(memberAt, target, name), arguments.map { written(it) } + [blockArgument], typeArguments, expected, scope, context)
+    else -> {
+      (callee, given, typeArguments) = when (handler) {
+        Call(_, c, arguments, ts) if !makesHandler -> (Some(c), arguments.map { written(it) }, ts)
+        Name(_, _) -> (Some(handler), [], [])
+        else -> (None, [], [])
+      }
+      lastNamed = callee.flatMap { c -> blockAsLastByName(c, given, scope, context) }
+      when ((callee, lastNamed)) {
+        (Some(c), Some(last)) ->
+          inferCall(at, c, given + [CallArgument(Some(last), blockArgument.value)], typeArguments, expected, scope, context)
+        else -> handled(at, handler, makesHandler, blockArgument, block, parameters, expected, scope, context)
+      }
+    }
+  }
+}
+
+private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLowerCase() }.getOrElse(false)
+
+// The name of a declared function's last parameter, if the block is to be given as it by name, so
+// that those before it can be left to their defaults.
+@Abandoning private blockAsLastByName(callee: Expression, given: List<CallArgument>, scope: Scope, context: Context): Option<String> = when (callee) {
+  Name(_, name) if Scopes.lookup(scope, name).isNone() -> Lookups.found(Globals.find(name, context, Skipping)).flatMap { declared ->
+    parameters = Signatures.parametersOf(declared).getOrElse([])
+    parameters.lastOrNone().map { it.name }.filter { last ->
+      inOrder = given.takeWhile { it.name.isNone() }.size
+      parameters.size > given.size + 1 && given.none { it.name == Some(last) } &&
+        parameters.dropLast(1).drop(inOrder).all { p -> p.default.isSome() || given.any { it.name == Some(p.name) } }
+    }
+  }
+  else -> None
+}
+
+// What's left once the block isn't a declared function's last argument by name: the last argument
+// of a function that takes one more than it's given, or a handler's block.
+@Inferring private handled(
+  at: Position,
+  handler: Expression,
+  makesHandler: Boolean,
+  blockArgument: CallArgument,
+  block: Expression,
+  parameters: Option<List<Parameter>>,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = {
+  asLast = when (handler) {
+    Call(_, callee, arguments, typeArguments) if !makesHandler -> when (resolved(infer(callee, None, scope, context).t)) {
+      FunctionOf(ps, _, _) if ps.size == arguments.size + 1 ->
+        Some(inferCall(at, callee, arguments.map { written(it) } + [blockArgument], typeArguments, expected, scope, context))
+      else -> None
+    }
+    else -> None
+  }
+  when (asLast) {
+    Some(typed) -> typed
+    None -> when (resolved(infer(handler, None, scope, context).t)) {
+      FunctionOf([_], _, _) -> inferCall(at, handler, [blockArgument], [], expected, scope, context)
+      Handler(effect, arguments) -> {
+        if (parameters.isSome()) abandon(Globals.problem(context, Defaults.positionOf(block), "a handler's block runs with the effect handled, so it takes no parameters")) else Unit
+        n = arguments.size
+        Typed(handling(effect, arguments.take(n - 2), arguments.getOrNone(n - 2).getOrElse(Variable(fresh())),
+          arguments.getOrNone(n - 1).getOrElse(Variable(fresh())), block, expected, scope, at, context))
+      }
+      else -> abandon(Globals.problem(context, Defaults.positionOf(handler),
+        "this isn't a handler: make one from a handled effect, as Console(println = ...), or use a module that follows one"))
+    }
+  }
+}
+
+// The block, run with the effect, with these type arguments, handled: inside, it may do the effect;
+// outside, what's left of what it does is done here, as is what the handler's answers do. The block
+// gives the handler's answer, as does every handler that doesn't resume.
+@Inferring handling(effect: String, arguments: List<Type>, answer: Type, answers: Type, block: Expression, expected: Option<Type>, scope: Scope, at: Position, context: Context): Type = {
+  rest = fresh()
+  typed = doingIn(Row([EffectLabel(effect, arguments)], Some(rest)), context) { infer(block, expected.orElse { known(Some(answer)) }, scope, context) }
+  assign(block, typed, answer, context)
+  perform(Row([], Some(rest)), at)
+  perform(asRow(answers), at)
+  typed.t
+}
+
+// ---- Operations ----
+
+// The operation the name calls from here, if it's one: unqualified, it must be the only one of that
+// name, in the modules around, out to the package, or brought in by the file's imports, as import
+// fckt.io.* brings in Console's.
+@Abandoning operationNamed(name: String, at: Position, context: Context): Option<Operation> = {
+  operations = context.environment.operations
+  namespace = context.environment.definitions.namespace
+  aroundHere = Names.reach(name, context.place, namespace.table).map { n ->
+    operations.getOrDefault((context.place.path.take(n) + [name]).joinToString("."), []).filter { Globals.visible(it.effect, context) }
+  }.find { it.isNotEmpty() }
+  found = aroundHere.getOrElse(
+    Names.importedNames(name, context.place, namespace).flatMap { operations.getOrDefault(it, []) }.filter { Globals.visible(it.effect, context) }
+      .distinctBy { it.effect.name }
+  )
+  when (found) {
+    [] -> None
+    [operation] -> Some(operation)
+    else -> abandon(Globals.problem(context, at,
+      "'$name' is an operation of ${found.map { Symbols.simpleName(it.effect) }.joinToString(" and ")}; write ${found.map { "${Symbols.simpleName(it.effect)}.$name" }.joinToString(" or ")}"))
+  }
+}
+
+// Console.println: an operation named through its effect.
+@Abandoning qualifiedOperation(at: Position, target: Expression, name: String, scope: Scope, context: Context): Option<Operation> =
+  dottedUnbound(target, scope).flatMap { d -> effectSpecNamed(d, context) }.map { spec ->
+    when (specValues(spec).find { it.name == name }) {
+      Some(value) -> Operation(spec, value)
+      None -> abandon(Globals.problem(context, at, "${Symbols.simpleName(spec)} has no operation '$name'"))
+    }
+  }
+
+// The handled effect the name means, if it means one.
+effectSpecNamed(name: String, context: Context): Option<Symbol> = {
+  namespace = context.environment.definitions.namespace
+  Lookups.found(Lookups.spec(name, context.place, namespace, Skipping)).filter { Annotations.isEffect(it, namespace) }
+}
+
+// What a spec says its values are.
+specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
+  SpecDefinition(_, values, _, _, _) -> values
+  else -> []
+}
+
+// A new instance of the operation's type, and the effect using it does: its effect with the type
+// arguments it's used with.
+@Solving @Abandoning private operationType(operation: Operation, at: Position, context: Context): (Type, EffectLabel) =
+  when (context.environment.specTypes.get(operation.effect.name).flatMap { types -> types.values.get(operation.value.name).map { s -> (types, s) } }) {
+    Some((types, scheme)) -> {
+      mapping = scheme.variables.map { v -> (v, Variable(fresh())) }.toMap()
+      (substitute(scheme.template, mapping), EffectLabel(operation.effect.name, types.parameters.map { v -> mapping.getOrDefault(v, Variable(v)) }))
+    }
+    None -> abandon(Globals.problem(context, at, "'${operation.value.name}' is used before ${Symbols.simpleName(operation.effect)} is checked"))
+  }
+
+// println("hi"): does Console's println, so the code it's in does @Console.
+@Inferring callOperation(at: Position, operation: Operation, arguments: List<CallArgument>, scope: Scope, context: Context): Type = {
+  (t, label) = operationType(operation, at, context)
+  name = operation.value.name
+  when (t) {
+    FunctionOf(parameterTypes, result, _) -> {
+      order = argumentOrder(arguments, operation.value.parameters.getOrElse([]).map { it.name }, at, "'$name'", context)
+      checkArguments(arguments, order, parameterTypes, scope, context)
+      perform(Row([label], None), at)
+      result
+    }
+    else -> abandon(Globals.problem(context, at, "'$name' is a value of ${Symbols.simpleName(operation.effect)}, not a function; write it without ()"))
+  }
+}
+
+// An operation used as a value, as in xs.forEach(println): a function that does it when called.
+@Inferring operationValue(operation: Operation, at: Position, context: Context): Type = {
+  (t, label) = operationType(operation, at, context)
+  when (t) {
+    FunctionOf(parameters, result, _) -> FunctionOf(parameters, result, Row([label], Some(fresh())))
+    else -> {
+      perform(Row([label], None), at)
+      t
+    }
+  }
+}
+
+// ---- Handlers ----
+
+// Console(println = s -> ..., readLine = ~"x"): a handler made from a function, or value, for each
+// of the effect's operations. An operation's function may take one more parameter, resume: the rest
+// of the handled block, which it calls with the operation's result, later, or never. What the block
+// gives, and so what resume does, is the handler's answer; its answers run where it handles, so what
+// they do is its last argument.
+@Inferring makeHandler(at: Position, spec: Symbol, arguments: List<CallArgument>, scope: Scope, context: Context): Type = {
+  types = context.environment.specTypes.getOrDefault(spec.name, SpecTypes(emptyMap(), []))
+  given = types.parameters.map { Variable(fresh()) }
+  answer = Variable(fresh())
+  answersRest = fresh()
+  answers = Row([], Some(answersRest))
+  values = specValues(spec)
+  order = argumentOrder(arguments, values.map { it.name }, at, Symbols.simpleName(spec), context)
+  values.zip(order).forEach { value, index ->
+    when ((types.values.get(value.name), arguments.getOrNone(index))) {
+      (Some(scheme), Some(argument)) -> {
+        mapping = (scheme.variables.map { v -> (v, Variable(fresh())) } + types.parameters.zip(given)).toMap()
+        answering(value, substitute(scheme.template, mapping), argument.value, answer, answers, scope, context)
+      }
+      else -> Unit
+    }
+  }
+  Handler(spec.name, given + [answer, Variable(answersRest)])
+}
+
+// That the argument answers the operation: a value, for a value; for a function, a function of its
+// parameters, or of them and resume.
+@Inferring private answering(value: SpecValue, t: Type, argument: ArgumentValue, answer: Type, answers: Row, scope: Scope, context: Context): Unit = when (t) {
+  FunctionOf(parameters, result, _) -> {
+    // A function with one more parameter than the operation takes resume. A lambda says by how many
+    // it's written with; anything else, by its type.
+    lambda = when (argument) {
+      WrittenValue(Lambda(_, ps, _, ignores)) -> Some((ps, ignores))
+      else -> None
+    }
+    given = when (lambda) {
+      Some(_) -> None
+      None -> Some(resolved(argumentTyped(argument, scope, context).t))
+    }
+    resuming = when ((lambda, given)) {
+      (Some((ps, ignores)), _) -> !ignores && ps.size == parameters.size + 1
+      (_, Some(FunctionOf(ps, _, _))) -> ps.size == parameters.size + 1
+      else -> false
+    }
+    field = if (resuming) FunctionOf(parameters + [FunctionOf([result], answer, answers)], answer, answers) else FunctionOf(parameters, result, answers)
+    attempt = Diagnostics.attempting {
+      when (given) {
+        Some(g) -> assign(argumentExpression(argument), Typed(g), field, context)
+        None -> checkArgument(argument, field, scope, context)
+      }
+    }
+    when (attempt) {
+      Ok(_) -> Unit
+      Error(d) ->
+        if (resuming || !isNamed(resolved(result), "Nothing")) abandon(d)
+        else abandon(Globals.problem(context, argumentPosition(argument),
+          "'${value.name}' gives Nothing, so it can't be answered: take resume and don't call it, " +
+            "as ${value.name} = (${(value.parameters.getOrElse([]).map { it.name } + ["resume"]).joinToString(", ")}) -> ..."))
+    }
+  }
+  else -> checkArgument(argument, t, scope, context)
+}
+
+// What an argument was found to be, worked out on its own.
+@Inferring private argumentTyped(argument: ArgumentValue, scope: Scope, context: Context): Typed = when (argument) {
+  WrittenValue(e) -> infer(e, None, scope, context)
+  TrailingBlock(at, parameters, block) -> Typed(inferLambda(at, parameters, block, false, true, None, scope, context))
+  DefaultValue(at, function) -> infer(Call(at, Name(at, function), [], []), None, scope, context)
+}
+
+// The expression an argument is, for an error about it.
+private argumentExpression(argument: ArgumentValue): Expression = when (argument) {
+  WrittenValue(e) -> e
+  TrailingBlock(at, parameters, block) -> Lambda(at, parameters.getOrElse([]), block, false)
+  DefaultValue(at, function) -> Call(at, Name(at, function), [], [])
+}
+
+// A module that follows an effect's spec, as a handler: what its functions do is what its answers do.
+@Inferring moduleHandler(m: Symbol, spec: Symbol, at: Position, context: Context): Type = {
+  answers = fresh()
+  specValues(spec).forEach { value ->
+    context.environment.functions.get("${m.name}.${value.name}").forEach { f ->
+      when (resolved(Globals.typeOf(f, at, context))) {
+        FunctionOf(_, _, effects) -> {
+          isSubEffects(effects, Row([], Some(answers)))
+          Unit
+        }
+        else -> Unit
+      }
+    }
+  }
+  Handler(spec.name, [Variable(fresh()), Variable(answers)])
+}

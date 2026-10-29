@@ -1,0 +1,28 @@
+import fckt.collections.Maps.*
+
+// Working with scopes, which never change: binding a name makes another.
+module Scopes {
+  empty: Scope = Scope(emptyMap(), None)
+
+  // A scope inside the one given, binding nothing yet.
+  inside(outer: Scope): Scope = Scope(emptyMap(), Some(outer))
+
+  // What the name means here: the innermost binding of it.
+  lookup(scope: Scope, name: String): Option<Local> = when (scope.own.get(name)) {
+    Some(local) -> Some(local)
+    None -> scope.outer.flatMap { lookup(it, name) }
+  }
+
+  // Whether the name is bound here, not just around.
+  bindsHere(scope: Scope, name: String): Boolean = scope.own.containsKey(name)
+
+  // The scope with the name bound, here.
+  bind(scope: Scope, name: String, local: Local): Scope = Scope(scope.own.put(name, local), scope.outer)
+
+  // The scope with each of the bindings made here.
+  bindAll(scope: Scope, bindings: List<(String, Local)>): Scope =
+    bindings.fold(scope) { s, binding ->
+      (name, local) = binding
+      bind(s, name, local)
+    }
+}

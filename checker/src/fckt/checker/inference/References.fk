@@ -1,0 +1,104 @@
+import fckt.parser.*
+
+// The names an expression may refer to that aren't bound inside it, before it's checked: more than
+// it does, which is harmless where they're used, to order functions so each comes after what it
+// calls. A name after a dot, .name, may be an extension's; operator plus, a type's own +;
+// Module.name, a module's member.
+module References {
+  // Each name, once, in the order it's first met.
+  of(e: Expression, bound: List<String>): List<String> = into(e, bound, []).distinct()
+
+  // The operators that are a method of their operand's type, where it has one: a + b is a.plus(b).
+  operatorMethods: List<(String, String)> = [("+", "plus"), ("-", "minus"), ("*", "times"), ("/", "div"), ("%", "rem")]
+
+  // The method -x is, where x's type has one.
+  unaryMinus: String = "unaryMinus"
+
+  private into(e: Expression, bound: List<String>, found: List<String>): List<String> = when (e) {
+    Name(_, name) -> if (bound.contains(name)) found else found + [name]
+    IntConstant(_, _) -> found
+    FloatConstant(_, _) -> found
+    BooleanConstant(_, _) -> found
+    CharConstant(_, _) -> found
+    Tuple(_, elements) -> intoAll(elements, bound, found)
+    Spread(_, list) -> into(list, bound, found)
+    StringTemplate(_, parts) -> parts.fold(found) { acc, part ->
+      when (part) {
+        TemplateText(_) -> acc
+        Interpolation(inner) -> into(inner, bound, acc)
+      }
+    }
+    ListOf(_, items) -> intoAll(items, bound, found)
+    Call(_, callee, arguments, _) -> intoAll(arguments.map { it.value }, bound, into(callee, bound, found))
+    Member(_, target, name) -> {
+      inTarget = into(target, bound, found) + [".$name"]
+      // Possibly a module's member, Module.name.
+      when (dotted(e)) {
+        Some(d) if !bound.contains(d.split(".").firstOrNone().getOrElse(d)) -> inTarget + [d]
+        else -> inTarget
+      }
+    }
+    Binary(_, operator, left, right) -> {
+      operands = into(right, bound, into(left, bound, found))
+      when (operatorMethods.lookup(operator)) {
+        Some(method) -> operands + ["operator $method"]
+        None -> operands
+      }
+    }
+    Unary(_, operator, operand) -> into(operand, bound, found) + (if (operator == "-") ["operator $unaryMinus"] else [])
+    Assign(_, target, value) -> into(value, bound, into(target, bound, found))
+    Handle(_, handler, block, parameters) -> {
+      inner = bound + parameters.map { ps -> ps.map { it.name } }.getOrElse(["it"])
+      into(block, inner, into(handler, bound, found))
+    }
+    Lambda(_, parameters, body, _) -> into(body, bound + parameters.map { it.name }, found)
+    Pipe(_, value, function) -> into(function, bound, into(value, bound, found))
+    If(_, condition, then, otherwise, _) -> intoAll([condition, then, otherwise], bound, found)
+    When(_, subject, branches) -> branches.fold(subject.map { into(it, bound, found) }.getOrElse(found)) { acc, branch ->
+      names = bound + branch.patterns.flatMap { namesIn(it) }
+      withCondition = branch.condition.map { into(it, bound, acc) }.getOrElse(acc)
+      withGuard = branch.guard.map { into(it, names, withCondition) }.getOrElse(withCondition)
+      into(branch.body, names, withGuard)
+    }
+    Block(_, statements, result, _) -> {
+      (names, inStatements) = statements.fold((bound, found)) { acc, statement ->
+        (b, f) = acc
+        when (statement) {
+          Binding(_, name, Some(parameters), _, value, _) -> (b + [name], into(value, b + [name] + parameters.map { it.name }, f))
+          Binding(_, name, None, _, value, _) -> (b + [name], into(value, b, f))
+          Evaluation(_, expression) -> (b, into(expression, b, f))
+          Destructuring(_, pattern, value) -> (b + namesIn(pattern), into(value, b, f))
+          Bind(_, pattern, value) -> (b + namesIn(pattern), into(value, b, f))
+        }
+      }
+      into(result, names, inStatements)
+    }
+    Monadic(_, monad, block) -> {
+      withMonad = when (dotted(monad)) {
+        Some(d) if !bound.contains(d.split(".").firstOrNone().getOrElse(d)) -> found + ["bind", "pure", "map", "product"].map { "$d.$it" }
+        else -> found
+      }
+      into(block, bound, withMonad)
+    }
+  }
+
+  private intoAll(es: List<Expression>, bound: List<String>, found: List<String>): List<String> =
+    es.fold(found) { acc, e -> into(e, bound, acc) }
+
+  // The dotted name an expression spells, as Ratios.make or A.B.C: names, through members.
+  dotted(e: Expression): Option<String> = when (e) {
+    Name(_, name) -> Some(name)
+    Member(_, target, name) -> dotted(target).map { "$it.$name" }
+    else -> None
+  }
+
+  // The names a pattern binds.
+  namesIn(p: Pattern): List<String> = when (p) {
+    NamePattern(_, name) -> [name]
+    CasePattern(_, _, arguments, _, _) -> arguments.getOrElse([]).flatMap { namesIn(it) }
+    TuplePattern(_, elements) -> elements.flatMap { namesIn(it) }
+    ListPattern(_, elements, rest) -> elements.flatMap { namesIn(it) } + rest.map { namesIn(it) }.getOrElse([])
+    Wildcard(_) -> []
+    ConstantPattern(_, _) -> []
+  }
+}

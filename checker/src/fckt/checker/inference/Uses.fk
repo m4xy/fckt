@@ -1,0 +1,5 @@
+import fckt.checker.symbols.Symbol
+
+// The functions and values a function's body may use, as told before it's checked; with, of those,
+// the ones it was taken to use only because a .name might be a package-mate's method, by full name.
+type Uses(functions: List<Symbol>, guessed: List<String>)

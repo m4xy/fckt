@@ -1,0 +1,6 @@
+import fckt.checker.symbols.CaseSymbol
+import fckt.checker.types.Type
+
+// What an expression was found to be: its type, and, if it spells out a case, as Alphabet.A or
+// Cons(1, Nil) does, which, so that it can take on any type with cases that has it.
+type Typed(t: Type, spelled: Option<CaseSymbol> = None)

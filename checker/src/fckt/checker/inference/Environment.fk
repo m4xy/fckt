@@ -1,0 +1,23 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+
+// What checking a group of functions knows of the program: its declarations and what they define;
+// every function and value by full name, the defaults made for parameters and fields among them,
+// and all of them in the order they're written, each default after what it's the default of;
+// extensions by the name they're called with, map for List$map and Option$map; each case by its
+// own name, for the types that have one of that name; the spec each module follows; what each spec
+// says its values are; each handled effect's operations, by the full name they're called by, several
+// where names clash; and what's known of the functions checked so far.
+type Environment(
+  definitions: Definitions,
+  functions: Map<String, Symbol>,
+  orderedFunctions: List<Symbol>,
+  extensions: Map<String, List<Symbol>>,
+  casesByName: Map<String, List<CaseSymbol>>,
+  moduleSpecs: Map<String, Symbol>,
+  specTypes: Map<String, SpecTypes>,
+  operations: Map<String, List<Operation>>,
+  known: Known,
+)

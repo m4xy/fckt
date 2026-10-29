@@ -1,0 +1,14 @@
+import fckt.parser.TypeRef
+import fckt.checker.symbols.Symbol
+import fckt.checker.resolution.Place
+
+// How a type with cases has one of them.
+type CaseSource {
+  // It declares it.
+  OwnCase,
+  // It names it, Owner.Case: the case as its owner, which takes no type parameters, has it.
+  NamedCase(from: CaseInfo),
+  // It includes the type that has it, *Other<A>: the type included, with the type arguments it's
+  // given and where they're written, and the case as that type has it.
+  IncludedCase(included: Symbol, arguments: List<TypeRef>, writtenAt: Place, from: CaseInfo),
+}

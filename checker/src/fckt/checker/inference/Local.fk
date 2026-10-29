@@ -1,0 +1,6 @@
+import fckt.checker.types.Type
+
+// A name bound where code is, by a function's parameters, a block or a pattern: its type; for a
+// var, the region it lives in, which changing it changes; the case an is check found it to be,
+// whose fields can then be read; and, for a block's it, whether it hides an it around it.
+type Local(t: Type, region: Option<Type> = None, narrowed: Option<Narrowing> = None, hides: Boolean = false)

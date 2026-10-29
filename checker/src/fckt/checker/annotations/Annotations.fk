@@ -1,0 +1,116 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// What annotations mean. An annotation names an annotation type, or an effect, which is a spec
+// marked @Effect. An annotation type's own annotations reach whatever it's used on, as @Console
+// @Network annotation type Io makes @Io mean both, except @Meta ones, which describe the
+// annotation type itself, as @Effect does.
+module Annotations {
+  // The language's annotations that it gives meaning to, by full name.
+  effect: String = "fckt.lang.Effect"
+  meta: String = "fckt.lang.Meta"
+  repeatable: String = "fckt.lang.Repeatable"
+
+  // The annotation type or effect the annotation names, written at the place.
+  declarationOf(a: Annotation, place: Place, namespace: Namespace): Option<Symbol> = {
+    table = namespace.table
+    quietly = (entries: Map<String, Symbol>) -> Names.find(a.name, entries, s -> Some(s), full -> entries.containsKey(full), place, namespace, Skipping)
+    when (quietly(table.annotationTypes)) {
+      Found(s) -> Some(s)
+      else -> when (quietly(table.specs)) {
+        Found(spec) if isEffect(spec, namespace) -> Some(spec)
+        else -> None
+      }
+    }
+  }
+
+  // Whether the declaration is annotated with the one of that full name.
+  isMarked(symbol: Symbol, name: String, namespace: Namespace): Boolean =
+    symbol.declaration.annotations.any { a -> declarationOf(a, placeOf(symbol), namespace).map { it.name } == Some(name) }
+
+  // An effect: a spec or annotation type marked @Effect.
+  isEffect(symbol: Symbol, namespace: Namespace): Boolean = isMarked(symbol, effect, namespace)
+
+  // Where a declaration's annotations are written: its file, and the module it's in.
+  placeOf(symbol: Symbol): Place = Place(symbol.file, symbol.path)
+
+  // The annotations, written at the place, with every annotation they pass on. The same annotation
+  // reached twice with different arguments is an error, unless it's @Repeatable, or written here
+  // directly, which chooses; so is an annotation type annotated, through others, with itself.
+  @Abandoning reached(annotations: List<Annotation>, place: Place, at: Position, namespace: Namespace): List<Reached> = {
+    all = walk(annotations, place, [], namespace)
+    direct = all.filter { it.via.isEmpty() }.map { it.declaration.name }
+    kept = all.filter { r -> r.via.isEmpty() || !direct.contains(r.declaration.name) }
+    kept.map { it.declaration }.distinctBy { it.name }.forEach { declaration ->
+      if (!isMarked(declaration, repeatable, namespace)) {
+        values = kept.filter { it.declaration.name == declaration.name }.distinctBy { text(it.annotation) }
+        if (values.size > 1) {
+          own = Symbols.simpleName(declaration)
+          ways = values.map { r -> "@${text(r.annotation)}" + r.via.lastOrNone().map { " through ${Symbols.simpleName(it)}" }.getOrElse("") }
+          abandon(Diagnostic(place.file.source.path, at,
+            "this gets @$own more than once, with different values: ${ways.joinToString(", and ")}; choose one by declaring @$own here"))
+        } else Unit
+      } else Unit
+    }
+    kept
+  }
+
+  @Abandoning private walk(annotations: List<Annotation>, place: Place, via: List<Symbol>, namespace: Namespace): List<Reached> =
+    annotations.flatMap { a ->
+      when (declarationOf(a, place, namespace)) {
+        None -> []
+        Some(declaration) -> {
+          if (via.any { it.name == declaration.name }) {
+            loop = via.dropWhile { it.name != declaration.name } + [declaration]
+            abandon(Diagnostic(declaration.file.source.path, declaration.declaration.at,
+              "annotations can't be annotated in a circle: ${loop.map { "@${Symbols.simpleName(it)}" }.joinToString(" -> ")}"))
+          } else {
+            passedOn = declaration.declaration.annotations.filter { inner ->
+              !declarationOf(inner, placeOf(declaration), namespace).map { t -> isMarked(t, meta, namespace) }.getOrElse(false)
+            }
+            [Reached(declaration, a, via), *walk(passedOn, placeOf(declaration), via + [declaration], namespace)]
+          }
+        }
+      }
+    }
+
+  // The full names of the effects the annotations, written at the place, allow, directly or
+  // through the annotations they're made of.
+  @Abandoning effectsOf(annotations: List<Annotation>, place: Place, at: Position, namespace: Namespace): List<String> =
+    reached(annotations, place, at, namespace).filter { isEffect(it.declaration, namespace) }.map { it.declaration.name }.distinct()
+
+  // An annotation as written, to tell apart two with different arguments: Route("/a", greet).
+  text(a: Annotation): String = lastPart(a.name) + when (a.arguments) {
+    [] -> ""
+    arguments -> "(" + arguments.map { argument -> argument.name.map { "$it = " }.getOrElse("") + valueText(argument.value) }.joinToString(", ") + ")"
+  }
+
+  private valueText(v: AnnotationValue): String = when (v) {
+    Constant(e) -> constantText(e)
+    Reference(_, name, typeArguments, arguments) ->
+      name + typeArguments.map { ts -> "<" + ts.map { Written.typeRef(it) }.joinToString(", ") + ">" }.getOrElse("") +
+        arguments.map { args -> "(" + args.map { valueText(it.value) }.joinToString(", ") + ")" }.getOrElse("")
+    ValueList(_, items) -> "[" + items.map { valueText(it) }.joinToString(", ") + "]"
+    ValueTuple(_, items) -> "(" + items.map { valueText(it) }.joinToString(", ") + ")"
+  }
+
+  private constantText(e: Expression): String = when (e) {
+    StringTemplate(_, parts) -> "\"" + parts.map { p ->
+      when (p) {
+        TemplateText(text) -> text
+        Interpolation(_) -> ""
+      }
+    }.joinToString("") + "\""
+    IntConstant(_, value) -> "$value"
+    FloatConstant(_, value) -> "$value"
+    BooleanConstant(_, value) -> "$value"
+    CharConstant(_, value) -> "'$value'"
+    Unary(_, _, operand) -> "-" + constantText(operand)
+    else -> "?"
+  }
+
+  private lastPart(name: String): String = name.split(".").lastOrNone().getOrElse(name)
+}

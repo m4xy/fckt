@@ -1,0 +1,5 @@
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.Scheme
+
+// A function or value, checked: its type, generic in its own unknowns.
+type CheckedFunction(function: Symbol, scheme: Scheme)

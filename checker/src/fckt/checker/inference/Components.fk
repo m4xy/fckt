@@ -1,0 +1,53 @@
+import fckt.collections.Maps.*
+
+// The strongly connected components of a graph, by Tarjan's algorithm: the groups of nodes that
+// can each reach every other in their group.
+module Components {
+  // The graph's components, each after every component it has edges to, each keeping the order
+  // the nodes are given in.
+  stronglyConnected<N>(nodes: List<N>, edges: (N) -> List<N>): List<List<N>> = {
+    search = Search(0, emptyMap(), emptyMap(), [], [])
+    nodes.forEach { node -> if (!search.indices.containsKey(node)) visit(search, node, nodes, edges) }
+    search.components
+  }
+
+  // How far the search has got: the next index to give, each node's index and lowest reachable
+  // index, the nodes on the stack, the last pushed first, and the components found.
+  private type Search<N>(
+    var next: Int,
+    var indices: Map<N, Int>,
+    var lowest: Map<N, Int>,
+    var stack: List<N>,
+    var components: List<List<N>>,
+  )
+
+  @Mutating private visit<N>(search: Search<N>, v: N, nodes: List<N>, edges: (N) -> List<N>): Unit = {
+    search.indices = search.indices.put(v, search.next)
+    search.lowest = search.lowest.put(v, search.next)
+    search.next = search.next + 1
+    search.stack = [v, *search.stack]
+    edges(v).forEach { w ->
+      if (!search.indices.containsKey(w)) {
+        visit(search, w, nodes, edges)
+        lower(search, v, lowestOf(search, w))
+      } else if (search.stack.contains(w)) {
+        lower(search, v, indexOf(search, w))
+      }
+    }
+    if (lowestOf(search, v) == indexOf(search, v)) {
+      // v is its component's root: the component is what's on the stack down to it.
+      count = search.stack.indexOf(v) + 1
+      component = search.stack.take(count)
+      search.stack = search.stack.drop(count)
+      search.components = search.components + [component.sortedBy { nodes.indexOf(it) }]
+    }
+  }
+
+  @Mutating private lower<N>(search: Search<N>, v: N, to: Int): Unit = {
+    search.lowest = search.lowest.put(v, min(lowestOf(search, v), to))
+  }
+
+  private indexOf<N>(search: Search<N>, v: N): Int = search.indices.getOrDefault(v, 0)
+
+  private lowestOf<N>(search: Search<N>, v: N): Int = search.lowest.getOrDefault(v, 0)
+}

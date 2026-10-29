@@ -57,19 +57,30 @@ module Lists {
   }
 
 
-  // Each item once, where it first appears: sorted by item, then by where each was, so that the
-  // same items are together with the first of them first; the first of each kept; then put back in
-  // the order they were.
-  List<A>.distinct(): List<A> = {
-    byItem = this.withIndex().map { i, a -> (a, i) }.sorted()
-    firsts = byItem.fold([]) { kept, entry ->
-      (a, _) = entry
+  // Each item once, where it first appears.
+  List<A>.distinct(): List<A> = this.distinctBy { it }
+
+  // Each item whose key no item before it has, where it appears: sorted by key, then by where each
+  // was, so that items with the same key are together with the first of them first; the first of
+  // each kept; then put back in the order they were. Only keys are compared, so items needn't be.
+  List<A>.distinctBy<K>(key: (A) -> K): List<A> = {
+    byKey = this.withIndex().map { i, a -> (key(a), i, a) }.sortedWith { x, y ->
+      (k, i, _) = x
+      (l, j, _) = y
+      compareValues((k, i), (l, j))
+    }
+    firsts = byKey.fold([]) { kept, entry ->
+      (k, _, _) = entry
       when (kept) {
-        [(b, _), *_] -> if (a == b) kept else [entry, *kept]
+        [(l, _, _), *_] -> if (k == l) kept else [entry, *kept]
         [] -> [entry]
       }
     }
-    firsts.map { a, i -> (i, a) }.sorted().map { _, a -> a }
+    firsts.sortedWith { x, y ->
+      (_, i, _) = x
+      (_, j, _) = y
+      compareValues(i, j)
+    }.map { _, _, a -> a }
   }
 
   // Smallest first, by OCaml's ordering of values: numbers, then strings, then fields in order.

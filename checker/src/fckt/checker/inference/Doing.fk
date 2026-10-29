@@ -1,0 +1,8 @@
+import fckt.parser.Position
+import fckt.checker.types.Row
+
+// What the code being checked does: each call adds what calling it does, at where it's called.
+// Checking a function's or a lambda's body handles it, as Doings.doing does.
+effect Doing {
+  perform(row: Row, at: Position): Unit
+}

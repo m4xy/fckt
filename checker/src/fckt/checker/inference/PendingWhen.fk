@@ -1,0 +1,8 @@
+import fckt.parser.Position
+import fckt.checker.coverage.Matches
+import fckt.checker.types.Type
+
+// A when with a subject, whose patterns must cover every value of its subject's type: checked once
+// the types of the group it's in are known. Where it is, in which file; what its branches without a
+// guard match; and its subject's type.
+type PendingWhen(file: Option<String>, at: Position, patterns: List<Matches>, subject: Type)

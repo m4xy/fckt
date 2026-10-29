@@ -1,0 +1,141 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.sources.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// Functions and values the program declares, as code uses them: looking one up, its type where
+// it's used, and the extensions a method call can be to.
+module Globals {
+  // The function or value the name means from where the code is.
+  find(name: String, context: Context, strictness: Strictness): Lookup<Symbol> = {
+    functions = context.environment.functions
+    Names.find(name, functions, s -> Some(s), full -> functions.containsKey(full), context.place, context.environment.definitions.namespace, strictness)
+  }
+
+  // The function or value, if the name means one.
+  @Abandoning findOrRefuse(name: String, at: Position, context: Context): Option<Symbol> = when (find(name, context, Refusing)) {
+    Found(s) -> Some(s)
+    Refused(why) -> abandon(problem(context, at, why))
+    NotFound -> None
+  }
+
+  // The function's type where it's used: to the others in its group, as it says it is; while its
+  // group is checked, as it's being worked out; after, a new instance of its generic type.
+  @Solving @Abandoning typeOf(s: Symbol, at: Position, context: Context): Type = {
+    known = context.environment.known
+    when (known.viewed.get(s.name)) {
+      Some(t) -> t
+      None -> when (known.provisional.get(s.name)) {
+        Some(t) -> t
+        None -> when (known.schemes.get(s.name)) {
+          Some(scheme) -> instantiate(scheme)
+          None -> abandon(problem(context, at, "'${Symbols.simpleName(s)}' is used before it's checked"))
+        }
+      }
+    }
+  }
+
+  // The function's type for a call that may give types for the type parameters it declares, after
+  // those of a method's receiver: emptyMap<String, Int>().
+  @Solving @Abandoning typeForCall(s: Symbol, typeArguments: List<TypeRef>, at: Position, context: Context): Type =
+    if (typeArguments.isEmpty()) typeOf(s, at, context)
+    else {
+      receiverNames = Signatures.receiverOf(s).map { namesIn(it) }.getOrElse([])
+      declared = Signatures.typeParametersOf(s).filter { !it.startsWith("@") }.dropWhile { receiverNames.contains(it) }
+      method = Signatures.methodName(s)
+      if (declared.size != typeArguments.size) {
+        abandon(problem(context, at, "'$method' takes ${declared.size} type argument${if (declared.size == 1) "" else "s"}, not ${typeArguments.size}"))
+      } else Unit
+      given = typeArguments.map { Conversion.typeOf(it, typeContext(context), context.environment.definitions) }
+      known = context.environment.known
+      when ((known.typeParameterVariables.get(s.name), known.schemes.get(s.name))) {
+        (Some(variables), Some(scheme)) ->
+          instantiate(scheme, declared.zip(given).mapNotNull { name, t -> variables.get(name).map { v -> (v, t) } }.toMap())
+        else -> abandon(problem(context, at, "'$method' can't be given type arguments here"))
+      }
+    }
+
+  // The names a type is written with that could be type parameters: K and V in Map<K, V>.
+  private namesIn(t: TypeRef): List<String> = when (t) {
+    NamedType(_, name, []) -> if (name.contains(".")) [] else [name]
+    NamedType(_, _, arguments) -> arguments.flatMap { namesIn(it) }
+    TupleType(_, elements) -> elements.flatMap { namesIn(it) }
+    FunctionType(_, parameters, result, _) -> parameters.flatMap { namesIn(it) } + namesIn(result)
+    EffectsType(_, _) -> []
+  }
+
+  // How written types are read where the code is.
+  typeContext(context: Context): TypeContext = TypeContext(context.place, context.typeParameters)
+
+  // ---- Extensions ----
+
+  // Whether the declaration can be seen from where the code is.
+  visible(s: Symbol, context: Context): Boolean =
+    Visibility.whyHidden(s, context.place, context.environment.definitions.namespace.table).isNone()
+
+  // Whether the code's file can call the extension by its method's name: it's the core's, or its
+  // own file's, or in its module, or the file imports its module, or anything in it; or it's in the
+  // package the file is in, as its modules are.
+  inScope(s: Symbol, context: Context): Boolean = onlyAsPackageMate(s, context).isSome()
+
+  // Whether the extension is in scope only as a method of a module beside the code's in its
+  // package, which its file doesn't import: Some(true); in scope otherwise, Some(false); not, None.
+  onlyAsPackageMate(s: Symbol, context: Context): Option<Boolean> = {
+    file = context.place.file
+    owner = s.path.joinToString(".")
+    here = context.place.path.joinToString(".")
+    imported = (i: Import) -> {
+      p = i.path.joinToString(".")
+      p == owner || p.startsWith("$owner.")
+    }
+    if (s.file.source.path == file.source.path || s.file.source.project == CoreProject) Some(false)
+    else if (owner.isEmpty() || here == owner || here.startsWith("$owner.")) Some(false)
+    else if (file.imports.any(imported)) Some(false)
+    else {
+      isPackage = when (context.environment.definitions.namespace.table.modules.get(owner)) {
+        Some(PackageModule(_)) -> true
+        else -> false
+      }
+      pkg = (if (isPackage) s.path else s.path.dropLast(1)).joinToString(".")
+      if (here == pkg || here.startsWith("$pkg.")) Some(true) else None
+    }
+  }
+
+  // The extensions of the method name that can be called from where the code is.
+  extensionsNamed(name: String, context: Context): List<Symbol> =
+    context.environment.extensions.getOrDefault(name, []).filter { visible(it, context) && inScope(it, context) }
+
+  // The extension's receiver's type, with its type parameters as unknowns.
+  @Solving @Abandoning receiverType(s: Symbol, context: Context): Type = when (Signatures.receiverOf(s)) {
+    Some(receiver) -> {
+      parameters = Signatures.typeParametersOf(s).map { p -> (p, Variable(fresh())) }.toMap()
+      Conversion.typeOf(receiver, TypeContext(Place(s.file, s.path), parameters), context.environment.definitions)
+    }
+    None -> Variable(fresh())
+  }
+
+  // Whether a receiver of the actual type can be one of the wanted type, and if so how specifically:
+  // how many named types they share.
+  @Solving fit(wanted: Type, actual: Type): Option<Int> = when ((resolved(wanted), resolved(actual))) {
+    (Variable(_), _) -> Some(0)
+    (_, Variable(_)) -> Some(0)
+    (Named(n, xs, _), Named(m, ys, _)) -> if (n != m || xs.size != ys.size) None else fitAll(xs, ys, 1)
+    (FunctionOf(xs, x, _), FunctionOf(ys, y, _)) -> if (xs.size != ys.size) None else fitAll(xs + [x], ys + [y], 0)
+    (TupleOf(xs), TupleOf(ys)) -> if (xs.size != ys.size) None else fitAll(xs, ys, 1)
+    (Abstract(n, xs), Abstract(m, ys)) -> if (n != m || xs.size != ys.size) None else fitAll(xs, ys, 1)
+    else -> None
+  }
+
+  @Solving private fitAll(xs: List<Type>, ys: List<Type>, start: Int): Option<Int> =
+    xs.zip(ys).fold(Some(start)) { acc, pair ->
+      (x, y) = pair
+      acc.flatMap { n -> fit(x, y).map { n + it } }
+    }
+
+  problem(context: Context, at: Position, message: String): Diagnostic = Diagnostic(context.place.file.source.path, at, message)
+}

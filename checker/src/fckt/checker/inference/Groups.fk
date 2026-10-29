@@ -1,0 +1,116 @@
+import fckt.collections.Maps.*
+import fckt.checker.annotations.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.parser.*
+
+// The order functions are checked in: each after what it uses, those that use each other together,
+// a group whose types are worked out as one. What a function uses is told from its body's names
+// before it's checked, so it's more than it does, which is harmless: a .name that may be an
+// extension, an operator that may be a type's own.
+module Groups {
+  // The functions, in groups, each after the groups it uses. A call between modules goes one way,
+  // as OCaml's modules can't call each other: so where .names that are only maybe a package-mate's
+  // methods join functions of different modules into a group, they're taken as what they may be,
+  // not as calls.
+  @Abandoning ordered(functions: List<Symbol>, environment: Environment): List<FunctionGroup> = {
+    uses = functions.map { f -> (f.name, usesOf(f, environment)) }.toMap()
+    usedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions }.getOrElse([])
+    certainlyUsedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions.filter { used -> !u.guessed.contains(used.name) || used.path == f.path } }.getOrElse([])
+    components = Components.stronglyConnected(functions, usedBy).flatMap { component ->
+      if (component.map { it.path }.distinct().size > 1)
+        Components.stronglyConnected(component) { f -> certainlyUsedBy(f).filter { used -> component.any { it.name == used.name } } }
+      else [component]
+    }
+    components.map { component ->
+      recursive = component.size > 1 || component.any { f -> usedBy(f).any { it.name == f.name } }
+      component.find { f -> !Signatures.isFunction(f) && recursive }.forEach { f ->
+        abandon(Diagnostic(f.file.source.path, f.declaration.at, "value '${Symbols.simpleName(f)}' is defined in terms of itself"))
+      }
+      when (component) {
+        [first, *_] if component.map { it.path }.distinct().size > 1 -> abandon(Diagnostic(first.file.source.path, first.declaration.at,
+          "${component.map { "'${it.name}'" }.joinToString(" and ")} call each other but are in different modules"))
+        else -> Unit
+      }
+      FunctionGroup(component, recursive)
+    }
+  }
+
+  // What a function's body may use, from the names in it, seen from where it's written.
+  usesOf(f: Symbol, environment: Environment): Uses = {
+    context = Context(environment, Place(f.file, f.path), emptyMap())
+    bound = Signatures.parametersOf(f).getOrElse([]).map { it.name }
+    names = Signatures.bodyOf(f).map { body -> References.of(body, bound) }.getOrElse([])
+    each = names.map { name -> uses(name, context) }
+    named = each.flatMap { it.named }.map { it.name }
+    Uses(
+      each.flatMap { it.functions }.distinctBy { it.name },
+      each.flatMap { it.guessed }.map { it.name }.filter { !named.contains(it) },
+    )
+  }
+
+  // What one name may use: the functions it may mean; of those, the ones it means only if it's a
+  // package-mate's method; and those it means by name.
+  private type NameUses(functions: List<Symbol>, guessed: List<Symbol>, named: List<Symbol>)
+
+  private uses(name: String, context: Context): NameUses =
+    if (name.startsWith(".")) {
+      method = name.drop(1)
+      found = Globals.extensionsNamed(method, context) + defaultsUsed(method, context)
+      NameUses(found, found.filter { f -> Signatures.isExtension(f) && isOnlyPackageMates(f, context) }, [])
+    } else if (name.startsWith("operator ")) {
+      found = Globals.extensionsNamed(name.removePrefix("operator "), context).filter { Signatures.isOperator(it) }
+      NameUses(found, found.filter { isOnlyPackageMates(it, context) }, [])
+    } else {
+      found = moduleFunctions(name, context) +
+        context.environment.extensions.getOrDefault(name, []).filter { Globals.visible(it, context) } +
+        declaredOrMember(name, context).toList() +
+        defaultsUsed(name, context)
+      NameUses(found, [], found)
+    }
+
+  private isOnlyPackageMates(f: Symbol, context: Context): Boolean = Globals.onlyAsPackageMate(f, context) == Some(true)
+
+  // A module used as a handler or a value: its functions.
+  private moduleFunctions(name: String, context: Context): List<Symbol> = {
+    namespace = context.environment.definitions.namespace
+    when (Lookups.found(Lookups.moduleNamed(name, context.place, namespace, Skipping))) {
+      Some(DeclaredModule(m)) -> {
+        asValue = context.environment.moduleSpecs.get(m.name).map { spec -> Annotations.isEffect(spec, namespace) || isValueSpec(spec, namespace) }.getOrElse(false)
+        if (asValue) context.environment.functions.toList().map { _, f -> f }.filter { f -> f.path == m.name.split(".") } else []
+      }
+      else -> []
+    }
+  }
+
+  // Whether a module that follows the spec can be a value of it: its types, if it has any, take no
+  // type parameters.
+  isValueSpec(spec: Symbol, namespace: Namespace): Boolean = when (spec.declaration.definition) {
+    SpecDefinition(types, _, typeParameters, _, _) ->
+      !Annotations.isEffect(spec, namespace) && types.all { it.typeParameters.isEmpty() } && typeParameters.isEmpty()
+    else -> false
+  }
+
+  // The function or value the name means, or, for Module.name, the module's.
+  private declaredOrMember(name: String, context: Context): Option<Symbol> = Lookups.found(Globals.find(name, context, Skipping)).orElse {
+    parts = name.split(".")
+    if (parts.size < 2) None
+    else Lookups.found(Lookups.moduleNamed(parts.dropLast(1).joinToString("."), context.place, context.environment.definitions.namespace, Skipping))
+      .flatMap { m -> context.environment.functions.get("${Symbols.moduleName(m)}.${parts.lastOrNone().getOrElse(name)}") }
+      .filter { Globals.visible(it, context) }
+  }
+
+  // The defaults' functions a use of the name may call: a function's or extension's, or the
+  // fields' of a record or case it may build, as calls that leave arguments out call them.
+  private defaultsUsed(name: String, context: Context): List<Symbol> = {
+    namespace = context.environment.definitions.namespace
+    lastPart = name.split(".").lastOrNone().getOrElse(name)
+    owners = Lookups.found(Globals.find(name, context, Skipping)).map { it.name }.toList() +
+      Lookups.found(Lookups.record(name, context.place, namespace, Skipping)).map { it.name }.toList() +
+      context.environment.extensions.getOrDefault(name, []).map { it.name } +
+      context.environment.casesByName.getOrDefault(lastPart, []).map { c -> "${c.owner.name}$${c.definition.name}" }
+    owners.flatMap { owner -> context.environment.orderedFunctions.filter { f -> f.name.startsWith(Defaults.nameOf(owner, "")) } }
+  }
+}

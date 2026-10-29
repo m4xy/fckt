@@ -26,9 +26,12 @@ module TypeText {
 
   @Solving @Mutating private render(t: Type, naming: Naming): String = when (resolved(t)) {
     Variable(v) -> nameOf(v, naming)
-    Parameter(name) -> name
-    Named(name, [], _) -> name
-    Named(name, arguments, _) -> "$name<${renderAll(arguments, naming)}>"
+    TypeParameter(name) -> name
+    Named(name, arguments, _) -> applied(name, arguments, naming)
+    Abstract(name, arguments) -> applied(name, arguments, naming)
+    SpecOwnType(name, arguments) -> applied(name, arguments, naming)
+    ModuleValue(spec, arguments) -> applied(spec, arguments, naming)
+    Handler(effect, _) -> "a handler for @${lastPart(effect)}"
     TupleOf(elements) -> "(${renderAll(elements, naming)})"
     // Only what calling it does is shown, not whether it may do more.
     FunctionOf(parameters, result, effects) -> {
@@ -49,6 +52,10 @@ module TypeText {
       }
     }
   }
+
+  // A name, with its arguments if it has any: List<Int>, or Int.
+  @Solving @Mutating private applied(name: String, arguments: List<Type>, naming: Naming): String =
+    if (arguments.isEmpty()) name else "$name<${renderAll(arguments, naming)}>"
 
   @Solving @Mutating private renderAll(types: List<Type>, naming: Naming): String = types.map { render(it, naming) }.joinToString(", ")
 

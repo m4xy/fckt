@@ -1,0 +1,116 @@
+import fckt.collections.Maps.*
+import fckt.checker.annotations.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// What checking functions starts from: the program's declarations, with the defaults' functions,
+// the spec each module follows, and what each spec says its values are.
+module Environments {
+  @Solving @Abandoning of(definitions: Definitions): Environment = {
+    table = definitions.namespace.table
+    // Each declaration's defaults come right after it.
+    ordered = table.declarations.flatMap { d -> (if (Symbols.isFunction(d)) [d] else []) + Defaults.of(d) }
+    functions = ordered.map { f -> (f.name, f) }.toMap()
+    extensions = ordered.filter { Signatures.isExtension(it) }.fold(emptyMap()) { m, f ->
+      method = Signatures.methodName(f)
+      m.put(method, m.getOrDefault(method, []) + [f])
+    }
+    casesByName = table.declarations.filter { Symbols.isCaseType(it) }.flatMap { owner ->
+      Symbols.casesOf(owner).map { c -> CaseSymbol("${owner.name}.${c.name}", owner, c) }
+    }.fold(emptyMap()) { m, c -> m.put(c.definition.name, m.getOrDefault(c.definition.name, []) + [c]) }
+    moduleSpecs = specsFollowed(table.declarations, definitions.namespace)
+    specs = table.declarations.filter { Symbols.isSpec(it) }
+    specTypes = specs.map { s -> (s.name, specTypesOf(s, definitions)) }.toMap()
+    operations = specs.filter { s -> Annotations.isEffect(s, definitions.namespace) }.flatMap { s ->
+      specValuesOf(s).map { v -> ((s.path + [v.name]).joinToString("."), Operation(s, v)) }
+    }.fold(emptyMap()) { m, entry ->
+      (name, operation) = entry
+      m.put(name, m.getOrDefault(name, []) + [operation])
+    }
+    Environment(definitions, functions, ordered, extensions, casesByName, moduleSpecs, specTypes, operations, Known(emptyMap(), emptyMap(), emptyMap(), emptyMap()))
+  }
+
+  private specValuesOf(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
+    SpecDefinition(_, values, _, _, _) -> values
+    else -> []
+  }
+
+  // The spec each module that says it follows one follows, by the module's full name.
+  @Abandoning private specsFollowed(declarations: List<Symbol>, namespace: Namespace): Map<String, Symbol> =
+    declarations.filter { Symbols.isModule(it) }.fold(emptyMap()) { followed, declared ->
+      when (declared.declaration.definition) {
+        ModuleDefinition(_, Some(NamedType(at, name, arguments)), parameters, _, _) -> {
+          place = Place(declared.file, declared.path)
+          problem = (message: String) -> Diagnostic(declared.file.source.path, at, message)
+          when (Lookups.spec(name, place, namespace, Refusing)) {
+            Found(spec) -> {
+              own = Symbols.simpleName(declared)
+              specName = Symbols.simpleName(spec)
+              when (arguments) {
+                [first, *_] -> abandon(Diagnostic(declared.file.source.path, Conversion.positionOf(first),
+                  "$own says what its types are in its body, so write just : $specName; type arguments are for a functor's parameters, like F(M: $specName<...>)"))
+                [] -> Unit
+              }
+              when (spec.declaration.definition) {
+                SpecDefinition(_, _, [_, *_], _, _) -> abandon(problem(
+                  "$own can't follow $specName, which takes type parameters; handle it with a value instead: $specName(...) { ... }"))
+                else -> Unit
+              }
+              followed.put(declared.name, spec)
+            }
+            Refused(why) -> abandon(problem(why))
+            NotFound -> abandon(problem("unknown spec '$name'"))
+          }
+        }
+        else -> followed
+      }
+    }
+
+  // What the spec says its values are: each generic in the spec's type parameters, its own, and the
+  // rest of what it may do, which is what it says it does and what its function parameters do; its
+  // own types as SpecOwnTypes.
+  @Solving @Abandoning specTypesOf(spec: Symbol, definitions: Definitions): SpecTypes = when (spec.declaration.definition) {
+    SpecDefinition(types, values, typeParameters, _, _) -> {
+      place = Place(spec.file, spec.path)
+      context = Context(Environment(definitions, emptyMap(), [], emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap(), Known(emptyMap(), emptyMap(), emptyMap(), emptyMap())), place, emptyMap())
+      checkDistinct(types.map { t -> (t.name, t.at) }, context)
+      checkDistinct(values.map { v -> (v.name, v.at) }, context)
+      types.find { t -> Types.builtins.containsKey(t.name) }.forEach { t ->
+        abandon(Diagnostic(spec.file.source.path, t.at, "'${t.name}' is a built-in type"))
+      }
+      parameterVariables = typeParameters.map { p -> (p, fresh()) }
+      SpecTypes(values.map { v ->
+        own = v.typeParameters.map { p -> (p, fresh()) }
+        rest = fresh()
+        effects = Annotations.effectsOf(v.annotations, place, v.at, definitions.namespace)
+        declared = if (effects.isEmpty()) Annotations.effectsOf(spec.declaration.annotations, place, spec.declaration.at, definitions.namespace) else effects
+        row = rowOf(declared, Some(rest))
+        typeContext = TypeContext(
+          place,
+          (parameterVariables + own).map { name, variable -> (name, Variable(variable)) }.toMap(),
+          None,
+          None,
+          [],
+          types.map { t -> (t.name, t.typeParameters.size) }.toMap(),
+        )
+        result = Conversion.typeOf(v.valueType, typeContext, definitions)
+        t = when (v.parameters) {
+          Some(ps) -> {
+            checkDistinct(ps.map { p -> (p.name, p.at) }, context)
+            // A function type among its parameters' does what the spec's function does.
+            withRow = TypeContext(typeContext.place, typeContext.typeParameters, None, Some(row), [], typeContext.specTypes)
+            FunctionOf(ps.map { p -> p.parameterType.map { Conversion.typeOf(it, withRow, definitions) }.getOrElse(Variable(fresh())) }, result, row)
+          }
+          None -> result
+        }
+        (v.name, Scheme(parameterVariables.map { _, variable -> variable } + own.map { _, variable -> variable } + [rest], t))
+      }.toMap(), parameterVariables.map { _, variable -> variable })
+    }
+    else -> SpecTypes(emptyMap(), [])
+  }
+}

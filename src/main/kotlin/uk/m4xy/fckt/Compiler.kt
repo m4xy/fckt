@@ -361,19 +361,28 @@ class Analysis(val decls: List<Decl>, val program: uk.m4xy.fckt.types.Program)
 /**
  * [text], as [entry], checked with the files it uses, for tools: what each name in it refers to.
  * Each declaration's position names its file: null for [entry], a path, or `std/...` for the
- * standard library, and with [libraries], their interfaces' declarations. Throws [uk.m4xy.fckt.syntax.CompileError].
+ * standard library, and with [libraries], their interfaces' declarations. With [coverage], each
+ * `when` must cover every value, as it must to compile; a tool that only wants to know what names
+ * mean needn't ask. Throws [uk.m4xy.fckt.syntax.CompileError].
  */
-fun analyse(text: String, entry: File?, dirs: List<File>, libraries: List<File> = emptyList(), others: List<File> = emptyList()): Analysis {
+fun analyse(
+    text: String,
+    entry: File?,
+    dirs: List<File>,
+    libraries: List<File> = emptyList(),
+    others: List<File> = emptyList(),
+    coverage: Boolean = false,
+): Analysis {
     corePath(entry)?.let { path ->
         return asItsOwn(path) {
             val linked = linkCore(path, text)
             fun inFile(ds: List<Decl>): List<Decl> = ds.flatMap { d -> if (d.pos.file == path) listOf(d) else if (d is Decl.Module) inFile(d.decls) else emptyList() }
-            Analysis(inFile(linked.file.decls), Checker(linked.file, coverage = false).check())
+            Analysis(inFile(linked.file.decls), Checker(linked.file, coverage).check())
         }
     }
     val linked = link(text, packages(dirs, entry, libraries, others))
     // A when that misses some cases is still clear about what its names refer to.
-    return Analysis(linked.main, Checker(linked.file, coverage = false).check())
+    return Analysis(linked.main, Checker(linked.file, coverage).check())
 }
 
 /**

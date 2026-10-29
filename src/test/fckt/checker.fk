@@ -1,0 +1,160 @@
+import fckt.collections.Maps.*
+import fckt.io.Paths.*
+import fckt.io.Files.*
+import fckt.io.FileSystem
+import fckt.io.Path
+import fckt.checker.*
+import fckt.checker.diagnostics.*
+import fckt.checker.sources.*
+import fckt.checker.resolution.*
+import fckt.checker.inference.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.parser.Position
+
+// Writes to the first argument what fckt.checker makes of what each argument after the second says
+// to check, as fckt's own checker is given it:
+//
+//   case <file>                  the file, as a program of its own, as a conformance case is
+//   package <root> <own|other> <p> <uses>
+//                                "import p.*", with the folder root as the program's own or
+//                                another project's, for each of p's files; uses is the folders,
+//                                separated by commas, of the other projects it uses, or -
+//
+// Each is checked with the core and the standard library beside it. The second argument says what's
+// written for each file, after "# file": with names, a line for each name that means a declared type
+// or a spec, "line:column Name full.name", in order; with types, a line for each function and value,
+// "name: type", by name; with errors, nothing, checking as compiling does, each when covering every
+// value. Then, after "# errors" and what was checked, a line for each error, "error file
+// line:column message", in order.
+main(args: List<String>) = when (args) {
+  [out, what, *commands] -> path(out).writeText(written(what, commands, core() + standard()))
+  else -> Unit
+}
+
+@FileSystem written(what: String, commands: List<String>, beside: List<(List<String>, List<SourceText>)>): String = when (commands) {
+  ["case", file, *rest] -> {
+    entry = SourceText(None, ProgramProject, path(file).readText())
+    "# $file\n" + described(what, file, entry, SourceTree(merged(beside)), f -> f.source.path == None) + written(what, rest, beside)
+  }
+  ["package", root, kind, pkg, uses, *rest] -> {
+    project = if (kind == "own") ProgramProject else OtherProject(path(root).canonical().value)
+    used = uses.split(",").filter { it != "-" }.flatMap { u -> packagesIn(path(u), [], OtherProject(path(u).canonical().value), "$u/") }
+    // The standard library is beside every program already.
+    tree = SourceTree(merged((if (root == "std/src") beside else beside + packagesIn(path(root), [], project, "$root/")) + used))
+    inPackage = (f: LoadedFile) -> f.package == pkg.split(".") && f.source.path.getOrElse("").startsWith("$root/")
+    described(what, pkg, SourceText(None, ProgramProject, "import $pkg.*\n"), tree, inPackage) + written(what, rest, beside)
+  }
+  else -> ""
+}
+
+// For each file the test says, what fckt.checker makes of it; then each error, if there are any,
+// after "# errors" and what was checked.
+described(what: String, checked: String, entry: SourceText, tree: SourceTree, wanted: (LoadedFile) -> Boolean): String =
+  if (what == "errors") {
+    (_, errors) = Checker.check(entry, tree, true)
+    problems(checked, errors)
+  } else if (what == "names") {
+    (files, errors) = Checker.typeNames(entry, tree)
+    files.filter { wanted(it.file) }.map { f -> heading(f.file) + lines(f.types) }.joinToString("") + problems(checked, errors)
+  } else {
+    (program, errors) = Checker.check(entry, tree, false)
+    when (program) {
+      Some(p) -> p.workspace.files.filter { wanted(it) }.map { file ->
+        heading(file) + p.functions.filter { it.function.file.source.path == file.source.path }
+          .map { f -> "${f.function.name}: ${schemeText(f.scheme)}\n" }.sorted().joinToString("")
+      }.joinToString("")
+      None -> ""
+    } + problems(checked, errors)
+  }
+
+// The heading of a file's lines: the program's own file has none, as the case's is written already.
+heading(file: LoadedFile): String = when (file.source.path) {
+  Some(p) -> "# $p\n"
+  None -> ""
+}
+
+problems(checked: String, errors: List<Diagnostic>): String =
+  if (errors.isEmpty()) "" else "# errors $checked\n" + errors.map { e -> "error ${e.file.getOrElse("-")} ${at(e.at)} ${e.message}\n" }.joinToString("")
+
+lines(resolved: List<ResolvedType>): String =
+  resolved.sortedBy { r -> (r.written.at.line, r.written.at.column) }.mapNotNull { meaningText(it) }.map { "$it\n" }.joinToString("")
+
+// A function's type, as TypesTest writes the compiler's: its unknowns T1, T2, in the order they're
+// met; without what functions do or regions; other types by their full names, with a marker for
+// those the compiler marks.
+schemeText(scheme: Scheme): String = Solutions.solving {
+  (text, _) = typeText(scheme.template, [])
+  text
+}
+
+typeText(t: Type, named: List<TypeVariable>): (String, List<TypeVariable>) = when (t) {
+  Variable(v) -> if (named.contains(v)) ("T${named.indexOf(v) + 1}", named) else ("T${named.size + 1}", named + [v])
+  TypeParameter(name) -> ("#$name", named)
+  Named(name, arguments, _) -> applied(name, arguments, named)
+  Abstract(name, arguments) -> applied("abstract $name", arguments, named)
+  SpecOwnType(name, arguments) -> applied("@$name", arguments, named)
+  ModuleValue(spec, arguments) -> applied("module $spec", arguments, named)
+  Handler(effect, arguments) -> applied("handler $effect", arguments, named)
+  TupleOf(elements) -> applied("Tuple", elements, named)
+  Effects(_) -> ("effects", named)
+  FunctionOf(parameters, result, _) -> {
+    (ps, afterParameters) = allText(parameters, named)
+    (r, afterResult) = typeText(result, afterParameters)
+    ("($ps) -> $r", afterResult)
+  }
+}
+
+applied(name: String, arguments: List<Type>, named: List<TypeVariable>): (String, List<TypeVariable>) =
+  if (arguments.isEmpty()) (name, named)
+  else {
+    (text, after) = allText(arguments, named)
+    ("$name<$text>", after)
+  }
+
+allText(ts: List<Type>, named: List<TypeVariable>): (String, List<TypeVariable>) = {
+  (texts, after) = ts.fold(([], named)) { acc, t ->
+    (done, n) = acc
+    (text, more) = typeText(t, n)
+    (done + [text], more)
+  }
+  (texts.joinToString(", "), after)
+}
+
+@FileSystem core(): List<(List<String>, List<SourceText>)> = packagesIn(path("src/main/resources/std"), [], CoreProject, "core:")
+
+@FileSystem standard(): List<(List<String>, List<SourceText>)> =
+  packagesIn(path("std/src"), [], OtherProject(path("std/src").canonical().value), "std/src/")
+
+// What a name means, if it's a declared type or a spec.
+meaningText(r: ResolvedType): Option<String> = when (r.meaning) {
+  DeclaredType(symbol) -> Some("${at(r.written.at)} ${r.written.name} ${symbol.name}")
+  SpecModuleType(spec) -> Some("${at(r.written.at)} ${r.written.name} module ${spec.name}")
+  else -> None
+}
+
+at(p: Position): String = "${p.line}:${p.column}"
+
+// Each package under the folder, its own path given, with its files, named as positions name them:
+// the prefix, then the file's path under the folder.
+@FileSystem packagesIn(folder: Path, pkg: List<String>, project: Project, prefix: String): List<(List<String>, List<SourceText>)> = {
+  entries = folder.listFiles().sortedBy { it.name }
+  files = entries.filter { it.extension == "fk" && !it.isDirectory() }.map { f ->
+    SourceText(Some(prefix + (pkg + [f.name]).joinToString("/")), project, f.readText())
+  }
+  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d -> packagesIn(d, pkg + [d.name], project, prefix) }
+  [(pkg, files), *inner]
+}
+
+// A folder named as a value is, which is a package: geometry, not Geometry or my-shapes.
+isPackageName(name: String): Boolean = when (name.toList()) {
+  [first, *rest] -> (first.isLowerCase() || first == '_') && rest.all { it.isLetterOrDigit() || it == '_' }
+  [] -> false
+}
+
+// The packages, those of the same path together, in order.
+merged(packages: List<(List<String>, List<SourceText>)>): Map<List<String>, List<SourceText>> =
+  packages.fold(emptyMap()) { m, entry ->
+    (pkg, files) = entry
+    m.put(pkg, m.getOrDefault(pkg, []) + files)
+  }

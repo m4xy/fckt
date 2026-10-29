@@ -1,0 +1,6 @@
+import fckt.parser.Expression
+import fckt.checker.coverage.Matches
+
+// A when's branch, checked: its body and what it was found to be, where nothing was expected of it,
+// to join with the others; and what its patterns match, for coverage.
+type CheckedBranch(body: Option<(Expression, Typed)>, matches: List<Matches>)

@@ -9,13 +9,18 @@ import fckt.parser.*
 module Symbols {
   // The declarations of the workspace's files, by kind and full name.
   @Abandoning table(workspace: Workspace): SymbolTable = {
-    declared = ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file) }
+    declared = declarations(workspace)
     modules = moduleTable(workspace, declared)
     specs = uniquely(declared.filter { isSpec(it) }) { s -> "spec '${simpleName(s)}' is declared twice" }
     types = typeTables(declared)
     functions = functionTable(declared)
-    SymbolTable(modules, types.records, types.caseTypes, types.aliases, types.annotationTypes, specs, functions, caseTable(types))
+    SymbolTable(modules, types.records, types.caseTypes, types.aliases, types.annotationTypes, specs, functions, caseTable(types), declared)
   }
+
+  // Every declaration in the workspace's files, and each inside the modules among them, by its full
+  // name, in the order they're taken.
+  declarations(workspace: Workspace): List<Symbol> =
+    ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file, workspace.borrowed) }
 
   // The files in the order their declarations are taken: each package's, then the program's own
   // file last, so that of two declarations of one name, it's the program's that's said to be the
@@ -29,12 +34,13 @@ module Symbols {
   // program's own package.
   private prefixOf(pkg: List<String>): String = if (pkg.isEmpty()) "" else pkg.joinToString(".") + "."
 
-  // Each declaration, and each inside the modules among them, by its full name.
-  private symbolsIn(declarations: List<Declaration>, prefix: String, file: LoadedFile): List<Symbol> = declarations.flatMap { d ->
+  // Each declaration, and each inside the modules among them, by its full name, in the file it's
+  // in, or, if it's borrowed from elsewhere, where it's written.
+  private symbolsIn(declarations: List<Declaration>, prefix: String, file: LoadedFile, borrowed: Map<String, LoadedFile>): List<Symbol> = declarations.flatMap { d ->
     name = prefix + ownName(d)
-    symbol = Symbol(name, pathOf(name), d, file)
+    symbol = Symbol(name, pathOf(name), d, borrowed.getOrDefault(name, file))
     when (d.definition) {
-      ModuleDefinition(inside, _, _, _, _) -> [symbol, *symbolsIn(inside, "$name.", file)]
+      ModuleDefinition(inside, _, _, _, _) -> [symbol, *symbolsIn(inside, "$name.", file, borrowed)]
       else -> [symbol]
     }
   }

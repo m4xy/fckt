@@ -2,5 +2,6 @@ import fckt.collections.Maps.*
 
 // The files a program is checked with: its own file first, then every file of each package it
 // uses. apart is what the files beside it that are programs of their own declare, each by the
-// file it's in, which they can't be used from.
-type Workspace(files: List<LoadedFile>, apart: Map<String, String>)
+// file it's in, which they can't be used from. borrowed is what modules have from the specs they
+// follow, each by its full name, with the file it's written in, where what it names is found.
+type Workspace(files: List<LoadedFile>, apart: Map<String, String>, borrowed: Map<String, LoadedFile> = emptyMap())

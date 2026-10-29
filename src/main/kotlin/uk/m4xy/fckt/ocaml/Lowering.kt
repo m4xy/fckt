@@ -286,8 +286,40 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         val modules = decls.filterIsInstance<Decl.Module>().filter { !isEmpty(it) }
         val groups = program.groups.filter { it.decls.first().path == path }
 
-        // Graph nodes, in the order they'd be emitted given no constraints: types, specs, modules, functions.
-        val typeGroups = typeGroups(types)
+        val ordered = inItemOrder(path, typeGroups(types), specs, modules, groups)
+        return ordered.flatMap { node ->
+            currentPath = path
+            when (node) {
+                is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems))) +
+                    if (node.name in hidden) listOf(StructureChild.ModuleDef(ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(outerAlias(node.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(moduleName(node.simpleName))))) else emptyList()
+                is Decl.Spec -> StructureElement.build<Unit> {
+                    moduleType(node.simpleName) { specItems(node) }
+                    if (node in program.effects) handledEffect(node)
+                }.children
+                is uk.m4xy.fckt.types.FunctionGroup -> listOf(functionItems.getValue(node))
+                else -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val group = node as List<Decl>
+                    StructureElement.build<Unit> {
+                        types { typeDefinitions(group, forSignature = false) }
+                        showFunctions(group.map { it.name })
+                    }.children
+                }
+            }
+        }
+    }
+
+    /**
+     * [typeGroups], [specs], [modules] and function [groups] of the module at [path], ordered so
+     * each comes after what it uses: given no constraints, types, specs, modules, then functions.
+     */
+    private fun inItemOrder(
+        path: List<String>,
+        typeGroups: List<List<Decl>>,
+        specs: List<Decl.Spec>,
+        modules: List<Decl.Module>,
+        groups: List<uk.m4xy.fckt.types.FunctionGroup>,
+    ): List<Any> {
         val nodes: List<Any> = typeGroups + specs + modules + groups
         fun insideOf(m: Decl.Module, name: String) = name.startsWith(m.name + ".")
         val edges = nodes.associateWith { node ->
@@ -325,32 +357,12 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 }
             }
         }
-        val ordered = uk.m4xy.fckt.types.stronglyConnected(nodes) { edges.getValue(it) }.map { component ->
+        return uk.m4xy.fckt.types.stronglyConnected(nodes) { edges.getValue(it) }.map { component ->
             if (component.size > 1) {
                 val names = component.map { n -> if (n is Decl.Module) "module ${n.simpleName}" else "its functions" }
                 throw CompileError((component.first { it is Decl.Module } as Decl.Module).pos, "${names.joinToString(" and ")} use each other")
             }
             component.single()
-        }
-        return ordered.flatMap { node ->
-            currentPath = path
-            when (node) {
-                is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems))) +
-                    if (node.name in hidden) listOf(StructureChild.ModuleDef(ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(outerAlias(node.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(moduleName(node.simpleName))))) else emptyList()
-                is Decl.Spec -> StructureElement.build<Unit> {
-                    moduleType(node.simpleName) { specItems(node) }
-                    if (node in program.effects) handledEffect(node)
-                }.children
-                is uk.m4xy.fckt.types.FunctionGroup -> listOf(functionItems.getValue(node))
-                else -> {
-                    @Suppress("UNCHECKED_CAST")
-                    val group = node as List<Decl>
-                    StructureElement.build<Unit> {
-                        types { typeDefinitions(group, forSignature = false) }
-                        showFunctions(group.map { it.name })
-                    }.children
-                }
-            }
         }
     }
 
@@ -447,16 +459,6 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     /** A type declaration to write out: an external type is OCaml's already. */
     private fun isType(d: Decl) = (d is Decl.Record && d.external == null) || d is Decl.Sealed || d is Decl.Alias
 
-    /** [modules], each after those whose functions or types it uses, as the signature must show them. */
-    private fun inDependencyOrder(modules: List<Decl.Module>): List<Decl.Module> {
-        fun insideOf(m: Decl.Module, name: String) = name.startsWith(m.name + ".")
-        val uses = modules.associateWith { node ->
-            val used = functionsIn(node).flatMap { program.uses[it].orEmpty() }.map { it.name } + typeNamesIn(node)
-            modules.filter { m -> m !== node && used.any { insideOf(m, it) } }
-        }
-        return uk.m4xy.fckt.types.stronglyConnected(modules) { uses.getValue(it) }.flatten()
-    }
-
     /** The full names of the user types and effects that what's in [m] uses: in its types, specs and functions' types. */
     private fun typeNamesIn(m: Decl.Module): Set<String> {
         val names = mutableSetOf<String>()
@@ -531,24 +533,35 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         val path = m.name.split('.')
         currentPath = path
         val types = m.decls.filter { isType(it) && !it.isPrivate }
-        for (group in typeGroups(types)) types { typeDefinitions(group, forSignature = true) }
-        for (spec in m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }) {
-            moduleType(spec.simpleName) { specItems(spec) }
-            // A handled effect's operations, handlers and how to run one, for handling it outside.
-            if (isHandled(spec)) {
-                effectDeclarations(spec)
-                sigValue(handleName(spec), "${handlerVars(spec)}${handlerType(spec)} -> (unit -> $ANSWER) -> $ANSWER")
+        val specs = m.decls.filterIsInstance<Decl.Spec>().filter { !it.isPrivate }
+        val modules = m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate && !isEmpty(it) }
+        // In the structure's order, so a type that names one of a module's types comes after it.
+        for (node in inItemOrder(path, typeGroups(types), specs, modules, emptyList())) {
+            currentPath = path
+            when (node) {
+                is Decl.Spec -> {
+                    moduleType(node.simpleName) { specItems(node) }
+                    // A handled effect's operations, handlers and how to run one, for handling it outside.
+                    if (isHandled(node)) {
+                        effectDeclarations(node)
+                        sigValue(handleName(node), "${handlerVars(node)}${handlerType(node)} -> (unit -> $ANSWER) -> $ANSWER")
+                    }
+                }
+                is Decl.Module -> {
+                    val alias = compiledModule(node)
+                    if (alias != null) sigModule(moduleName(node.simpleName)) { this.alias = alias }
+                    else sigModule(moduleName(node.simpleName)) {
+                        functorParams(node)?.let { params = it }
+                        signatureItems(node)
+                    }
+                    // Its alias, where one of its name further in hides it, as the structure has.
+                    if (node.name in hidden) sigModule(outerAlias(node.simpleName)) { this.alias = moduleName(node.simpleName) }
+                }
+                else -> {
+                    @Suppress("UNCHECKED_CAST")
+                    types { typeDefinitions(node as List<Decl>, forSignature = true) }
+                }
             }
-        }
-        for (inner in inDependencyOrder(m.decls.filterIsInstance<Decl.Module>().filter { !it.isPrivate && !isEmpty(it) })) {
-            val alias = compiledModule(inner)
-            if (alias != null) sigModule(moduleName(inner.simpleName)) { this.alias = alias }
-            else sigModule(moduleName(inner.simpleName)) {
-                functorParams(inner)?.let { params = it }
-                signatureItems(inner)
-            }
-            // Its alias, where one of its name further in hides it, as the structure has.
-            if (inner.name in hidden) sigModule(outerAlias(inner.simpleName)) { this.alias = moduleName(inner.simpleName) }
             currentPath = path
         }
         for (type in types) {

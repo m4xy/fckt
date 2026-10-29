@@ -1,0 +1,342 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.*
+
+// Blocks: lines that bind names, change vars, or are run for what they do, then what the block
+// gives. In a module's block, Options { ... }, a by line goes through the module's bind, and what
+// the block gives through its pure; a module without a bind pairs its by lines with its product,
+// and maps the rest of the block over them.
+
+@Inferring inferBlock(
+  at: Position,
+  statements: List<Statement>,
+  result: Expression,
+  endsInBinding: Boolean,
+  expected: Option<Type>,
+  scope: Scope,
+  monad: Option<MonadFunctions>,
+  context: Context,
+): Type = {
+  whole = Variable(fresh())
+  independent = when (monad) {
+    Some(Mapping(_, _, _, _, _)) -> true
+    else -> false
+  }
+  start = BlockSoFar(Scopes.inside(scope), whole, [], [], None, false)
+  done = statements.fold(start) { soFar, statement -> line(statement, soFar, independent, monad, context) }
+  if (endsInBinding && !done.assigned) {
+    abandon(Globals.problem(context, statements.lastOrNone().map { statementPosition(it) }.getOrElse(at), "a block must end with an expression, not a binding"))
+  } else Unit
+  when (monad) {
+    None -> infer(result, expected, done.scope, context).t
+    Some(m) ->
+      if (independent && done.steps.isNotEmpty()) {
+        inner = bindSteps(done.pending, done.scope, context)
+        (resultType, blockType) = combine(m, done.steps, at, context)
+        check(result, resultType, inner, context)
+        blockType
+      } else when (pureOf(m)) {
+        None -> abandon(Globals.problem(context, positionOfMonad(m), "${nameOf(m)} has no pure, so its block needs a 'by' line"))
+        Some(pure) -> when (resolved(Globals.typeOf(pure, positionOfMonad(m), context))) {
+          FunctionOf([value], pureResult, _) -> {
+            expect(pureResult, done.rest, Defaults.positionOf(result), context)
+            check(result, value, done.scope, context)
+            whole
+          }
+          else -> abandon(Globals.problem(context, positionOfMonad(m), "${pure.name} should take one value, as Monad's pure does"))
+        }
+      }
+  }
+}
+
+// A line of a block, checked, and how far the block has got after it.
+@Inferring private line(statement: Statement, before: BlockSoFar, independent: Boolean, monad: Option<MonadFunctions>, context: Context): BlockSoFar = {
+  // Without a bind, a line that isn't a by line ends the by lines before it, whose names it can use.
+  soFar = if (independent && !isBind(statement) && before.steps.isNotEmpty())
+    BlockSoFar(bindSteps(before.pending, before.scope, context), before.rest, before.steps, [], before.after.orElse { Some(statementPosition(statement)) }, before.assigned)
+  else before
+  inner = soFar.scope
+  when (statement) {
+    Evaluation(_, e) -> {
+      infer(e, None, inner, context)
+      withScope(soFar, inner, false)
+    }
+    Destructuring(at, pattern, value) -> withScope(soFar, bindPattern(at, pattern, infer(value, None, inner, context).t, inner, false, context), false)
+    Bind(at, pattern, value) -> byLine(at, pattern, value, soFar, independent, monad, context)
+    Binding(at, name, parameters, valueType, value, variable) -> binding(at, name, parameters, valueType, value, variable, soFar, context)
+  }
+}
+
+private withScope(soFar: BlockSoFar, scope: Scope, assigned: Boolean): BlockSoFar =
+  BlockSoFar(scope, soFar.rest, soFar.steps, soFar.pending, soFar.after, assigned)
+
+private isBind(s: Statement): Boolean = when (s) {
+  Bind(_, _, _) -> true
+  else -> false
+}
+
+// name = value, var name = value, name: T = value, a local function, or, for a var in scope,
+// changing it, as in Kotlin.
+@Inferring private binding(
+  at: Position,
+  name: String,
+  parameters: Option<List<Parameter>>,
+  valueType: Option<TypeRef>,
+  value: Expression,
+  variable: Boolean,
+  soFar: BlockSoFar,
+  context: Context,
+): BlockSoFar = {
+  inner = soFar.scope
+  existing = Scopes.lookup(inner, name)
+  changed = if (!variable && parameters.isNone() && valueType.isNone()) existing.flatMap { local -> local.region.map { r -> (local, r) } } else None
+  when (changed) {
+    Some((local, region)) -> {
+      check(value, local.t, inner, context)
+      perform(mutating(region), at)
+      withScope(soFar, inner, true)
+    }
+    None -> {
+      if (Scopes.bindsHere(inner, name)) {
+        abandon(Globals.problem(context, at, "'$name' is already defined in this block; to change it, declare it with var $name = ..."))
+      } else Unit
+      when (parameters) {
+        None -> {
+          declared = valueType.map { t -> Conversion.typeOf(t, Globals.typeContext(context), context.environment.definitions) }
+          typed = infer(value, declared, inner, context)
+          declared.forEach { d -> assign(value, typed, d, context) }
+          region = if (variable) Some(Variable(fresh())) else None
+          withScope(soFar, Scopes.bind(inner, name, Local(typed.t, region)), false)
+        }
+        Some(ps) -> {
+          checkDistinct(ps.map { p -> (p.name, p.at) }, context)
+          row = Row([], Some(fresh()))
+          parameterTypes = ps.map { p -> p.parameterType.map { parameterType(it, row, context) }.getOrElse(Variable(fresh())) }
+          result = valueType.map { t -> Conversion.typeOf(t, Globals.typeContext(context), context.environment.definitions) }.getOrElse(Variable(fresh()))
+          // Bound before its body is checked, so it can call itself.
+          withFunction = Scopes.bind(inner, name, Local(FunctionOf(parameterTypes, result, row)))
+          body = ps.zip(parameterTypes).fold(Scopes.inside(withFunction)) { s, entry ->
+            (p, t) = entry
+            Scopes.bind(s, p.name, Local(t))
+          }
+          doingIn(row, context) { check(value, result, body, context) }
+          withScope(soFar, withFunction, false)
+        }
+      }
+    }
+  }
+}
+
+// x by value: through the module's bind, or, without one, a step paired with the others.
+@Inferring private byLine(at: Position, pattern: Pattern, value: Expression, soFar: BlockSoFar, independent: Boolean, monad: Option<MonadFunctions>, context: Context): BlockSoFar =
+  when (monad) {
+    None -> abandon(Globals.problem(context, at, "'by' needs a block to bind in, such as Options { ... }, directly around it"))
+    Some(m) ->
+      if (independent) {
+        soFar.after.forEach { afterAt ->
+          abandon(Globals.problem(context, afterAt, "${nameOf(m)} has no bind, so its 'by' lines go together: move this line above the first 'by' or below the last"))
+        }
+        refs = References.of(value, [])
+        soFar.pending.flatMap { _, p, _ -> References.namesIn(p) }.find { refs.contains(it) }.forEach { used ->
+          abandon(Globals.problem(context, Defaults.positionOf(value), "${nameOf(m)} has no bind, so a step can't use $used from an earlier step"))
+        }
+        (valueType, held) = step(m, value, soFar.scope, context)
+        BlockSoFar(soFar.scope, soFar.rest, soFar.steps + [(valueType, held)], soFar.pending + [(at, pattern, held)], soFar.after, false)
+      } else {
+        (valueType, next, result) = bindType(m, context)
+        expect(result, soFar.rest, at, context)
+        wanted = genericText(valueType)
+        actual = infer(value, Some(valueType), soFar.scope, context)
+        if (!isSubtype(actual.t, valueType, context)) {
+          abandon(Globals.problem(context, Defaults.positionOf(value), "${nameOf(m)} binds $wanted, but this is ${TypeText.shown(actual.t)}"))
+        } else Unit
+        (nextValue, nextResult) = when (next) {
+          FunctionOf([p], r, _) -> (p, r)
+          _ -> (Variable(fresh()), Variable(fresh()))
+        }
+        BlockSoFar(bindPattern(at, pattern, nextValue, soFar.scope, true, context), nextResult, soFar.steps, soFar.pending, soFar.after, false)
+      }
+  }
+
+// Binds each pending step's names, now the lines after them can see them.
+@Inferring private bindSteps(pending: List<(Position, Pattern, Type)>, scope: Scope, context: Context): Scope =
+  pending.fold(scope) { s, entry ->
+    (at, pattern, t) = entry
+    bindPattern(at, pattern, t, s, true, context)
+  }
+
+// Binds what an irrefutable pattern, of the type, binds, as (a, b) = ... and (a, b) by ... do.
+@Inferring private bindPattern(at: Position, pattern: Pattern, t: Type, scope: Scope, isBy: Boolean, context: Context): Scope = {
+  names = References.namesIn(pattern)
+  checkDistinct(names.map { (it, at) }, context)
+  names.find { Scopes.bindsHere(scope, it) }.forEach { name ->
+    abandon(Globals.problem(context, at, "'$name' is already defined in this block"))
+  }
+  if (!irrefutable(pattern)) {
+    what = if (isBy) "'by'" else "a destructuring binding"
+    abandon(Globals.problem(context, at, "$what takes only names and '_'; use 'when' to match other patterns"))
+  } else Unit
+  // Bound apart first, so the value can't see its own names.
+  bound = checkPattern(pattern, t, Scopes.inside(scope), None, context).scope
+  Scopes.bindAll(scope, bound.own.toList())
+}
+
+// Where a line of a block starts.
+statementPosition(s: Statement): Position = when (s) {
+  Binding(at, _, _, _, _, _) -> at
+  Evaluation(at, _) -> at
+  Destructuring(at, _, _) -> at
+  Bind(at, _, _) -> at
+}
+
+// ---- Modules' blocks ----
+
+// The module's name, as written, and where.
+private nameOf(monad: MonadFunctions): String = when (monad) {
+  Binding(name, _, _, _) -> name
+  Mapping(name, _, _, _, _) -> name
+}
+
+private positionOfMonad(monad: MonadFunctions): Position = when (monad) {
+  Binding(_, at, _, _) -> at
+  Mapping(_, at, _, _, _) -> at
+}
+
+private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
+  Binding(_, _, _, pure) -> Some(pure)
+  Mapping(_, _, _, _, pure) -> pure
+}
+
+// Options { ... }: the block, with by going through the module's bind, and what it gives through its
+// pure; or, for a module that follows a handled effect's spec, the block with the effect handled.
+@Inferring inferMonadic(at: Position, monad: Expression, block: Expression, scope: Scope, context: Context): Type = {
+  monadAt = Defaults.positionOf(monad)
+  name = dottedUnbound(monad, scope)
+  shown = name.getOrElse("this")
+  found = name.flatMap { n -> Lookups.found(Lookups.moduleNamed(n, context.place, context.environment.definitions.namespace, Skipping)) }
+  when (found) {
+    None -> abandon(Globals.problem(context, monadAt, "$shown isn't a module, so ${name.getOrElse("null")} { ... } has nothing to bind with"))
+    Some(m) -> {
+      effect = when (m) {
+        DeclaredModule(s) -> context.environment.moduleSpecs.get(s.name).filter { _ -> isEffectModule(m, context) }.map { spec -> (s, spec) }
+        PackageModule(_) -> None
+      }
+      when (effect) {
+        Some((s, spec)) -> when (moduleHandler(s, spec, at, context)) {
+          Handler(effectName, [answer, answers]) -> handling(effectName, [], answer, answers, block, None, scope, at, context)
+          other -> other
+        }
+        None -> {
+          functions = monadFunctions(m, shown, monadAt, context)
+          when (block) {
+            Block(blockAt, statements, result, endsInBinding) -> inferBlock(blockAt, statements, result, endsInBinding, None, scope, Some(functions), context)
+            other -> infer(other, None, scope, context).t
+          }
+        }
+      }
+    }
+  }
+}
+
+// What the module's block runs with: its bind and pure, or else its map and product.
+@Abandoning private monadFunctions(m: ModuleSymbol, shown: String, at: Position, context: Context): MonadFunctions = {
+  moduleName = fckt.checker.symbols.Symbols.moduleName(m)
+  member = (what: String) -> context.environment.functions.get("$moduleName.$what").filter { Globals.visible(it, context) }
+  when ((member("bind"), member("pure"), member("map"), member("product"))) {
+    (Some(bind), Some(pure), _, _) -> Binding(shown, at, bind, pure)
+    (_, pure, Some(map), Some(product)) -> Mapping(shown, at, map, product, pure)
+    else -> abandon(Globals.problem(context, at,
+      "$shown has neither bind and pure nor map and product, so it can't run a block; give it pure and bind, as Monad has"))
+  }
+}
+
+// A new instance of the module's function, if it takes that many values.
+@Inferring private instance(monad: MonadFunctions, function: Symbol, arity: Int, what: String, context: Context): Type = {
+  at = positionOfMonad(monad)
+  when (resolved(Globals.typeOf(function, at, context))) {
+    FunctionOf(parameters, result, effects) if parameters.size == arity -> {
+      perform(effects, at)
+      FunctionOf(parameters, result, effects)
+    }
+    _ -> abandon(Globals.problem(context, at, "${function.name} should take $what"))
+  }
+}
+
+// A new instance of the module's map: the value it maps, and the function it applies to what it
+// holds, and what each gives.
+@Inferring private mapType(monad: MonadFunctions, map: Symbol, context: Context): (Type, Type, Type, Type) = {
+  what = "a value and a function to apply to what it holds"
+  wrong = () -> abandon(Globals.problem(context, positionOfMonad(monad), "${map.name} should take $what"))
+  when (instance(monad, map, 2, what, context)) {
+    FunctionOf([mapped, f], mapResult, _) -> when (resolved(f)) {
+      FunctionOf([held], fResult, _) -> (mapped, mapResult, held, fResult)
+      _ -> wrong()
+    }
+    _ -> wrong()
+  }
+}
+
+// That a step's value is one of the module's, giving its type and the type of what it holds.
+@Inferring private step(monad: MonadFunctions, value: Expression, scope: Scope, context: Context): (Type, Type) = when (monad) {
+  Mapping(name, _, map, _, _) -> {
+    (mapped, _, held, _) = mapType(monad, map, context)
+    wanted = genericText(mapped)
+    actual = infer(value, Some(mapped), scope, context)
+    if (!isSubtype(actual.t, mapped, context)) {
+      abandon(Globals.problem(context, Defaults.positionOf(value), "$name maps $wanted, but this is ${TypeText.shown(actual.t)}"))
+    } else (mapped, held)
+  }
+  Binding(_, _, _, _) -> (Variable(fresh()), Variable(fresh()))
+}
+
+// Without a bind, the steps are paired up with product, as ((a, b), c), and the rest of the block is
+// a function of the pairs, applied with map: what the rest of the block gives, and what the block is.
+@Inferring private combine(monad: MonadFunctions, steps: List<(Type, Type)>, at: Position, context: Context): (Type, Type) = when ((monad, steps)) {
+  (Mapping(_, monadAt, map, product, _), [(firstValue, firstHeld), *others]) -> {
+    (values, held) = others.fold((firstValue, firstHeld)) { acc, s ->
+      (vs, h) = acc
+      (value, element) = s
+      when (instance(monad, product, 2, "two values, to pair what they hold", context)) {
+        FunctionOf([p, q], result, _) -> {
+          expect(vs, p, at, context)
+          expect(value, q, at, context)
+          (result, TupleOf([h, element]))
+        }
+        _ -> acc
+      }
+    }
+    (mapped, mapResult, given, fResult) = mapType(monad, map, context)
+    expect(values, mapped, at, context)
+    if (!unify(given, held)) abandon(Globals.problem(context, monadAt, "${product.name} should pair what its two values hold, as (A, B)"))
+    else (fResult, mapResult)
+  }
+  else -> (Variable(fresh()), Variable(fresh()))
+}
+
+// A new instance of the module's bind: the value it binds, the function it goes on with, and what it
+// gives.
+@Inferring private bindType(monad: MonadFunctions, context: Context): (Type, Type, Type) = when (monad) {
+  Binding(_, at, bind, _) -> {
+    shape = when (resolved(Globals.typeOf(bind, at, context))) {
+      FunctionOf([value, next], result, effects) -> when (resolved(next)) {
+        FunctionOf([_], _, _) -> Some((value, resolved(next), result, effects))
+        _ -> None
+      }
+      _ -> None
+    }
+    when (shape) {
+      Some((value, next, result, effects)) -> {
+        perform(effects, at)
+        (value, next, result)
+      }
+      None -> abandon(Globals.problem(context, at, "${bind.name} should take a value and a function to go on with, as Monad's bind does"))
+    }
+  }
+  Mapping(_, _, _, _, _) -> (Variable(fresh()), Variable(fresh()), Variable(fresh()))
+}

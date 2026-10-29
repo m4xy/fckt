@@ -1,0 +1,131 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// The values of defaults, each a function of its own, beside what it's for, named for its owner and
+// its parameter or field: area$default$scale. A call that leaves the argument out calls it. A
+// default is worked out where it's written, on its own, so it can't use the other parameters.
+module Defaults {
+  // The full name of the default of owner's parameter or field.
+  nameOf(owner: String, name: String): String = owner + marker + name
+
+  // Whether the function is a default's.
+  isDefault(s: Symbol): Boolean = s.name.contains(marker)
+
+  // What's between a default's owner's name and its own.
+  private marker: String = "\$default\$"
+
+  // A function for each default the declaration has: a function's parameters', a record's or its
+  // cases' fields', or a spec's functions' parameters'.
+  @Abandoning of(d: Symbol): List<Symbol> =
+    if (Symbols.isFunction(d)) ofFunction(d)
+    else if (Symbols.isAnnotation(d)) ofAnnotation(d)
+    else if (Symbols.isRecord(d)) ofRecord(d)
+    else if (Symbols.isCaseType(d)) ofCases(d)
+    else if (Symbols.isSpec(d)) ofSpec(d)
+    else []
+
+  @Abandoning private ofFunction(s: Symbol): List<Symbol> = {
+    parameters = Signatures.writtenParametersOf(s).getOrElse([])
+    parameters.flatMap { p ->
+      when (p.default) {
+        None -> []
+        Some(value) -> {
+          refs = References.of(value, [])
+          when (parameters.find { other -> refs.contains(other.name) }) {
+            Some(other) -> abandon(Diagnostic(s.file.source.path, positionOf(value),
+              "a default can't use the other parameters, as '${other.name}' here: it's worked out on its own"))
+            None -> [made(s, s.name, p.name, p.at, p.parameterType, value, Signatures.typeParametersOf(s))]
+          }
+        }
+      }
+    }
+  }
+
+  private ofRecord(s: Symbol): List<Symbol> = when (s.declaration.definition) {
+    RecordDefinition(typeParameters, fields, _, _, _) -> fields.flatMap { f ->
+      f.default.map { value -> made(s, s.name, f.name, f.at, Some(f.fieldType), value, typeParameters) }.toList()
+    }
+    else -> []
+  }
+
+  @Abandoning private ofAnnotation(s: Symbol): List<Symbol> = when (s.declaration.definition) {
+    RecordDefinition(_, fields, _, _, _) -> when (fields.find { it.default.isSome() }) {
+      Some(f) -> abandon(Diagnostic(s.file.source.path, f.at, "an annotation's fields can't have defaults"))
+      None -> []
+    }
+    else -> []
+  }
+
+  private ofCases(s: Symbol): List<Symbol> = when (s.declaration.definition) {
+    CasesDefinition(typeParameters, cases, _, _) -> cases.flatMap { c ->
+      c.fields.flatMap { f ->
+        f.default.map { value -> made(s, "${s.name}$${c.name}", f.name, f.at, Some(f.fieldType), value, typeParameters) }.toList()
+      }
+    }
+    else -> []
+  }
+
+  // A spec's function's, which every module that follows it has, and a value of it.
+  @Abandoning private ofSpec(s: Symbol): List<Symbol> = when (s.declaration.definition) {
+    SpecDefinition(types, values, _, _, _) -> values.flatMap { v ->
+      v.parameters.getOrElse([]).flatMap { p ->
+        when (p.default) {
+          None -> []
+          Some(value) -> {
+            own = p.parameterType.map { namesIn(it) }.getOrElse([]).find { name -> types.any { it.name == name } }
+            when (own) {
+              Some(name) -> abandon(Diagnostic(s.file.source.path, positionOf(value),
+                "a default is worked out on its own, so it can't be a $name, which each module says what it is"))
+              None -> [made(s, "${s.name}$${v.name}", p.name, p.at, p.parameterType, value, v.typeParameters)]
+            }
+          }
+        }
+      }
+    }
+    else -> []
+  }
+
+  // The default's function, of no parameters, giving the type written for what it's the default
+  // of, beside its owner and as private as it.
+  private made(owner: Symbol, ownerName: String, name: String, at: Position, valueType: Option<TypeRef>, value: Expression, typeParameters: List<String>): Symbol = {
+    full = nameOf(ownerName, name)
+    definition = FunctionDefinition(typeParameters, None, Some([]), valueType, value, None, false)
+    visibility = if (owner.declaration.visibility == Private) Private else Public
+    Symbol(full, owner.path, Declaration(at, full.split(".").lastOrNone().getOrElse(full), definition, visibility), owner.file)
+  }
+
+  // The names of the types a type is written with.
+  private namesIn(t: TypeRef): List<String> = when (t) {
+    NamedType(_, name, arguments) -> [name, *arguments.flatMap { namesIn(it) }]
+    FunctionType(_, parameters, result, _) -> parameters.flatMap { namesIn(it) } + namesIn(result)
+    TupleType(_, elements) -> elements.flatMap { namesIn(it) }
+    EffectsType(_, _) -> []
+  }
+
+  // Where an expression starts.
+  positionOf(e: Expression): Position = when (e) {
+    IntConstant(at, _) -> at
+    FloatConstant(at, _) -> at
+    BooleanConstant(at, _) -> at
+    CharConstant(at, _) -> at
+    StringTemplate(at, _) -> at
+    Name(at, _) -> at
+    Tuple(at, _) -> at
+    ListOf(at, _) -> at
+    Spread(at, _) -> at
+    Call(at, _, _, _) -> at
+    Member(at, _, _) -> at
+    Binary(at, _, _, _) -> at
+    Unary(at, _, _) -> at
+    Assign(at, _, _) -> at
+    Lambda(at, _, _, _) -> at
+    Pipe(at, _, _) -> at
+    If(at, _, _, _, _) -> at
+    When(at, _, _) -> at
+    Block(at, _, _, _) -> at
+    Monadic(at, _, _) -> at
+    Handle(at, _, _, _) -> at
+  }
+}

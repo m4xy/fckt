@@ -2695,11 +2695,15 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun checkGroupBody(group: FunctionGroup) {
         val declaredParams = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
         val outside = mutableMapOf<Decl.Function, Type>()
-        currentPath = group.decls.first().path
-        currentFile = group.decls.first().pos.file
+        // Each function is read where it's written: a group's may be in different files of a package.
+        fun at(decl: Decl.Function) {
+            currentPath = decl.path
+            currentFile = decl.pos.file
+        }
         val rows = mutableMapOf<Decl.Function, Type>()
         val declaredArgs = mutableMapOf<Decl.Function, List<Type.Con>>()
         for (decl in group.decls) {
+            at(decl)
             val vars = decl.typeParams.associateWith { u.fresh() }
             declaredParams[decl] = vars
             typeParams = vars
@@ -2732,6 +2736,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         // Only where functions call each other: one that only calls itself shares only its own.
         // A @Mutating one is taken, as an external is, to change what any of its parameters holds.
         if (group.decls.size > 1) for (decl in group.decls) {
+            at(decl)
             val inside = provisional.getValue(decl) as? Type.Fn ?: continue
             if (!seenAsDeclared(decl)) continue
             // Its parameters are its own: a function given for one does what it does there.
@@ -2744,6 +2749,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             viewed[decl] = Type.Fn(inside.params, inside.result, row)
         }
         for (decl in group.decls) {
+            at(decl)
             typeParams = declaredParams.getValue(decl)
             val type = provisional.getValue(decl)
             val scope = Scope(null)

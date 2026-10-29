@@ -1,0 +1,5 @@
+import fckt.checker.symbols.Symbol
+
+// Functions checked together, as each uses another, their types worked out as one: or a single
+// function, which may call itself.
+type FunctionGroup(functions: List<Symbol>, recursive: Boolean)

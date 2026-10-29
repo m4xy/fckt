@@ -1,0 +1,11 @@
+import fckt.io.Console
+
+// distinctBy keeps each item whose key no item before it has, in the order they were; distinct is
+// distinctBy of the items themselves.
+main() = {
+  println(["bb", "a", "dd", "ccc", "e"].distinctBy { it.length }.joinToString(" "))
+  println([3, 1, 3, 2, 1].distinct().joinToString(" "))
+}
+
+// prints: bb a ccc
+// prints: 3 1 2

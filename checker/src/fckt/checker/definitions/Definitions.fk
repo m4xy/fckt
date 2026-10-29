@@ -1,0 +1,7 @@
+import fckt.collections.Maps.*
+import fckt.checker.resolution.Namespace
+
+// What a program's type declarations define, beside what its names mean: each type with cases'
+// cases, by its full name, and the full names of the types whose values can change, which have
+// regions.
+type Definitions(namespace: Namespace, cases: Map<String, List<CaseInfo>>, regioned: List<String>)

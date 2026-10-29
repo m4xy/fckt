@@ -1,0 +1,11 @@
+import fckt.parser.Position
+import fckt.checker.symbols.Symbol
+
+// What a module's block is run with, by the module's name as written, and where it's written.
+type MonadFunctions {
+  // Its bind and pure: each by line goes through bind, and what the block gives through pure.
+  Binding(name: String, at: Position, bind: Symbol, pure: Symbol),
+  // Its map and product, and pure if it has one: by lines can't depend on each other, so they're
+  // paired with product, and the rest of the block is mapped over them.
+  Mapping(name: String, at: Position, map: Symbol, product: Symbol, pure: Option<Symbol>),
+}

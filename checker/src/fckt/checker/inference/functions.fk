@@ -1,0 +1,383 @@
+import fckt.collections.Maps.*
+import fckt.checker.annotations.*
+import fckt.checker.coverage.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.*
+
+// Checking a group of functions, and what's known of them after: each one's type, generic in its
+// own unknowns. While the group is checked, each is what it's being worked out to be; or, to the
+// others in a group of several, what it says it does, as an external is seen, rather than sharing
+// what its body turns out to do: otherwise a group's functions, calling each other, would all do
+// what any does, so one that handles an effect around a call to another, as a parser backtracking
+// does, would still be taken to do it.
+
+// What's known after the group is checked, with each when in it checked for covering every value,
+// if coverage is wanted.
+@Solving @Abandoning checkGroup(group: FunctionGroup, environment: Environment, coverage: Boolean): Known = {
+  var pending: List<PendingWhen> = []
+  known = Covering(cover = found -> { pending = pending + [found] }) { checkFunctions(group, environment) }
+  if (coverage) pending.forEach { checkCovers(it, environment) } else Unit
+  known
+}
+
+// What's known after a group that couldn't be checked: its functions may be anything, so what uses
+// them is checked without more errors about them. A function of as many parameters, taking and
+// giving anything, and doing anything.
+@Solving failed(group: FunctionGroup, known: Known): Known = Known(
+  group.functions.filter { f -> !known.schemes.containsKey(f.name) }.fold(known.schemes) { schemes, f ->
+    t = when (Signatures.parametersOf(f)) {
+      Some(ps) -> FunctionOf(ps.map { Variable(fresh()) }, Variable(fresh()), Row([], Some(fresh())))
+      None -> Variable(fresh())
+    }
+    schemes.put(f.name, Scheme(variablesIn(t), t))
+  },
+  known.typeParameterVariables,
+  emptyMap(),
+  emptyMap(),
+)
+
+@Solving @Abandoning @Covering private checkFunctions(group: FunctionGroup, environment: Environment): Known = {
+  signatures = group.functions.map { f -> signatureOf(f, environment) }
+  provisional = signatures.map { s -> (s.function.name, s.t) }.toMap()
+  viewed = if (group.functions.size > 1) signatures.mapNotNull { s -> viewedAs(s, environment).map { t -> (s.function.name, t) } }.toMap() else emptyMap()
+  known = environment.known
+  checking = Environment(environment.definitions, environment.functions, environment.orderedFunctions, environment.extensions, environment.casesByName,
+    environment.moduleSpecs, environment.specTypes, environment.operations, Known(known.schemes, known.typeParameterVariables, provisional, viewed))
+  signatures.forEach { s -> checkBody(s, checking) }
+  // What each does as its callers see it: changing values that never left it doesn't count.
+  done = signatures.map { s -> masked(s.row, s.t) }
+  signatures.zip(done).forEach { s, row -> checkDeclaredArguments(s, row, environment) }
+  signatures.zip(done).forEach { s, row ->
+    if (!Signatures.isExternal(s.function)) checkEffects(s.function, row, environment) else Unit
+  }
+  signatures.zip(done).fold(known) { k, entry ->
+    (s, row) = entry
+    withScheme(s, row, k)
+  }
+}
+
+// That a generic effect a function says it does, @Yielding<Int>, is the one it does: its type
+// arguments are what it does them with.
+@Solving @Abandoning private checkDeclaredArguments(s: Signature, done: Row, environment: Environment): Unit = {
+  f = s.function
+  context = contextOf(f, s.typeVariables, environment)
+  namespace = environment.definitions.namespace
+  f.declaration.annotations.filter { a -> a.typeArguments.isNotEmpty() }.forEach { a ->
+    when (Annotations.declarationOf(a, Place(f.file, f.path), namespace).filter { Symbols.isSpec(it) }) {
+      Some(effect) -> {
+        says = a.typeArguments.map { t -> Conversion.typeOf(t, Globals.typeContext(context), environment.definitions) }
+        flattened(done).labels.find { it.name == effect.name }.forEach { did ->
+          if (!did.arguments.zip(says).all { x, y -> unify(x, y) }) {
+            abandon(Diagnostic(f.file.source.path, f.declaration.at,
+              "'${Symbols.simpleName(f)}' does @${Symbols.simpleName(effect)}<${did.arguments.map { TypeText.shown(it) }.joinToString(", ")}>, but says <${says.map { TypeText.shown(it) }.joinToString(", ")}>"))
+          } else Unit
+        }
+      }
+      None -> Unit
+    }
+  }
+}
+
+// That a function may do what its body does: what it says, or what its module allows. main may do
+// anything, as running a program is what it's for; a default's does what the call that leaves its
+// argument out does; a top-level value can't do anything, as it runs on its own when the program
+// starts.
+@Solving @Abandoning private checkEffects(f: Symbol, done: Row, environment: Environment): Unit =
+  if (f.name == "main" || Defaults.isDefault(f)) Unit
+  else {
+    did = effectNames(done).distinct()
+    own = Symbols.simpleName(f)
+    if (!Signatures.isFunction(f)) {
+      if (did.isNotEmpty()) abandon(Diagnostic(f.file.source.path, f.declaration.at,
+        "'$own' does ${Doings.shown(did)}, but a top-level value runs when the program starts; make it a function: $own() = ..."))
+      else Unit
+    } else {
+      undeclared = did.filter { !allowed(f, environment).contains(it) }
+      if (undeclared.isEmpty()) Unit
+      else when (ceiling(f.path, environment)) {
+        Some((m, effects)) -> abandon(Diagnostic(f.file.source.path, f.declaration.at,
+          "'$own' does ${Doings.shown(undeclared)}, but it's in ${Symbols.simpleName(m)}, which may only ${allows(effects)}"))
+        None -> abandon(Diagnostic(f.file.source.path, f.declaration.at,
+          "'$own' does ${Doings.shown(undeclared)}, so it must say so: ${Doings.shown(undeclared)} $own(...)"))
+      }
+    }
+  }
+
+// The context a function's signature and body are read in: where it's written, with its type
+// parameters as the unknowns given.
+private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, environment: Environment): Context =
+  Context(environment, Place(f.file, f.path), typeVariables.map { name, v -> (name, Variable(v)) }.toMap())
+
+// A function's type as its group sees it before its body's checked: what it's written to take and
+// give, and unknowns for what isn't written. A function type among its parameters' types that
+// doesn't say what it does does what the function does.
+@Solving @Abandoning private signatureOf(f: Symbol, environment: Environment): Signature = {
+  typeVariables = Signatures.typeParametersOf(f).map { p -> (p, fresh()) }
+  context = contextOf(f, typeVariables, environment)
+  result = Signatures.resultOf(f).map { t -> Conversion.typeOf(t, Globals.typeContext(context), environment.definitions) }.getOrElse(Variable(fresh()))
+  row = Row([], Some(fresh()))
+  t = when (Signatures.parametersOf(f)) {
+    Some(ps) -> {
+      checkDistinct(ps.map { p -> (p.name, p.at) }, context)
+      FunctionOf(ps.map { p -> p.parameterType.map { parameterType(it, row, context) }.getOrElse(Variable(fresh())) }, result, row)
+    }
+    None -> result
+  }
+  Signature(f, typeVariables, row, t)
+}
+
+// How the others in a group of several see a function that says what it does: as doing that. A
+// @Mutating one is taken, as an external is, to change what any of its parameters holds. Not main,
+// a default's, an external, or one with an effect parameter or a generic effect, which do what
+// they're given.
+@Solving @Abandoning private viewedAs(s: Signature, environment: Environment): Option<Type> = when (s.t) {
+  FunctionOf(parameters, result, _) if isSeenAsDeclared(s.function, environment) -> {
+    row = Row([], Some(fresh()))
+    unifyRows(row, declaredRow(s.function, parameters, environment))
+    Some(FunctionOf(parameters, result, row))
+  }
+  else -> None
+}
+
+@Abandoning private isSeenAsDeclared(f: Symbol, environment: Environment): Boolean = {
+  namespace = environment.definitions.namespace
+  generic = f.declaration.annotations.any { a ->
+    a.typeArguments.isNotEmpty() && Annotations.declarationOf(a, Place(f.file, f.path), namespace).map { Symbols.isSpec(it) }.getOrElse(false)
+  }
+  f.name != "main" && !Defaults.isDefault(f) && !Signatures.isExternal(f) &&
+    Signatures.typeParametersOf(f).none { it.startsWith("@") } && !generic
+}
+
+// The row a function that says what it does does: what it's allowed, with @Mutating on each region
+// its parameters hold, if it says it changes things.
+@Solving @Abandoning private declaredRow(f: Symbol, parameters: List<Type>, environment: Environment): Row = {
+  declared = allowed(f, environment)
+  regions = parameters.flatMap { p -> regionsIn(p, None) }.filter { r ->
+    when (r) {
+      Variable(_) -> true
+      else -> false
+    }
+  }.distinct()
+  changes = if (declared.contains(Types.mutating) && regions.isNotEmpty()) regions.map { r -> EffectLabel(Types.mutating, [r]) } else []
+  labels = declared.filter { d -> d != Types.mutating || changes.isEmpty() }.map { d -> EffectLabel(d, []) } + changes
+  Row(labels, Some(fresh()))
+}
+
+// What a function may do: what its module allows, if its module says, and then it can't say more;
+// otherwise what it says itself.
+@Abandoning allowed(f: Symbol, environment: Environment): List<String> = {
+  namespace = environment.definitions.namespace
+  own = Annotations.effectsOf(f.declaration.annotations, Place(f.file, f.path), f.declaration.at, namespace)
+  when (ceiling(f.path, environment)) {
+    None -> own
+    Some((m, effects)) -> {
+      beyond = own.filter { !effects.contains(it) }
+      if (beyond.isNotEmpty()) abandon(Diagnostic(f.file.source.path, f.declaration.at,
+        "'${Symbols.simpleName(f)}' is in ${Symbols.simpleName(m)}, which may only ${allows(effects)}, so it can't be ${Doings.shown(beyond)}"))
+      else effects
+    }
+  }
+}
+
+// The module around the path that says what may be done in it, with what: the innermost one with
+// effects, which pass to everything in it.
+@Abandoning private ceiling(path: List<String>, environment: Environment): Option<(Symbol, List<String>)> = {
+  namespace = environment.definitions.namespace
+  path.mapIndexed { i, _ -> path.take(path.size - i) }.mapNotNull { p ->
+    when (namespace.table.modules.get(p.joinToString("."))) {
+      Some(DeclaredModule(m)) -> {
+        effects = Annotations.effectsOf(m.declaration.annotations, Place(m.file, m.path), m.declaration.at, namespace)
+        if (effects.isEmpty()) None else Some((m, effects))
+      }
+      else -> None
+    }
+  }.firstOrNone()
+}
+
+// What a module's effects let its functions do, for messages: do @Console, or be pure for @Pure.
+private allows(effects: List<String>): String = {
+  doing = effects.filter { it != "fckt.lang.Pure" }
+  if (doing.isEmpty()) "be pure" else "do ${Doings.shown(doing)}"
+}
+
+// Checks a function's body, as code that does its row; an external's is OCaml, trusted to do what it
+// says, and, if it's @Mutating, to change what it's given.
+@Solving @Abandoning @Covering private checkBody(s: Signature, environment: Environment): Unit = {
+  f = s.function
+  context = contextOf(f, s.typeVariables, environment)
+  if (Signatures.isExternal(f)) {
+    parameters = when (s.t) {
+      FunctionOf(ps, _, _) -> ps
+      else -> []
+    }
+    unifyRows(s.row, declaredRow(f, parameters, environment))
+    Unit
+  } else when (Signatures.bodyOf(f)) {
+    None -> Unit
+    Some(body) -> doingIn(s.row, context) {
+      when (s.t) {
+        FunctionOf(parameterTypes, result, _) -> {
+          scope = Signatures.parametersOf(f).getOrElse([]).zip(parameterTypes).fold(Scopes.empty) { scope, entry ->
+            (p, t) = entry
+            Scopes.bind(scope, p.name, Local(t))
+          }
+          check(body, result, scope, context)
+        }
+        other -> check(body, other, Scopes.empty, context)
+      }
+    }
+  }
+}
+
+// What's known once the function's checked: its type, generic in its own unknowns, as what it does
+// is seen by its callers, without changing values that never left it. Its declared type parameters
+// must have stayed unknown, each its own. A top-level value isn't generic, as OCaml's value
+// restriction wouldn't make most generic either, and lives as long as the program, as do the values
+// it holds.
+@Solving @Abandoning private withScheme(s: Signature, done: Row, known: Known): Known = {
+  f = s.function
+  checkTypeParametersStayed(s)
+  t = resolvedFully(when (s.t) {
+    FunctionOf(parameters, result, _) -> FunctionOf(parameters, result, done)
+    other -> other
+  })
+  isValue = !Signatures.isFunction(f)
+  if (isValue) regionsIn(t, None).forEach { r ->
+    when (r) {
+      Variable(_) -> {
+        unify(r, globalRegion)
+        Unit
+      }
+      else -> Unit
+    }
+  } else Unit
+  final = resolvedFully(t)
+  scheme = if (isValue) Scheme([], final) else Scheme(variablesIn(final), final)
+  variables = s.typeVariables.filter { name, _ -> !name.startsWith("@") }.mapNotNull { name, v ->
+    when (resolved(Variable(v))) {
+      Variable(w) -> Some((name, w))
+      else -> None
+    }
+  }.toMap()
+  Known(known.schemes.put(f.name, scheme), known.typeParameterVariables.put(f.name, variables), emptyMap(), emptyMap())
+}
+
+// That each declared type parameter stayed unknown, and none is another: id<T>(x: T): Int = x is
+// wrong. An effect parameter's is a row, which must be only its own rest: any effects.
+@Solving @Abandoning private checkTypeParametersStayed(s: Signature): Unit = {
+  f = s.function
+  s.typeVariables.fold([]) { seen, entry ->
+    (name, v) = entry
+    if (name.startsWith("@")) {
+      row = asRow(Variable(v))
+      when (row.rest) {
+        Some(rest) if row.labels.isEmpty() && !seen.contains(Variable(rest)) -> seen + [Variable(rest)]
+        _ -> abandon(Diagnostic(f.file.source.path, f.declaration.at,
+          "effect parameter $name of '${Symbols.simpleName(f)}' always does ${Doings.shown(row.labels.map { it.name })} here"))
+      }
+    } else when (resolved(Variable(v))) {
+      Variable(w) if !seen.contains(Variable(w)) -> seen + [Variable(w)]
+      other -> abandon(Diagnostic(f.file.source.path, f.declaration.at, "type parameter $name of '${f.name}' is always ${TypeText.shown(other)} here"))
+    }
+  }
+  Unit
+}
+
+// What a function does as its callers see it: without changes to regions its type doesn't mention,
+// values made inside it that never left it, which no one else can see change. Its row is its own,
+// which its parameters' function types share, so that doesn't count as mentioning them.
+@Solving masked(row: Row, t: Type): Row = {
+  flat = flattened(row)
+  visible = regionsIn(t, Some(row))
+  Row(flat.labels.filter { label ->
+    // A written @Mutating says nothing about where, so it stays.
+    label.name != Types.mutating || when (label.arguments) {
+      [region, *_] -> when (resolved(region)) {
+        Variable(v) -> visible.contains(Variable(v))
+        _ -> true
+      }
+      [] -> true
+    }
+  }, flat.rest)
+}
+
+// The regions a type mentions, in its values' types and in what its functions change, but not in
+// the row given, whose changes aren't seen through it.
+@Solving regionsIn(t: Type, skip: Option<Row>): List<Type> = regionsInto(t, skip, []).distinct()
+
+@Solving private regionsInto(t: Type, skip: Option<Row>, found: List<Type>): List<Type> = when (resolved(t)) {
+  Named(_, arguments, region) -> arguments.fold(found + region.map { r -> [resolved(r)] }.getOrElse([])) { acc, a -> regionsInto(a, skip, acc) }
+  Effects(row) -> found + rowRegions(row, skip)
+  FunctionOf(parameters, result, effects) -> {
+    inside = regionsInto(result, skip, parameters.fold(found) { acc, p -> regionsInto(p, skip, acc) })
+    if (skip.map { own -> flattened(own) == flattened(effects) }.getOrElse(false)) inside else inside + rowRegions(effects, skip)
+  }
+  Abstract(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
+  SpecOwnType(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
+  ModuleValue(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
+  Handler(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
+  TupleOf(elements) -> elements.fold(found) { acc, e -> regionsInto(e, skip, acc) }
+  else -> found
+}
+
+// The regions a row's changes are to, but those the row given changes too: a parameter's row can
+// hold the function's own, which isn't seen through it.
+@Solving private rowRegions(row: Row, skip: Option<Row>): List<Type> = {
+  own = skip.map { s -> flattened(s).labels }.getOrElse([])
+  flattened(row).labels.filter { label -> own.none { sameEffect(it, label) } }.mapNotNull { label ->
+    label.arguments.firstOrNone().map { resolved(it) }
+  }
+}
+
+// That a when's patterns match every value of its subject, as Kotlin requires of a when over a type
+// with cases.
+@Solving @Abandoning checkCovers(pending: PendingWhen, environment: Environment): Unit = {
+  subject = resolvedFully(pending.subject)
+  missing = Coverage.missing(pending.patterns, subject, t -> alternativesOf(t, environment))
+  if (missing.isEmpty()) Unit
+  else when (missing) {
+    [Matches(None, _)] -> {
+      what = when (resolved(subject)) {
+        Variable(_) -> "every value"
+        other -> "every ${TypeText.shown(other)}"
+      }
+      abandon(Diagnostic(pending.file, pending.at, "this when doesn't cover $what; add an else"))
+    }
+    else -> {
+      shown = missing.map { Coverage.shown(it) }
+      listed = if (shown.size > 10) shown.take(8).joinToString(", ") + " and ${shown.size - 8} more" else shown.joinToString(", ")
+      abandon(Diagnostic(pending.file, pending.at, "this when doesn't cover $listed; add ${if (shown.size == 1) "it" else "them"}, or an else"))
+    }
+  }
+}
+
+// The shapes a value of a type can have, with their fields' types; None if they can't all be listed.
+@Solving @Abandoning private alternativesOf(t: Type, environment: Environment): Option<List<Alternative<Type>>> = {
+  definitions = environment.definitions
+  table = definitions.namespace.table
+  when (resolved(t)) {
+    Named(name, arguments, region) -> when (table.caseTypes.get(name)) {
+      Some(caseType) -> Some(Conversion.casesWithFields(caseType, arguments, region, definitions).map { c, fields ->
+        Alternative(CaseShape(c.origin.name, c.definition.name), fields)
+      })
+      None -> when (table.records.get(name)) {
+        Some(record) -> Some([Alternative(RecordShape(record.name), Conversion.recordFields(record, arguments, region, definitions))])
+        None -> when ((name, arguments)) {
+          ("List", [element]) -> Some([Alternative(EmptyList, []), Alternative(NonEmptyList, [element, resolved(t)])])
+          ("Option", [element]) -> Some([Alternative(CaseShape("", "Some"), [element]), Alternative(CaseShape("", "None"), [])])
+          ("Result", [value, error]) -> Some([Alternative(CaseShape("", "Ok"), [value]), Alternative(CaseShape("", "Error"), [error])])
+          ("Boolean", []) -> Some([Alternative(BooleanShape(true), []), Alternative(BooleanShape(false), [])])
+          else -> None
+        }
+      }
+    }
+    TupleOf(elements) -> Some([Alternative(TupleShape(elements.size), elements)])
+    else -> None
+  }
+}

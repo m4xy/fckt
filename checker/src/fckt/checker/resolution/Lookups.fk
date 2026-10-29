@@ -1,0 +1,58 @@
+import fckt.collections.Maps.*
+import fckt.checker.symbols.*
+
+// Looking a name up among declarations of one kind, from a place: what each later stage asks.
+// Records, types with cases and aliases are alike, so a name two imports bring in as one of each
+// is as unclear as two of one kind.
+module Lookups {
+  record(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    ofType(name, namespace.table.records, place, namespace, strictness)
+
+  caseType(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    ofType(name, namespace.table.caseTypes, place, namespace, strictness)
+
+  alias(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    ofType(name, namespace.table.aliases, place, namespace, strictness)
+
+  spec(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    ofKind(name, namespace.table.specs, place, namespace, strictness)
+
+  annotationType(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    ofKind(name, namespace.table.annotationTypes, place, namespace, strictness)
+
+  function(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    ofKind(name, namespace.table.functions, place, namespace, strictness)
+
+  moduleNamed(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<ModuleSymbol> = {
+    modules = namespace.table.modules
+    Names.find(name, modules, m -> when (m) {
+      DeclaredModule(s) -> Some(s)
+      PackageModule(_) -> None
+    }, full -> modules.containsKey(full), place, namespace, strictness)
+  }
+
+  // A record, then a type with cases, then an alias, of the name: the first kind that has it, or
+  // refuses it.
+  anyType(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    when (record(name, place, namespace, strictness)) {
+      NotFound -> when (caseType(name, place, namespace, strictness)) {
+        NotFound -> alias(name, place, namespace, strictness)
+        other -> other
+      }
+      other -> other
+    }
+
+  private ofType(name: String, entries: Map<String, Symbol>, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> = {
+    table = namespace.table
+    Names.find(name, entries, s -> Some(s), full -> table.records.containsKey(full) || table.caseTypes.containsKey(full) || table.aliases.containsKey(full), place, namespace, strictness)
+  }
+
+  private ofKind(name: String, entries: Map<String, Symbol>, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+    Names.find(name, entries, s -> Some(s), full -> entries.containsKey(full), place, namespace, strictness)
+
+  // What a lookup found, if anything.
+  found<A>(lookup: Lookup<A>): Option<A> = when (lookup) {
+    Found(a) -> Some(a)
+    else -> None
+  }
+}

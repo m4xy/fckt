@@ -1,0 +1,5 @@
+import fckt.parser.SpecValue
+import fckt.checker.symbols.Symbol
+
+// One of a handled effect's operations: the effect, and the operation as the effect declares it.
+type Operation(effect: Symbol, value: SpecValue)

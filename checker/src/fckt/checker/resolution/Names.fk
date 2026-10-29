@@ -56,7 +56,7 @@ module Names {
 
   // How far out from the place's module, by how many of its path's names are kept, the name is
   // looked for: out to its package, and from the top if it's written in full from a package.
-  private reach(name: String, place: Place, table: SymbolTable): List<Int> = {
+  reach(name: String, place: Place, table: SymbolTable): List<Int> = {
     depth = packageDepth(place.path, 0, table)
     first = name.split(".").firstOrNone().getOrElse(name)
     full = depth > 0 && isPackage(first, table)

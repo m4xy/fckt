@@ -1,11 +1,21 @@
 // Collecting what's wrong, and carrying on after it.
 module Diagnostics {
+  // The errors, each once, in the order they're written: by file, the program's own first, then
+  // line and column.
+  ordered(diagnostics: List<Diagnostic>): List<Diagnostic> =
+    diagnostics.distinct().sortedBy { d -> (d.file.getOrElse(""), d.at.line, d.at.column) }
+
   // What block gives, with every error it reports, in the order it reports them.
   collecting<A>(block: @Reporting () -> A): (A, List<Diagnostic>) = {
     var found = []
     result = Reporting(report = diagnostic -> { found = found + [diagnostic] }) { block() }
     (result, found)
   }
+
+  // What block gives, or, if it gives up, why, reported to no one: for code that tries something,
+  // and says something else if it fails.
+  attempting<A>(block: @Abandoning () -> A): Result<A, Diagnostic> =
+    Abandoning(abandon = (diagnostic, _) -> Error(diagnostic)) { Ok(block()) }
 
   // What block gives, or, if it gives up, None, with why it did reported.
   @Reporting recovering<A>(block: @Abandoning () -> A): Option<A> =

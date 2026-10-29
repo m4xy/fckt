@@ -1,0 +1,121 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// Lambdas, and blocks written after a call, which are its last argument. What a lambda's body does
+// is what calling it does, not what the code around it does. What's expected tells its parameters'
+// types, unless they're written.
+
+@Inferring inferLambda(
+  at: Position,
+  parameters: Option<List<Parameter>>,
+  body: Expression,
+  ignoresArguments: Boolean,
+  trailing: Boolean,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Type = {
+  expectedFunction = expected.flatMap { t ->
+    when (resolved(t)) {
+      FunctionOf(ps, r, row) -> Some(FunctionOf(ps, r, row))
+      else -> None
+    }
+  }
+  row = when (expectedFunction) {
+    Some(FunctionOf(_, _, effects)) -> effects
+    else -> Row([], Some(fresh()))
+  }
+  written = parameters.getOrElse([])
+  if (ignoresArguments) ignoringArguments(body, expectedFunction, row, scope, context)
+  else when ((trailing, expectedFunction)) {
+    (true, Some(FunctionOf(wanted, result, _))) if written.isEmpty() && wanted.size == 1 -> {
+      // A block given one parameter calls it it.
+      t = wanted.getOrNone(0).getOrElse(Variable(fresh()))
+      inner = Scopes.bind(Scopes.inside(scope), "it", Local(t, None, None, Scopes.lookup(scope, "it").isSome()))
+      doingIn(row, context) { check(body, result, inner, context) }
+      FunctionOf([t], result, row)
+    }
+    (true, Some(FunctionOf(wanted, _, _))) if written.isNotEmpty() && wanted.isEmpty() -> abandon(Globals.problem(context, at,
+      "this block takes no parameters, as it's run with none: to give back a function, write { (${written.map { it.name }.joinToString(", ")} -> ...) }"))
+    (true, Some(FunctionOf(wanted, _, _))) if written.isEmpty() && wanted.size > 1 -> abandon(Globals.problem(context, at,
+      "this block is given ${wanted.size} parameters, so it has no 'it': name them, { ${"abcdefghijklmnopqrstuvwxyz".toList().take(wanted.size).map { "$it" }.joinToString(", ")} -> ... }"))
+    else -> {
+      checkDistinct(written.map { p -> (p.name, p.at) }, context)
+      when (expectedFunction) {
+        Some(FunctionOf([tuple], result, _)) if written.size > 1 -> takingApart(at, written, tuple, result, row, body, scope, context)
+        else -> withParameters(written, expectedFunction, row, body, scope, context)
+      }
+    }
+  }
+}
+
+// ~body, which ignores what it's given: as many parameters as are expected.
+@Inferring private ignoringArguments(body: Expression, expectedFunction: Option<Type>, row: Row, scope: Scope, context: Context): Type = {
+  (parameters, result) = when (expectedFunction) {
+    Some(FunctionOf(ps, r, _)) -> (ps, r)
+    else -> ([], Variable(fresh()))
+  }
+  doingIn(row, context) { check(body, result, scope, context) }
+  FunctionOf(parameters, result, row)
+}
+
+// Several parameters where one is expected take apart a tuple, as pairs.map((k, v) -> ...) does.
+@Inferring private takingApart(at: Position, written: List<Parameter>, tuple: Type, result: Type, row: Row, body: Expression, scope: Scope, context: Context): Type = {
+  parts = when (resolved(tuple)) {
+    TupleOf(elements) ->
+      if (elements.size != written.size) abandon(Globals.problem(context, at,
+        "this function is given a tuple of ${elements.size}, so it takes ${elements.size} parameters, not ${written.size}"))
+      else elements
+    _ -> {
+      made = written.map { Variable(fresh()) }
+      expect(tuple, TupleOf(made), at, context)
+      made
+    }
+  }
+  inner = written.zip(parts).fold(Scopes.inside(scope)) { s, entry ->
+    (p, part) = entry
+    p.parameterType.forEach { declared -> expect(part, parameterType(declared, row, context), p.at, context) }
+    Scopes.bind(s, p.name, Local(part))
+  }
+  doingIn(row, context) { check(body, result, inner, context) }
+  FunctionOf([tuple], result, row)
+}
+
+// Each parameter of the type written for it, or else the one expected, or else unknown.
+@Inferring private withParameters(written: List<Parameter>, expectedFunction: Option<Type>, row: Row, body: Expression, scope: Scope, context: Context): Type = {
+  (hintedParameters, hintedResult) = when (expectedFunction) {
+    Some(FunctionOf(ps, r, _)) if ps.size == written.size -> (Some(ps), Some(r))
+    else -> (None, None)
+  }
+  types = written.mapIndexed { i, p ->
+    declared = p.parameterType.map { parameterType(it, row, context) }
+    hinted = hintedParameters.flatMap { ps -> ps.getOrNone(i) }
+    when ((declared, hinted)) {
+      (Some(d), Some(h)) -> {
+        expect(h, d, p.at, context)
+        d
+      }
+      (Some(d), None) -> d
+      (None, Some(h)) -> h
+      (None, None) -> Variable(fresh())
+    }
+  }
+  inner = written.zip(types).fold(Scopes.inside(scope)) { s, entry ->
+    (p, t) = entry
+    Scopes.bind(s, p.name, Local(t))
+  }
+  result = hintedResult.getOrElse(Variable(fresh()))
+  doingIn(row, context) { check(body, result, inner, context) }
+  FunctionOf(types, result, row)
+}
+
+// A parameter's written type, where a function type without effects does what the lambda does.
+@Solving @Abandoning parameterType(t: TypeRef, row: Row, context: Context): Type =
+  Conversion.typeOf(t, TypeContext(context.place, context.typeParameters, None, Some(row)), context.environment.definitions)
+
+// What block gives, checked as code that does the row.
+@Solving @Abandoning doingIn<A>(row: Row, context: Context, block: @Doing () -> A): A = Doings.doing(row, context.place.file.source.path, block)

@@ -1,0 +1,124 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.*
+
+// Operators. && and || take Booleans; == and != any two values of a type; + joins lists and
+// strings; and the rest are numbers', an Int becoming a Float beside one, or, for a type whose
+// operators are its own, as a Set's are, its operator method: a + b is a.plus(b).
+
+@Inferring inferBinary(at: Position, operator: String, left: Expression, right: Expression, scope: Scope, context: Context): Type = when (operator) {
+  "&&" -> logical(left, right, scope, context)
+  "||" -> logical(left, right, scope, context)
+  "==" -> equality(at, left, right, scope, context)
+  "!=" -> equality(at, left, right, scope, context)
+  else -> arithmetic(at, operator, left, right, scope, context)
+}
+
+@Inferring private logical(left: Expression, right: Expression, scope: Scope, context: Context): Type = {
+  check(left, boolean, scope, context)
+  check(right, boolean, scope, context)
+  boolean
+}
+
+// Two values of a type; different types with cases compare as the smallest one that has both,
+// as Alphabet.E == vowel does.
+@Inferring private equality(at: Position, left: Expression, right: Expression, scope: Scope, context: Context): Type = {
+  l = infer(left, None, scope, context)
+  r = infer(right, Some(l.t), scope, context)
+  (x, y) = (caseTypeOf(l.t, context), caseTypeOf(r.t, context))
+  if (x.isSome() && y.isSome() && x != y) {
+    join([(left, l), (right, r)], at, context)
+    Unit
+  } else assign(right, r, l.t, context)
+  boolean
+}
+
+@Inferring private arithmetic(at: Position, operator: String, left: Expression, right: Expression, scope: Scope, context: Context): Type = {
+  leftTyped = infer(left, None, scope, context)
+  l = resolved(leftTyped.t)
+  method = References.operatorMethods.lookup(operator)
+  ownOperator = method.filter { m -> ownsOperators(l) && Globals.extensionsNamed(m, context).any { s -> Signatures.isOperator(s) && fitsReceiver(s, l, context) } }
+  when (ownOperator) {
+    Some(m) -> operatorCall(operator, at, left, leftTyped, m, [right], scope, context)
+    None -> numbers(at, operator, method, left, l, right, scope, context)
+  }
+}
+
+@Inferring private numbers(at: Position, operator: String, method: Option<String>, left: Expression, l: Type, right: Expression, scope: Scope, context: Context): Type = {
+  hint = when (l) {
+    Variable(_) -> None
+    else -> Some(l)
+  }
+  r = resolved(infer(right, hint, scope, context).t)
+  isArithmetic = ["+", "-", "*", "/", "%"].contains(operator)
+  if (operator == "+" && (isNamed(l, "List") || isNamed(r, "List"))) {
+    expect(r, l, Defaults.positionOf(right), context)
+    l
+  } else if (operator == "+" && (isNamed(l, "String") || isNamed(r, "String"))) {
+    expect(l, string, Defaults.positionOf(left), context)
+    expect(r, string, Defaults.positionOf(right), context)
+    string
+  } else {
+    // Unknown operands are settled from the other side, or, for arithmetic, are Ints.
+    when ((l, r)) {
+      (Variable(_), Variable(_)) -> {
+        unify(l, r)
+        if (isArithmetic) unify(l, int) else true
+        Unit
+      }
+      (Variable(_), _) -> {
+        unify(l, r)
+        Unit
+      }
+      (_, Variable(_)) -> {
+        unify(r, l)
+        Unit
+      }
+      else -> Unit
+    }
+    (x, y) = (resolved(l), resolved(r))
+    if (isNumeric(x) && isNumeric(y)) {
+      if (!isArithmetic) boolean
+      else if (isNamed(x, "Float") || isNamed(y, "Float")) float
+      else int
+    } else if (isArithmetic) {
+      why = method.filter { ownsOperators(x) }.map { m -> ": ${noOperator(operator, m, x, context)}" }.getOrElse("")
+      abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(x)} and ${TypeText.shown(y)}$why"))
+    } else {
+      expect(y, x, Defaults.positionOf(right), context)
+      boolean
+    }
+  }
+}
+
+private isNumeric(t: Type): Boolean = isNamed(t, "Int") || isNamed(t, "Float")
+
+// Whether the type's operators are its own, as a Set's are: not a number's, a string's or a list's.
+ownsOperators(t: Type): Boolean = when (t) {
+  Named(name, _, _) -> !["Int", "Float", "String", "List"].contains(name)
+  Variable(_) -> false
+  FunctionOf(_, _, _) -> false
+  Effects(_) -> false
+  else -> true
+}
+
+// a + b, where a's type has its own +, as a.plus(b): a call to an operator extension of the
+// method, with the operand, already worked out, as its receiver.
+@Inferring operatorCall(operator: String, at: Position, operand: Expression, operandTyped: Typed, method: String, arguments: List<Expression>, scope: Scope, context: Context): Type = {
+  t = resolved(operandTyped.t)
+  notOperator = () -> abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(t)}: its $method isn't an operator; mark it operator to use '$operator' for it"))
+  when (extensionFor(at, method, t, context)) {
+    Some(s) if Signatures.isOperator(s) ->
+      callExtension(at, at, operand, s, t, arguments.map { CallArgument(None, WrittenValue(it)) }, [], scope, context)
+    else -> notOperator()
+  }
+}
+
+// Why the operator can't be applied to a type whose operators are its own, as its method.
+@Solving @Abandoning noOperator(operator: String, method: String, t: Type, context: Context): String =
+  if (Globals.extensionsNamed(method, context).any { fitsReceiver(it, t, context) }) "its $method isn't an operator; mark it operator to use '$operator' for it"
+  else "there's no operator $method"

@@ -318,9 +318,11 @@ parser, token for token and declaration for declaration, over the conformance ca
 std, the examples, and these libraries, their own source among them.
 
 [fckt.checker](checker) is the checker, being written the same way, a stage at a time: reading
-the files a program uses, naming its declarations, and working out what its names mean, then what
-type everything is. `NamesTest` holds it to this compiler over the conformance cases and every
-package here: each type's name must mean the same declaration.
+the files a program uses, filling in what its declarations say, naming them, working out what its
+names mean, then what type everything is and what it does. `NamesTest`, `TypesTest` and
+`CheckerErrorsTest` hold it to this compiler over the conformance cases and every package here:
+each type's name must mean the same declaration, each function have the same type, and each case
+the compiler rejects give the same errors.
 
 ## Building a project
 

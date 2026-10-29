@@ -1,0 +1,4 @@
+import fckt.collections.Maps.*
+
+// The names bound where code is: those bound in the innermost block or pattern, and those around it.
+type Scope(own: Map<String, Local>, outer: Option<Scope>)

@@ -1,0 +1,5 @@
+// Each when with a subject, handed on to be checked for covering every value once the types around
+// it are known.
+effect Covering {
+  cover(pending: PendingWhen): Unit
+}

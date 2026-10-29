@@ -1,0 +1,69 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.Position
+
+// Checking code as code that does a row of effects, as a function's or a lambda's body does.
+module Doings {
+  // What block gives, checked as code that does the row: each thing it does is added to the row,
+  // which must have room for it. What's someone else's to say, as a parameter's effects, an E, are,
+  // is added once the code is checked, as the rest of its own, so the code does what it does itself
+  // and E, rather than E being made to hold all it does. Errors are in the file given.
+  @Solving @Abandoning doing<A>(row: Row, file: Option<String>, block: @Doing () -> A): A = {
+    var included: List<(TypeVariable, Position)> = []
+    result = Doing(perform = (performed, at) -> {
+      flat = flattened(performed)
+      own = flattened(row).rest
+      when (flat.rest) {
+        Some(rest) if Some(rest) != own -> {
+          included = included + [(rest, at)]
+          performIn(Row(flat.labels, None), row, at, file)
+        }
+        else -> performIn(performed, row, at, file)
+      }
+    }) { block() }
+    include(row, included, file)
+    result
+  }
+
+  // Adds what the row does to effects, the code's: a row with no rest of its own gets one, so the
+  // code can do other things too. It fails only where the code must do no more than a written type
+  // says: a lambda given where an @Console (String) -> Unit is wanted can't also write files.
+  @Solving @Abandoning private performIn(performed: Row, effects: Row, at: Position, file: Option<String>): Unit = {
+    flat = flattened(performed)
+    own = flattened(effects).rest
+    // Doing what may include what the function does anyway, as a parameter's @Fail () -> A does, is
+    // doing its own effects.
+    open = if (flat.rest.isNone() || flat.rest == own) Row(flat.labels, Some(fresh())) else performed
+    if (!unifyRows(open, effects)) {
+      allowed = effectNames(effects)
+      extra = flat.labels.map { it.name }.filter { !allowed.contains(it) }.distinct()
+      can = if (allowed.isEmpty()) "says it's pure" else "says it can only do ${shown(allowed)}"
+      abandon(Diagnostic(file, at, "this does ${shown(extra)}, but the type of the function it's in $can"))
+    } else Unit
+  }
+
+  // Adds each rest that's someone else's to the row, now nothing more of the code's own will be.
+  @Solving @Abandoning private include(row: Row, rests: List<(TypeVariable, Position)>, file: Option<String>): Unit = rests.forEach { entry ->
+    (v, at) = entry
+    theirs = flattened(Row([], Some(v)))
+    if (theirs.labels.isNotEmpty()) performIn(Row(theirs.labels, None), row, at, file) else Unit
+    own = flattened(row).rest
+    when (theirs.rest, own) {
+      (None, _) -> Unit
+      (Some(rest), Some(mine)) if rest == mine -> Unit
+      // Closed: E may do only what the row says.
+      (Some(rest), None) -> if (!unifyRows(Row([], Some(rest)), row)) performIn(Row([], Some(rest)), row, at, file) else Unit
+      // Open: the row's rest is E, with whatever else gets added to it.
+      (Some(rest), Some(mine)) -> {
+        unify(Variable(mine), Variable(rest))
+        Unit
+      }
+    }
+  }
+
+  // Effects as they're written: @Console @FileSystem.
+  shown(names: List<String>): String = names.distinct().sorted().map { "@" + it.split(".").lastOrNone().getOrElse(it) }.joinToString(" ")
+}

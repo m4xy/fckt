@@ -1,0 +1,120 @@
+import fckt.collections.Maps.*
+import fckt.checker.annotations.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// Modules as values. A module that follows a handled effect's spec is a handler for it; one that
+// follows another spec is a value of that spec, which shows only what the spec says: so what its
+// functions do must be what the spec says they may.
+
+// What a module named as a value is.
+@Inferring moduleAsValue(m: ModuleSymbol, at: Position, context: Context): Type = when (m) {
+  DeclaredModule(s) -> when (context.environment.moduleSpecs.get(s.name)) {
+    Some(spec) if Annotations.isEffect(spec, context.environment.definitions.namespace) -> moduleHandler(s, spec, at, context)
+    _ -> moduleValue(s, at, context)
+  }
+  PackageModule(name) -> abandon(Globals.problem(context, at,
+    "${name.split(".").lastOrNone().getOrElse(name)} is a module, which is a value only of a spec it follows: module ${name.split(".").lastOrNone().getOrElse(name)} : Spec { ... }"))
+}
+
+// Whether the module follows a handled effect's spec.
+isEffectModule(m: ModuleSymbol, context: Context): Boolean = when (m) {
+  DeclaredModule(s) -> context.environment.moduleSpecs.get(s.name).map { spec -> Annotations.isEffect(spec, context.environment.definitions.namespace) }.getOrElse(false)
+  PackageModule(_) -> false
+}
+
+// The module, as a value of the spec it follows: what its own types are, as Point is a Format's T.
+@Inferring private moduleValue(m: Symbol, at: Position, context: Context): Type = {
+  own = Symbols.simpleName(m)
+  isFunctor = when (m.declaration.definition) {
+    ModuleDefinition(_, _, [_, *_], _, _) -> true
+    else -> false
+  }
+  if (isFunctor) abandon(Globals.problem(context, at, "$own is a functor; give it modules first: $own(...)")) else Unit
+  when (context.environment.moduleSpecs.get(m.name)) {
+    None -> abandon(Globals.problem(context, at, "$own is a module, which is a value only of a spec it follows: module $own : Spec { ... }"))
+    Some(spec) -> {
+      table = context.environment.definitions.namespace.table
+      ownTypes = specTypeNames(spec).map { t ->
+        typeDeclaration = table.records.get("${m.name}.$t").orElse { table.caseTypes.get("${m.name}.$t") }.orElse { table.aliases.get("${m.name}.$t") }
+        when (typeDeclaration) {
+          Some(d) -> Conversion.declared(d, [], Globals.typeContext(context), context.environment.definitions)
+          None -> abandon(Globals.problem(context, at, "$own doesn't say what its $t is"))
+        }
+      }
+      t = Conversion.moduleType(spec, at, ownTypes, Globals.typeContext(context), context.environment.definitions)
+      specValues(spec).forEach { value ->
+        context.environment.functions.get("${m.name}.${value.name}").forEach { f ->
+          done = when (resolved(Globals.typeOf(f, at, context))) {
+            FunctionOf(_, _, effects) -> effectNames(effects)
+            else -> []
+          }
+          extra = done.filter { !specEffects(spec, value, context).contains(it) }.distinct()
+          if (extra.isNotEmpty() && !hides(spec, value, context)) {
+            specName = Symbols.simpleName(spec)
+            abandon(Globals.problem(context, at,
+              "$own can't be a $specName value: its ${value.name} does ${Doings.shown(extra)}, which $specName's ${value.name} doesn't say it can, " +
+                "and a value shows only what the spec says"))
+          } else Unit
+        }
+      }
+      t
+    }
+  }
+}
+
+// The names of a spec's own types.
+specTypeNames(spec: Symbol): List<String> = when (spec.declaration.definition) {
+  SpecDefinition(types, _, _, _, _) -> types.map { it.name }
+  else -> []
+}
+
+// What a module given as a value has of the name, as its spec says, with the spec's own types as the
+// value's type says they are.
+@Solving moduleValueMember(specName: String, arguments: List<Type>, name: String, context: Context): Option<FieldReference> =
+  context.environment.definitions.namespace.table.specs.get(specName).flatMap { spec ->
+    specValues(spec).find { it.name == name }.flatMap { value ->
+      context.environment.specTypes.get(spec.name).flatMap { types -> types.values.get(value.name) }.map { scheme ->
+        names = specTypeNames(spec)
+        ModuleMember(spec, value, withOwnTypes(instantiate(scheme), names, arguments))
+      }
+    }
+  }
+
+// A type a spec says, with each of the spec's own types, by name, as given in order.
+@Solving withOwnTypes(t: Type, names: List<String>, given: List<Type>): Type = when (resolved(t)) {
+  SpecOwnType(name, _) -> given.getOrNone(names.indexOf(name)).getOrElse(t)
+  Named(n, arguments, region) -> Named(n, arguments.map { withOwnTypes(it, names, given) }, region)
+  Abstract(n, arguments) -> Abstract(n, arguments.map { withOwnTypes(it, names, given) })
+  ModuleValue(n, arguments) -> ModuleValue(n, arguments.map { withOwnTypes(it, names, given) })
+  Handler(n, arguments) -> Handler(n, arguments.map { withOwnTypes(it, names, given) })
+  TupleOf(elements) -> TupleOf(elements.map { withOwnTypes(it, names, given) })
+  FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { withOwnTypes(it, names, given) }, withOwnTypes(result, names, given), effects)
+  other -> other
+}
+
+// The effects a spec's value may do: what it says, or else what its spec says.
+@Abandoning specEffects(spec: Symbol, value: SpecValue, context: Context): List<String> = {
+  namespace = context.environment.definitions.namespace
+  place = Annotations.placeOf(spec)
+  own = Annotations.effectsOf(value.annotations, place, value.at, namespace)
+  if (own.isEmpty()) Annotations.effectsOf(spec.declaration.annotations, place, spec.declaration.at, namespace) else own
+}
+
+// Whether what a module following the spec does beyond what the value says stays inside it: so for
+// a spec annotated with an @Encapsulates annotation, as @Repository may be, unless the value says
+// what it does itself.
+@Abandoning hides(spec: Symbol, value: SpecValue, context: Context): Boolean = {
+  namespace = context.environment.definitions.namespace
+  place = Annotations.placeOf(spec)
+  encapsulates = "fckt.lang.Encapsulates"
+  Annotations.effectsOf(value.annotations, place, value.at, namespace).isEmpty() &&
+    Annotations.reached(spec.declaration.annotations, place, spec.declaration.at, namespace).any { r ->
+      r.declaration.name == encapsulates || Annotations.isMarked(r.declaration, encapsulates, namespace)
+    }
+}
