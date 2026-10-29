@@ -2583,4 +2583,28 @@ class CompilerTest {
         )
         assertEquals("ran\nran\n", output)
     }
+
+    @Test
+    fun `a block after a call is its last parameter's, those before it left to their defaults`() {
+        val output = run(
+            """
+            module Greeting {
+              greet(name: String = "you", punctuation: String = "!", say: (String) -> String): String = say(name) + punctuation
+            }
+
+            twice(times: Int = 2, f: () -> String): String = if (times <= 1) f() else f() + " " + twice(times - 1, f)
+
+            String.framed(left: String = "[", right: String = "]", inside: (String) -> String): String = left + inside(this) + right
+
+            @Console main() = {
+              println(Greeting.greet { "hello ${'$'}it" })
+              println(Greeting.greet("Ada") { "hi ${'$'}it" })
+              println(twice { "again" })
+              println("x".framed { it + it })
+              println("x".framed("<") { it })
+            }
+            """.trimIndent(),
+        )
+        assertEquals("hello you!\nhi Ada!\nagain again\n[xx]\n<x]\n", output)
+    }
 }

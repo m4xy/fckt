@@ -613,10 +613,29 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     private fun defaultName(owner: String, name: String) = "$owner\$default\$$name"
 
     /**
+     * A block written after a call, `f(a) { ... }`, is its last parameter's, as in Kotlin, however
+     * many before it are left to their defaults, if each it skips has one: by name, or, for a
+     * method, whose arguments are all in order, after a call to the default of each.
+     */
+    private fun trailingLast(e: Expr.Call, params: List<Pair<String, Boolean>>, owner: String, named: Boolean) {
+        val block = e.args.lastOrNull()?.takeIf { it.name == null && (it.value as? Expr.Lambda)?.trailing == true } ?: return
+        if (e.args.size >= params.size) return
+        // Only where what it skips can be left out: otherwise it's the next one's, as it always was.
+        val skipped = params.subList(e.args.size - 1, params.size - 1)
+        if (skipped.any { !it.second }) return
+        if (named) {
+            e.args = e.args.dropLast(1) + block.copy(name = params.last().first)
+            return
+        }
+        e.args = e.args.dropLast(1) + skipped.map { (name, _) -> Arg(null, Expr.Call(e.pos, Expr.Name(e.pos, defaultName(owner, name)), emptyList())) } + block
+    }
+
+    /**
      * [e] with a call to the default of each of [params] it leaves out that has one: those after
      * the ones passed in order, and not passed by name. [owner] is the full name defaults are named for.
      */
     private fun withDefaultArgs(e: Expr.Call, params: List<Pair<String, Boolean>>, owner: String, named: Boolean = true) {
+        trailingLast(e, params, owner, named)
         val inOrder = e.args.takeWhile { it.name == null }.size
         val byName = e.args.mapNotNull { it.name }.toSet()
         val missing = params.drop(inOrder).filter { (name, hasDefault) -> hasDefault && name !in byName }.map { it.first }

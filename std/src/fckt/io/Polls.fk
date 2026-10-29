@@ -16,11 +16,8 @@ module Polls {
   }
 
   // What block gives, once it and the tasks it launched have ended, each waiting as Polling says,
-  // and run InTurn.
-  @Fail @Clock running<A, @E>(block: @Concurrent<@Polling @Clock @E> @Polling @Clock @E () -> A): A = runningWith(InTurn, block)
-
-  // The same, run as executor runs them.
-  @Fail @Clock runningWith<A, @E>(executor: Executor, block: @Concurrent<@Polling @Clock @E> @Polling @Clock @E () -> A): A = {
+  // and run as executor runs them.
+  @Fail @Clock running<A, @E>(executor: Executor = InTurn, block: @Concurrent<@Polling @Clock @E> @Polling @Clock @E () -> A): A = {
     var waiting: List<(Wait, Waker)> = []
     Polling(
       whenReadable = (d, waker) -> { waiting = waiting + [(Readable(d), waker)] },
