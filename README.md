@@ -250,7 +250,9 @@ their main is made. fk-tests' kiln plugin does this for a project's tests.
 declare, or every package in the `-I` folders: each type that isn't private, with its fields and
 cases, their types by the full names of what they refer to, and the annotations on each, with what
 their arguments resolved to. It's for a program that reads a project's types, as a processor that
-writes code from them does; fckt knows nothing of what it's for.
+writes code from them does; fckt knows nothing of what it's for. Only
+what's declared is checked, not code: a function that says its type is trusted to have it, so code
+can use what's written from the symbols before it's there.
 [fckt.symbols](symbols) reads it, so such a program works with typed values, not lines:
 
 ```

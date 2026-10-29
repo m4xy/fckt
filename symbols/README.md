@@ -22,4 +22,23 @@ The format names its version on its first line, and `SymbolsText` reads only the
 `fckt-symbols 1`, and only the lines that version has, so a program never works from symbols it half
 understood.
 
+## Processors
+
+A processor writes code from a project's symbols: a module that follows `Processor`, from
+`fckt.symbols.processing`, whose `process(symbols)` says the `GeneratedFile`s to write, each a path
+from the folder they go in and its text, or the `Problem`s that stop it, each with where it is. It
+reads and writes nothing itself, so its tests give it `Symbols` and look at what it says.
+`Processing.run(processor, args)` is a main that runs it, given the file of symbols and the folder
+to write to; [kiln](https://github.com/m4xy/kiln) runs a project's processors so, before compiling
+it.
+
+```kotlin
+module Describer : Processor {
+  process(symbols: Symbols): Result<List<GeneratedFile>, List<Problem>> =
+    Ok(symbols.annotatedWith("uk.m4xy.describe.Describe").map { d ->
+      GeneratedFile("${d.simpleName}Description.fk", "module ${d.simpleName}Description { ... }\n")
+    })
+}
+```
+
 `kiln build` here builds and tests it, and `kiln publishLocal` publishes it, as `fckt:symbols:0.1.0`.

@@ -2446,6 +2446,8 @@ class CompilerTest {
             write("shop/Address.fk", "type Address private(line: String)")
             write("shop/Shape.fk", "type Shape<T> { Circle(radius: Double, tag: T), @Named(\"pt\") Point }")
             write("shop/Rounding.fk", "internal module Rounding {\n  internal type Level { Low, High }\n  private type Hidden(n: Int)\n}")
+            // Code isn't checked, only what it declares, so it can use what's generated from the symbols.
+            write("shop/Generated.fk", "import fckt.text.Format\nmodule Generated {\n  user: Format<User> = UserSerializer\n}")
             // A program apart isn't the project's types.
             write("shop/tool.fk", "type Tool(n: Int)\nmain() = println(Tool(1))")
             val symbols = compileSymbols(emptyList(), listOf(dir), emptyList(), others = listOf(STD))

@@ -1,0 +1,10 @@
+import fckt.symbols.Symbols
+
+// What writes code from what a project declares, as a serialization library's writes a serializer
+// for each type annotated for it. It only says what to write: it reads nothing and writes nothing
+// itself, so a test gives it symbols and looks at what it says. kiln runs it before compiling the
+// project, whose code then has what it wrote.
+spec Processor {
+  // The files it writes, or what in the project stops it.
+  process(symbols: Symbols): Result<List<GeneratedFile>, List<Problem>>
+}

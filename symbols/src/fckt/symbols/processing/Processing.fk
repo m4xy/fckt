@@ -1,0 +1,39 @@
+import fckt.io.Paths.*
+import fckt.io.Files.*
+import fckt.io.FileSystem
+import fckt.effects.Fail
+import fckt.symbols.*
+
+// Running a processor, as kiln does: a program whose main is Processing.run(MyProcessor, args),
+// given where fckt --symbols wrote the project's symbols, and the folder to write to, which it
+// empties first, so what it wrote before and wouldn't now is gone.
+module Processing {
+  @FileSystem @Fail run(processor: Processor, args: List<String>): Unit = when (args) {
+    [symbolsFile, folder] -> {
+      symbols = when (SymbolsText.read(path(symbolsFile).readText())) {
+        Ok(read) -> read
+        Error(reason) -> fail("couldn't read the symbols in $symbolsFile: $reason")
+      }
+      when (processor.process(symbols)) {
+        Ok(files) -> {
+          root = path(folder)
+          if (root.exists()) root.delete()
+          root.makeDirs()
+          files.forEach { f ->
+            target = root.resolve(f.path)
+            target.parent.forEach { it.makeDirs() }
+            target.writeText(f.text)
+          }
+        }
+        Error(problems) -> fail(problems.map { problemText(it) }.joinToString("\n"))
+      }
+    }
+    else -> fail("a processor is given the symbols' file and the folder to write to, not ${args.joinToString(" ")}")
+  }
+
+  // A problem as a compiler's error is written: where it is, then what it is.
+  problemText(problem: Problem): String = when (problem.location) {
+    Some(at) -> "${at.file}:${at.line}:${at.column}: error: ${problem.message}"
+    None -> "error: ${problem.message}"
+  }
+}

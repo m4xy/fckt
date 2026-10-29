@@ -6,6 +6,7 @@ import uk.m4xy.fckt.syntax.CompileError
 import uk.m4xy.fckt.syntax.CompileErrors
 import uk.m4xy.fckt.syntax.Copier
 import uk.m4xy.fckt.syntax.Decl
+import uk.m4xy.fckt.syntax.Expr
 import uk.m4xy.fckt.syntax.Import
 import uk.m4xy.fckt.syntax.Lexer
 import uk.m4xy.fckt.syntax.Parser
@@ -313,7 +314,16 @@ fun compileSymbols(packages: List<String>, dirs: List<File>, libraries: List<Fil
     val files = named.flatMap { sources.sourceFiles(it) }.filter { f -> Parser.parse(f.readText(), f.path).decls.none { it is Decl.Function && it.name == "main" } }
     if (files.isEmpty()) return Symbols.write(Checker(SourceFile(emptyList())).check(), emptySet())
     val linked = link(named.joinToString("") { "import ${it.joinToString(".")}.*\n" }, sources)
-    return Symbols.write(Checker(linked.file).check(), files.map { it.path }.toSet())
+    val paths = files.map { it.path }.toSet()
+    // Code isn't checked, only what it declares: as code generated from these symbols isn't there
+    // yet, what uses it would fail. A function that says its type is trusted to have it, as a
+    // library's in its interface is.
+    fun declared(d: Decl): Decl = when {
+        d is Decl.Module -> d.copy(decls = d.decls.map(::declared))
+        d is Decl.Function && d.pos.file in paths && d.returnType != null && d.external == null -> d.copy(body = Expr.Compiled(d.body.pos))
+        else -> d
+    }
+    return Symbols.write(Checker(linked.file.copy(decls = linked.file.decls.map(::declared)), coverage = false).check(), paths)
 }
 
 /** The packages under [root]: each folder below it with a file of code in it, by its path. */

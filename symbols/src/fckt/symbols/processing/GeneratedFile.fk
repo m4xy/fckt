@@ -1,0 +1,3 @@
+// A file of fckt a processor writes: where, from the folder of what it writes, as a package's
+// file is from its root, shop/UserSerializer.fk; and what's in it.
+type GeneratedFile(path: String, text: String)

@@ -1,0 +1,4 @@
+import fckt.symbols.Location
+
+// Something in a project that stops a processor writing its code, and where it is.
+type Problem(message: String, location: Option<Location> = None)
