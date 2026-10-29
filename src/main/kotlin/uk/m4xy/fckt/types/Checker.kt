@@ -2301,7 +2301,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val value = spec.values.first { it.name == decl.simpleName }
         val declared = specEffects(spec, value)
         val hides = hides(spec, value)
-        val done = (inside as? Type.Fn)?.let { Type.effectNames(it.effects) }.orEmpty()
+        // Its own effect parameters, which the spec's function has too: run<@E> doing @E, its block's.
+        val ownEffects = names.map { it.second }.filter { it.startsWith("@") }.map { "#$it" }.toSet()
+        val done = (inside as? Type.Fn)?.let { Type.effectNames(it.effects) }.orEmpty() - ownEffects
         val extra = done - declared
         if (extra.isNotEmpty() && declared.isNotEmpty() && !hides) {
             throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(extra)}, but ${spec.simpleName}'s ${decl.simpleName} doesn't say it can: declare it there, as ${shown(extra)} ${decl.simpleName}(...)")

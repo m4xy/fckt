@@ -2514,7 +2514,7 @@ class CompilerTest {
               log = Mutable([])
               said = (line: String) -> { log.value = log.value + [line] }
               println("${'$'}{attempt {
-                Executor.run {
+                InTurn.run {
                   a = launch { said("a1"); pause(); said("a2") }
                   b = launch { said("b1"); join(a); said("b after a") }
                   said("main")
@@ -2526,7 +2526,7 @@ class CompilerTest {
               println("${'$'}{log.value}")
               // A task parks until another wakes it.
               println("${'$'}{attempt {
-                Executor.run {
+                InTurn.run {
                   waker = Mutable(None)
                   launch { park { waker.value = Some(it) }; println("woken") }
                   launch { pause(); waker.value.forEach { wake(it) }; println("waking") }
@@ -2534,8 +2534,8 @@ class CompilerTest {
                 }
               }}")
               // What nothing will wake fails, rather than waiting for ever.
-              println(when (attempt { Executor.run { park { _ -> Unit } } }) { Ok(_) -> "ended"; Error(reason) -> "stopped: ${'$'}reason" })
-              println(when (attempt { Executor.run { join(launch { park { _ -> Unit } }) } }) { Ok(_) -> "ended"; Error(reason) -> "stopped: ${'$'}reason" })
+              println(when (attempt { InTurn.run { park { _ -> Unit } } }) { Ok(_) -> "ended"; Error(reason) -> "stopped: ${'$'}reason" })
+              println(when (attempt { InTurn.run { join(launch { park { _ -> Unit } }) } }) { Ok(_) -> "ended"; Error(reason) -> "stopped: ${'$'}reason" })
               // Sleeping, the others go on: the shortest wakes first.
               println("${'$'}{attempt {
                 Polls.running {
@@ -2558,5 +2558,29 @@ class CompilerTest {
             ).joinToString("\n") + "\n",
             output,
         )
+    }
+
+    @Test
+    fun `a spec's function can take an effect parameter, which a module's does as the spec's would`() {
+        val output = run(
+            """
+            spec Runner {
+              go<@E>(work: @E () -> Unit): Unit
+            }
+
+            module Twice : Runner {
+              go<@E>(work: @E () -> Unit): Unit = {
+                work()
+                work()
+              }
+            }
+
+            // Given as a value, it does what the work does.
+            @Console runWith(runner: Runner) = runner.go { println("ran") }
+
+            @Console main() = runWith(Twice)
+            """.trimIndent(),
+        )
+        assertEquals("ran\nran\n", output)
     }
 }
