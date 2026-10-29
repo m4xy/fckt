@@ -2182,6 +2182,18 @@ class CompilerTest {
     }
 
     @Test
+    fun `an external type that's a tuple is one value, as an operation's parameter too`() {
+        val source = """
+            external type Pair = "int * string"
+            external makePair(n: Int): Pair = "(fun n -> (n, string_of_int n)) n"
+            external second(p: Pair): String = "(fun (_, s) -> s) p"
+            effect Store { keep(p: Pair): String }
+            main() = Store(keep = p -> second(p)) { println(keep(makePair(7))) }
+        """.trimIndent()
+        assertEquals("7\n", run(source))
+    }
+
+    @Test
     fun `a default handler that does another effect runs inside that effect's`() {
         // Greeting's default speaks through Voice, so main handles Voice around Greeting.
         val source = """

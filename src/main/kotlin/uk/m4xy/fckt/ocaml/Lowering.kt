@@ -739,9 +739,11 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     private fun applied(name: String, args: List<Pair<String, Boolean>>): String {
         // An external type is its OCaml, with each type parameter P, written 'p, replaced.
         records[name]?.external?.let { ocaml ->
-            return records.getValue(name).typeParams.zip(args).fold(ocaml) { text, (param, arg) ->
+            val text = records.getValue(name).typeParams.zip(args).fold(ocaml) { text, (param, arg) ->
                 text.replace(Regex("'${Regex.escape(param.lowercase())}\\b"), Regex.escapeReplacement(if (arg.second) "(${arg.first})" else arg.first))
             }
+            // A tuple or function is one type wherever it's written: as one argument of a case, not several.
+            return if ('*' in text || "->" in text) "($text)" else text
         }
         val base = when (name) {
             "Int" -> "int"; "Float" -> "float"; "String" -> "string"; "Boolean" -> "bool"; "Unit" -> "unit"; "Nothing" -> helper(NOTHING)
