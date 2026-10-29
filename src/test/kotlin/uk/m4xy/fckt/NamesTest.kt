@@ -32,15 +32,6 @@ class NamesTest {
         val files: List<File> get() = File(root.dir, name.replace('.', '/')).listFiles().orEmpty().filter { it.extension == "fk" }.sortedBy { it.name }
     }
 
-    /**
-     * Cases whose names mean what they do through what's still to come in fckt.checker, by why: they
-     * aren't compared until it's there.
-     */
-    private val later = mapOf(
-        "conformance/a-spec-builds-on-another-and-its-defaults-are-what-a-module-leaves-out-1.fk" to
-            "a spec's defaults, copied into each module that leaves them out, and a functor's parameters: milestone 5",
-    )
-
     /** What fckt.checker makes of each case and package, by file. */
     private val written: Map<String, String> by lazy {
         val arguments = cases.flatMap { listOf("case", it.path) } +
@@ -53,7 +44,6 @@ class NamesTest {
     @TestFactory
     fun `in each conformance case, fckt's checker takes each type's name to mean what this one does`() = cases.map { file ->
         DynamicTest.dynamicTest(file.path) {
-            assumeTrue(file.path !in later, later[file.path])
             val program = analysed(file.readText(), emptyList(), listOf(std))
             // What a program that doesn't compile names isn't compared yet.
             assumeTrue(program != null, "it doesn't compile")
@@ -79,6 +69,7 @@ class NamesTest {
 
     /** As names.fk writes them: each name in the file that means a declared type or a spec, in order. */
     private fun described(program: Program, file: String?): String =
-        program.typeNames.entries.filter { it.key.pos.file == file }.sortedWith(compareBy({ it.key.pos.line }, { it.key.pos.col }))
-            .joinToString("") { (ref, name) -> "${ref.pos.line}:${ref.pos.col} ${ref.name} $name\n" }
+        program.typeNames.entries.filter { it.key.pos.file == file }.map { (ref, name) -> Triple(ref.pos, ref.name, name) }.distinct()
+            .sortedWith(compareBy({ it.first.line }, { it.first.col }, { it.third }))
+            .joinToString("") { (pos, written, name) -> "${pos.line}:${pos.col} $written $name\n" }
 }

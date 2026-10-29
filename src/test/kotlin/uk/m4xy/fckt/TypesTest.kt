@@ -32,15 +32,6 @@ class TypesTest {
                 .map { Package(root, it.relativeTo(root.dir).path.replace('/', '.')) }.toList()
         }
 
-    /**
-     * Cases whose types come from what's still to come in fckt.checker, by why: they aren't compared
-     * until it's there.
-     */
-    private val later = mapOf(
-        "conformance/a-spec-builds-on-another-and-its-defaults-are-what-a-module-leaves-out-1.fk" to
-            "a spec's defaults, copied into each module that leaves them out, and a functor's parameters: milestone 5",
-    )
-
     /** What fckt.checker makes of each case and package, by file, and its errors, by what was checked. */
     private val written: Map<String, String> by lazy {
         val arguments = cases.flatMap { listOf("case", it.path) } +
@@ -51,7 +42,6 @@ class TypesTest {
     @TestFactory
     fun `in each conformance case, fckt's checker finds each function's type as this one does`() = cases.map { file ->
         DynamicTest.dynamicTest(file.path) {
-            assumeTrue(file.path !in later, later[file.path])
             val program = analysed(file.readText(), emptyList(), listOf(std))
             assumeTrue(program != null, "it doesn't compile")
             assertEquals(null, written["errors ${file.path}"], "errors")

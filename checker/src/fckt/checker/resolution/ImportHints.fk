@@ -35,33 +35,38 @@ module ImportHints {
     else when (Parser.parse(f.text)) {
       Error(_) -> []
       Ok(file) -> file.declarations.filter { it.name == own }.flatMap { main ->
+        lines = f.text.lines()
+        atTop = (at: Position) -> lines.getOrNone(at.line - 1).map { line -> line.startsWith("  ") && !line.startsWith("   ") }.getOrElse(false)
         if (name.getOrNone(0).map { it.isUpperCase() }.getOrElse(false)) {
-          if (declaresInside(main, name)) ["$imported.$name"] else []
-        } else if (isHandler(main) || !hasMember(main, name)) []
+          if (declaresInside(main, name, atTop)) ["$imported.$name"] else []
+        } else if (isHandler(main) || !hasMember(main, name, atTop)) []
         else if (isEffect(main)) [imported]
         else ["$imported.$name"]
       }
     }
   }
 
-  // Whether the declaration has, at the top of its body, a type, spec, effect or module of the name.
-  private declaresInside(main: Declaration, name: String): Boolean = when (main.definition) {
+  // Whether the declaration has, at the top of its body, written on a line indented two spaces, a type, spec, effect or module of the name.
+  private declaresInside(main: Declaration, name: String, atTop: (Position) -> Boolean): Boolean = when (main.definition) {
     ModuleDefinition(inside, _, _, _, _) -> inside.any { d -> d.name == name && atTop(d.at) && !isFunction(d) }
     SpecDefinition(types, _, _, _, _) -> types.any { t -> t.name == name && atTop(t.at) }
     _ -> false
   }
 
-  // Whether the declaration has, at the top of its body, a function, value, field or operation of the
+  // Whether the declaration has, at the top of its body, written on a line indented two spaces, a function, value, field or operation of the
   // name.
-  private hasMember(main: Declaration, name: String): Boolean = when (main.definition) {
-    ModuleDefinition(inside, _, _, _, _) -> inside.any { d -> d.name == name && atTop(d.at) && isFunction(d) }
+  private hasMember(main: Declaration, name: String, atTop: (Position) -> Boolean): Boolean = when (main.definition) {
+    // Written plainly: not private, internal or an operator, which are found otherwise.
+    ModuleDefinition(inside, _, _, _, _) -> inside.any { d -> d.name == name && atTop(d.at) && isFunction(d) && d.visibility == Public && !isOperator(d) }
     SpecDefinition(_, values, _, _, _) -> values.any { v -> v.name == name && atTop(v.at) }
     RecordDefinition(_, fields, _, _, _) -> fields.any { field -> field.name == name && atTop(field.at) }
     _ -> false
   }
 
-  // Whether something starts where a declaration's body's top is written: indented two spaces.
-  private atTop(at: Position): Boolean = at.column == 3
+  private isOperator(d: Declaration): Boolean = when (d.definition) {
+    FunctionDefinition(_, _, _, _, _, _, operator) -> operator
+    _ -> false
+  }
 
   private isFunction(d: Declaration): Boolean = when (d.definition) {
     FunctionDefinition(_, _, _, _, _, _, _) -> true

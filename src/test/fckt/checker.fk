@@ -78,7 +78,8 @@ problems(checked: String, errors: List<Diagnostic>): String =
   if (errors.isEmpty()) "" else "# errors $checked\n" + errors.map { e -> "error ${e.file.getOrElse("-")} ${at(e.at)} ${e.message}\n" }.joinToString("")
 
 lines(resolved: List<ResolvedType>): String =
-  resolved.sortedBy { r -> (r.written.at.line, r.written.at.column) }.mapNotNull { meaningText(it) }.map { "$it\n" }.joinToString("")
+  resolved.mapNotNull { r -> meaningText(r).map { text -> ((r.written.at.line, r.written.at.column), meaningOf(r), text) } }.distinct()
+    .sortedBy { key, meaning, _ -> (key, meaning) }.map { _, _, text -> "$text\n" }.joinToString("")
 
 // A function's type, as TypesTest writes the compiler's: its unknowns T1, T2, in the order they're
 // met; without what functions do or regions; other types by their full names, with a marker for
@@ -125,6 +126,13 @@ allText(ts: List<Type>, named: List<TypeVariable>): (String, List<TypeVariable>)
 
 @FileSystem standard(): List<(List<String>, List<SourceText>)> =
   packagesIn(path("std/src"), [], OtherProject(path("std/src").canonical().value), "std/src/")
+
+// What a name means, by full name, to put several at one place in order.
+meaningOf(r: ResolvedType): String = when (r.meaning) {
+  DeclaredType(symbol) -> symbol.name
+  SpecModuleType(spec) -> "module ${spec.name}"
+  else -> ""
+}
 
 // What a name means, if it's a declared type or a spec.
 meaningText(r: ResolvedType): Option<String> = when (r.meaning) {

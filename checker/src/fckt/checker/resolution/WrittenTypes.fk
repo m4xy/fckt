@@ -1,3 +1,4 @@
+import fckt.checker.symbols.Symbol
 import fckt.collections.Maps.*
 import fckt.checker.sources.*
 import fckt.parser.*
@@ -9,14 +10,77 @@ module WrittenTypes {
   // Each type's name written in the file: not in what a module there borrows from its spec, which
   // is written in the spec's file, by its full name in borrowed.
   inFile(file: LoadedFile, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
-    inDeclarations(file.declarations, Place(file, file.package), [], namespace, borrowed)
+    inDeclarations(file.declarations, Place(file, file.package), [], namespace, borrowed) +
+      // What modules elsewhere borrow from what's written here, read in each of them.
+      borrowed.toList().filter { _, from -> from.source.path == file.source.path }.flatMap { name, _ ->
+        namespace.table.functions.get(name).map { f -> inDeclaration(f.declaration, Place(file, f.path), [], namespace, emptyMap()) }.getOrElse([])
+      }
 
   // The declarations' types, in modules whose type parameters are those given, as Results<E>'s E.
   private inDeclarations(declarations: List<Declaration>, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
     declarations.filter { d -> !borrowed.containsKey((place.path + [d.name]).joinToString(".")) }
       .flatMap { inDeclaration(it, place, moduleTypeParameters, namespace, borrowed) }
 
-  private inDeclaration(d: Declaration, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> = when (d.definition) {
+  private inDeclaration(d: Declaration, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
+    inAnnotations(d.annotations, place, namespace) + inAnnotated(d, place, namespace) + inDefinition(d, place, moduleTypeParameters, namespace, borrowed)
+
+  // The annotations on what a declaration holds: its fields, cases, parameters and values.
+  private inAnnotated(d: Declaration, place: Place, namespace: Namespace): List<WrittenType> = when (d.definition) {
+    RecordDefinition(_, fields, _, _, _) -> fields.flatMap { inAnnotations(it.annotations, place, namespace) }
+    CasesDefinition(_, cases, _, _) -> cases.flatMap { c -> inAnnotations(c.annotations, place, namespace) + c.fields.flatMap { inAnnotations(it.annotations, place, namespace) } }
+    FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters.getOrElse([]).flatMap { inAnnotations(it.annotations, place, namespace) }
+    SpecDefinition(_, values, _, _, _) -> values.flatMap { inAnnotations(it.annotations, place, namespace) }
+    _ -> []
+  }
+
+  // The types given as annotations' arguments, where the field they're for holds a Type, or a list or
+  // tuple of them, and in the annotations given as arguments.
+  private inAnnotations(annotations: List<Annotation>, place: Place, namespace: Namespace): List<WrittenType> = annotations.flatMap { a ->
+    when (Lookups.annotationType(a.name, place, namespace, Skipping)) {
+      Found(declared) -> inArguments(a.arguments, declared, place, namespace)
+      _ -> []
+    }
+  }
+
+  private inArguments(arguments: List<AnnotationArgument>, annotation: Symbol, place: Place, namespace: Namespace): List<WrittenType> = {
+    fields = when (annotation.declaration.definition) {
+      RecordDefinition(_, fs, _, _, _) -> fs
+      _ -> []
+    }
+    scope = TypeScope(place, [], [])
+    arguments.withIndex().flatMap { i, argument ->
+      field = when (argument.name) {
+        Some(n) -> fields.find { it.name == n }
+        None -> fields.getOrNone(i).orElse { fields.lastOrNone().filter { it.vararg } }
+      }
+      field.map { f -> inArgument(argument.value, f.fieldType, f.vararg && argument.name.isNone(), scope, namespace) }.getOrElse([])
+    }
+  }
+
+  // The types written in an argument for a field of the type: one item of a vararg field's list.
+  private inArgument(v: AnnotationValue, fieldType: TypeRef, item: Boolean, scope: TypeScope, namespace: Namespace): List<WrittenType> = when ((fieldType, v)) {
+    (NamedType(_, "List", [itemType]), ValueList(_, items)) if !item -> items.flatMap { inArgument(it, itemType, false, scope, namespace) }
+    (NamedType(_, "List", [itemType]), _) if item -> inArgument(v, itemType, false, scope, namespace)
+    (TupleType(_, elements), ValueTuple(_, items)) -> items.zip(elements).flatMap { value, t -> inArgument(value, t, false, scope, namespace) }
+    (NamedType(_, "Type", []), _) -> typeRefOf(v).map { inTypeRef(it, scope) }.getOrElse([])
+    (NamedType(_, name, []), Reference(_, n, None, Some(nested))) -> when (Lookups.annotationType(name, scope.place, namespace, Skipping)) {
+      Found(annotation) -> inArguments(nested, annotation, scope.place, namespace)
+      _ -> []
+    }
+    _ -> []
+  }
+
+  // An argument as a type: User, List<User>, (Int, String).
+  private typeRefOf(v: AnnotationValue): Option<TypeRef> = when (v) {
+    Reference(at, name, typeArguments, None) -> Some(NamedType(at, name, typeArguments.getOrElse([])))
+    ValueTuple(at, items) -> {
+      refs = items.mapNotNull { typeRefOf(it) }
+      if (refs.size == items.size) Some(TupleType(at, refs)) else None
+    }
+    _ -> None
+  }
+
+  private inDefinition(d: Declaration, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> = when (d.definition) {
     // An annotation's fields can refer to what only the compiler knows, Type, Module<Spec>, Case<T>.
     RecordDefinition(typeParameters, fields, _, true, _) -> fields.flatMap { inMetaTypeRef(it.fieldType, TypeScope(place, typeParameters, []), namespace) }
     RecordDefinition(typeParameters, fields, _, _, _) -> inFields(fields, TypeScope(place, typeParameters, []))
@@ -33,8 +97,14 @@ module WrittenTypes {
         result.toList().flatMap { inTypeRef(it, scope) } +
         inExpression(body, scope)
     }
-    ModuleDefinition(declarations, _, _, _, typeParameters) ->
-      inDeclarations(declarations, Place(place.file, place.path + [d.name]), moduleTypeParameters + typeParameters, namespace, borrowed)
+    ModuleDefinition(declarations, _, _, _, typeParameters) -> {
+      full = (place.path + [d.name]).joinToString(".")
+      // A functor's body is read again in each module it makes, where its modules are those given.
+      made = namespace.modules.applications.toList().filter { _, application -> application.functor.name == full }.map { name, _ -> name }
+      ([full] + made).flatMap { reading ->
+        inDeclarations(declarations, Place(place.file, reading.split(".")), moduleTypeParameters + typeParameters, namespace, borrowed)
+      }
+    }
     SpecDefinition(_, values, typeParameters, _, _) -> {
       scope = TypeScope(place, typeParameters, Specs.ownTypes(d, place, namespace))
       values.flatMap { v ->

@@ -17,15 +17,6 @@ class CheckerErrorsTest {
 
     private val cases = File("conformance").walk().filter { it.isFile && it.extension == "fk" }.sortedBy { it.path }.toList()
 
-    /**
-     * Cases whose errors come from what's still to come in fckt.checker, by why: they aren't compared
-     * until it's there.
-     */
-    private val later = mapOf(
-        "conformance/a-spec-builds-on-another-and-its-defaults-are-what-a-module-leaves-out-2.fk" to
-            "a module's spec's values it must define, and a functor's parameters: milestone 5",
-    )
-
     /** Each case's errors, as fckt.checker finds them, by the case's path. */
     private val written: Map<String, String> by lazy {
         SelfHosted.written("checker.fk", listOf("errors") + cases.flatMap { listOf("case", it.path) }, listOf(File("parser/src"), File("checker/src")))
@@ -34,7 +25,6 @@ class CheckerErrorsTest {
     @TestFactory
     fun `in each conformance case, fckt's checker finds the errors this one does`() = cases.map { file ->
         DynamicTest.dynamicTest(file.path) {
-            assumeTrue(file.path !in later, later[file.path])
             val errors = errorsOf(file.readText())
             assumeTrue(errors != null, "it checks")
             assertEquals(errors, written["errors ${file.path}"])
