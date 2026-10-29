@@ -1,0 +1,21 @@
+// Finding what a processor looks for in symbols: the types annotated with something, and what an
+// annotation was given.
+module Declarations {
+  // The types with the annotation named, by its full name, on them.
+  Symbols.annotatedWith(annotation: String): List<TypeDeclaration> = this.types.filter { it.annotations.named(annotation).isSome() }
+
+  // The annotation of the full name given, if it's one of these.
+  List<Annotation>.named(annotation: String): Option<Annotation> = this.find { it.name == annotation }
+
+  // What the annotation was given for its field, if it was given anything.
+  Annotation.argument(field: String): Option<Value> = this.arguments.find { it.field == field }.map { it.value }
+
+  // Its name without what it's in: User for shop.User.
+  TypeDeclaration.simpleName: String = this.name.substringAfterLast(".")
+
+  // Whether it has cases, none of which carry anything, as type Level { Low, High } has.
+  TypeDeclaration.isEnumeration: Boolean = when (this.body) {
+    Cases(cases) -> cases.all { it.fields.isEmpty() }
+    Fields(_, _) -> false
+  }
+}

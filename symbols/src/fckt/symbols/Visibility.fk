@@ -1,0 +1,2 @@
+// Who sees a declaration: anyone, or only its project.
+type Visibility { Public, Internal }

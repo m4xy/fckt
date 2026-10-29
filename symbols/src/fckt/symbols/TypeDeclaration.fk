@@ -1,0 +1,12 @@
+// A type: a record, or a type with cases, by its full name, shop.User, or shop.Rounding.Level in a
+// module; with its type parameters, by name, in order, and what's annotated on it.
+type TypeDeclaration(
+  name: String,
+  location: Location,
+  body: Body,
+  visibility: Visibility = Public,
+  // Outside its module, it can't be built or looked into.
+  opaque: Boolean = false,
+  parameters: List<String> = [],
+  annotations: List<Annotation> = [],
+)

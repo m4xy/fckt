@@ -1,0 +1,6 @@
+// What a type is made of: a record's fields, which only its module can build one from with a
+// private constructor, or its cases.
+type Body {
+  Fields(fields: List<Field>, privateConstructor: Boolean = false),
+  Cases(cases: List<Case>),
+}

@@ -1,0 +1,21 @@
+// What an annotation's argument can be: a constant; a reference, to a type, function, value, case,
+// field, module or spec, by its full name; a record or case made of constants; another annotation;
+// or a list or tuple of these.
+type Value {
+  Whole(value: Int),
+  Decimal(value: Float),
+  Truth(value: Boolean),
+  Character(value: Char),
+  Text(value: String),
+  TypeOf(typeRef: TypeRef),
+  FunctionRef(name: String),
+  ValueRef(name: String),
+  CaseRef(owner: String, name: String),
+  FieldRef(record: String, name: String),
+  ModuleRef(name: String),
+  SpecRef(name: String),
+  Made(name: String, arguments: List<Argument>),
+  Nested(annotation: Annotation),
+  Items(items: List<Value>),
+  TupleOf(items: List<Value>),
+}

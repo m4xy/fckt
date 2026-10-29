@@ -1,0 +1,2 @@
+// Where a declaration is: its file, as fckt was given it, and its line and column there, from 1.
+type Location(line: Int, column: Int, file: String)

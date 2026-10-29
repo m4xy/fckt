@@ -4,4 +4,4 @@ build/
 .idea/
 *.iml
 .intellijPlatform/
-std/.kiln/
+.kiln/

@@ -1,0 +1,10 @@
+// A type as a field has it: a type by its full name, the language's own unqualified, as Int and
+// List are, with its type arguments; a parameter of the type it's in; a tuple; or a function.
+type TypeRef {
+  Named(name: String, arguments: List<TypeRef> = []),
+  Parameter(name: String),
+  TupleType(elements: List<TypeRef>),
+  FunctionType(parameters: List<TypeRef>, result: TypeRef),
+  // What an annotation's type argument left to be inferred, _.
+  Inferred,
+}

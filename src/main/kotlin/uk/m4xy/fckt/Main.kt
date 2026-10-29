@@ -8,6 +8,7 @@ import kotlin.system.exitProcess
 private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [--import <name>]... [-o <file.ml>]
        fckt --library <interface> -o <file.ml> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... <package>...
        fckt --test <dir> --marker <annotation> --runner <module> [--fixtures <annotation>] [--runner-tests] [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
+       fckt --symbols <file> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [<package>...]
        fckt --core -o <file.ml>
        fckt --std-path
        fckt --version
@@ -36,12 +37,16 @@ uk.m4xy.fktests.api.Test for fk-tests's, to one program that runs each with --ru
 uk.m4xy.fktests.runner.Runner for fk-tests-runner's; in modules, they're in sections. With
 --fixtures, a test runs inside the functions that annotation lists on it, and on its sections:
 uk.m4xy.fktests.api.Fixtures for fk-tests's. Tests can't use the runner, unless they're its own:
---runner-tests. Building projects is kiln's job."""
+--runner-tests. fckt --symbols writes what the packages named declare, or without any, every
+package in the -I folders: each type, with its fields, cases and annotations, as fckt's README sets
+out, for a program that writes code from them; - writes to standard output. Building projects is
+kiln's job."""
 
 fun main(args: Array<String>) {
     var input: String? = null
     var output: String? = null
     var library: String? = null
+    var symbols: String? = null
     var core = false
     var noStd = false
     var separate = false
@@ -72,6 +77,7 @@ fun main(args: Array<String>) {
             "-L" -> libraries += File(args.getOrNull(i++) ?: usage())
             "--import" -> imports += args.getOrNull(i++) ?: usage()
             "--library" -> library = args.getOrNull(i++) ?: usage()
+            "--symbols" -> symbols = args.getOrNull(i++) ?: usage()
             "--test" -> test = args.getOrNull(i++) ?: usage()
             "--runner" -> runner = args.getOrNull(i++) ?: usage()
             "--marker" -> marker = args.getOrNull(i++) ?: usage()
@@ -86,14 +92,14 @@ fun main(args: Array<String>) {
             "--separate" -> separate = true
             else -> when {
                 arg.startsWith("-") -> usage()
-                library != null -> packages += arg
+                library != null || symbols != null -> packages += arg
                 input != null -> usage()
                 else -> input = arg
             }
         }
     }
     // A library's packages may come before --library.
-    if (library != null && input != null) {
+    if ((library != null || symbols != null) && input != null) {
         packages.add(0, input)
         input = null
     }
@@ -102,6 +108,7 @@ fun main(args: Array<String>) {
     if (!noStd) shippedStd()?.let { others += it }
     when {
         core -> write(output ?: usage(), "the core") { compileCore() }
+        symbols != null -> write(symbols!!, "the symbols") { compileSymbols(packages, dirs, libraries, others) }
         test != null -> {
             val dir = File(test)
             if (!dir.isDirectory) {

@@ -1,0 +1,3 @@
+// An annotation on a declaration, by its full name, with what it was given for each of its fields
+// that was, in the order it declares them.
+type Annotation(name: String, arguments: List<Argument> = [])

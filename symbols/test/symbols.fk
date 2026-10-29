@@ -1,0 +1,136 @@
+import uk.m4xy.fktests.api.Test
+import uk.m4xy.fktests.api.Formats.*
+import fckt.symbols.*
+import fckt.symbols.Declarations.*
+import fckt.effects.Fail
+
+// What fckt --symbols wrote for a project, as fckt's own tests have it.
+written: String = """fckt-symbols 1
+record shop.Address
+  at 1 1 src/shop/Address.fk
+  private-constructor
+  field line String
+cases shop.Rounding.Level
+  at 2 12 src/shop/Rounding.fk
+  internal
+  case Low
+    at 2 25 src/shop/Rounding.fk
+  case High
+    at 2 30 src/shop/Rounding.fk
+cases shop.Shape
+  at 1 1 src/shop/Shape.fk
+  parameter T
+  case Circle
+    at 1 17 src/shop/Shape.fk
+    field radius Float
+    field tag T
+  case Point
+    at 1 62 src/shop/Shape.fk
+    annotation shop.Named
+      argument name "pt"
+record shop.User
+  at 2 37 src/shop/User.fk
+  annotation shop.Tagged
+    argument of type List<shop.Address>
+    argument tags ["a", "b\"c"]
+  field name String
+    annotation shop.Named
+      argument name "full_name"
+  field age Int
+    default
+  field scores fckt.collections.Maps.Map<String, Float>
+    var
+  field home Option<shop.Address>
+"""
+
+@Fail typeNamed(symbols: Symbols, name: String): TypeDeclaration = when (symbols.types.find { it.name == name }) {
+  Some(found) -> found
+  None -> fail("there's no $name")
+}
+
+@Test @Fail readsWhatFcktWrites() = {
+  symbols = when (SymbolsText.read(written)) {
+    Ok(s) -> s
+    Error(reason) -> fail(reason)
+  }
+  assertEquals(["shop.Address", "shop.Rounding.Level", "shop.Shape", "shop.User"], symbols.types.map { it.name })
+  assertEquals(
+    TypeDeclaration(
+      "shop.Shape",
+      Location(1, 1, "src/shop/Shape.fk"),
+      Cases([
+        Case("Circle", Location(1, 17, "src/shop/Shape.fk"), [Field("radius", Named("Float")), Field("tag", Parameter("T"))]),
+        Case("Point", Location(1, 62, "src/shop/Shape.fk"), annotations = [Annotation("shop.Named", [Argument("name", Text("pt"))])]),
+      ]),
+      parameters = ["T"],
+    ),
+    typeNamed(symbols, "shop.Shape"),
+  )
+  user = typeNamed(symbols, "shop.User")
+  assertEquals(
+    Fields([
+      Field("name", Named("String"), annotations = [Annotation("shop.Named", [Argument("name", Text("full_name"))])]),
+      Field("age", Named("Int"), hasDefault = true),
+      Field("scores", Named("fckt.collections.Maps.Map", [Named("String"), Named("Float")]), mutable = true),
+      Field("home", Named("Option", [Named("shop.Address")])),
+    ]),
+    user.body,
+  )
+  assertEquals(
+    [Argument("of", TypeOf(Named("List", [Named("shop.Address")]))), Argument("tags", Items([Text("a"), Text("b\"c")]))],
+    user.annotations.named("shop.Tagged").map { it.arguments }.getOrElse([]),
+  )
+  // And writes it back as it was.
+  assertEquals(written, SymbolsText.of(symbols))
+}
+
+@Test @Fail findsWhatsAnnotated() = {
+  symbols = when (SymbolsText.read(written)) {
+    Ok(s) -> s
+    Error(reason) -> fail(reason)
+  }
+  assertEquals(["shop.User"], symbols.annotatedWith("shop.Tagged").map { it.name })
+  user = typeNamed(symbols, "shop.User")
+  named = when (user.body) {
+    Fields(fields, _) -> fields.flatMap { it.annotations }.named("shop.Named").flatMap { it.argument("name") }
+    Cases(_) -> None
+  }
+  assertEquals(Some(Text("full_name")), named)
+  assertEquals([false, true, false, false], symbols.types.map { it.isEnumeration })
+  assertEquals("Level", typeNamed(symbols, "shop.Rounding.Level").simpleName)
+}
+
+// Every kind of value and type is read back as it's written.
+@Test everyValueIsReadBack() = assertReadsBack(SymbolsText, Symbols([
+  TypeDeclaration(
+    "shop.Everything",
+    Location(3, 4, "a folder/Everything.fk"),
+    Fields([
+      Field("f", FunctionType([Named("Int"), TupleType([Named("String"), Parameter("A")])], Named("Unit"))),
+    ], privateConstructor = true),
+    Internal,
+    true,
+    ["A"],
+    [Annotation("shop.All", [
+      Argument("whole", Whole(-42)),
+      Argument("decimal", Decimal(1.5)),
+      Argument("truth", Truth(false)),
+      Argument("character", Character('\'')),
+      Argument("text", Text("tab\tline\nslash\\ quote\" done")),
+      Argument("type", TypeOf(Named("Result", [Inferred, Named("String")]))),
+      Argument("refs", Items([FunctionRef("shop.Routes.list"), ValueRef("shop.limit"), CaseRef("shop.Shape", "Point"), FieldRef("shop.User", "name"), ModuleRef("shop.Prices"), SpecRef("fckt.text.Format")])),
+      Argument("made", Made("shop.Point", [Argument("x", Whole(1)), Argument("y", Whole(2))])),
+      Argument("nested", Nested(Annotation("shop.Named", [Argument("name", Text("n"))]))),
+      Argument("tuple", TupleOf([Whole(1), Items([])])),
+    ])],
+  ),
+  TypeDeclaration("shop.Vowel", Location(1, 1, "v.fk"), Cases([Case("A", Location(1, 20, "v.fk"), declaredBy = Some("shop.Letter"))])),
+]))
+
+// What isn't the format, or is another version of it, says so.
+@Test whatIsntTheFormatSaysSo() = {
+  assertEquals(Error("these are fckt-symbols 2, not fckt-symbols 1, which is what this reads"), SymbolsText.read("fckt-symbols 2\n"))
+  assertEquals(Error("record shop.User says 'colour red', which a type doesn't have"), SymbolsText.read("fckt-symbols 1\nrecord shop.User\n  at 1 1 u.fk\n  colour red\n"))
+  assertEquals(Error("record shop.User should say once where it's at"), SymbolsText.read("fckt-symbols 1\nrecord shop.User\n"))
+  assertEquals(Error("'List<Int' ends too soon"), SymbolsText.read("fckt-symbols 1\nrecord shop.User\n  at 1 1 u.fk\n  field xs List<Int\n"))
+}

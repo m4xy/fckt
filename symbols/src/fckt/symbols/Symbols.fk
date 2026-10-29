@@ -1,0 +1,3 @@
+// What a project declares, as fckt --symbols writes it: each of its types that isn't private, in
+// the order of its files, and in each, of its declarations.
+type Symbols(types: List<TypeDeclaration>)

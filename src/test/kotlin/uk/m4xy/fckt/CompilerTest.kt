@@ -2426,4 +2426,75 @@ class CompilerTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun `a project's symbols are its types, their fields and cases, and what's annotated on them, by full names`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt-symbols").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text.trimIndent() + "\n")
+        try {
+            write("shop/Named.fk", "annotation type Named(name: String)")
+            write("shop/Tagged.fk", "annotation type Tagged(of: Type, vararg tags: String)")
+            write("shop/User.fk", """
+                import fckt.collections.Maps.*
+                @Tagged(List<Address>, "a", "b\"c") type User(
+                  @Named("full_name") name: String,
+                  age: Int = 0,
+                  var scores: Map<String, Double>,
+                  home: Option<Address>,
+                )
+            """)
+            write("shop/Address.fk", "type Address private(line: String)")
+            write("shop/Shape.fk", "type Shape<T> { Circle(radius: Double, tag: T), @Named(\"pt\") Point }")
+            write("shop/Rounding.fk", "internal module Rounding {\n  internal type Level { Low, High }\n  private type Hidden(n: Int)\n}")
+            // A program apart isn't the project's types.
+            write("shop/tool.fk", "type Tool(n: Int)\nmain() = println(Tool(1))")
+            val symbols = compileSymbols(emptyList(), listOf(dir), emptyList(), others = listOf(STD))
+            val file = { name: String -> File(dir, "shop/$name").path }
+            assertEquals(
+                """
+                fckt-symbols 1
+                record shop.Address
+                  at 1 1 ${file("Address.fk")}
+                  private-constructor
+                  field line String
+                cases shop.Rounding.Level
+                  at 2 12 ${file("Rounding.fk")}
+                  internal
+                  case Low
+                    at 2 25 ${file("Rounding.fk")}
+                  case High
+                    at 2 30 ${file("Rounding.fk")}
+                cases shop.Shape
+                  at 1 1 ${file("Shape.fk")}
+                  parameter T
+                  case Circle
+                    at 1 17 ${file("Shape.fk")}
+                    field radius Float
+                    field tag T
+                  case Point
+                    at 1 62 ${file("Shape.fk")}
+                    annotation shop.Named
+                      argument name "pt"
+                record shop.User
+                  at 2 37 ${file("User.fk")}
+                  annotation shop.Tagged
+                    argument of type List<shop.Address>
+                    argument tags ["a", "b\"c"]
+                  field name String
+                    annotation shop.Named
+                      argument name "full_name"
+                  field age Int
+                    default
+                  field scores fckt.collections.Maps.Map<String, Float>
+                    var
+                  field home Option<shop.Address>
+                """.trimIndent() + "\n",
+                symbols,
+            )
+            val missing = assertFailsWith<CompileError> { compileSymbols(listOf("till"), listOf(dir), emptyList(), others = listOf(STD)) }
+            assertContains(missing.message!!, "till isn't a package")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }

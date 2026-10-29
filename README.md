@@ -244,6 +244,64 @@ error is on the test, or on a fixture that does what none before it, nor the run
 names in the annotation mean what they mean where it's written, as the tests are checked before
 their main is made. fk-tests' kiln plugin does this for a project's tests.
 
+### Symbols
+
+`fckt --symbols <file> -I src [<package>...]` checks a project and writes what its packages
+declare, or every package in the `-I` folders: each type that isn't private, with its fields and
+cases, their types by the full names of what they refer to, and the annotations on each, with what
+their arguments resolved to. It's for a program that reads a project's types, as a processor that
+writes code from them does; fckt knows nothing of what it's for.
+[fckt.symbols](symbols) reads it, so such a program works with typed values, not lines:
+
+```
+fckt-symbols 1
+record shop.User
+  at 4 1 src/shop/User.fk
+  annotation shop.Tagged
+    argument of type List<shop.Address>
+    argument tags ["a", "b\"c"]
+  field name String
+    annotation shop.Named
+      argument name "full_name"
+  field age Int
+    default
+cases shop.Shape
+  at 1 1 src/shop/Shape.fk
+  parameter T
+  case Circle
+    at 1 17 src/shop/Shape.fk
+    field radius Float
+    field tag T
+  case Point
+```
+
+The first line is the format's version, which changes whenever what's written does, so a reader
+refuses a format it doesn't know rather than misreading it. Each line is one thing, indented two
+spaces under what it belongs to:
+
+| Line | Under | What it is |
+| --- | --- | --- |
+| `record <name>`, `cases <name>` | nothing | A type, by its full name: a record, or a type with cases. |
+| `at <line> <column> <file>` | a type, a case | Where it's declared. |
+| `internal`, `opaque` | a type | Only its project sees it; outside its module, it can't be built or looked into. |
+| `private-constructor` | a record | Only its module can build one. |
+| `parameter <name>` | a type | A type parameter, in order. |
+| `case <name>` | `cases` | A case, in order, every one the type has. |
+| `from <name>` | a case | The type that declares the case, when it's another's. |
+| `field <name> <type>` | a record, a case | A field, in order. |
+| `var`, `default` | a field | It can be changed; it has a default, so a constructor call can leave it out. |
+| `annotation <name>` | a type, a case, a field | An annotation, by its full name. |
+| `argument <field> <value>` | an annotation | What it's given for its field, in the order it declares them; a `vararg`'s items are a list. |
+
+A type is a type parameter's name, or a type's full name, the language's own unqualified (`Int`,
+`String`, `List`, `Option`, `Result`, `Lazy`, `Unit`, `Char`, `Byte`, `Float`, `Boolean`), with
+its type arguments, `Option<shop.Address>`; a tuple, `(Int, String)`; or a function,
+`(Int) -> String`. A value is a constant, `42`, `1.5`, `true`, `'c'`, `"text"` with `\"`, `\\`,
+`\n`, `\t` and `\r` escaped; a reference, by what it is and its full name, `type <type>`,
+`function <name>`, `value <name>`, `case <type>.<case>`, `field <record>.<field>`, `module <name>`
+or `spec <name>`; a record or case made of constants, `make <name>(<field> = <value>, ...)`; an
+annotation, `@<name>(<field> = <value>, ...)`; or a list, `[...]`, or tuple, `(...)`, of them.
+
 ## Building a project
 
 Building projects, their tests and their dependencies, and publishing libraries, is

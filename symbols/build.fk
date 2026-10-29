@@ -1,0 +1,8 @@
+// fckt.symbols: what fckt --symbols writes, as typed values, for programs that read a project's
+// types, as a processor that writes code from them does. kiln publishLocal publishes it.
+import uk.m4xy.kiln.fckt.Fckt
+import uk.m4xy.fktests.kiln.*
+
+project = Project(name = "symbols", group = "fckt", version = "0.1.0")
+
+plugins = [Fckt(), FkTests()]

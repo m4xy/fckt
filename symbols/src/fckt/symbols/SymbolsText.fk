@@ -1,0 +1,335 @@
+import fckt.text.Format
+import fckt.effects.Fail
+import fckt.effects.Failure.attempt
+
+// Symbols as fckt --symbols writes them: a line for each thing, indented two spaces under what it
+// belongs to, after one naming the format's version, which fckt's README sets out. What's read is
+// only what this version has: a line it doesn't know is an error, not passed over, so a program
+// never works from symbols it half understood.
+module SymbolsText : Format {
+  type T = Symbols
+
+  // The version this reads and writes.
+  version: String = "fckt-symbols 1"
+
+  of(value: Symbols): String = ([version] + value.types.flatMap { declarationLines(it) }).joinToString("\n") + "\n"
+
+  read(text: String): Result<Symbols, String> = attempt {
+    lines = text.lines().filter { it.isNotBlank() }
+    when (lines) {
+      [] -> fail("there are no symbols: the first line should be $version")
+      [first, *rest] -> {
+        if (first != version) fail("these are ${first.trim()}, not $version, which is what this reads")
+        Symbols(forest(rest.map { Line(depthOf(it), it.trim()) }, 0).map { typeDeclaration(it) })
+      }
+    }
+  }
+
+  // ---- Writing ----
+
+  private declarationLines(d: TypeDeclaration): List<String> = {
+    header = [at(d.location)] +
+      (if (d.visibility == Internal) ["internal"] else []) +
+      (if (d.opaque) ["opaque"] else []) +
+      d.parameters.map { "parameter $it" } +
+      d.annotations.flatMap { annotationLines(it) }
+    when (d.body) {
+      Fields(fields, privateConstructor) ->
+        ["record ${d.name}"] + indented(header + (if (privateConstructor) ["private-constructor"] else []) + fields.flatMap { fieldLines(it) })
+      Cases(cases) -> ["cases ${d.name}"] + indented(header + cases.flatMap { caseLines(it) })
+    }
+  }
+
+  private caseLines(c: Case): List<String> = ["case ${c.name}"] + indented(
+    [at(c.location)] +
+      c.declaredBy.map { ["from $it"] }.getOrElse([]) +
+      c.annotations.flatMap { annotationLines(it) } +
+      c.fields.flatMap { fieldLines(it) }
+  )
+
+  private fieldLines(f: Field): List<String> = ["field ${f.name} ${typeText(f.fieldType)}"] + indented(
+    (if (f.mutable) ["var"] else []) + (if (f.hasDefault) ["default"] else []) + f.annotations.flatMap { annotationLines(it) }
+  )
+
+  private annotationLines(a: Annotation): List<String> =
+    ["annotation ${a.name}"] + indented(a.arguments.map { "argument ${it.field} ${valueText(it.value)}" })
+
+  private at(l: Location): String = "at ${l.line} ${l.column} ${l.file}"
+
+  private indented(lines: List<String>): List<String> = lines.map { "  $it" }
+
+  // A type as the format writes it.
+  typeText(t: TypeRef): String = when (t) {
+    Named(name, arguments) -> if (arguments.isEmpty()) name else "$name<${arguments.map { typeText(it) }.joinToString(", ")}>"
+    Parameter(name) -> name
+    TupleType(elements) -> "(${elements.map { typeText(it) }.joinToString(", ")})"
+    FunctionType(parameters, result) -> "(${parameters.map { typeText(it) }.joinToString(", ")}) -> ${typeText(result)}"
+    Inferred -> "_"
+  }
+
+  // A value as the format writes it.
+  valueText(v: Value): String = when (v) {
+    Whole(n) -> "$n"
+    Decimal(x) -> "$x"
+    Truth(b) -> if (b) "true" else "false"
+    Character(c) -> "'${escaped("$c", "'")}'"
+    Text(s) -> "\"${escaped(s, "\"")}\""
+    TypeOf(t) -> "type ${typeText(t)}"
+    FunctionRef(name) -> "function $name"
+    ValueRef(name) -> "value $name"
+    CaseRef(owner, name) -> "case $owner.$name"
+    FieldRef(record, name) -> "field $record.$name"
+    ModuleRef(name) -> "module $name"
+    SpecRef(name) -> "spec $name"
+    Made(name, arguments) -> "make $name(${arguments.map { "${it.field} = ${valueText(it.value)}" }.joinToString(", ")})"
+    Nested(a) -> "@${a.name}(${a.arguments.map { "${it.field} = ${valueText(it.value)}" }.joinToString(", ")})"
+    Items(items) -> "[${items.map { valueText(it) }.joinToString(", ")}]"
+    TupleOf(items) -> "(${items.map { valueText(it) }.joinToString(", ")})"
+  }
+
+  private escaped(text: String, quote: String): String =
+    text.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r").replace(quote, "\\$quote")
+
+  // ---- Reading ----
+
+  // A line, and how deep it's indented.
+  private type Line(depth: Int, text: String)
+
+  // A line, with the lines under it.
+  private type Node(text: String, children: List<Node>)
+
+  private depthOf(line: String): Int = (line.length - line.trimStart().length) / 2
+
+  // The lines at depth, each with those under it.
+  @Fail private forest(lines: List<Line>, depth: Int): List<Node> = when (lines) {
+    [] -> []
+    [first, *rest] -> {
+      if (first.depth != depth) fail("'${first.text}' is indented under nothing")
+      under = rest.takeWhile { it.depth > depth }
+      [Node(first.text, forest(under, depth + 1))] + forest(rest.drop(under.size), depth)
+    }
+  }
+
+  private word(n: Node): String = n.text.substringBefore(" ")
+  private rest(n: Node): String = n.text.substringAfter(" ")
+  private named(nodes: List<Node>, w: String): List<Node> = nodes.filter { word(it) == w }
+
+  // Fails unless each of n's lines is one of those it can have.
+  @Fail private only(n: Node, what: String, words: List<String>): Unit =
+    n.children.forEach { if (!words.contains(word(it))) fail("${n.text} says '${it.text}', which $what doesn't have") }
+
+  @Fail private typeDeclaration(n: Node): TypeDeclaration = {
+    only(n, "a type", ["at", "internal", "opaque", "parameter", "annotation", "private-constructor", "field", "case"])
+    parameters = named(n.children, "parameter").map { rest(it) }
+    body = when (word(n)) {
+      "record" -> Fields(named(n.children, "field").map { field(it, parameters) }, n.children.any { it.text == "private-constructor" })
+      "cases" -> Cases(named(n.children, "case").map { case(it, parameters) })
+      else -> fail("'${n.text}' should be a record or cases")
+    }
+    TypeDeclaration(
+      rest(n),
+      location(n),
+      body,
+      if (n.children.any { it.text == "internal" }) Internal else Public,
+      n.children.any { it.text == "opaque" },
+      parameters,
+      named(n.children, "annotation").map { annotation(it, parameters) },
+    )
+  }
+
+  @Fail private case(n: Node, parameters: List<String>): Case = {
+    only(n, "a case", ["at", "from", "annotation", "field"])
+    Case(
+      rest(n),
+      location(n),
+      named(n.children, "field").map { field(it, parameters) },
+      named(n.children, "annotation").map { annotation(it, parameters) },
+      named(n.children, "from").firstOrNone().map { rest(it) },
+    )
+  }
+
+  @Fail private field(n: Node, parameters: List<String>): Field = {
+    only(n, "a field", ["var", "default", "annotation"])
+    nameAndType = rest(n)
+    Field(
+      nameAndType.substringBefore(" "),
+      whole(nameAndType.substringAfter(" ")) { s, at -> typeAt(s, at, parameters) },
+      n.children.any { it.text == "var" },
+      n.children.any { it.text == "default" },
+      named(n.children, "annotation").map { annotation(it, parameters) },
+    )
+  }
+
+  @Fail private annotation(n: Node, parameters: List<String>): Annotation = {
+    only(n, "an annotation", ["argument"])
+    Annotation(rest(n), named(n.children, "argument").map { a ->
+      fieldAndValue = rest(a)
+      Argument(fieldAndValue.substringBefore(" "), whole(fieldAndValue.substringAfter(" ")) { s, at -> valueAt(s, at, parameters) })
+    })
+  }
+
+  @Fail private location(n: Node): Location = when (named(n.children, "at")) {
+    [at] -> {
+      parts = rest(at).split(" ")
+      when (parts) {
+        [line, column, *file] -> Location(number(line), number(column), file.joinToString(" "))
+        else -> fail("'${at.text}' should be at a line, a column and a file")
+      }
+    }
+    else -> fail("${n.text} should say once where it's at")
+  }
+
+  @Fail private number(text: String): Int = when (text.toIntOrNone()) {
+    Some(n) -> n
+    None -> fail("'$text' isn't a number")
+  }
+
+  // What all of text is, as read from its start, or why it isn't.
+  @Fail private whole<A>(text: String, reading: @Fail (String, Int) -> (A, Int)): A = {
+    (read, next) = reading(text, 0)
+    if (next != text.length) fail("'$text' has '${text.drop(next)}' after what it says")
+    read
+  }
+
+  // ---- Types and values, from a position in a line ----
+
+  @Fail private charAt(s: String, at: Int): Char = if (at < s.length) s.get(at) else fail("'$s' ends too soon")
+
+  private startsAt(s: String, at: Int, prefix: String): Boolean = s.drop(at).startsWith(prefix)
+
+  @Fail private expect(s: String, at: Int, prefix: String): Int =
+    if (startsAt(s, at, prefix)) at + prefix.length else fail("'$s' should have '$prefix' at ${at + 1}")
+
+  // Where the name starting at at ends.
+  private nameEnd(s: String, at: Int): Int =
+    if (at < s.length && !" ,()[]<>=".contains("${s.get(at)}")) nameEnd(s, at + 1) else at
+
+  @Fail private nameAt(s: String, at: Int): (String, Int) = {
+    end = nameEnd(s, at)
+    if (end == at) fail("'$s' should have a name at ${at + 1}")
+    (s.substring(at, end), end)
+  }
+
+  // What's between open and close, each read, separated by commas.
+  @Fail private listAt<A>(s: String, at: Int, close: Char, item: @Fail (String, Int) -> (A, Int)): (List<A>, Int) =
+    if (charAt(s, at) == close) ([], at + 1) else moreAt(s, at, close, item, [])
+
+  @Fail private moreAt<A>(s: String, at: Int, close: Char, item: @Fail (String, Int) -> (A, Int), kept: List<A>): (List<A>, Int) = {
+    (read, next) = item(s, at)
+    if (charAt(s, next) == close) (kept + [read], next + 1)
+    else moreAt(s, expect(s, next, ", "), close, item, kept + [read])
+  }
+
+  @Fail private typeAt(s: String, at: Int, parameters: List<String>): (TypeRef, Int) =
+    if (charAt(s, at) == '(') {
+      (inside, next) = listAt(s, at + 1, ')') { s2, a -> typeAt(s2, a, parameters) }
+      if (startsAt(s, next, " -> ")) {
+        (result, after) = typeAt(s, next + 4, parameters)
+        (FunctionType(inside, result), after)
+      } else (TupleType(inside), next)
+    } else {
+      (name, next) = nameAt(s, at)
+      if (next < s.length && s.get(next) == '<') {
+        (arguments, after) = listAt(s, next + 1, '>') { s2, a -> typeAt(s2, a, parameters) }
+        (Named(name, arguments), after)
+      }
+      else if (name == "_") (Inferred, next)
+      else if (parameters.contains(name)) (Parameter(name), next)
+      else (Named(name), next)
+    }
+
+  @Fail private valueAt(s: String, at: Int, parameters: List<String>): (Value, Int) = {
+    c = charAt(s, at)
+    when {
+      c == '"' -> {
+        (text, next) = quotedAt(s, at + 1, '"', "")
+        (Text(text), next)
+      }
+      c == '\'' -> {
+        (text, next) = quotedAt(s, at + 1, '\'', "")
+        when (text.toList()) {
+          [one] -> (Character(one), next)
+          else -> fail("'$text' should be one character")
+        }
+      }
+      c == '[' -> {
+        (items, next) = listAt(s, at + 1, ']') { s2, a -> valueAt(s2, a, parameters) }
+        (Items(items), next)
+      }
+      c == '(' -> {
+        (items, next) = listAt(s, at + 1, ')') { s2, a -> valueAt(s2, a, parameters) }
+        (TupleOf(items), next)
+      }
+      c == '@' -> {
+        (name, next) = nameAt(s, at + 1)
+        (arguments, after) = argumentsAt(s, expect(s, next, "("), parameters)
+        (Nested(Annotation(name, arguments)), after)
+      }
+      c.isDigit() || c == '-' -> numberAt(s, at)
+      else -> {
+        (w, next) = nameAt(s, at)
+        when (w) {
+          "true" -> (Truth(true), next)
+          "false" -> (Truth(false), next)
+          "type" -> {
+            (t, after) = typeAt(s, expect(s, next, " "), parameters)
+            (TypeOf(t), after)
+          }
+          "make" -> {
+            (name, after) = nameAt(s, expect(s, next, " "))
+            (arguments, end) = argumentsAt(s, expect(s, after, "("), parameters)
+            (Made(name, arguments), end)
+          }
+          else -> {
+            (name, after) = nameAt(s, expect(s, next, " "))
+            (reference(w, name), after)
+          }
+        }
+      }
+    }
+  }
+
+  @Fail private reference(kind: String, name: String): Value = when (kind) {
+    "function" -> FunctionRef(name)
+    "value" -> ValueRef(name)
+    "case" -> CaseRef(name.substringBeforeLast("."), name.substringAfterLast("."))
+    "field" -> FieldRef(name.substringBeforeLast("."), name.substringAfterLast("."))
+    "module" -> ModuleRef(name)
+    "spec" -> SpecRef(name)
+    else -> fail("'$kind $name' is no value the format has")
+  }
+
+  @Fail private argumentsAt(s: String, at: Int, parameters: List<String>): (List<Argument>, Int) =
+    listAt(s, at, ')') { s2, a ->
+      (field, next) = nameAt(s2, a)
+      (value, after) = valueAt(s2, expect(s2, next, " = "), parameters)
+      (Argument(field, value), after)
+    }
+
+  // A number: a whole one, or with a point or exponent, a decimal.
+  @Fail private numberAt(s: String, at: Int): (Value, Int) = {
+    end = numberEnd(s, at + 1)
+    text = s.substring(at, end)
+    if (text.contains(".") || text.contains("e") || text.contains("E")) (Decimal(text.toFloat()), end)
+    else (Whole(number(text)), end)
+  }
+
+  private numberEnd(s: String, at: Int): Int =
+    if (at < s.length && (s.get(at).isDigit() || ".eE-+".contains("${s.get(at)}"))) numberEnd(s, at + 1) else at
+
+  // The text up to the closing quote, unescaped, and where it ends.
+  @Fail private quotedAt(s: String, at: Int, quote: Char, kept: String): (String, Int) = {
+    c = charAt(s, at)
+    if (c == quote) (kept, at + 1)
+    else if (c == '\\') {
+      escapedChar = when (charAt(s, at + 1)) {
+        'n' -> "\n"
+        't' -> "\t"
+        'r' -> "\r"
+        other -> "$other"
+      }
+      quotedAt(s, at + 2, quote, kept + escapedChar)
+    }
+    else quotedAt(s, at + 1, quote, kept + "$c")
+  }
+}

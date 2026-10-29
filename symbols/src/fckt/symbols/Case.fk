@@ -1,0 +1,9 @@
+// A case of a type with cases: one it declares, or, declaredBy another, one it takes from that
+// type, as type Vowel { Alphabet.A } does.
+type Case(
+  name: String,
+  location: Location,
+  fields: List<Field> = [],
+  annotations: List<Annotation> = [],
+  declaredBy: Option<String> = None,
+)

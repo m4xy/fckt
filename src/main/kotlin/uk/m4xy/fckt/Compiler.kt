@@ -299,6 +299,30 @@ fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<Fil
     return ocaml
 }
 
+/**
+ * What [packages] declare, checked, as [Symbols] writes it, for programs that read a project's
+ * types; without packages, each in [dirs] that has a file of code.
+ */
+fun compileSymbols(packages: List<String>, dirs: List<File>, libraries: List<File>, others: List<File> = emptyList()): String {
+    val sources = packages(dirs, null, libraries, others)
+    val named = packages.map { it.split('.') }.ifEmpty { dirs.flatMap { packagesIn(it) }.distinct() }
+    for (path in named) {
+        if (!sources.isPackage(path) || sources.unitOf(path) != null) throw CompileError(null, "${path.joinToString(".")} isn't a package in ${dirs.joinToString(", ")}")
+    }
+    // A program's file, with a main, is a program apart, as a library's is.
+    val files = named.flatMap { sources.sourceFiles(it) }.filter { f -> Parser.parse(f.readText(), f.path).decls.none { it is Decl.Function && it.name == "main" } }
+    if (files.isEmpty()) return Symbols.write(Checker(SourceFile(emptyList())).check(), emptySet())
+    val linked = link(named.joinToString("") { "import ${it.joinToString(".")}.*\n" }, sources)
+    return Symbols.write(Checker(linked.file).check(), files.map { it.path }.toSet())
+}
+
+/** The packages under [root]: each folder below it with a file of code in it, by its path. */
+private fun packagesIn(root: File): List<List<String>> = root.walkTopDown()
+    .filter { it.isDirectory && it != root && it.listFiles().orEmpty().any { f -> f.isFile && f.extension == "fk" } }
+    .map { it.relativeTo(root).path.split(File.separatorChar) }
+    .sortedBy { it.joinToString(".") }
+    .toList()
+
 /** The whole core, to OCaml, as [CORE_UNIT]: what programs and libraries compiled separately are linked with. */
 fun compileCore(): String {
     return compile(linkCore().file, showsAll = true)

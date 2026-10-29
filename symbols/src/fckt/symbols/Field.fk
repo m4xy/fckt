@@ -1,0 +1,9 @@
+// A field of a record or a case: a var one can be changed, and one with a default can be left out
+// of a constructor call.
+type Field(
+  name: String,
+  fieldType: TypeRef,
+  mutable: Boolean = false,
+  hasDefault: Boolean = false,
+  annotations: List<Annotation> = [],
+)

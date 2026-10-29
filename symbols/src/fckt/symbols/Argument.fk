@@ -1,0 +1,2 @@
+// What an annotation, or a record made of constants, is given for its field.
+type Argument(field: String, value: Value)
