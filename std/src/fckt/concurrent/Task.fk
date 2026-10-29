@@ -1,0 +1,2 @@
+// Work launched to run alongside what launched it, which join waits for.
+type Task(id: Int)

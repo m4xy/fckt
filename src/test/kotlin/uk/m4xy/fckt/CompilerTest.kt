@@ -2499,4 +2499,64 @@ class CompilerTest {
             dir.deleteRecursively()
         }
     }
+
+    @Test
+    fun `tasks take turns, launched, paused, joined, parked and woken, and sleep while others go on`() {
+        val output = run(
+            """
+            import fckt.concurrent.*
+            import fckt.io.Polls
+            import fckt.io.Polls.*
+            import fckt.time.Duration
+            import fckt.values.Mutable
+
+            @Console main() = {
+              log = Mutable([])
+              said = (line: String) -> { log.value = log.value + [line] }
+              println("${'$'}{attempt {
+                Executor.run {
+                  a = launch { said("a1"); pause(); said("a2") }
+                  b = launch { said("b1"); join(a); said("b after a") }
+                  said("main")
+                  join(b)
+                  said("main after b")
+                  42
+                }
+              }}")
+              println("${'$'}{log.value}")
+              // A task parks until another wakes it.
+              println("${'$'}{attempt {
+                Executor.run {
+                  waker = Mutable(None)
+                  launch { park { waker.value = Some(it) }; println("woken") }
+                  launch { pause(); waker.value.forEach { wake(it) }; println("waking") }
+                  "done"
+                }
+              }}")
+              // What nothing will wake fails, rather than waiting for ever.
+              println(when (attempt { Executor.run { park { _ -> Unit } } }) { Ok(_) -> "ended"; Error(reason) -> "stopped: ${'$'}reason" })
+              println(when (attempt { Executor.run { join(launch { park { _ -> Unit } }) } }) { Ok(_) -> "ended"; Error(reason) -> "stopped: ${'$'}reason" })
+              // Sleeping, the others go on: the shortest wakes first.
+              println("${'$'}{attempt {
+                Polls.running {
+                  launch { sleep(Duration(60)); println("slow") }
+                  launch { sleep(Duration(10)); println("fast") }
+                  println("started")
+                  "slept"
+                }
+              }}")
+            }
+            """.trimIndent(),
+        )
+        assertEquals(
+            listOf(
+                "Ok(42)", "[main, a1, b1, a2, b after a, main after b]",
+                "waking", "woken", "Ok(done)",
+                "stopped: every task is waiting, for what nothing will bring",
+                "stopped: every task is waiting, for what nothing will bring",
+                "started", "fast", "slow", "Ok(slept)",
+            ).joinToString("\n") + "\n",
+            output,
+        )
+    }
 }

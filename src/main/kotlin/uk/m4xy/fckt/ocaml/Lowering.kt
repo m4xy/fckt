@@ -163,12 +163,12 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
 
     /** The handler record's type, as named from here: `_ console_handler`, or `(_, _) yielding_handler`. */
     private fun handlerTypeText(spec: Decl.Spec): String =
-        (if (spec.typeParams.isEmpty()) "_ " else (spec.typeParams + ANSWER).joinToString(", ", "(", ") ") { "_" }) + nextTo(spec, handlerType(spec))
+        (if (spec.typeParams.ocaml().isEmpty()) "_ " else (spec.typeParams.ocaml() + ANSWER).joinToString(", ", "(", ") ") { "_" }) + nextTo(spec, handlerType(spec))
 
     private fun operationParams(spec: Decl.Spec, op: SpecValue): List<Pair<String, Boolean>> =
-        op.params.orEmpty().map { typeText(it.type!!, spec.typeParams + op.typeParams) to compound(it.type!!) }
+        op.params.orEmpty().map { typeText(it.type!!, spec.typeParams.ocaml() + op.typeParams) to compound(it.type!!) }
 
-    private fun operationResult(spec: Decl.Spec, op: SpecValue) = typeText(op.type, spec.typeParams + op.typeParams)
+    private fun operationResult(spec: Decl.Spec, op: SpecValue) = typeText(op.type, spec.typeParams.ocaml() + op.typeParams)
 
     /**
      * A handled effect in OCaml 5: an effect constructor for each operation, a record type for its
@@ -177,7 +177,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
      * does: its [ANSWER]. One that doesn't take resume in fckt is resumed with what it gives.
      */
     private fun StructureScope<Unit>.handledEffect(spec: Decl.Spec) {
-        val generic = spec.typeParams.isNotEmpty()
+        val generic = spec.typeParams.ocaml().isNotEmpty()
         effectDeclarations(spec)
         let(false) {
             binding(handleName(spec)) {
@@ -217,7 +217,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         }
         types {
             typeDef(handlerType(spec)) {
-                params = spec.typeParams.map(::typeVar) + ANSWER
+                params = spec.typeParams.ocaml().map(::typeVar) + ANSWER
                 for (op in spec.values) {
                     val result = operationResult(spec, op)
                     val type = if (op.params == null) result else (operationParams(spec, op) + ("$result -> $ANSWER" to true)).joinToString(" -> ") { (text, paren) -> if (paren) "($text)" else text } + " -> $ANSWER"
@@ -231,7 +231,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
 
     /** The type variables of [spec]'s handler records: `'fk_answer `, or `('a, 'fk_answer) `. */
     private fun handlerVars(spec: Decl.Spec) =
-        (spec.typeParams.map(::typeVar) + ANSWER).let { if (it.size == 1) it[0] + " " else it.joinToString(", ", "(", ") ") }
+        (spec.typeParams.ocaml().map(::typeVar) + ANSWER).let { if (it.size == 1) it[0] + " " else it.joinToString(", ", "(", ") ") }
 
     /** Performing [op] with [args]: whatever handles its effect answers. */
     private fun perform(spec: Decl.Spec, op: SpecValue, args: List<Gen>): Gen {

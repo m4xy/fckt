@@ -1,0 +1,88 @@
+import fckt.effects.Fail
+import fckt.collections.Maps.*
+
+// Running tasks, one at a time, in the order they're ready: what's launched, paused, joined or
+// woken goes to the back of the queue. Nothing it keeps outlives a run.
+module Executor {
+  // What a run keeps, what its tasks do being @E: the tasks ready to go on, next first; those parked, by their wakers', and
+  // those joining a task, by its, ids; and the tasks that have ended.
+  private type Run<@E>(
+    var ready: List<@E () -> Unit>,
+    var parked: Map<Int, @E () -> Unit>,
+    var joining: Map<Int, List<@E () -> Unit>>,
+    var ended: List<Int>,
+    var next: Int,
+  )
+
+  // What block gives, once it and every task it launched, and they launched, have ended. When no
+  // task is ready, but some are parked, idle waits for something to wake them, and says the wakers
+  // of what came; where it can wait for nothing, none would ever go on, which fails. Without idle,
+  // tasks wake only each other.
+  @Fail run<A, @E>(block: @Concurrent<@E> @E () -> A, idle: @E () -> List<Waker> = () -> []): A = {
+    state = Run([], emptyMap(), emptyMap(), [], 1)
+    var result = None
+    task(state, 0) { result = Some(block()) }
+    // As the loop has it, idle may do what the tasks do: it does less.
+    loop(state, () -> idle())
+    when (result) {
+      Some(value) -> value
+      None -> fail("the block's task never ended")
+    }
+  }
+
+  // Runs work as the task id, handling what it asks of Concurrent, until it gives way.
+  @Mutating private task<@E>(state: Run, id: Int, work: @Concurrent<@E> @E () -> Unit): Unit = Concurrent(
+    launch = (launched, resume) -> {
+      next = state.next
+      state.next = next + 1
+      state.ready = state.ready + [~task(state, next, launched)]
+      resume(Task(next))
+    },
+    join = (joined, resume) -> {
+      if (state.ended.contains(joined.id)) resume(Unit)
+      else {
+        state.joining = state.joining.put(joined.id, state.joining.get(joined.id).getOrElse([]) + [~resume(Unit)])
+      }
+    },
+    pause = resume -> { state.ready = state.ready + [~resume(Unit)] },
+    park = (register, resume) -> {
+      next = state.next
+      state.next = next + 1
+      state.parked = state.parked.put(next, ~resume(Unit))
+      register(Waker(next))
+    },
+    wake = (waker, resume) -> {
+      woken(state, waker)
+      resume(Unit)
+    },
+  ) {
+    work()
+    state.ended = state.ended + [id]
+    state.ready = state.ready + state.joining.get(id).getOrElse([])
+    state.joining = state.joining.remove(id)
+  }
+
+  // With the task parked with waker ready, if it's still parked.
+  @Mutating private woken(state: Run, waker: Waker): Unit = when (state.parked.get(waker.id)) {
+    Some(carryOn) -> {
+      state.parked = state.parked.remove(waker.id)
+      state.ready = state.ready + [carryOn]
+    }
+    None -> Unit
+  }
+
+  @Mutating @Fail private loop<@E>(state: Run, idle: @E () -> List<Waker>): Unit = when (state.ready) {
+    [next, *rest] -> {
+      state.ready = rest
+      next()
+      loop(state, idle)
+    }
+    [] -> if (state.parked.size > 0) {
+      came = idle()
+      if (came.isEmpty()) fail("every task is waiting, for what nothing will bring")
+      came.forEach { woken(state, it) }
+      loop(state, idle)
+    } else if (state.joining.size > 0) fail("every task is waiting, for one that's waiting too")
+    else Unit
+  }
+}

@@ -1,0 +1,3 @@
+// What the system has open, as a socket, a pipe or a terminal, by its number: what it can say is
+// ready to read or write without waiting.
+external type Descriptor = "Unix.file_descr"

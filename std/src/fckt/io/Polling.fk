@@ -1,0 +1,14 @@
+import fckt.concurrent.Waker
+import fckt.time.Instant
+
+// Waiting for the system: what to wait for, each with the waker to wake once it's come, and then
+// waiting for any of it.
+// Polls.running handles it, with the machine's select, for a block's tasks.
+effect Polling {
+  whenReadable(descriptor: Descriptor, waker: Waker): Unit
+  whenWritable(descriptor: Descriptor, waker: Waker): Unit
+  whenPast(time: Instant, waker: Waker): Unit
+  // Waits until something waited for has come, and says the wakers of what has: none, if nothing's
+  // waited for. Each is then no longer waited for.
+  waitForAny(): List<Waker>
+}

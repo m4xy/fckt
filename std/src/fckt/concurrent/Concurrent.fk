@@ -1,0 +1,15 @@
+// Doing several things at once, each a task, taking turns: what the tasks do is @E. A task runs
+// until it pauses, parks, joins one not done, or ends, and then another runs: one at a time, so
+// none sees another half way through changing something. Executor.run runs a block's tasks.
+effect Concurrent<@E> {
+  // Starts work, as a task of its own, which runs once this one gives way.
+  launch(work: @Concurrent<@E> @E () -> Unit): Task
+  // Waits until the task has ended.
+  join(task: Task): Unit
+  // Lets the other tasks ready to run have a turn first.
+  pause(): Unit
+  // Waits until whatever register gives the waker to wakes it: register says what to wait for.
+  park(register: @E (Waker) -> Unit): Unit
+  // Carries on the task that parked with the waker, if it's still waiting.
+  wake(waker: Waker): Unit
+}

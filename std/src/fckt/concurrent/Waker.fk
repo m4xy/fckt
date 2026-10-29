@@ -1,0 +1,3 @@
+// What carries on a task that parked: given to whatever the task waits for, which wakes it once
+// that's come, as a poller does when a descriptor's ready, or another task when it's sent something.
+type Waker(id: Int)
