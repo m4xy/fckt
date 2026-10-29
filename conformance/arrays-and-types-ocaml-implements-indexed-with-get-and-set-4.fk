@@ -1,0 +1,10 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f() = { 1 + 1 = 2; 3 }
+main() = assert(true)
+
+// error: only a var, a var field or an index can be assigned to

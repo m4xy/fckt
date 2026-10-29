@@ -1,0 +1,25 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Counter {
+  type T
+  zero: T
+  count(c: T): Int
+}
+module Tally : Counter {
+  opaque type T = Int
+  zero = 0
+  count(c: Int) = c
+  helper(c: Int) = c
+}
+module Clicks : Counter {
+  opaque type T(clicks: List<String>)
+  zero = T([])
+  count(c: T) = c.clicks.size
+}
+x = Tally.helper(1)
+
+// compiles

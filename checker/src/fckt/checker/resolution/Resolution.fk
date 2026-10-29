@@ -7,10 +7,13 @@ import fckt.checker.symbols.*
 module Resolution {
   // Every declaration, and what each file's imports bring in; or, giving up, why a name is
   // declared twice or an import names nothing.
-  @Abandoning namespace(workspace: Workspace): Namespace = {
+  @Abandoning namespace(workspace: Workspace, tree: SourceTree): Namespace = {
     table = Symbols.table(workspace)
-    Namespace(table, workspace.files.map { file -> (file.source.path, Imports.of(file, table)) }.toMap())
+    Namespace(table, workspace.files.map { file -> (file.source.path, Imports.of(file, table)) }.toMap(), noModules, Hints(tree, workspace.apart))
   }
+
+  // What modules are before functors are: nothing more than what they declare.
+  noModules: Modules = Modules(emptyMap(), [], [], emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap())
 
   // What each type's name written in the file means, with an error for each that means nothing
   // it can be used as.

@@ -142,12 +142,12 @@ fieldType(field: FieldReference): Type = when (field) {
         None -> None
         Some(record) ->
           if (!recordFieldsOf(record).any { it.name == name }) None
-          else if (Conversion.isAbstractHere(record, context.place)) {
+          else if (Conversion.isAbstractHere(record, context.place, context.environment.definitions)) {
             // A field that can't be seen here isn't what the name means, when an extension of that name is.
             hasExtension: Option<Symbol> = extensionFor(at, name, receiver, context)
             if (hasExtension.isSome()) None else abandon(opaque(record, at, context))
           } else {
-            types = Conversion.recordFields(record, arguments, region, context.environment.definitions)
+            types = Conversion.recordFields(record, arguments, region, context.environment.definitions, Some(context.place))
             index = recordFieldsOf(record).indexOfFirst { it.name == name }
             types.getOrNone(index).map { t -> RecordField(record, t) }
           }
@@ -323,7 +323,7 @@ fieldType(field: FieldReference): Type = when (field) {
     }
     None -> when (receiver) {
       Variable(_) -> abandon(Globals.problem(context, memberAt, "can't tell what '$name' is: the receiver's type isn't known here; annotate it"))
-      _ -> abandon(Globals.problem(context, memberAt, "${TypeText.shown(receiver)} has no method '$name'"))
+      _ -> abandon(Globals.problem(context, memberAt, "${TypeText.shown(receiver)} has no method '$name'${methodImportHint(name, receiver, context)}"))
     }
   }
 }
@@ -331,7 +331,7 @@ fieldType(field: FieldReference): Type = when (field) {
 // record.copy(field = value): the record, with the fields named changed.
 @Inferring private copied(at: Position, memberAt: Position, record: Symbol, receiver: Type, arguments: List<CallArgument>, scope: Scope, context: Context): Type = {
   own = Symbols.simpleName(record)
-  if (Conversion.isAbstractHere(record, context.place)) abandon(opaque(record, memberAt, context)) else Unit
+  if (Conversion.isAbstractHere(record, context.place, context.environment.definitions)) abandon(opaque(record, memberAt, context)) else Unit
   privateConstructor = when (record.declaration.definition) {
     RecordDefinition(_, _, p, _, _) -> p
     else -> false
@@ -344,7 +344,7 @@ fieldType(field: FieldReference): Type = when (field) {
     Named(_, typeArguments, r) -> (typeArguments, r)
     else -> ([], None)
   }
-  types = Conversion.recordFields(record, recordArguments, region, context.environment.definitions)
+  types = Conversion.recordFields(record, recordArguments, region, context.environment.definitions, Some(context.place))
   fields = recordFieldsOf(record)
   arguments.fold([]) { seen, argument ->
     fieldName = argument.name.getOrElse("")
@@ -378,4 +378,16 @@ fieldType(field: FieldReference): Type = when (field) {
   TupleOf(elements) -> elements.fold(found) { acc, e -> shownVariables(e, acc) }
   FunctionOf(parameters, result, _) -> shownVariables(result, parameters.fold(found) { acc, p -> shownVariables(p, acc) })
   else -> found
+}
+
+// For a method that isn't in scope here, the imports of the modules that would bring one in: those
+// with an extension of the name that fits, or, of the modules not loaded at all, those that declare a
+// method of the name.
+@Solving @Abandoning methodImportHint(name: String, receiver: Type, context: Context): String = {
+  linked = context.environment.extensions.getOrDefault(name, [])
+    .filter { s -> Globals.visible(s, context) && !Globals.inScope(s, context) && fitsReceiver(s, receiver, context) }
+    .map { s -> s.path.joinToString(".") }
+  namespace = context.environment.definitions.namespace
+  modules = (if (linked.isEmpty()) ImportHints.importsFor(name, namespace.hints).filter { it.endsWith(".$name") }.map { it.removeSuffix(".$name") } else linked).distinct()
+  if (modules.isEmpty()) "" else "; " + modules.map { "import $it.*" }.joinToString(", or ") + " has one"
 }

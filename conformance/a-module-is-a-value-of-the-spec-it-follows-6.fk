@@ -1,0 +1,32 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Reporting { shown(line: String): Boolean = true }
+module Everything : Reporting {}
+module Quiet : Reporting { shown(line: String): Boolean = line.startsWith("!") }
+
+spec Plugin {
+  name(): String
+  tasks(project: String): List<String>
+}
+module Docs : Plugin {
+  name(): String = "docs"
+  tasks(project: String): List<String> = ["docs $project"]
+}
+module Tests(R: Reporting = Everything) : Plugin {
+  name(): String = "tests"
+  tasks(project: String): List<String> = ["test $project", "! check $project"].filter(line -> R.shown(line))
+}
+
+module Loud : Reporting {
+  @Console shown(line: String): Boolean = {
+    println(line)
+    true
+  }
+}
+r: Reporting = Loud
+
+// error: Loud can't be a Reporting value: its shown does @Console

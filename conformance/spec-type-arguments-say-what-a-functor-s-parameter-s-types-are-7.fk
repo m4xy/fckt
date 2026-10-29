@@ -1,0 +1,9 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f(x: List<_>): Int = 1
+
+// error: '_' only marks a spec type's parameters

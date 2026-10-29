@@ -25,7 +25,7 @@ module TypeNames {
         else ->
           if (scope.typeParameters.contains("@$name")) Refused("'$name' is an effect parameter, written @$name, as in @$name () -> Unit")
           else if (name == "_") Refused("'_' only marks a spec type's parameters, as in Monad<Result<_, String>>")
-          else Refused("unknown type '$name'")
+          else Refused("unknown type '$name'${ImportHints.forName(name, namespace)}")
       }
     }
   }

@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Account(owner: String, var balance: Int)
+f() = { a = Account("x", 0); b = a; b.balance = 3; a.balance }
+g() = [Account("a", 1)].forEach(a -> { a.balance = 0 })
+h() = { var n = 0; n = 5 }
+main() = assert(true)
+
+// compiles

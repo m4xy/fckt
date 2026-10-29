@@ -1,0 +1,52 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+// Annotations, as in Kotlin: @Name(...) on a declaration, a field, a case or a parameter. The
+// compiler checks them, then leaves them out, so they're for tools that read the program. An
+// argument is a constant or a reference to something in the program, never a calculation.
+
+annotation type Pure
+annotation type Route(path: String, handler: (String) -> String)
+annotation type SortedBy(order: Module<Ordered>)
+annotation type Codec(of: Type)
+annotation type Derive(specs: List<Spec>)
+annotation type Default(value: Case<Shape>)
+annotation type Index(field: Field<User, String>)
+annotation type Routes(routes: List<Route>)
+
+spec Ordered {
+  type T
+  compare(a: T, b: T): Int
+}
+
+module IntOrder : Ordered {
+  type T = Int
+  compare(a: Int, b: Int) = a - b
+}
+
+type Shape {
+  @Pure Circle(radius: Float),
+  Square(side: Float)
+}
+
+@Index(User.email)
+type User(name: String, @Pure email: String)
+
+@Default(Shape.Circle)
+@Codec(List<(User, Shape)>)
+@Derive([Ordered])
+type Drawing(shapes: List<Shape>)
+
+@Pure
+greet(name: String) = "hello $name"
+
+shout(@Pure s: String) = s + "!"
+
+@Routes([Route("/a")])
+f() = 1
+main() = assert(true)
+
+// error: @Route takes 2 arguments, not 1

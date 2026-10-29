@@ -20,16 +20,47 @@ import fckt.parser.*
 // What's known after the group is checked, with each when in it checked for covering every value,
 // if coverage is wanted.
 @Solving @Abandoning checkGroup(group: FunctionGroup, environment: Environment, coverage: Boolean): Known = {
+  first = group.functions.firstOrNone()
+  application = first.flatMap { f -> Names.enclosingApplication(f.path, environment.definitions.namespace) }
+  when (application) {
+    None -> checkGroupAlone(group, environment, coverage)
+    // A module a functor made: its modules first, then the functor's body for them, its errors said
+    // to be the functor's for them.
+    Some(made) -> {
+      checkArgumentTypes(made, environment.known, environment)
+      when (Diagnostics.attempting { checkGroupAlone(group, environment, coverage) }) {
+        Ok(known) -> known
+        Error(d) -> abandon(inApplication(made, d, environment))
+      }
+    }
+  }
+}
+
+@Solving @Abandoning private checkGroupAlone(group: FunctionGroup, environment: Environment, coverage: Boolean): Known = {
   var pending: List<PendingWhen> = []
   known = Covering(cover = found -> { pending = pending + [found] }) { checkFunctions(group, environment) }
   if (coverage) pending.forEach { checkCovers(it, environment) } else Unit
   known
 }
 
+// An error in a module a functor made, as the functor's for the modules it was given: in
+// SortedSet<IntOrder>, at 3:5: ...
+private inApplication(made: String, d: Diagnostic, environment: Environment): Diagnostic = {
+  namespace = environment.definitions.namespace
+  when ((namespace.modules.applications.get(made), namespace.table.modules.get(made))) {
+    (Some(application), Some(DeclaredModule(app))) -> {
+      at = d.file.map { "$it:" }.getOrElse("") + "${d.at.line}:${d.at.column}"
+      Diagnostic(app.file.source.path, app.declaration.at,
+        "in ${Symbols.simpleName(application.functor)}<${application.arguments.map { Symbols.simpleName(it) }.joinToString(", ")}>, at $at: ${d.message}")
+    }
+    _ -> d
+  }
+}
+
 // What's known after a group that couldn't be checked: its functions may be anything, so what uses
 // them is checked without more errors about them. A function of as many parameters, taking and
 // giving anything, and doing anything.
-@Solving failed(group: FunctionGroup, known: Known): Known = Known(
+@Solving failed(group: FunctionGroup, known: Known): Known = known.copy(schemes =
   group.functions.filter { f -> !known.schemes.containsKey(f.name) }.fold(known.schemes) { schemes, f ->
     t = when (Signatures.parametersOf(f)) {
       Some(ps) -> FunctionOf(ps.map { Variable(fresh()) }, Variable(fresh()), Row([], Some(fresh())))
@@ -37,9 +68,8 @@ import fckt.parser.*
     }
     schemes.put(f.name, Scheme(variablesIn(t), t))
   },
-  known.typeParameterVariables,
-  emptyMap(),
-  emptyMap(),
+  provisional = emptyMap(),
+  viewed = emptyMap(),
 )
 
 @Solving @Abandoning @Covering private checkFunctions(group: FunctionGroup, environment: Environment): Known = {
@@ -48,18 +78,20 @@ import fckt.parser.*
   viewed = if (group.functions.size > 1) signatures.mapNotNull { s -> viewedAs(s, environment).map { t -> (s.function.name, t) } }.toMap() else emptyMap()
   known = environment.known
   checking = Environment(environment.definitions, environment.functions, environment.orderedFunctions, environment.extensions, environment.casesByName,
-    environment.moduleSpecs, environment.specTypes, environment.operations, Known(known.schemes, known.typeParameterVariables, provisional, viewed))
+    environment.moduleSpecs, environment.specTypes, environment.operations, known.copy(provisional = provisional, viewed = viewed))
   signatures.forEach { s -> checkBody(s, checking) }
   // What each does as its callers see it: changing values that never left it doesn't count.
   done = signatures.map { s -> masked(s.row, s.t) }
   signatures.zip(done).forEach { s, row -> checkDeclaredArguments(s, row, environment) }
+  signatures.zip(done).find { s, _ -> s.function.name == "main" }.forEach { s, row -> checkMainHandled(s.function, row, environment) }
   signatures.zip(done).forEach { s, row ->
     if (!Signatures.isExternal(s.function)) checkEffects(s.function, row, environment) else Unit
   }
-  signatures.zip(done).fold(known) { k, entry ->
+  withSchemes = signatures.zip(done).fold(known) { k, entry ->
     (s, row) = entry
     withScheme(s, row, k)
   }
+  signatures.fold(withSchemes) { k, s -> conform(s.function, k, environment) }
 }
 
 // That a generic effect a function says it does, @Yielding<Int>, is the one it does: its type
@@ -90,8 +122,12 @@ import fckt.parser.*
 // starts.
 @Solving @Abandoning private checkEffects(f: Symbol, done: Row, environment: Environment): Unit =
   if (f.name == "main" || Defaults.isDefault(f)) Unit
+  // A module a functor made was checked as the functor; what it does with its real modules is theirs.
+  else if (Names.enclosingApplication(f.path, environment.definitions.namespace).isSome()) Unit
   else {
-    did = effectNames(done).distinct()
+    // What a functor's parameters do is theirs too: a use case may do whatever its repositories do.
+    theirs = parameterEffects(f.path, environment)
+    did = effectNames(done).distinct().filter { !theirs.contains(it) }
     own = Symbols.simpleName(f)
     if (!Signatures.isFunction(f)) {
       if (did.isNotEmpty()) abandon(Diagnostic(f.file.source.path, f.declaration.at,
@@ -129,7 +165,18 @@ private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, enviro
     }
     None -> result
   }
-  Signature(f, typeVariables, row, t)
+  // Inside, an opaque type is what it stands for; callers outside see the type as written.
+  outside = if (!Conversion.isOpaqueAround(f.path, environment.definitions)) None else {
+    outsideContext = TypeContext(context.place, context.typeParameters, None, None, [], emptyMap(), true)
+    shownResult = Signatures.resultOf(f).map { r -> Conversion.typeOf(r, outsideContext, environment.definitions) }.getOrElse(result)
+    Some(when ((t, Signatures.parametersOf(f))) {
+      (FunctionOf(parameters, _, _), Some(ps)) -> FunctionOf(ps.zip(parameters).map { p, inside ->
+        p.parameterType.map { written -> Conversion.typeOf(written, TypeContext(context.place, context.typeParameters, None, Some(row), [], emptyMap(), true), environment.definitions) }.getOrElse(inside)
+      }, shownResult, row)
+      _ -> shownResult
+    })
+  }
+  Signature(f, typeVariables, row, t, outside)
 }
 
 // How the others in a group of several see a function that says what it does: as doing that. A
@@ -151,6 +198,7 @@ private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, enviro
     a.typeArguments.isNotEmpty() && Annotations.declarationOf(a, Place(f.file, f.path), namespace).map { Symbols.isSpec(it) }.getOrElse(false)
   }
   f.name != "main" && !Defaults.isDefault(f) && !Signatures.isExternal(f) &&
+    Names.enclosingApplication(f.path, namespace).isNone() && parameterEffects(f.path, environment).isEmpty() &&
     Signatures.typeParametersOf(f).none { it.startsWith("@") } && !generic
 }
 
@@ -190,7 +238,10 @@ private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, enviro
 @Abandoning private ceiling(path: List<String>, environment: Environment): Option<(Symbol, List<String>)> = {
   namespace = environment.definitions.namespace
   path.mapIndexed { i, _ -> path.take(path.size - i) }.mapNotNull { p ->
-    when (namespace.table.modules.get(p.joinToString("."))) {
+    name = p.joinToString(".")
+    // A module a functor made has the functor's.
+    around = namespace.modules.applications.get(name).map { made -> DeclaredModule(made.functor) }.orElse { namespace.table.modules.get(name) }
+    when (around) {
       Some(DeclaredModule(m)) -> {
         effects = Annotations.effectsOf(m.declaration.annotations, Place(m.file, m.path), m.declaration.at, namespace)
         if (effects.isEmpty()) None else Some((m, effects))
@@ -198,6 +249,24 @@ private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, enviro
       else -> None
     }
   }.firstOrNone()
+}
+
+// The effects the specs of the functor around the path say its parameters' functions have, which
+// aren't the functor's own.
+@Abandoning parameterEffects(path: List<String>, environment: Environment): List<String> = {
+  namespace = environment.definitions.namespace
+  functor = path.mapIndexed { i, _ -> path.take(i + 1).joinToString(".") }.mapNotNull { name ->
+    when (namespace.table.modules.get(name)) {
+      Some(DeclaredModule(m)) if functorParameters(m).isNotEmpty() -> Some(m)
+      _ -> None
+    }
+  }.firstOrNone()
+  functor.map { m ->
+    context = Context(environment, Place(m.file, m.path), emptyMap())
+    functorParameters(m).flatMap { p ->
+      namespace.modules.specs.get("${m.name}.${p.name}").map { spec -> specValues(spec).flatMap { v -> specEffects(spec, v, context) } }.getOrElse([])
+    }.distinct()
+  }.getOrElse([])
 }
 
 // What a module's effects let its functions do, for messages: do @Console, or be pure for @Pure.
@@ -259,13 +328,27 @@ private allows(effects: List<String>): String = {
   } else Unit
   final = resolvedFully(t)
   scheme = if (isValue) Scheme([], final) else Scheme(variablesIn(final), final)
+  // How callers outside its module see it, with an opaque alias there as written.
+  outside = s.outside.map { o ->
+    shown = resolvedFully(when (o) {
+      FunctionOf(parameters, result, _) -> FunctionOf(parameters, result, done)
+      other -> other
+    })
+    if (isValue) Scheme([], shown) else Scheme(variablesIn(shown), shown)
+  }
   variables = s.typeVariables.filter { name, _ -> !name.startsWith("@") }.mapNotNull { name, v ->
     when (resolved(Variable(v))) {
       Variable(w) -> Some((name, w))
       else -> None
     }
   }.toMap()
-  Known(known.schemes.put(f.name, scheme), known.typeParameterVariables.put(f.name, variables), emptyMap(), emptyMap())
+  known.copy(
+    schemes = known.schemes.put(f.name, scheme),
+    outside = outside.map { o -> known.outside.put(f.name, o) }.getOrElse(known.outside),
+    typeParameterVariables = known.typeParameterVariables.put(f.name, variables),
+    provisional = emptyMap(),
+    viewed = emptyMap(),
+  )
 }
 
 // That each declared type parameter stayed unknown, and none is another: id<T>(x: T): Int = x is

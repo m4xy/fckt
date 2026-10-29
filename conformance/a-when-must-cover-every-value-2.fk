@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Letter { X, Y, Z }
+f(a: Letter) = when (a) {
+  X, Y -> 1
+}
+
+// error: this when doesn't cover Z; add it, or an else

@@ -192,7 +192,7 @@ private isSpread(e: Expression): Boolean = when (e) {
               Some(m) -> Typed(moduleAsValue(m, at, context))
               None ->
                 if (name == "it") abandon(Globals.problem(context, at, "there's no 'it' here: only a block given as a function of one parameter has one, as in xs.filter { it > 1 }"))
-                else abandon(Globals.problem(context, at, "unknown name '$name'"))
+                else abandon(Globals.problem(context, at, "unknown name '$name'${ImportHints.forName(name, context.environment.definitions.namespace)}"))
             }
           }
         }

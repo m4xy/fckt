@@ -21,6 +21,26 @@ import fckt.parser.*
   expected: Option<Type>,
   scope: Scope,
   context: Context,
+): Typed = when (liftedModule(at, context)) {
+  // A functor applied here is the module made for it, as a value of the functor's spec.
+  Some(made) -> Typed(moduleAsValue(made, at, context))
+  None -> inferUnlifted(at, callee, arguments, typeArguments, expected, scope, context)
+}
+
+// The module made for a functor applied in an expression, if the call at the position is one.
+private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
+  namespace = context.environment.definitions.namespace
+  namespace.modules.lifted.get(CallSite(context.place.file.source.path, at)).flatMap { made -> namespace.table.modules.get(made) }
+}
+
+@Inferring private inferUnlifted(
+  at: Position,
+  callee: Expression,
+  arguments: List<CallArgument>,
+  typeArguments: List<TypeRef>,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
 ): Typed = when (declaredCallee(callee, scope, context)) {
   Some(global) if Signatures.isFunction(global) -> Typed(callDeclared(at, global, arguments, typeArguments, scope, context))
   declared -> {
@@ -119,7 +139,7 @@ import fckt.parser.*
       unify(Variable(v), FunctionOf(ps, r, row))
       (ps, r, row)
     }
-    other -> abandon(Globals.problem(context, Defaults.positionOf(callee), "a ${TypeText.shown(other)} is not a function"))
+    other -> abandon(Globals.problem(context, Positions.of(callee), "a ${TypeText.shown(other)} is not a function"))
   }
   if (parameters.size != arguments.size) {
     abandon(Globals.problem(context, at, "this function takes ${parameters.size} arguments, not ${arguments.size}"))
@@ -179,25 +199,30 @@ spelledCase(shape: ConstructorShape): Option<CaseSymbol> = when (shape.construct
 
 // Which argument each parameter gets: the first arguments in order, as in Kotlin, then the rest by
 // name, each parameter once.
-@Abandoning argumentOrder(arguments: List<CallArgument>, parameters: List<String>, at: Position, what: String, context: Context): List<Int> = {
-  counted = "$what takes ${parameters.size} argument${if (parameters.size == 1) "" else "s"}, not ${arguments.size}"
-  if (arguments.none { it.name.isSome() }) {
-    if (arguments.size != parameters.size) abandon(Globals.problem(context, at, counted)) else parameters.mapIndexed { i, _ -> i }
+@Abandoning argumentOrder(arguments: List<CallArgument>, parameters: List<String>, at: Position, what: String, context: Context): List<Int> =
+  orderOf(arguments.map { a -> (a.name, argumentPosition(a.value)) }, parameters, at, what, context)
+
+// Which of the given, each its name, if it's given by one, and where it's written, each parameter
+// gets: the first in order, then the rest by name, each parameter once.
+@Abandoning orderOf(given: List<(Option<String>, Position)>, parameters: List<String>, at: Position, what: String, context: Context): List<Int> = {
+  counted = "$what takes ${parameters.size} argument${if (parameters.size == 1) "" else "s"}, not ${given.size}"
+  if (given.none { name, _ -> name.isSome() }) {
+    if (given.size != parameters.size) abandon(Globals.problem(context, at, counted)) else parameters.mapIndexed { i, _ -> i }
   } else {
-    byName = arguments.withIndex().fold(emptyMap()) { found, entry ->
+    byName = given.withIndex().fold(emptyMap()) { found, entry ->
       (i, argument) = entry
-      argumentAt = argumentPosition(argument.value)
-      when (argument.name) {
+      (name, argumentAt) = argument
+      when (name) {
         None ->
-          if (arguments.take(i).any { it.name.isSome() }) abandon(Globals.problem(context, argumentAt, "an argument passed in order can't follow one passed by name"))
+          if (given.take(i).any { n, _ -> n.isSome() }) abandon(Globals.problem(context, argumentAt, "an argument passed in order can't follow one passed by name"))
           else when (parameters.getOrNone(i)) {
             Some(parameter) -> found.put(parameter, i)
             None -> abandon(Globals.problem(context, at, counted))
           }
-        Some(name) ->
-          if (!parameters.contains(name)) abandon(Globals.problem(context, argumentAt, "$what has no parameter '$name'"))
-          else if (found.containsKey(name)) abandon(Globals.problem(context, argumentAt, "'$name' is passed twice"))
-          else found.put(name, i)
+        Some(n) ->
+          if (!parameters.contains(n)) abandon(Globals.problem(context, argumentAt, "$what has no parameter '$n'"))
+          else if (found.containsKey(n)) abandon(Globals.problem(context, argumentAt, "'$n' is passed twice"))
+          else found.put(n, i)
       }
     }
     parameters.map { p ->
@@ -211,7 +236,7 @@ spelledCase(shape: ConstructorShape): Option<CaseSymbol> = when (shape.construct
 
 // Where an argument is, for an error about it.
 argumentPosition(value: ArgumentValue): Position = when (value) {
-  WrittenValue(e) -> Defaults.positionOf(e)
+  WrittenValue(e) -> Positions.of(e)
   TrailingBlock(at, _, _) -> at
   DefaultValue(at, _) -> at
 }

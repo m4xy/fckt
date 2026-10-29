@@ -14,9 +14,12 @@ module Inference {
   // Each function's and value's type, in the order they're written, and every error found. Where a
   // group can't be checked, its functions may be anything, so what uses them is checked without
   // more errors about them. With coverage, each when must cover every value of its subject.
-  @Solving @Reporting @Abandoning functionTypes(definitions: Definitions, coverage: Boolean): List<CheckedFunction> = {
+  @Solving @Reporting @Abandoning functionTypes(definitions: Definitions, coverage: Boolean): Inferred = {
     checkTypeDeclarations(definitions)
+    metaTypes = MetaTypes.all(definitions)
     environment = Environments.of(definitions)
+    checkModulesDefine(environment)
+    checkArgumentsDefine(environment)
     groups = Groups.ordered(environment.orderedFunctions, environment)
     known = groups.fold(environment.known) { k, group ->
       checking = Environment(environment.definitions, environment.functions, environment.orderedFunctions, environment.extensions,
@@ -29,15 +32,23 @@ module Inference {
         }
       }
     }
-    checkMain(environment, known)
-    environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s) } }
+    reportingAbandoned { checkExposure(environment, known) }
+    Inferred(environment, known, environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s) } }, metaTypes)
+  }
+
+  // What block gives up on, reported, going on after it.
+  @Reporting private reportingAbandoned(block: @Abandoning () -> Unit): Unit = {
+    Diagnostics.recovering(block)
+    Unit
   }
 
   // Every type declaration's fields' types, and every alias's, so a wrong one is reported where it's
   // written, whether or not anything uses it; and no type with two fields of a name.
   @Solving @Abandoning private checkTypeDeclarations(definitions: Definitions): Unit = {
     table = definitions.namespace.table
-    table.declarations.filter { Symbols.isAlias(it) }.forEach { a ->
+    // Not those a spec's type arguments make, which are worked out where they're used.
+    fixed = definitions.namespace.modules.fixedTypes.toList().map { _, a -> a.name }
+    table.declarations.filter { a -> Symbols.isAlias(a) && !fixed.contains(a.name) }.forEach { a ->
       Conversion.expand(a, Conversion.typeParametersOf(a).map { TypeParameter(it) }, TypeContext(Place(a.file, a.path), emptyMap()), definitions)
       Unit
     }
@@ -72,7 +83,7 @@ module Inference {
   }
 
   // That main, if there is one, takes nothing or the program's arguments, and gives Unit.
-  @Solving @Reporting private checkMain(environment: Environment, known: Known): Unit =
+  @Solving @Reporting checkMain(environment: Environment, known: Known): Unit =
     when ((environment.functions.get("main"), known.schemes.get("main"))) {
       (Some(main), Some(scheme)) -> {
         problem = (message: String) -> report(Diagnostic(main.file.source.path, main.declaration.at, message))

@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Fail { fail(reason: String): Nothing }
+effect Choose { choose(): Boolean }
+f(): Int = Fail(fail = (r, resume) -> resume(0)) { fail("x") }
+main() = assert(true)
+
+// error: expected Nothing but found Int

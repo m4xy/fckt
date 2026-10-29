@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+apply(f: (Int) -> Int, x: Int) = f(x)
+p() = apply(x -> x + 1, 1)
+twice(f, x) = f(f(x))
+t() = twice(x -> x * 2, 1)
+main() = assert(true)
+
+// compiles

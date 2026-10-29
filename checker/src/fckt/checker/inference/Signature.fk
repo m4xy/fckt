@@ -2,5 +2,6 @@ import fckt.checker.symbols.Symbol
 import fckt.checker.types.*
 
 // A function of a group being checked, as its group sees it before its body's checked: the unknown
-// each of its type parameters is, by name; its own row, what its body does; and its type.
-type Signature(function: Symbol, typeVariables: List<(String, TypeVariable)>, row: Row, t: Type)
+// each of its type parameters is, by name; its own row, what its body does; its type; and, in a
+// module with an opaque alias, its type as callers outside see it, with the alias as written.
+type Signature(function: Symbol, typeVariables: List<(String, TypeVariable)>, row: Row, t: Type, outside: Option<Type> = None)

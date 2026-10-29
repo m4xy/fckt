@@ -1,0 +1,19 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module V {
+  map(m, f) = when (m) {
+    Some(x) -> Some(f(x))
+    None -> None
+  }
+  product(a, b) = when (a, b) {
+    (Some(x), Some(y)) -> Some((x, y))
+    else -> None
+  }
+}
+f(n: Int) = V { n }
+
+// error: V has no pure, so its block needs a 'by' line

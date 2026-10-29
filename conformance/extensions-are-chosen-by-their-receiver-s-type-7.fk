@@ -1,0 +1,9 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+external f(x: Int): Int = x
+
+// error: an external's body is OCaml in a string

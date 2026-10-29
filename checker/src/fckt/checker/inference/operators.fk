@@ -56,11 +56,11 @@ import fckt.parser.*
   r = resolved(infer(right, hint, scope, context).t)
   isArithmetic = ["+", "-", "*", "/", "%"].contains(operator)
   if (operator == "+" && (isNamed(l, "List") || isNamed(r, "List"))) {
-    expect(r, l, Defaults.positionOf(right), context)
+    expect(r, l, Positions.of(right), context)
     l
   } else if (operator == "+" && (isNamed(l, "String") || isNamed(r, "String"))) {
-    expect(l, string, Defaults.positionOf(left), context)
-    expect(r, string, Defaults.positionOf(right), context)
+    expect(l, string, Positions.of(left), context)
+    expect(r, string, Positions.of(right), context)
     string
   } else {
     // Unknown operands are settled from the other side, or, for arithmetic, are Ints.
@@ -89,7 +89,7 @@ import fckt.parser.*
       why = method.filter { ownsOperators(x) }.map { m -> ": ${noOperator(operator, m, x, context)}" }.getOrElse("")
       abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(x)} and ${TypeText.shown(y)}$why"))
     } else {
-      expect(y, x, Defaults.positionOf(right), context)
+      expect(y, x, Positions.of(right), context)
       boolean
     }
   }
@@ -121,4 +121,4 @@ ownsOperators(t: Type): Boolean = when (t) {
 // Why the operator can't be applied to a type whose operators are its own, as its method.
 @Solving @Abandoning noOperator(operator: String, method: String, t: Type, context: Context): String =
   if (Globals.extensionsNamed(method, context).any { fitsReceiver(it, t, context) }) "its $method isn't an operator; mark it operator to use '$operator' for it"
-  else "there's no operator $method"
+  else "there's no operator $method${methodImportHint(method, t, context)}"

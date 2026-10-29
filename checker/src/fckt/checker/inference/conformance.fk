@@ -1,0 +1,317 @@
+import fckt.collections.Maps.*
+import fckt.checker.annotations.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+import fckt.parser.*
+
+// Modules against the specs they follow: a module that follows one defines everything it lists,
+// publicly, each function with the type the spec gives it, where the spec's types are what the module
+// makes them and its type parameters work for any type; and a module given to a functor has what its
+// parameter's spec lists, of those types. Callers outside a module that follows a spec see its
+// functions as the spec says they are.
+
+// That each module that follows a spec defines each of its types, taking as many type parameters as
+// it says, and each of its values, none of them privately.
+@Abandoning checkModulesDefine(environment: Environment): Unit = {
+  table = environment.definitions.namespace.table
+  environment.moduleSpecs.toList().forEach { name, spec ->
+    when (table.modules.get(name)) {
+      Some(DeclaredModule(declared)) -> checkDefines(declared, spec, environment)
+      _ -> Unit
+    }
+  }
+}
+
+@Abandoning private checkDefines(declared: Symbol, spec: Symbol, environment: Environment): Unit = {
+  table = environment.definitions.namespace.table
+  own = Symbols.simpleName(declared)
+  specName = Symbols.simpleName(spec)
+  specTypeNames(spec).forEach { typeName ->
+    t = specOwnTypes(spec).find { it.name == typeName }
+    wantedParameters = t.map { it.typeParameters.size }.getOrElse(0)
+    when (typeNamed("${declared.name}.$typeName", table)) {
+      None -> abandon(Diagnostic(declared.file.source.path, declared.declaration.at, "$own doesn't define type $typeName, which its spec $specName needs"))
+      Some(d) -> {
+        if (d.declaration.visibility == Private) abandon(Diagnostic(d.file.source.path, d.declaration.at, "$typeName is in $own's spec $specName, so it can't be private")) else Unit
+        n = Conversion.typeParametersOf(d).size
+        if (n != wantedParameters) {
+          abandon(Diagnostic(d.file.source.path, d.declaration.at,
+            "$specName says $typeName takes $wantedParameters type parameter${if (wantedParameters == 1) "" else "s"}, not $n"))
+        } else Unit
+      }
+    }
+  }
+  specValues(spec).forEach { v ->
+    when (environment.functions.get("${declared.name}.${v.name}")) {
+      None -> abandon(Diagnostic(declared.file.source.path, declared.declaration.at, "$own doesn't define '${v.name}', which its spec $specName needs"))
+      Some(f) ->
+        if (f.declaration.visibility == Private) abandon(Diagnostic(f.file.source.path, f.declaration.at, "'${v.name}' is in $own's spec $specName, so it can't be private"))
+        else Unit
+    }
+  }
+}
+
+// The types a spec says each module that follows it has.
+specOwnTypes(spec: Symbol): List<SpecType> = when (spec.declaration.definition) {
+  SpecDefinition(types, _, _, _, _) -> types
+  _ -> []
+}
+
+// The record, type with cases or alias of that full name.
+typeNamed(full: String, table: SymbolTable): Option<Symbol> =
+  table.records.get(full).orElse { table.caseTypes.get(full) }.orElse { table.aliases.get(full) }
+
+// ---- A module's functions against its spec ----
+
+// That the function, checked, has the type its module's spec gives it, and does no more than the spec
+// says it may; with how callers outside the module see it.
+@Solving @Abandoning conform(f: Symbol, known: Known, environment: Environment): Known = {
+  owner = f.path.joinToString(".")
+  value = environment.moduleSpecs.get(owner).flatMap { spec ->
+    specValues(spec).find { it.name == f.declaration.name }.flatMap { v ->
+      environment.specTypes.get(spec.name).flatMap { types -> types.values.get(v.name) }.map { wanted -> (spec, v, wanted) }
+    }
+  }
+  when ((value, known.schemes.get(f.name))) {
+    (Some((spec, v, wanted)), Some(scheme)) -> conformTo(f, owner, spec, v, wanted, scheme, known, environment)
+    else -> known
+  }
+}
+
+@Solving @Abandoning private conformTo(f: Symbol, owner: String, spec: Symbol, v: SpecValue, wanted: Scheme, scheme: Scheme, known: Known, environment: Environment): Known = {
+  definitions = environment.definitions
+  own = Symbols.simpleName(f)
+  specName = Symbols.simpleName(spec)
+  // Its type parameters must work for any type; what else it may do is open.
+  named = wanted.variables.zip(v.typeParameters)
+  open = wanted.variables.drop(named.size).map { variable -> (variable, Variable(fresh())) }
+  rigid = (named.map { variable, name -> (variable, TypeParameter(name)) } + open).toMap()
+  inside = withModuleTypes(substitute(wanted.template, rigid), owner, moduleContext(f, definitions), definitions)
+  actual = instantiate(scheme)
+  shownActual = TypeText.shown(actual)
+  if (!unify(actual, inside)) {
+    abandon(Diagnostic(f.file.source.path, f.declaration.at,
+      "'$own' has type $shownActual, but $specName needs ${specShown(wanted, named)}, which here is ${TypeText.shown(inside)}"))
+  } else Unit
+  // What it does, against what the spec says its function may do.
+  declared = specEffects(spec, v, Context(environment, Place(f.file, f.path), emptyMap()))
+  hidden = hides(spec, v, Context(environment, Place(f.file, f.path), emptyMap()))
+  done = when (resolved(inside)) {
+    FunctionOf(_, _, effects) -> effectNames(effects).distinct()
+    _ -> []
+  }
+  extra = done.filter { !declared.contains(it) }
+  if (extra.isNotEmpty() && declared.isNotEmpty() && !hidden) {
+    abandon(Diagnostic(f.file.source.path, f.declaration.at,
+      "'$own' does ${Doings.shown(extra)}, but $specName's $own doesn't say it can: declare it there, as ${Doings.shown(extra)} $own(...)"))
+  } else Unit
+  // An effect with operations needs a handler, which callers can't give if they can't see it: so it
+  // can be hidden only if it has a default, which main always puts around everything.
+  if (hidden) {
+    extra.find { name -> needsHandler(name, environment) && defaultHandler(name, environment).isNone() }.forEach { name ->
+      effect = name.split(".").lastOrNone().getOrElse(name)
+      abandon(Diagnostic(f.file.source.path, f.declaration.at,
+        "'$own' does ${Doings.shown([name])}, which needs a handler and has no default, so $specName can't hide it: " +
+          "handle it inside ${owner.split(".").lastOrNone().getOrElse(owner)}, or give $effect a default with @HandledBy"))
+    }
+  } else Unit
+  // Callers outside see the spec's view: with what the spec says it does, or, where the spec says
+  // nothing, what this one does. Generic, too, in the module's own type parameters.
+  moduleVariables = Conversion.moduleTypeParameters(f.path, definitions).map { p -> (p, fresh()) }
+  outsideContext = TypeContext(Place(f.file, f.path), moduleVariables.map { p, variable -> (p, Variable(variable)) }.toMap())
+  shownType = ownTypesReplaced(wanted.template) { name, arguments -> Conversion.outsideType(owner, name, arguments, outsideContext, definitions) }
+  variables = wanted.variables + moduleVariables.map { _, variable -> variable }
+  outside = when ((declared.isEmpty(), shownType)) {
+    (true, FunctionOf(parameters, result, _)) -> {
+      rest = fresh()
+      Scheme(variables + [rest], FunctionOf(parameters, result, rowOf(done, Some(rest))))
+    }
+    _ -> Scheme(variables, shownType)
+  }
+  known.copy(outside = known.outside.put(f.name, outside))
+}
+
+// How a function's module sees types: from where it's written, its module's type parameters as new
+// unknowns.
+@Solving private moduleContext(f: Symbol, definitions: Definitions): TypeContext =
+  TypeContext(Place(f.file, f.path), Conversion.moduleTypeParameters(f.path, definitions).map { p -> (p, Variable(fresh())) }.toMap())
+
+// A spec's type, its type parameters by their names, its own types as written: (A) -> T<A>.
+@Solving private specShown(wanted: Scheme, named: List<(TypeVariable, String)>): String =
+  TypeText.shown(substitute(wanted.template, named.map { variable, name -> (variable, TypeParameter(name)) }.toMap()))
+
+// A type a spec says, with each of its own types the module's of that name.
+@Solving @Abandoning withModuleTypes(t: Type, owner: String, context: TypeContext, definitions: Definitions): Type =
+  ownTypesReplaced(t) { name, arguments ->
+    when (typeNamed("$owner.$name", definitions.namespace.table)) {
+      Some(d) -> Conversion.declared(d, arguments, context, definitions)
+      None -> SpecOwnType(name, arguments)
+    }
+  }
+
+// A type a spec says, with each of its own types what own makes it.
+@Solving @Abandoning ownTypesReplaced(t: Type, own: @Solving @Abandoning (String, List<Type>) -> Type): Type = when (resolved(t)) {
+  SpecOwnType(name, arguments) -> own(name, arguments.map { ownTypesReplaced(it, own) })
+  Named(n, arguments, region) -> Named(n, arguments.map { ownTypesReplaced(it, own) }, region)
+  Abstract(n, arguments) -> Abstract(n, arguments.map { ownTypesReplaced(it, own) })
+  ModuleValue(n, arguments) -> ModuleValue(n, arguments.map { ownTypesReplaced(it, own) })
+  Handler(n, arguments) -> Handler(n, arguments.map { ownTypesReplaced(it, own) })
+  TupleOf(elements) -> TupleOf(elements.map { ownTypesReplaced(it, own) })
+  FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { ownTypesReplaced(it, own) }, ownTypesReplaced(result, own), effects)
+  other -> other
+}
+
+// ---- Handlers ----
+
+// Whether the effect of that full name has operations, which something must answer.
+needsHandler(name: String, environment: Environment): Boolean =
+  environment.definitions.namespace.table.specs.get(name).map { spec ->
+    Annotations.isEffect(spec, environment.definitions.namespace) && specValues(spec).isNotEmpty()
+  }.getOrElse(false)
+
+// The module @HandledBy names as the effect's default, which main uses if it doesn't handle it.
+defaultHandler(name: String, environment: Environment): Option<Symbol> = {
+  namespace = environment.definitions.namespace
+  namespace.table.specs.get(name).flatMap { spec ->
+    place = Place(spec.file, spec.path)
+    spec.declaration.annotations.find { a -> Annotations.declarationOf(a, place, namespace).map { it.name } == Some("fckt.lang.HandledBy") }.flatMap { a ->
+      when (a.arguments) {
+        [AnnotationArgument(_, Reference(_, moduleName, _, _))] -> when (Lookups.found(Lookups.moduleNamed(moduleName, place, namespace, Skipping))) {
+          Some(DeclaredModule(m)) -> Some(m)
+          _ -> None
+        }
+        _ -> None
+      }
+    }
+  }
+}
+
+// That main, which may do anything, has a handler for each handled effect it does: its own, or the
+// effect's default.
+@Solving @Abandoning checkMainHandled(main: Symbol, done: Row, environment: Environment): Unit =
+  flattened(done).labels.forEach { label ->
+    if (needsHandler(label.name, environment) && defaultHandler(label.name, environment).isNone()) {
+      effect = label.name.split(".").lastOrNone().getOrElse(label.name)
+      abandon(Diagnostic(main.file.source.path, main.declaration.at, "main does @$effect, but nothing handles it: run it in a handler, like $effect(...) { ... }"))
+    } else Unit
+  }
+
+// ---- Functors' arguments ----
+
+// That each module given to a functor has what its parameter's spec lists, of the types it needs:
+// M : Ordered<Int> needs a module whose T is Int, as seen from where it's given.
+@Solving @Abandoning checkArgumentsDefine(environment: Environment): Unit = {
+  namespace = environment.definitions.namespace
+  namespace.modules.applications.toList().forEach { made, application ->
+    when (namespace.table.modules.get(made)) {
+      Some(DeclaredModule(app)) -> checkArgumentsOf(app, application, environment)
+      _ -> Unit
+    }
+  }
+}
+
+@Solving @Abandoning private checkArgumentsOf(app: Symbol, application: Made, environment: Environment): Unit = {
+  definitions = environment.definitions
+  namespace = definitions.namespace
+  functorName = Symbols.simpleName(application.functor)
+  context = TypeContext(Place(app.file, app.path), emptyMap())
+  functorParameters(application.functor).zip(application.arguments).forEach { parameter, argument ->
+    parameterModule = "${application.functor.name}.${parameter.name}"
+    fail = (why: String) -> abandon(Diagnostic(app.file.source.path, app.declaration.at, "${Symbols.simpleName(argument)} can't be $functorName's ${parameter.name}: $why"))
+    namespace.modules.specs.get(parameterModule).forEach { s ->
+      types = specOwnTypes(s)
+      types.forEach { t ->
+        if (namespace.modules.fixedTypes.containsKey("$parameterModule.${t.name}")) {
+          typeNamed("${argument.name}.${t.name}", namespace.table).forEach { d ->
+            rigid = t.typeParameters.map { TypeParameter(it) }
+            needed = Conversion.outsideType(parameterModule, t.name, rigid, context, definitions)
+            given = Conversion.declared(d, rigid, context, definitions)
+            if (!unify(needed, given)) fail("$functorName needs its ${t.name} to be ${TypeText.shown(needed)}, but here it's ${TypeText.shown(given)}") else Unit
+          }
+        } else Unit
+      }
+      argumentSpec = environment.moduleSpecs.get(argument.name)
+      if (argumentSpec.map { it.name } != Some(s.name)) {
+        // A module whose spec builds on the one wanted has all it lists.
+        argumentSpec.forEach { a -> if (!buildsOn(a, s, namespace, [])) fail("it follows ${Symbols.simpleName(a)}, not ${Symbols.simpleName(s)}") else Unit }
+        types.forEach { t ->
+          when (typeNamed("${argument.name}.${t.name}", namespace.table)) {
+            None -> fail("it doesn't define type ${t.name}, which ${Symbols.simpleName(s)} needs")
+            Some(d) -> {
+              Visibility.whyHidden(d, Place(app.file, app.path), namespace.table).forEach { why -> fail(why) }
+              n = Conversion.typeParametersOf(d).size
+              if (n != t.typeParameters.size) fail("${Symbols.simpleName(s)} says ${t.name} takes ${t.typeParameters.size} type parameters, not $n") else Unit
+            }
+          }
+        }
+        specValues(s).forEach { v ->
+          when (environment.functions.get("${argument.name}.${v.name}")) {
+            None -> fail("it doesn't define '${v.name}', which ${Symbols.simpleName(s)} needs")
+            Some(f) -> Visibility.whyHidden(f, Place(app.file, app.path), namespace.table).forEach { why -> fail(why) }
+          }
+        }
+      } else Unit
+    }
+  }
+}
+
+// A functor's parameters, as written.
+functorParameters(functor: Symbol): List<ModuleParameter> = when (functor.declaration.definition) {
+  ModuleDefinition(_, _, parameters, _, _) -> parameters
+  _ -> []
+}
+
+// Whether the spec builds on the other, or on a spec that does: spec Monad : Applicative.
+buildsOn(spec: Symbol, other: Symbol, namespace: Namespace, seen: List<String>): Boolean = when (spec.declaration.definition) {
+  SpecDefinition(_, _, _, _, parents) if !seen.contains(spec.name) -> parents.any { ref ->
+    when (ref) {
+      NamedType(_, name, _) -> when (Lookups.found(Lookups.spec(name, Place(spec.file, spec.path), namespace, Skipping))) {
+        Some(parent) -> parent.name == other.name || buildsOn(parent, other, namespace, seen + [spec.name])
+        None -> false
+      }
+      _ -> false
+    }
+  }
+  _ -> false
+}
+
+// That the values of the modules given to the functor that made the module have the types their
+// parameters' specs give them, once they're checked. Modules that follow the spec were checked
+// already.
+@Solving @Abandoning checkArgumentTypes(made: String, known: Known, environment: Environment): Unit = {
+  namespace = environment.definitions.namespace
+  definitions = environment.definitions
+  when ((namespace.modules.applications.get(made), namespace.table.modules.get(made))) {
+    (Some(application), Some(DeclaredModule(app))) -> functorParameters(application.functor).zip(application.arguments).forEach { parameter, argument ->
+      parameterModule = "${application.functor.name}.${parameter.name}"
+      namespace.modules.specs.get(parameterModule).filter { s -> environment.moduleSpecs.get(argument.name).map { it.name } != Some(s.name) }.forEach { s ->
+        specValues(s).forEach { v ->
+          when ((environment.functions.get("${argument.name}.${v.name}"), environment.specTypes.get(s.name).flatMap { it.values.get(v.name) })) {
+            (Some(f), Some(wanted)) if known.schemes.containsKey(f.name) -> {
+              named = wanted.variables.zip(v.typeParameters)
+              open = wanted.variables.drop(named.size).map { variable -> (variable, Variable(fresh())) }
+              rigid = (named.map { variable, name -> (variable, TypeParameter(name)) } + open).toMap()
+              context = TypeContext(Place(app.file, app.path), emptyMap())
+              inside = withModuleTypes(substitute(wanted.template, rigid), argument.name, context, definitions)
+              // As it's seen from where the module's made: from outside its own module.
+              actual = instantiate(known.outside.get(f.name).orElse { known.schemes.get(f.name) }.getOrElse(Scheme([], unit)))
+              shownActual = TypeText.shown(actual)
+              if (!unify(actual, inside)) {
+                abandon(Diagnostic(app.file.source.path, app.declaration.at,
+                  "${Symbols.simpleName(argument)} can't be ${Symbols.simpleName(application.functor)}'s ${parameter.name}: '${v.name}' has type $shownActual, " +
+                    "but ${Symbols.simpleName(s)} needs ${specShown(wanted, named)}, which here is ${TypeText.shown(inside)}"))
+              } else Unit
+            }
+            _ -> Unit
+          }
+        }
+      }
+    }
+    _ -> Unit
+  }
+}

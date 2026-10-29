@@ -9,8 +9,24 @@ import fckt.parser.*
 module Symbols {
   // The declarations of the workspace's files, by kind and full name.
   @Abandoning table(workspace: Workspace): SymbolTable = {
-    declared = declarations(workspace)
-    modules = moduleTable(workspace, declared)
+    packages = workspace.files.map { it.package }.filter { it.isNotEmpty() }.flatMap { pkg -> prefixes(pkg) }.distinct()
+      .map { pkg -> PackageModule(pkg.joinToString(".")) }
+    tableOf(declarations(workspace), packages)
+  }
+
+  // The table with these declarations in place of its own, as functors make: with their parameters'
+  // modules, and the modules they make.
+  @Abandoning rebuilt(table: SymbolTable, declarations: List<Symbol>): SymbolTable =
+    tableOf(declarations, table.modules.toList().mapNotNull { _, m ->
+      when (m) {
+        PackageModule(_) -> Some(m)
+        DeclaredModule(_) -> None
+      }
+    })
+
+  // The declarations, by kind, with the packages they're in.
+  @Abandoning private tableOf(declared: List<Symbol>, packages: List<ModuleSymbol>): SymbolTable = {
+    modules = moduleTable(packages, declared)
     specs = uniquely(declared.filter { isSpec(it) }) { s -> "spec '${simpleName(s)}' is declared twice" }
     types = typeTables(declared)
     functions = functionTable(declared)
@@ -72,9 +88,7 @@ module Symbols {
   // ---- Modules ----
 
   // Every module: each package, as its folder, and each that a file declares.
-  @Abandoning private moduleTable(workspace: Workspace, declared: List<Symbol>): Map<String, ModuleSymbol> = {
-    packages = workspace.files.map { it.package }.filter { it.isNotEmpty() }.flatMap { pkg -> prefixes(pkg) }.distinct()
-      .map { pkg -> PackageModule(pkg.joinToString(".")) }
+  @Abandoning private moduleTable(packages: List<ModuleSymbol>, declared: List<Symbol>): Map<String, ModuleSymbol> = {
     modules = declared.filter { isModule(it) }.map { DeclaredModule(it) }
     (packages + modules).fold(emptyMap()) { table, m ->
       name = moduleName(m)

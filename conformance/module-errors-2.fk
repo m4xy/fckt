@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module Ratios {
+  type Ratio private(num: Int, denom: Int)
+  make(n: Int, d: Int) = Ratio(n, d)
+  private gcd(a: Int, b: Int): Int = a
+  private type Secret(x: Int)
+}
+f() = Ratios.Ratio(1, 2)
+
+// error: Ratio's constructor is private to Ratios

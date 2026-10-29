@@ -1,0 +1,135 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// What each annotation type's fields can hold: ordinary types, or Type, Spec, Function, Module or
+// Module<Spec>, Case<T>, Field<R, T> (_ for any T), another annotation, or lists and tuples of them.
+module MetaTypes {
+  // Each annotation type's fields' meta types, by the annotation type's full name, a vararg field's
+  // as a list of what it takes.
+  @Solving @Abandoning all(definitions: Definitions): Map<String, List<MetaType>> =
+    definitions.namespace.table.declarations.filter { Symbols.isAnnotation(it) }.map { a ->
+      context = TypeContext(Place(a.file, a.path), emptyMap())
+      fields = when (a.declaration.definition) {
+        RecordDefinition(_, fs, _, _, _) -> fs
+        _ -> []
+      }
+      fields.forEachIndexed { i, f -> if (fields.take(i).any { it.name == f.name }) abandon(Diagnostic(a.file.source.path, f.at, "field '${f.name}' is declared twice")) else Unit }
+      (a.name, fields.map { f ->
+        t = metaTypeOf(f.fieldType, context, definitions)
+        if (f.vararg) MetaList(t) else t
+      })
+    }.toMap()
+
+  // The meta type a field is written with.
+  @Solving @Abandoning metaTypeOf(t: TypeRef, context: TypeContext, definitions: Definitions): MetaType = when (t) {
+    TupleType(_, elements) -> tupleOf(elements.map { metaTypeOf(it, context, definitions) })
+    NamedType(at, name, arguments) -> {
+      problem = (message: String) -> abandon(Diagnostic(context.place.file.source.path, at, message))
+      arity = (n: Int) -> if (arguments.size != n) problem("'$name' takes $n type argument${if (n == 1) "" else "s"}, not ${arguments.size}") else Unit
+      when (name) {
+        "Type" -> {
+          arity(0)
+          MetaTypeReference
+        }
+        "Spec" -> {
+          arity(0)
+          MetaSpec
+        }
+        "Function" -> {
+          arity(0)
+          MetaFunction
+        }
+        "Module" -> {
+          if (arguments.size > 1) arity(1) else Unit
+          MetaModule(arguments.firstOrNone().map { argument ->
+            when (argument) {
+              NamedType(argumentAt, specName, []) -> when (Lookups.spec(specName, context.place, definitions.namespace, Refusing)) {
+                Found(spec) -> spec
+                Refused(why) -> abandon(Diagnostic(context.place.file.source.path, argumentAt, why))
+                NotFound -> abandon(Diagnostic(context.place.file.source.path, Positions.ofType(argument), "Module<...> takes a spec, like Module<Ordered>"))
+              }
+              _ -> abandon(Diagnostic(context.place.file.source.path, Positions.ofType(argument), "Module<...> takes a spec, like Module<Ordered>"))
+            }
+          })
+        }
+        "Case" -> {
+          arity(1)
+          argument = arguments.firstOrNone().getOrElse(t)
+          caseType = Conversion.typeOf(argument, context, definitions)
+          if (!isCaseType(caseType, definitions)) {
+            abandon(Diagnostic(context.place.file.source.path, Positions.ofType(argument), "Case<...> takes a type with cases, not ${TypeText.shown(caseType)}"))
+          } else MetaCase(caseType)
+        }
+        "Field" -> {
+          arity(2)
+          (recordRef, valueRef) = when (arguments) {
+            [r, v] -> (r, v)
+            _ -> (t, t)
+          }
+          record = Conversion.typeOf(recordRef, context, definitions)
+          isRecord = when (resolved(record)) {
+            Named(n, _, _) -> definitions.namespace.table.records.containsKey(n)
+            _ -> false
+          }
+          if (!isRecord) abandon(Diagnostic(context.place.file.source.path, Positions.ofType(recordRef), "Field<R, T> takes a record type as R, not ${TypeText.shown(record)}")) else Unit
+          MetaField(record, when (valueRef) {
+            NamedType(_, "_", []) -> None
+            _ -> Some(Conversion.typeOf(valueRef, context, definitions))
+          })
+        }
+        "List" -> when (arguments) {
+          [item] -> when (metaTypeOf(item, context, definitions)) {
+            MetaValue(itemType) -> MetaValue(listOf(itemType))
+            meta -> MetaList(meta)
+          }
+          _ -> MetaValue(Conversion.typeOf(t, context, definitions))
+        }
+        _ -> when (Lookups.annotationType(name, context.place, definitions.namespace, Refusing)) {
+          Found(annotation) -> {
+            arity(0)
+            MetaAnnotation(annotation)
+          }
+          Refused(why) -> abandon(Diagnostic(context.place.file.source.path, at, why))
+          NotFound -> MetaValue(Conversion.typeOf(t, context, definitions))
+        }
+      }
+    }
+    _ -> MetaValue(Conversion.typeOf(t, context, definitions))
+  }
+
+  // A tuple of meta types: an ordinary value, if each of its items is one.
+  private tupleOf(items: List<MetaType>): MetaType = {
+    values = items.mapNotNull { item ->
+      when (item) {
+        MetaValue(t) -> Some(t)
+        _ -> None
+      }
+    }
+    if (values.size == items.size) MetaValue(TupleOf(values)) else MetaTuple(items)
+  }
+
+  @Solving private isCaseType(t: Type, definitions: Definitions): Boolean = when (resolved(t)) {
+    Named(n, _, _) -> definitions.namespace.table.caseTypes.containsKey(n)
+    _ -> false
+  }
+
+  // What an argument of the meta type must be, for messages.
+  @Solving described(meta: MetaType): String = when (meta) {
+    MetaValue(t) -> "a value of type ${TypeText.shown(t)}"
+    MetaTypeReference -> "a type, like List<User>"
+    MetaSpec -> "a spec, by name"
+    MetaFunction -> "a function, by name"
+    MetaModule(Some(spec)) -> "a module that follows ${spec.name}"
+    MetaModule(None) -> "a module, by name"
+    MetaCase(t) -> "a case of ${TypeText.shown(t)}"
+    MetaField(record, _) -> "a field of ${TypeText.shown(record)}, like ${TypeText.shown(record)}.name"
+    MetaAnnotation(a) -> "an annotation, @${Symbols.simpleName(a)}(...)"
+    MetaList(item) -> "a list of ${described(item)}s"
+    MetaTuple(items) -> "a tuple of ${items.map { described(it) }.joinToString(", ")}"
+  }
+}

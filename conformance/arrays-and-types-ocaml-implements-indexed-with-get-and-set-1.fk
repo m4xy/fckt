@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+import fckt.collections.Array
+import fckt.collections.Arrays.*
+f(xs: Array<Int>) = { xs[0] = 1 }
+main() = assert(true)
+
+// error: 'f' does @Mutating, so it must say so

@@ -36,6 +36,9 @@ isEffectModule(m: ModuleSymbol, context: Context): Boolean = when (m) {
     else -> false
   }
   if (isFunctor) abandon(Globals.problem(context, at, "$own is a functor; give it modules first: $own(...)")) else Unit
+  if (context.environment.definitions.namespace.modules.parameterModules.contains(m.name)) {
+    abandon(Globals.problem(context, at, "$own is a functor's module, which can't be a value yet"))
+  } else Unit
   when (context.environment.moduleSpecs.get(m.name)) {
     None -> abandon(Globals.problem(context, at, "$own is a module, which is a value only of a spec it follows: module $own : Spec { ... }"))
     Some(spec) -> {

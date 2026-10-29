@@ -1,0 +1,11 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+List<Int>.f(): Int = 0
+List<Float>.f(): Int = 1
+g(): Int = [].f()
+
+// error: can't tell which 'f' this is: List<A> fits List<Int>.f and List<Float>.f

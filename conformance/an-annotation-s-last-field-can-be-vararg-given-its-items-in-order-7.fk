@@ -1,0 +1,9 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+annotation type A(vararg a: Int = 1)
+
+// error: a vararg field is a list of what it's given, so it has no default

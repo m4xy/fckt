@@ -1,0 +1,43 @@
+import fckt.parser.*
+
+// The calls written in expressions.
+module Calls {
+  // Each call in the expression, and in what it holds, outermost first.
+  of(e: Expression): List<CallIn> = when (e) {
+    Call(at, callee, arguments, _) -> [CallIn(at, callee, arguments), *of(callee), *arguments.flatMap { of(it.value) }]
+    IntConstant(_, _) -> []
+    FloatConstant(_, _) -> []
+    BooleanConstant(_, _) -> []
+    CharConstant(_, _) -> []
+    Name(_, _) -> []
+    StringTemplate(_, parts) -> parts.flatMap { p ->
+      when (p) {
+        TemplateText(_) -> []
+        Interpolation(inner) -> of(inner)
+      }
+    }
+    Tuple(_, elements) -> elements.flatMap { of(it) }
+    ListOf(_, items) -> items.flatMap { of(it) }
+    Spread(_, list) -> of(list)
+    Member(_, target, _) -> of(target)
+    Binary(_, _, left, right) -> of(left) + of(right)
+    Unary(_, _, operand) -> of(operand)
+    Assign(_, target, value) -> of(target) + of(value)
+    Lambda(_, _, body, _) -> of(body)
+    Pipe(_, value, function) -> of(value) + of(function)
+    If(_, condition, then, otherwise, _) -> of(condition) + of(then) + of(otherwise)
+    When(_, subject, branches) -> subject.toList().flatMap { of(it) } + branches.flatMap { b ->
+      b.condition.toList().flatMap { of(it) } + b.guard.toList().flatMap { of(it) } + of(b.body)
+    }
+    Block(_, statements, result, _) -> statements.flatMap { s ->
+      when (s) {
+        Binding(_, _, _, _, value, _) -> of(value)
+        Evaluation(_, expression) -> of(expression)
+        Destructuring(_, _, value) -> of(value)
+        Bind(_, _, value) -> of(value)
+      }
+    } + of(result)
+    Monadic(_, monad, block) -> of(monad) + of(block)
+    Handle(_, handler, block, _) -> of(handler) + of(block)
+  }
+}

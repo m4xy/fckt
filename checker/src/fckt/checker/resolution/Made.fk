@@ -1,0 +1,4 @@
+import fckt.checker.symbols.Symbol
+
+// A module a functor makes: the functor, and the module given for each of its parameters, in order.
+type Made(functor: Symbol, arguments: List<Symbol>)

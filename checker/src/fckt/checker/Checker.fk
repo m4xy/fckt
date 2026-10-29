@@ -3,6 +3,8 @@ import fckt.checker.sources.*
 import fckt.checker.resolution.*
 import fckt.checker.definitions.*
 import fckt.checker.expansion.*
+import fckt.checker.functors.*
+import fckt.checker.metadata.*
 import fckt.checker.inference.*
 import fckt.checker.types.*
 
@@ -14,7 +16,7 @@ module Checker {
   typeNames(entry: SourceText, tree: SourceTree): (List<ResolvedFile>, List<Diagnostic>) = Diagnostics.collecting {
     resolved = Diagnostics.recovering {
       workspace = Expansion.expanded(Loader.load(entry, tree))
-      namespace = Resolution.namespace(workspace)
+      namespace = Functors.applied(Resolution.namespace(workspace, tree))
       workspace.files.map { file -> ResolvedFile(file, Resolution.resolvedTypes(file, namespace, workspace.borrowed)) }
     }
     resolved.getOrElse([])
@@ -32,9 +34,17 @@ module Checker {
     Solutions.solving {
       Diagnostics.recovering {
         workspace = Expansion.expanded(Loader.load(entry, tree))
-        namespace = Resolution.namespace(workspace)
+        namespace = Functors.applied(Resolution.namespace(workspace, tree))
         definitions = Definitions(namespace, Cases.all(namespace), Regions.regioned(namespace))
-        CheckedProgram(workspace, Inference.functionTypes(definitions, coverage))
+        // main is checked once nothing else is wrong.
+        (inferred, errors) = Diagnostics.collecting {
+          inferred = Inference.functionTypes(definitions, coverage)
+          Diagnostics.recovering { AnnotationChecks.checkAll(inferred) }
+          inferred
+        }
+        errors.forEach { report(it) }
+        if (errors.isEmpty()) Inference.checkMain(inferred.environment, inferred.known) else Unit
+        CheckedProgram(workspace, inferred.functions)
       }
     }
   }

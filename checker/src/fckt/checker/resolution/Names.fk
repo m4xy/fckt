@@ -18,9 +18,83 @@ module Names {
     place: Place,
     namespace: Namespace,
     strictness: Strictness,
-  ): Lookup<A> = when (around(name, reach(name, place, namespace.table), entries, symbolOf, place, namespace.table, strictness)) {
-    NotFound -> imported(name, entries, symbolOf, alike, place, namespace, strictness)
+  ): Lookup<A> = when (around(name, reach(name, place, namespace.table), entries, symbolOf, place, namespace, strictness)) {
+    NotFound -> when (whereFunctorIs(name, entries, symbolOf, alike, place, namespace, strictness)) {
+      NotFound -> when (whereSpecIs(name, entries, symbolOf, alike, place, namespace, strictness)) {
+        NotFound -> imported(name, entries, symbolOf, alike, place, namespace, strictness)
+        other -> other
+      }
+      other -> other
+    }
     other -> other
+  }
+
+  // The name, with a module a functor made's parameter at its start replaced by the module it was
+  // given: IntSet.M.T is IntOrder.T, in module IntSet = SortedSet(IntOrder).
+  canonical(name: String, namespace: Namespace): String = {
+    parts = name.split(".")
+    found = parts.mapIndexed { i, _ -> parts.size - i }.mapNotNull { n ->
+      namespace.modules.aliases.get(parts.take(n).joinToString(".")).map { given -> ([given] + parts.drop(n)).joinToString(".") }
+    }.firstOrNone()
+    when (found) {
+      Some(replaced) -> canonical(replaced, namespace)
+      None -> name
+    }
+  }
+
+  // The module a functor made that the path is in, if any.
+  enclosingApplication(path: List<String>, namespace: Namespace): Option<String> =
+    path.mapIndexed { i, _ -> path.take(i + 1).joinToString(".") }.find { namespace.modules.applications.containsKey(it) }
+
+  // In a module a functor made, what the functor's body names is what it names where the functor is:
+  // what's beside it in its package, wherever it's applied. Not its modules, which the made module
+  // has as what it was given.
+  private whereFunctorIs<A>(
+    name: String,
+    entries: Map<String, A>,
+    symbolOf: (A) -> Option<Symbol>,
+    alike: (String) -> Boolean,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<A> = when (enclosingApplication(place.path, namespace).flatMap { app -> namespace.modules.applications.get(app).map { made -> (app, made) } }) {
+    None -> NotFound
+    Some((app, made)) -> {
+      inFunctor = Place(place.file, made.functor.name.split(".") + place.path.drop(app.split(".").size))
+      isParameters = (full: String) -> namespace.modules.parameterModules.any { p -> full == p || full.startsWith("$p.") }
+      when (find(name, entries, symbolOf, alike, inFunctor, namespace, strictness)) {
+        Found(entry) if symbolOf(entry).map { s -> !isParameters(s.name) }.getOrElse(true) -> Found(entry)
+        Refused(why) -> Refused(why)
+        _ -> NotFound
+      }
+    }
+  }
+
+  // A spec's default, in a module elsewhere that follows the spec, names what it names where the
+  // spec is: as a default's file is the spec's, a module whose own file isn't the place's has the
+  // default written there.
+  private whereSpecIs<A>(
+    name: String,
+    entries: Map<String, A>,
+    symbolOf: (A) -> Option<Symbol>,
+    alike: (String) -> Boolean,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<A> = when (namespace.table.modules.get(place.path.joinToString("."))) {
+    Some(DeclaredModule(m)) if m.file.source.path != place.file.source.path && enclosingApplication(place.path, namespace).isNone() ->
+      when (namespace.modules.specs.get(m.name)) {
+        None -> NotFound
+        Some(followed) -> {
+          spec = if (followed.file.source.path == place.file.source.path) Some(followed)
+            else namespace.table.specs.toList().map { _, s -> s }.find { s -> s.file.source.path == place.file.source.path }
+          when (spec) {
+            Some(s) -> find(name, entries, symbolOf, alike, Place(place.file, s.path), namespace, strictness)
+            None -> NotFound
+          }
+        }
+      }
+    _ -> NotFound
   }
 
   // The first of the full names the reach gives that's an entry that can be seen; with Refusing,
@@ -31,13 +105,14 @@ module Names {
     entries: Map<String, A>,
     symbolOf: (A) -> Option<Symbol>,
     place: Place,
-    table: SymbolTable,
+    namespace: Namespace,
     strictness: Strictness,
   ): Lookup<A> = when (depths) {
     [] -> NotFound
     [depth, *further] -> {
-      next = () -> around(name, further, entries, symbolOf, place, table, strictness)
-      when (entries.get((place.path.take(depth) + [name]).joinToString("."))) {
+      table = namespace.table
+      next = () -> around(name, further, entries, symbolOf, place, namespace, strictness)
+      when (entries.get(canonical((place.path.take(depth) + [name]).joinToString("."), namespace))) {
         None -> next()
         Some(entry) -> when (symbolOf(entry)) {
           Some(symbol) if Visibility.isForeign(symbol, place) -> next()
@@ -87,7 +162,7 @@ module Names {
     strictness: Strictness,
   ): Lookup<A> = {
     names = importedNames(name, place, namespace)
-    found = names.filter { entries.containsKey(it) }.distinct()
+    found = names.map { canonical(it, namespace) }.filter { entries.containsKey(it) }.distinct()
     similar = names.filter { alike(it) }.distinct()
     first = name.split(".").firstOrNone().getOrElse(name)
     if (similar.size > 1 || found.size > 1) {

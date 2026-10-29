@@ -1,0 +1,18 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module Options {
+  pure(x) = Some(x)
+  bind(m, f) = when (m) {
+    Some(x) -> f(x)
+    None -> None
+  }
+}
+half(n: Int): Option<Int> = if (n % 2 == 0) Some(n / 2) else None
+module P { g() = 1 }
+f(n: Int) = P { x by half(n); x }
+
+// error: P has neither bind and pure nor map and product, so it can't run a block

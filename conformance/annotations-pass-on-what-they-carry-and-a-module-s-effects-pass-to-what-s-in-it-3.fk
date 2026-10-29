@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+import fckt.values.Mutable
+effect Network
+@Console @Network annotation type Io
+@Pure module D {
+  f() = println("x")
+}
+main() = assert(true)
+
+// error: 'f' does @Console, but it's in D, which may only be pure

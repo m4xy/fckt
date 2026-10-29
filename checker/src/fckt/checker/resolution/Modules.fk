@@ -1,0 +1,20 @@
+import fckt.collections.Maps.*
+import fckt.checker.symbols.Symbol
+
+// What a program's modules are, beyond what they declare. The spec each follows, by the module's full
+// name. A functor's parameters, each a module standing for whatever module it's given, with just what
+// its spec lists, its types abstract; their members. Each module a functor makes, with the functor
+// and the modules it's given; each parameter of it, as the module it was given, X.M as IntOrder; and
+// each type it copies from the functor, by the copy's full name. What a spec's type arguments make a
+// functor parameter's types, as aliases, by the type's full name. And each functor applied in an
+// expression, by where the call is, with the module made for it.
+type Modules(
+  specs: Map<String, Symbol>,
+  parameterModules: List<String>,
+  parameterMembers: List<String>,
+  applications: Map<String, Made>,
+  aliases: Map<String, String>,
+  copyOrigins: Map<String, String>,
+  fixedTypes: Map<String, Symbol>,
+  lifted: Map<CallSite, String>,
+)

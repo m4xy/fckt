@@ -1,0 +1,69 @@
+import fckt.collections.Maps.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.parser.*
+
+// What a module shows. A public function, type or alias can't mention a type that's private to its
+// module: callers outside could see it but not name it. And an opaque type is opaque outside its
+// module, so it must be in one.
+
+@Solving @Abandoning checkExposure(environment: Environment, known: Known): Unit = {
+  definitions = environment.definitions
+  table = definitions.namespace.table
+  parameterMembers = definitions.namespace.modules.parameterMembers
+  environment.orderedFunctions.filter { f -> !parameterMembers.contains(f.name) }.forEach { f ->
+    known.schemes.get(f.name).forEach { scheme -> checkShows(f, scheme.template, table) }
+  }
+  types = table.declarations.filter { d -> Symbols.isRecord(d) && !Symbols.isAnnotation(d) } + table.declarations.filter { Symbols.isCaseType(it) }
+  types.forEach { d ->
+    parameters = Conversion.typeParametersOf(d)
+    context = TypeContext(Place(d.file, d.path), parameters.map { p -> (p, TypeParameter(p)) }.toMap())
+    fields = if (Symbols.isRecord(d)) recordFieldsOf(d)
+      else definitions.cases.getOrDefault(d.name, []).flatMap { c -> Cases.writtenFields(c).map { t -> Field(d.declaration.at, "", t) } }
+    fields.forEach { field -> checkShows(d, Conversion.typeOf(field.fieldType, context, definitions), table) }
+  }
+  (types + table.declarations.filter { Symbols.isAlias(it) }).forEach { d ->
+    if (d.declaration.opaque && d.path.isEmpty()) {
+      abandon(Diagnostic(d.file.source.path, d.declaration.at, "an opaque type is opaque outside its module, so it needs to be in one"))
+    } else Unit
+  }
+  fixed = definitions.namespace.modules.fixedTypes.toList().map { _, a -> a.name }
+  table.declarations.filter { a -> Symbols.isAlias(a) && !fixed.contains(a.name) }.forEach { a ->
+    parameters = Conversion.typeParametersOf(a) + Conversion.moduleTypeParameters(a.path, definitions)
+    context = TypeContext(Place(a.file, a.path), parameters.map { p -> (p, TypeParameter(p)) }.toMap())
+    when (a.declaration.definition) {
+      AliasDefinition(_, target) -> checkShows(a, Conversion.typeOf(target, context, definitions), table)
+      _ -> Unit
+    }
+  }
+}
+
+// That the declaration, if it's public, doesn't show a type private to a module it's outside.
+@Solving @Abandoning private checkShows(user: Symbol, t: Type, table: SymbolTable): Unit =
+  privateTypesIn(t, table).find { hidden -> exposes(user, hidden) }.forEach { hidden ->
+    abandon(Diagnostic(user.file.source.path, user.declaration.at,
+      "'${Symbols.simpleName(user)}' is public, but its type uses ${Symbols.simpleName(hidden)}, which is private to ${hidden.path.joinToString(".")}"))
+  }
+
+// The private records and types with cases the type mentions.
+@Solving private privateTypesIn(t: Type, table: SymbolTable): List<Symbol> = when (resolved(t)) {
+  Named(name, arguments, _) ->
+    table.records.get(name).orElse { table.caseTypes.get(name) }.filter { it.declaration.visibility == Private }.toList() +
+      arguments.flatMap { privateTypesIn(it, table) }
+  FunctionOf(parameters, result, _) -> parameters.flatMap { privateTypesIn(it, table) } + privateTypesIn(result, table)
+  TupleOf(elements) -> elements.flatMap { privateTypesIn(it, table) }
+  Abstract(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
+  SpecOwnType(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
+  ModuleValue(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
+  Handler(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
+  _ -> []
+}
+
+// Whether the user, public, is seen beyond the hidden type's module: it's not in a module nested in it.
+private exposes(user: Symbol, hidden: Symbol): Boolean =
+  user.declaration.visibility != Private && hidden.path.isNotEmpty() &&
+    !(user.path.size > hidden.path.size && user.path.take(hidden.path.size) == hidden.path)

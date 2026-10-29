@@ -1,0 +1,6 @@
+import fckt.collections.Maps.*
+import fckt.checker.sources.*
+
+// Where to look for what a name means when it means nothing here: every package a program could use,
+// and what the files beside its own that are programs of their own declare, by name, with the file.
+type Hints(tree: SourceTree, apart: Map<String, String>)

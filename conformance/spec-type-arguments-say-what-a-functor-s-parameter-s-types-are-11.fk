@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Monad {
+  type M<A>
+  pure<A>(x: A): M<A>
+}
+module G(M: Monad<Result<_, String>>) {
+  two: Result<Int, String> = M.pure(2)
+}
+
+// compiles

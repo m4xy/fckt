@@ -34,7 +34,7 @@ module Defaults {
         Some(value) -> {
           refs = References.of(value, [])
           when (parameters.find { other -> refs.contains(other.name) }) {
-            Some(other) -> abandon(Diagnostic(s.file.source.path, positionOf(value),
+            Some(other) -> abandon(Diagnostic(s.file.source.path, Positions.of(value),
               "a default can't use the other parameters, as '${other.name}' here: it's worked out on its own"))
             None -> [made(s, s.name, p.name, p.at, p.parameterType, value, Signatures.typeParametersOf(s))]
           }
@@ -76,7 +76,7 @@ module Defaults {
           Some(value) -> {
             own = p.parameterType.map { namesIn(it) }.getOrElse([]).find { name -> types.any { it.name == name } }
             when (own) {
-              Some(name) -> abandon(Diagnostic(s.file.source.path, positionOf(value),
+              Some(name) -> abandon(Diagnostic(s.file.source.path, Positions.of(value),
                 "a default is worked out on its own, so it can't be a $name, which each module says what it is"))
               None -> [made(s, "${s.name}$${v.name}", p.name, p.at, p.parameterType, value, v.typeParameters)]
             }
@@ -102,30 +102,5 @@ module Defaults {
     FunctionType(_, parameters, result, _) -> parameters.flatMap { namesIn(it) } + namesIn(result)
     TupleType(_, elements) -> elements.flatMap { namesIn(it) }
     EffectsType(_, _) -> []
-  }
-
-  // Where an expression starts.
-  positionOf(e: Expression): Position = when (e) {
-    IntConstant(at, _) -> at
-    FloatConstant(at, _) -> at
-    BooleanConstant(at, _) -> at
-    CharConstant(at, _) -> at
-    StringTemplate(at, _) -> at
-    Name(at, _) -> at
-    Tuple(at, _) -> at
-    ListOf(at, _) -> at
-    Spread(at, _) -> at
-    Call(at, _, _, _) -> at
-    Member(at, _, _) -> at
-    Binary(at, _, _, _) -> at
-    Unary(at, _, _) -> at
-    Assign(at, _, _) -> at
-    Lambda(at, _, _, _) -> at
-    Pipe(at, _, _) -> at
-    If(at, _, _, _, _) -> at
-    When(at, _, _) -> at
-    Block(at, _, _, _) -> at
-    Monadic(at, _, _) -> at
-    Handle(at, _, _, _) -> at
   }
 }

@@ -36,7 +36,7 @@ private covariant: List<String> = ["List", "Option", "Lazy", "Result"]
   else {
     before = TypeText.shown(typed.t)
     wanted = TypeText.shown(expected)
-    if (!isSubtype(typed.t, expected, context)) mismatch(Defaults.positionOf(e), wanted, before, context) else Unit
+    if (!isSubtype(typed.t, expected, context)) mismatch(Positions.of(e), wanted, before, context) else Unit
   }
 
 // Whether the case the expression spells out is one the wanted type with cases has: Alphabet.E is a
@@ -44,7 +44,7 @@ private covariant: List<String> = ["List", "Option", "Lazy", "Result"]
 @Solving @Abandoning private takesOnCase(typed: Typed, expected: Type, context: Context): Boolean = when ((typed.spelled, resolved(expected))) {
   (Some(c), Named(name, arguments, region)) -> when (caseTypeNamed(name, context)) {
     Some(target) if caseTypeOf(typed.t, context) != Some(name) ->
-      Conversion.casesWithFields(target, arguments, region, context.environment.definitions).any { info, _ -> isCase(info, c) }
+      Conversion.casesWithFields(target, arguments, region, context.environment.definitions, Some(context.place)).any { info, _ -> isCase(info, c) }
     else -> false
   }
   else -> false
@@ -100,8 +100,8 @@ caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environm
     definitions = context.environment.definitions
     when ((caseTypeNamed(n, context), caseTypeNamed(m, context))) {
       (Some(xType), Some(yType)) if sameRegion -> {
-        theirs = Conversion.casesWithFields(yType, ys, yRegion, definitions)
-        Conversion.casesWithFields(xType, xs, xRegion, definitions).all { entry ->
+        theirs = Conversion.casesWithFields(yType, ys, yRegion, definitions, Some(context.place))
+        Conversion.casesWithFields(xType, xs, xRegion, definitions, Some(context.place)).all { entry ->
           (c, types) = entry
           when (theirs.find { other, _ -> Cases.same(other, c) }) {
             Some((_, theirTypes)) -> types.zip(theirTypes).all { a, b -> unify(a, b) }

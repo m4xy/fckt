@@ -1,0 +1,10 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+shout(xs: List<String>) = xs.forEach(println)
+main() = assert(true)
+
+// error: 'shout' does @Console

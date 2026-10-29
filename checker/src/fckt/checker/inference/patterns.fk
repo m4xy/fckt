@@ -61,10 +61,10 @@ import fckt.parser.*
   }
   when (record) {
     Some((r, arguments, region)) -> {
-      if (Conversion.isAbstractHere(r, context.place)) abandon(opaque(r, at, context)) else Unit
+      if (Conversion.isAbstractHere(r, context.place, context.environment.definitions)) abandon(opaque(r, at, context)) else Unit
       fields = recordFieldsOf(r)
       if (elements.size != fields.size) abandon(Globals.problem(context, at, "${r.name} has ${fields.size} fields, not ${elements.size}")) else Unit
-      (after, matches) = checkEach(elements, Conversion.recordFields(r, arguments, region, context.environment.definitions), scope, context)
+      (after, matches) = checkEach(elements, Conversion.recordFields(r, arguments, region, context.environment.definitions, Some(context.place)), scope, context)
       CheckedPattern(after, product(matches).map { Matches(Some(RecordShape(r.name)), it) })
     }
     None -> {
@@ -135,7 +135,7 @@ import fckt.parser.*
   qualifierCases = qualifier.map { q ->
     when (Lookups.caseType(q, context.place, namespace, Refusing)) {
       Found(s) -> {
-        if (Conversion.isAbstractHere(s, context.place)) abandon(opaque(s, at, context)) else Unit
+        if (Conversion.isAbstractHere(s, context.place, context.environment.definitions)) abandon(opaque(s, at, context)) else Unit
         allCases.getOrDefault(s.name, [])
       }
       Refused(why) -> abandon(Globals.problem(context, at, why))
@@ -146,7 +146,7 @@ import fckt.parser.*
       }
     }
   }
-  matches = Conversion.casesWithFields(st, typeArguments, region, context.environment.definitions).filter { c, _ ->
+  matches = Conversion.casesWithFields(st, typeArguments, region, context.environment.definitions, Some(context.place)).filter { c, _ ->
     c.definition.name == name && qualifierCases.map { qs -> qs.any { Cases.same(it, c) } }.getOrElse(true)
   }
   when (matches) {

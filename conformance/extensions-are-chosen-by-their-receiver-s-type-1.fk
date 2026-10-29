@@ -1,0 +1,10 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+List<Int>.total(): Int = 0
+List<Int>.total(): Int = 1
+
+// error: 'total' is declared twice for List<Int>

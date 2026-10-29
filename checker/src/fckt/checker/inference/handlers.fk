@@ -23,7 +23,7 @@ import fckt.parser.*
   scope: Scope,
   context: Context,
 ): Typed = {
-  blockArgument = CallArgument(None, TrailingBlock(Defaults.positionOf(block), parameters, block))
+  blockArgument = CallArgument(None, TrailingBlock(Positions.of(block), parameters, block))
   makesHandler = when (handler) {
     Call(_, Name(_, name), _, _) -> Scopes.lookup(scope, name).isNone() && Lookups.found(Globals.find(name, context, Skipping)).isNone() &&
       effectSpecNamed(name, context).isSome()
@@ -92,12 +92,12 @@ private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLo
     None -> when (resolved(infer(handler, None, scope, context).t)) {
       FunctionOf([_], _, _) -> inferCall(at, handler, [blockArgument], [], expected, scope, context)
       Handler(effect, arguments) -> {
-        if (parameters.isSome()) abandon(Globals.problem(context, Defaults.positionOf(block), "a handler's block runs with the effect handled, so it takes no parameters")) else Unit
+        if (parameters.isSome()) abandon(Globals.problem(context, Positions.of(block), "a handler's block runs with the effect handled, so it takes no parameters")) else Unit
         n = arguments.size
         Typed(handling(effect, arguments.take(n - 2), arguments.getOrNone(n - 2).getOrElse(Variable(fresh())),
           arguments.getOrNone(n - 1).getOrElse(Variable(fresh())), block, expected, scope, at, context))
       }
-      else -> abandon(Globals.problem(context, Defaults.positionOf(handler),
+      else -> abandon(Globals.problem(context, Positions.of(handler),
         "this isn't a handler: make one from a handled effect, as Console(println = ...), or use a module that follows one"))
     }
   }

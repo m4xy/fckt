@@ -1,0 +1,14 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Account(owner: String, var balance: Int)
+type Holder { H(acc: Account) }
+f(h: Holder) = when (h) {
+  H(acc) -> { acc.balance = 1 }
+}
+main() = assert(true)
+
+// error: 'f' does @Mutating

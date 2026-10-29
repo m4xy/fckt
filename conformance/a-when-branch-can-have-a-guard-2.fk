@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f(x: Option<Int>): Int = when (x) {
+  Some(n) if n -> 1
+  else -> 0
+}
+main() = Unit
+
+// error: expected Boolean but found Int

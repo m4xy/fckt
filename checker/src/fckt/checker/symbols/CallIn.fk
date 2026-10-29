@@ -1,0 +1,4 @@
+import fckt.parser.*
+
+// A call written in an expression: where, what's called, and what it's given.
+type CallIn(at: Position, callee: Expression, arguments: List<Argument>)

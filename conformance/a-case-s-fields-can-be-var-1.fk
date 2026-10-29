@@ -1,0 +1,14 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Tree { Leaf, Node(var left: Tree, value: Int, var right: Tree) }
+@Mutating f(t: Tree) = when (t) {
+  is Node -> { t.value = 1 }
+  else -> Unit
+}
+main() = assert(true)
+
+// error: Node's value can't be changed; declare it with var value: ...

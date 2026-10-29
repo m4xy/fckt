@@ -1,0 +1,9 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+interface Shape { Circle }
+
+// error: write a type with cases as 'type Shape { ... }'

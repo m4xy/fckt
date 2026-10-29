@@ -1,0 +1,11 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module Boxes<E> {
+  get<E>(x: E): E = x
+}
+
+// error: 'get' is in Boxes<E>, so its own type parameters can't be named E too

@@ -1,0 +1,14 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module A {
+  f(): Int = B.g()
+}
+module B {
+  g(): Int = A.f()
+}
+
+// error: call each other but are in different modules

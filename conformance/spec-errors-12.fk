@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec S {
+  type T
+}
+module M : S { x = 1 }
+
+// error: M doesn't define type T

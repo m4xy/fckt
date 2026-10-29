@@ -1,0 +1,9 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec S { f(x): Int }
+
+// error: a spec's parameters need types

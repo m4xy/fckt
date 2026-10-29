@@ -1,0 +1,18 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Shout { loud(s: String): String }
+spec Greeting { hello(name: String): String }
+module Plain : Shout { loud(s: String): String = s }
+module Caps : Shout { loud(s: String): String = s.uppercase() }
+module English : Greeting { hello(name: String): String = "hello $name" }
+module French : Greeting { hello(name: String): String = "bonjour $name" }
+module Greeter(S: Shout = Plain, G: Greeting = English) {
+  greet(name: String): String = S.loud(G.hello(name))
+}
+module X = Greeter(Caps, S = Plain)
+
+// error: Greeter's S is given twice

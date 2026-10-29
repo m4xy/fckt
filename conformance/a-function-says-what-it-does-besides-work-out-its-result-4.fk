@@ -1,0 +1,11 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+apply(f: (Int) -> Int, x: Int) = f(x)
+q() = apply(x -> { println("a"); x }, 1)
+main() = assert(true)
+
+// error: 'q' does @Console

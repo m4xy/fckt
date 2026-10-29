@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Cell { Empty, Full(var n: Int) }
+type Slot { Cell.Full, Spare }
+@Mutating f(s: Slot) = when (s) {
+  is Full -> { s.n = 2 }
+  else -> Unit
+}
+main() = Unit
+
+// error: n can't be changed here: its case is shared with another type

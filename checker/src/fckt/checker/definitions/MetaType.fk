@@ -1,0 +1,25 @@
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.Type
+
+// What an annotation's field can hold: an ordinary value of a type, or a reference to what only the
+// checker knows, which it checks and then leaves out.
+type MetaType {
+  // A value of the type, a constant or a reference to one.
+  MetaValue(t: Type),
+  // Type: a type, like List<User>.
+  MetaTypeReference,
+  // Spec: a spec, by name.
+  MetaSpec,
+  // Function: a function, by name, whatever its type, which what reads the annotation says.
+  MetaFunction,
+  // Module, or Module<Spec>: a module, or one that follows the spec.
+  MetaModule(spec: Option<Symbol>),
+  // Case<T>: a case of the type with cases.
+  MetaCase(caseType: Type),
+  // Field<R, T>: a field of the record type R, of type T, or of any type for _.
+  MetaField(record: Type, fieldType: Option<Type>),
+  // Another annotation, made with its arguments.
+  MetaAnnotation(annotation: Symbol),
+  MetaList(item: MetaType),
+  MetaTuple(items: List<MetaType>),
+}

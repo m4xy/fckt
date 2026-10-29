@@ -1,0 +1,81 @@
+import fckt.collections.Maps.*
+import fckt.checker.sources.*
+import fckt.parser.*
+
+// What to say of a name that means nothing here: which imports would bring in something of that
+// name, or that a file beside the program's declares it but is a program of its own. The imports are
+// found as a reader of the files would find them: a module, type, spec or effect named so, or one a
+// module declares at its top, or a function or value it does, with an effect's operations coming
+// with the effect. The core's files aren't looked in, as every file has the core.
+module ImportHints {
+  // What to add to an error about the name: "; import geometry.Shapes has one", or nothing.
+  forName(name: String, namespace: Namespace): String = when (namespace.hints.apart.get(name)) {
+    Some(file) -> "; $file declares it, but it has a main of its own, so it's a program apart from this one"
+    None -> when (importsFor(name, namespace.hints)) {
+      [] -> ""
+      imports -> "; " + imports.map { "import $it" }.joinToString(", or ") + " has one"
+    }
+  }
+
+  // The imports that would bring in something of the name.
+  importsFor(name: String, hints: Hints): List<String> =
+    if (name.isEmpty()) []
+    else hints.tree.packages.toList().filter { pkg, _ -> pkg.isNotEmpty() }.flatMap { pkg, files ->
+      files.filter { f -> f.project != CoreProject && isModuleFile(f) }.flatMap { f -> foundIn(name, pkg, f) }
+    }.distinct()
+
+  private isModuleFile(f: SourceText): Boolean =
+    Loader.fileName(f).getOrNone(0).map { it.isUpperCase() }.getOrElse(false)
+
+  // What of the name the file declares, as imports of it.
+  private foundIn(name: String, pkg: List<String>, f: SourceText): List<String> = {
+    own = Loader.fileName(f)
+    imported = (pkg + [own]).joinToString(".")
+    if (own == name) [imported]
+    else when (Parser.parse(f.text)) {
+      Error(_) -> []
+      Ok(file) -> file.declarations.filter { it.name == own }.flatMap { main ->
+        if (name.getOrNone(0).map { it.isUpperCase() }.getOrElse(false)) {
+          if (declaresInside(main, name)) ["$imported.$name"] else []
+        } else if (isHandler(main) || !hasMember(main, name)) []
+        else if (isEffect(main)) [imported]
+        else ["$imported.$name"]
+      }
+    }
+  }
+
+  // Whether the declaration has, at the top of its body, a type, spec, effect or module of the name.
+  private declaresInside(main: Declaration, name: String): Boolean = when (main.definition) {
+    ModuleDefinition(inside, _, _, _, _) -> inside.any { d -> d.name == name && atTop(d.at) && !isFunction(d) }
+    SpecDefinition(types, _, _, _, _) -> types.any { t -> t.name == name && atTop(t.at) }
+    _ -> false
+  }
+
+  // Whether the declaration has, at the top of its body, a function, value, field or operation of the
+  // name.
+  private hasMember(main: Declaration, name: String): Boolean = when (main.definition) {
+    ModuleDefinition(inside, _, _, _, _) -> inside.any { d -> d.name == name && atTop(d.at) && isFunction(d) }
+    SpecDefinition(_, values, _, _, _) -> values.any { v -> v.name == name && atTop(v.at) }
+    RecordDefinition(_, fields, _, _, _) -> fields.any { field -> field.name == name && atTop(field.at) }
+    _ -> false
+  }
+
+  // Whether something starts where a declaration's body's top is written: indented two spaces.
+  private atTop(at: Position): Boolean = at.column == 3
+
+  private isFunction(d: Declaration): Boolean = when (d.definition) {
+    FunctionDefinition(_, _, _, _, _, _, _) -> true
+    _ -> false
+  }
+
+  // A module that follows a spec, whose functions are the spec's, not its own to import.
+  private isHandler(d: Declaration): Boolean = when (d.definition) {
+    ModuleDefinition(_, Some(_), _, _, _) -> true
+    _ -> false
+  }
+
+  private isEffect(d: Declaration): Boolean = when (d.definition) {
+    SpecDefinition(_, _, _, _, _) -> d.annotations.any { it.name == "Effect" }
+    _ -> false
+  }
+}

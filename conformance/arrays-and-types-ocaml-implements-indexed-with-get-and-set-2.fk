@@ -1,0 +1,11 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+import fckt.collections.Array
+f() = Array(1)
+main() = assert(true)
+
+// error: Array is an OCaml type, made by its functions, not by Array(...)

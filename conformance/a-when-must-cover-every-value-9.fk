@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type P(a: Boolean, b: Int)
+f(p: P) = when (p) {
+  P(true, n) -> n
+  P(false, _) -> 0
+}
+
+// compiles

@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f() = {
+  y = 1
+  y = 2
+  y
+}
+
+// error: 'y' is already defined in this block

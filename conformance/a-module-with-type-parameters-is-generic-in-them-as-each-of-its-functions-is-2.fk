@@ -1,0 +1,20 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Sized {
+  type M<A>
+  size<A>(m: M<A>): Int
+}
+module Boxes<E> : Sized {
+  type M<A> = Result<A, E>
+  size<A>(m: Result<A, E>): Int = 1
+}
+module Count(S: Sized) {
+  one(): Int = 1
+}
+module C = Count(Boxes)
+
+// error: Boxes takes type parameters, E, so it can't be given to a functor yet

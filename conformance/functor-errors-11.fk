@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec S { type T }
+module F(M: S) {
+  f(x: M.T): Int = x
+}
+
+// error: expected Int but found F.M.T

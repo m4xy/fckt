@@ -11,12 +11,18 @@ import fckt.parser.*
 // before it's checked, so it's more than it does, which is harmless: a .name that may be an
 // extension, an operator that may be a type's own.
 module Groups {
-  // The functions, in groups, each after the groups it uses. A call between modules goes one way,
+  // The functions, in groups, each after the groups it uses, but a functor's parameters'. A call between modules goes one way,
   // as OCaml's modules can't call each other: so where .names that are only maybe a package-mate's
   // methods join functions of different modules into a group, they're taken as what they may be,
   // not as calls.
-  @Abandoning ordered(functions: List<Symbol>, environment: Environment): List<FunctionGroup> = {
-    uses = functions.map { f -> (f.name, usesOf(f, environment)) }.toMap()
+  @Abandoning ordered(all: List<Symbol>, environment: Environment): List<FunctionGroup> = {
+    // A functor's parameter's members stand for whatever module it's given: they have no body.
+    isParameterMember = (f: Symbol) -> environment.definitions.namespace.modules.parameterMembers.contains(f.name)
+    functions = all.filter { f -> !isParameterMember(f) }
+    uses = functions.map { f ->
+      found = usesOf(f, environment)
+      (f.name, Uses(found.functions.filter { u -> !isParameterMember(u) }, found.guessed))
+    }.toMap()
     usedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions }.getOrElse([])
     certainlyUsedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions.filter { used -> !u.guessed.contains(used.name) || used.path == f.path } }.getOrElse([])
     components = Components.stronglyConnected(functions, usedBy).flatMap { component ->

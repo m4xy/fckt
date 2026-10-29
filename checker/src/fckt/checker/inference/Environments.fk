@@ -23,7 +23,7 @@ module Environments {
     casesByName = table.declarations.filter { Symbols.isCaseType(it) }.flatMap { owner ->
       Symbols.casesOf(owner).map { c -> CaseSymbol("${owner.name}.${c.name}", owner, c) }
     }.fold(emptyMap()) { m, c -> m.put(c.definition.name, m.getOrDefault(c.definition.name, []) + [c]) }
-    moduleSpecs = specsFollowed(table.declarations, definitions.namespace)
+    moduleSpecs = definitions.namespace.modules.specs
     specs = table.declarations.filter { Symbols.isSpec(it) }
     specTypes = specs.map { s -> (s.name, specTypesOf(s, definitions)) }.toMap()
     operations = specs.filter { s -> Annotations.isEffect(s, definitions.namespace) }.flatMap { s ->
@@ -32,44 +32,47 @@ module Environments {
       (name, operation) = entry
       m.put(name, m.getOrDefault(name, []) + [operation])
     }
-    Environment(definitions, functions, ordered, extensions, casesByName, moduleSpecs, specTypes, operations, Known(emptyMap(), emptyMap(), emptyMap(), emptyMap()))
+    outside = parameterMembersSeen(definitions, specTypes)
+    Environment(definitions, functions, ordered, extensions, casesByName, moduleSpecs, specTypes, operations,
+      Known(emptyMap(), emptyMap(), emptyMap(), emptyMap(), outside))
   }
+
+  // A functor's parameter's values, as the functor sees them: with the types their parameter's spec
+  // gives them, its own types abstract, or as its type arguments say they are.
+  @Solving @Abandoning private parameterMembersSeen(definitions: Definitions, specTypes: Map<String, SpecTypes>): Map<String, Scheme> = {
+    modules = definitions.namespace.modules
+    modules.parameterMembers.mapNotNull { member ->
+      owner = Symbols.pathOf(member).joinToString(".")
+      definitions.namespace.table.functions.get(member).flatMap { f ->
+        wanted = modules.specs.get(owner).flatMap { spec -> specTypes.get(spec.name) }.flatMap { types -> types.values.get(f.declaration.name) }
+        wanted.map { scheme ->
+          context = TypeContext(Place(f.file, f.path), emptyMap())
+          (member, Scheme(scheme.variables, withOwnTypesOutside(scheme.template, owner, context, definitions)))
+        }
+      }
+    }.toMap()
+  }
+
+  // A type a spec says, with each of the spec's own types as the module's of that name is seen from
+  // outside it.
+  @Solving @Abandoning withOwnTypesOutside(t: Type, owner: String, context: TypeContext, definitions: Definitions): Type = when (resolved(t)) {
+    SpecOwnType(name, arguments) -> Conversion.outsideType(owner, name, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, context, definitions)
+    Named(n, arguments, region) -> Named(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, region)
+    Abstract(n, arguments) -> Abstract(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
+    ModuleValue(n, arguments) -> ModuleValue(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
+    Handler(n, arguments) -> Handler(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
+    TupleOf(elements) -> TupleOf(elements.map { withOwnTypesOutside(it, owner, context, definitions) })
+    FunctionOf(parameters, result, effects) ->
+      FunctionOf(parameters.map { withOwnTypesOutside(it, owner, context, definitions) }, withOwnTypesOutside(result, owner, context, definitions), effects)
+    other -> other
+  }
+
+
 
   private specValuesOf(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
     SpecDefinition(_, values, _, _, _) -> values
     else -> []
   }
-
-  // The spec each module that says it follows one follows, by the module's full name.
-  @Abandoning private specsFollowed(declarations: List<Symbol>, namespace: Namespace): Map<String, Symbol> =
-    declarations.filter { Symbols.isModule(it) }.fold(emptyMap()) { followed, declared ->
-      when (declared.declaration.definition) {
-        ModuleDefinition(_, Some(NamedType(at, name, arguments)), parameters, _, _) -> {
-          place = Place(declared.file, declared.path)
-          problem = (message: String) -> Diagnostic(declared.file.source.path, at, message)
-          when (Lookups.spec(name, place, namespace, Refusing)) {
-            Found(spec) -> {
-              own = Symbols.simpleName(declared)
-              specName = Symbols.simpleName(spec)
-              when (arguments) {
-                [first, *_] -> abandon(Diagnostic(declared.file.source.path, Conversion.positionOf(first),
-                  "$own says what its types are in its body, so write just : $specName; type arguments are for a functor's parameters, like F(M: $specName<...>)"))
-                [] -> Unit
-              }
-              when (spec.declaration.definition) {
-                SpecDefinition(_, _, [_, *_], _, _) -> abandon(problem(
-                  "$own can't follow $specName, which takes type parameters; handle it with a value instead: $specName(...) { ... }"))
-                else -> Unit
-              }
-              followed.put(declared.name, spec)
-            }
-            Refused(why) -> abandon(problem(why))
-            NotFound -> abandon(problem("unknown spec '$name'"))
-          }
-        }
-        else -> followed
-      }
-    }
 
   // What the spec says its values are: each generic in the spec's type parameters, its own, and the
   // rest of what it may do, which is what it says it does and what its function parameters do; its

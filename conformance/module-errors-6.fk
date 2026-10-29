@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module M {
+  private type T(x: Int)
+  leak() = T(1)
+}
+
+// error: 'leak' is public, but its type uses T, which is private to M

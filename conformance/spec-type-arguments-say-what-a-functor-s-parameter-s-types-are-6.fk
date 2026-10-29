@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Monad {
+  type M<A>
+  pure<A>(x: A): M<A>
+}
+module G(M: Monad<Result<_, _>>) { x = 1 }
+
+// error: Monad's M takes 1 type parameter, so Result needs 1 '_', not 2

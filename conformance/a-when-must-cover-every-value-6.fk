@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f(n: Int) = when (n) {
+  0 -> "zero"
+  1 -> "one"
+}
+
+// error: this when doesn't cover every Int; add an else

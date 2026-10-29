@@ -1,0 +1,10 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+x = println("hi")
+main() = assert(true)
+
+// error: a top-level value runs when the program starts; make it a function

@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Fail { fail(reason: String): Nothing }
+effect Choose { choose(): Boolean }
+f(): Int = Fail(fail = r -> 0) { fail("x") }
+main() = assert(true)
+
+// error: 'fail' gives Nothing, so it can't be answered: take resume and don't call it, as fail = (reason, resume) -> ...

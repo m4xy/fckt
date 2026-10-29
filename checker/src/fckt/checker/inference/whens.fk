@@ -1,3 +1,4 @@
+import fckt.checker.symbols.*
 import fckt.collections.Maps.*
 import fckt.checker.coverage.*
 import fckt.checker.diagnostics.*

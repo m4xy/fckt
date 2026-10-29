@@ -1,0 +1,4 @@
+import fckt.parser.Position
+
+// Where a call is: its file, None for the program's own, and its position.
+type CallSite(file: Option<String>, at: Position)

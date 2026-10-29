@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec S {
+  type T<A>
+}
+module M : S { type T = Int }
+
+// error: S says T takes 1 type parameter, not 0

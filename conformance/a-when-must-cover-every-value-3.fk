@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f(o: Option<Result<Int, String>>) = when (o) {
+  Some(Ok(x)) -> x
+  None -> 0
+}
+
+// error: this when doesn't cover Some(Error(_)); add it, or an else

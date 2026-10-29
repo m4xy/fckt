@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Database { query(sql: String): List<String> }
+effect OrdersDb = Database
+effect UsersDb = Database
+effect X = Nope
+main() = Unit
+
+// error: unknown effect 'Nope'

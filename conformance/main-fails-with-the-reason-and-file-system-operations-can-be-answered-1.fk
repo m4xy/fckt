@@ -1,0 +1,14 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+import fckt.io.Files.*
+import fckt.io.Paths.*
+import fckt.io.Channels.*
+import fckt.io.FileSystem
+write(a: Int, b: Int, c: Int): Int = a
+@FileSystem main() = path("x").writing { writeLine("y") }
+
+// compiles

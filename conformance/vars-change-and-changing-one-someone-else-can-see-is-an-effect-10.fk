@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Account(owner: String, var balance: Int)
+bank = Account("b", 0)
+f() = { bank.balance = 1 }
+main() = assert(true)
+
+// error: 'f' does @Mutating

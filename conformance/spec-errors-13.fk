@@ -1,0 +1,16 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec S {
+  type T
+  f(x: T): Int
+}
+module M : S {
+  type T = Int
+  f(x: Int) = "s"
+}
+
+// error: 'f' has type (Int) -> String, but S needs (T) -> Int, which here is (Int) -> Int

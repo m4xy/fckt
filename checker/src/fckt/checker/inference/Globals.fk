@@ -26,7 +26,16 @@ module Globals {
 
   // The function's type where it's used: to the others in its group, as it says it is; while its
   // group is checked, as it's being worked out; after, a new instance of its generic type.
-  @Solving @Abandoning typeOf(s: Symbol, at: Position, context: Context): Type = {
+  @Solving @Abandoning typeOf(s: Symbol, at: Position, context: Context): Type = when (outsideScheme(s, context)) {
+    Some(scheme) -> instantiate(scheme)
+    None -> insideType(s, at, context)
+  }
+
+  // How the function is seen from outside its module, where that's how it's seen from here.
+  private outsideScheme(s: Symbol, context: Context): Option<Scheme> =
+    if (Visibility.isInside(context.place, s.path)) None else context.environment.known.outside.get(s.name)
+
+  @Solving @Abandoning private insideType(s: Symbol, at: Position, context: Context): Type = {
     known = context.environment.known
     when (known.viewed.get(s.name)) {
       Some(t) -> t
@@ -53,7 +62,7 @@ module Globals {
       } else Unit
       given = typeArguments.map { Conversion.typeOf(it, typeContext(context), context.environment.definitions) }
       known = context.environment.known
-      when ((known.typeParameterVariables.get(s.name), known.schemes.get(s.name))) {
+      when ((known.typeParameterVariables.get(s.name), outsideScheme(s, context).orElse { known.schemes.get(s.name) })) {
         (Some(variables), Some(scheme)) ->
           instantiate(scheme, declared.zip(given).mapNotNull { name, t -> variables.get(name).map { v -> (v, t) } }.toMap())
         else -> abandon(problem(context, at, "'$method' can't be given type arguments here"))

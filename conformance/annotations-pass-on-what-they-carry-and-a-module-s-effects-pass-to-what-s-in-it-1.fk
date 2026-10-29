@@ -1,0 +1,143 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+// Domain-driven design. The domain is pure, and the compiler holds it to that: Ordering is @Pure,
+// so nothing in it can print, store anything, or call anything that does. Repositories are specs
+// marked @Repository: whatever one does underneath, Postgres or a list in memory, its callers see
+// only @Persistence, as a Kotlin use case sees only the repository's interface. A use case is a
+// functor that takes its repositories, and configurations make one with real or fake ones.
+import fckt.io.Console
+
+
+import fckt.monads.Results
+import fckt.values.Mutable
+
+// ---- Domain ----
+
+@Pure
+module Ordering {
+  // Value objects: opaque, so the only way to get one is through its check.
+  opaque type OrderId = String
+  orderId(raw: String): Result<OrderId, String> = if (raw.isBlank()) Error("an order needs an id") else Ok(raw)
+
+  opaque type Quantity = Int
+  quantity(n: Int): Result<Quantity, String> = if (n > 0) Ok(n) else Error("a quantity must be positive, not $n")
+
+  type Line(sku: String, quantity: Quantity, price: Int)
+  type Status { Draft, Placed }
+
+  // The aggregate: only the functions below change it, and they keep its rules.
+  type Order private(id: OrderId, customer: String, lines: List<Line>, status: Status)
+
+  // What happened, as a value.
+  type OrderPlaced(id: OrderId, total: Int)
+
+  draft(id: OrderId, customer: String) = Order(id, customer, [], Draft)
+
+  addLine(order: Order, line: Line): Result<Order, String> = when (order.status) {
+    Draft -> Ok(order.copy(lines = order.lines + [line]))
+    else -> Error("only a draft order can change")
+  }
+
+  // A percentage off, decided elsewhere, and applied here.
+  place(order: Order, discount: Int): Result<(Order, OrderPlaced), String> = when {
+    order.status != Draft -> Error("this order is already placed")
+    order.lines.isEmpty() -> Error("an empty order can't be placed")
+    else -> Ok((order.copy(status = Placed), OrderPlaced(order.id, total(order) * (100 - discount) / 100)))
+  }
+
+  private total(order: Order) = order.lines.map { it.quantity * it.price }.sum()
+}
+
+// ---- Ports ----
+
+// Storing and fetching, however it's done.
+effect Persistence
+
+// Every function of a @Repository is @Persistence to its callers; what its module does beyond
+// that, Postgres or memory, stays inside the module.
+@Persistence @Encapsulates annotation type Repository
+
+// Safe to do twice: a marker, for readers and tools.
+annotation type Idempotent
+
+@Repository
+spec OrderRepository {
+  @Idempotent find(id: Ordering.OrderId): Option<Ordering.Order>
+  save(order: Ordering.Order): Unit
+}
+
+@Repository
+spec PaymentRepository {
+  charge(customer: String, amount: Int): Result<String, String>
+}
+
+@Repository
+spec CustomerRepository {
+  @Idempotent discountFor(customer: String): Int
+}
+
+// ---- Application ----
+
+module PlaceOrder(Orders: OrderRepository, Payments: PaymentRepository, Customers: CustomerRepository) {
+  run(rawId: String): Result<Ordering.OrderPlaced, String> = Results {
+    id by Ordering.orderId(rawId)
+    order by Orders.find(id).toResult("no order $rawId")
+    (placed, event) by Ordering.place(order, Customers.discountFor(order.customer))
+    receipt by Payments.charge(order.customer, event.total)
+    Orders.save(placed)
+    event
+  }
+}
+
+// ---- Adapters ----
+
+// Stands in for Postgres: prints the SQL it would run, and keeps the rows in memory.
+module PostgresOrders : OrderRepository {
+  rows: Mutable<List<Ordering.Order>> = Mutable([])
+  @Console @Mutating find(id: Ordering.OrderId) = {
+    println("SELECT * FROM orders WHERE id = '$id'")
+    rows.value.filter { it.id == id }.firstOrNone()
+  }
+  @Console @Mutating save(order: Ordering.Order) = {
+    println("UPSERT INTO orders ...")
+    rows.value = [order, *rows.value.filter { it.id != order.id }]
+  }
+}
+
+module InMemoryOrders : OrderRepository {
+  rows: Mutable<List<Ordering.Order>> = Mutable([])
+  @Mutating find(id: Ordering.OrderId) = rows.value.filter { it.id == id }.firstOrNone()
+  @Mutating save(order: Ordering.Order) = {
+    rows.value = [order, *rows.value.filter { it.id != order.id }]
+  }
+}
+
+module AcceptingPayments : PaymentRepository {
+  charge(customer: String, amount: Int) = Ok("receipt for $customer: $amount")
+}
+
+module LoyalCustomers : CustomerRepository {
+  discountFor(customer: String) = if (customer == "ada") 10 else 0
+}
+
+// ---- Configuration ----
+
+module Live = PlaceOrder(PostgresOrders, AcceptingPayments, LoyalCustomers)
+module Testing = PlaceOrder(InMemoryOrders, AcceptingPayments, LoyalCustomers)
+
+// Makes a draft with one line, ready to place.
+example(rawId: String, customer: String): Result<Ordering.Order, String> = Results {
+  id by Ordering.orderId(rawId)
+  quantity by Ordering.quantity(2)
+  order by Ordering.addLine(Ordering.draft(id, customer), Ordering.Line("book", quantity, 15))
+  order
+}
+
+f() = Live.run("x")
+main() = assert(true)
+
+// error: 'f' does @Persistence, so it must say so

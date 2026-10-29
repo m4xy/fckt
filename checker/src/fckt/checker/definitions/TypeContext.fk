@@ -7,7 +7,10 @@ import fckt.checker.types.*
 // the value they're in, which what they hold shares; while converting a function's parameters'
 // types, its own row, which a function type written there without effects shares, so map(xs, f)
 // does what f does; the aliases being expanded, none of which can be in its own expansion; and, in
-// a spec, its own types, with how many type parameters each takes.
+// a spec, its own types, with how many type parameters each takes; whether it's read as callers
+// outside its module see it, so that an opaque type there is opaque inside too; and where it's seen
+// from, if not where it's written, which decides whether an opaque type in it is: a record's field's
+// type, seen from outside the module of the opaque type it names, is that opaque type.
 type TypeContext(
   place: Place,
   typeParameters: Map<String, Type>,
@@ -15,4 +18,6 @@ type TypeContext(
   arrowEffects: Option<Row> = None,
   expanding: List<String> = [],
   specTypes: Map<String, Int> = emptyMap(),
+  outsideView: Boolean = false,
+  seenFrom: Option<Place> = None,
 )

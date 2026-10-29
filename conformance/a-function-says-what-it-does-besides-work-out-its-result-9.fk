@@ -1,0 +1,11 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Logger { @Pure log(s: String): Unit }
+module L : Logger { @Console log(s: String) = println(s) }
+main() = assert(true)
+
+// error: 'log' does @Console, but Logger's log doesn't say it can: declare it there, as @Console log(...)

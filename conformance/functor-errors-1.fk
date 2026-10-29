@@ -1,0 +1,18 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Ordered {
+  type T
+  compare(a: T, b: T): Int
+}
+module SortedSet(M: Ordered) {
+  type Set(items: List<M.T>)
+  empty = Set([])
+  insert(s: Set, x: M.T): Set = Set([x, *s.items])
+}
+x = SortedSet.empty
+
+// error: 'empty' is in the functor SortedSet

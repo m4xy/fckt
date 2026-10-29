@@ -1,0 +1,10 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+mk(): (String) -> Unit = s -> println(s)
+main() = assert(true)
+
+// error: this does @Console, but the type of the function it's in says it's pure

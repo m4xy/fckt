@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+annotation type Routes(prefix: String, vararg handlers: Function)
+f(x: Int): Int = x
+g(x: Int): Int = x
+@Routes("/a", f, handlers = [g])
+main() = Unit
+
+// error: 'handlers' is passed twice

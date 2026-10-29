@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Logger { log(s: String): Unit }
+module L : Logger { @Console log(s: String) = println(s) }
+f() = L.log("x")
+main() = assert(true)
+
+// error: 'f' does @Console

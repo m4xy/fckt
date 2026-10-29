@@ -1,0 +1,12 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Clock { now(): Int }
+effect Yielding<A> { yield(value: A): Unit }
+@Clock stamp() = now()
+main() = Clock(now = ~42) { println("${stamp()}") }
+
+// compiles

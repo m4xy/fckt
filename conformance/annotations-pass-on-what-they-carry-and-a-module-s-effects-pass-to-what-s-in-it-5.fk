@@ -1,0 +1,17 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+import fckt.values.Mutable
+effect Network
+@Console @Network annotation type Io
+@Pure module Outer {
+  @Console module Inner {
+    f() = 1
+  }
+}
+main() = assert(true)
+
+// error: Inner is in Outer, which may only be pure, so it can't be @Console

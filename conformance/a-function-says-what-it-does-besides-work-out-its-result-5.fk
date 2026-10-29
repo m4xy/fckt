@@ -1,0 +1,11 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type H(f: (String) -> Unit)
+h() = H(println)
+main() = assert(true)
+
+// error: expected (String) -> Unit but found @Console (String) -> Unit

@@ -1,0 +1,364 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.*
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// Functors, and the modules they make. Inside a functor, each of its parameters, M: Spec, is a module
+// with just what the spec lists, its types abstract, as the body must work for any module that follows
+// the spec. module IntSet = SortedSet(IntOrder) is a copy of SortedSet's declarations, its M naming
+// IntOrder; and a functor applied in an expression makes such a module beside the declaration it's
+// in, which the call is. What's found is the namespace's modules, and the declarations it adds.
+module Functors {
+  @Abandoning applied(namespace: Namespace): Namespace = {
+    building = Building(namespace, namespace.table.declarations, emptyMap(), [], [], emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap(), 0)
+    namespace.table.declarations.filter { isFunctor(it) }.forEach { f -> addParameters(building, f) }
+    namespace.table.declarations.filter { isApplication(it) }.forEach { app -> apply(building, app) }
+    namespace.table.declarations.filter { Symbols.isFunction(it) }.forEach { d -> liftApplications(building, d) }
+    table = Symbols.rebuilt(namespace.table, building.declarations)
+    withTable = namespace.copy(table = table)
+    namespace.copy(table = table, modules = Modules(
+      specsFollowed(table.declarations, withTable, building.parameterModules, building.applications),
+      building.parameterModules,
+      building.parameterMembers,
+      building.applications,
+      building.aliases,
+      building.copyOrigins,
+      building.fixedTypes,
+      building.lifted,
+    ))
+  }
+
+  // What's been found so far: the declarations, with those added; each functor's parameters, by
+  // the functor's full name, with the spec each follows; and what goes into Modules.
+  private type Building(
+    namespace: Namespace,
+    var declarations: List<Symbol>,
+    var parameters: Map<String, List<(String, Symbol)>>,
+    var parameterModules: List<String>,
+    var parameterMembers: List<String>,
+    var parameterSpecs: Map<String, Symbol>,
+    var applications: Map<String, Made>,
+    var aliases: Map<String, String>,
+    var copyOrigins: Map<String, String>,
+    var fixedTypes: Map<String, Symbol>,
+    var lifted: Map<CallSite, String>,
+    var liftedCount: Int,
+  )
+
+  private isFunctor(s: Symbol): Boolean = when (s.declaration.definition) {
+    ModuleDefinition(_, _, [_, *_], _, _) -> true
+    else -> false
+  }
+
+  private isApplication(s: Symbol): Boolean = when (s.declaration.definition) {
+    ModuleDefinition(_, _, _, Some(_), _) -> true
+    else -> false
+  }
+
+  // The functor around the path, if any, as the declarations stand.
+  private enclosingFunctor(building: Building, path: List<String>): Option<Symbol> =
+    path.mapIndexed { i, _ -> path.take(i + 1).joinToString(".") }.mapNotNull { name ->
+      building.declarations.find { d -> d.name == name && isFunctor(d) }
+    }.firstOrNone()
+
+  // The module a functor made that the path is in, if any.
+  private enclosingApplication(building: Building, path: List<String>): Option<String> =
+    path.mapIndexed { i, _ -> path.take(i + 1).joinToString(".") }.find { building.applications.containsKey(it) }
+
+  private problem(s: Symbol, at: Position, message: String): Diagnostic = Diagnostic(s.file.source.path, at, message)
+
+  // The spec each module that says it follows one follows, by the module's full name.
+  @Abandoning private specsFollowed(declarations: List<Symbol>, namespace: Namespace, parameterModules: List<String>, applications: Map<String, Made>): Map<String, Symbol> = {
+    followed =
+    declarations.filter { Symbols.isModule(it) }.fold(emptyMap()) { followed, declared ->
+      when (declared.declaration.definition) {
+        ModuleDefinition(_, Some(NamedType(at, name, arguments)), parameters, _, _) -> {
+          place = Place(declared.file, declared.path)
+          problem = (message: String) -> Diagnostic(declared.file.source.path, at, message)
+          when (Lookups.spec(name, place, namespace, Refusing)) {
+            Found(spec) -> {
+              own = Symbols.simpleName(declared)
+              specName = Symbols.simpleName(spec)
+              when (arguments) {
+                // A functor's parameter's spec's type arguments say what its types are.
+                [first, *_] if !parameterModules.contains(declared.name) -> abandon(Diagnostic(declared.file.source.path, Positions.ofType(first),
+                  "$own says what its types are in its body, so write just : $specName; type arguments are for a functor's parameters, like F(M: $specName<...>)"))
+                _ -> Unit
+              }
+              when (spec.declaration.definition) {
+                SpecDefinition(_, _, [_, *_], _, _) -> abandon(problem(
+                  "$own can't follow $specName, which takes type parameters; handle it with a value instead: $specName(...) { ... }"))
+                else -> Unit
+              }
+              followed.put(declared.name, spec)
+            }
+            Refused(why) -> abandon(problem(why))
+            NotFound -> abandon(problem("unknown spec '$name'${ImportHints.forName(name, namespace)}"))
+          }
+        }
+        else -> followed
+      }
+    }
+    // A module a functor makes follows the functor's spec.
+    applications.toList().fold(followed) { m, entry ->
+      (made, application) = entry
+      when (m.get(application.functor.name)) {
+        Some(spec) -> m.put(made, spec)
+        None -> m
+      }
+    }
+  }
+
+  // ---- Parameters ----
+
+  // Each parameter M: Spec of the functor: a module, F.M, with a record for each of the spec's types
+  // and a function for each of its values, which stand for whatever module F is given.
+  @Abandoning @Mutating private addParameters(building: Building, f: Symbol): Unit = when (f.declaration.definition) {
+    ModuleDefinition(_, _, parameters, _, _) -> {
+      enclosingFunctor(building, f.path).forEach { outer ->
+        abandon(problem(f, f.declaration.at, "a functor can't be inside another functor (${Symbols.simpleName(outer)}) yet"))
+      }
+      place = Place(f.file, f.path)
+      parameters.forEachIndexed { i, p ->
+        if (parameters.take(i).any { it.name == p.name }) abandon(problem(f, p.at, "'${p.name}' is declared twice")) else Unit
+      }
+      found = parameters.map { p ->
+        specName = when (p.spec) {
+          NamedType(_, n, _) -> n
+          _ -> ""
+        }
+        spec = when (Lookups.spec(specName, place, building.namespace, Refusing)) {
+          Found(s) -> s
+          Refused(why) -> abandon(problem(f, Positions.ofType(p.spec), why))
+          NotFound -> abandon(problem(f, Positions.ofType(p.spec), "unknown spec '$specName'${ImportHints.forName(specName, building.namespace)}"))
+        }
+        name = "${f.name}.${p.name}"
+        if (building.declarations.any { it.name == name && Symbols.isModule(it) }) {
+          abandon(problem(f, p.at, "${Symbols.simpleName(f)} has a module named ${p.name} already"))
+        } else Unit
+        (types, values) = when (spec.declaration.definition) {
+          SpecDefinition(ts, vs, _, _, _) -> (ts, vs)
+          _ -> ([], [])
+        }
+        fixTypes(building, name, f, spec, p.spec)
+        typeDeclarations = types.map { t -> Declaration(p.at, t.name, RecordDefinition(t.typeParameters, [], false, false, None)) }
+        valueDeclarations = values.map { v -> Declaration(p.at, v.name, FunctionDefinition(v.typeParameters, None, v.parameters, None, BooleanConstant(p.at, true), None, false)) }
+        moduleDeclaration = Declaration(p.at, p.name, ModuleDefinition(typeDeclarations + valueDeclarations, Some(p.spec), [], None, []))
+        inside = (typeDeclarations + valueDeclarations).map { d -> Symbol("$name.${d.name}", Symbols.pathOf("$name.${d.name}"), d, f.file) }
+        building.declarations = building.declarations + [Symbol(name, Symbols.pathOf(name), moduleDeclaration, f.file)] + inside
+        building.parameterModules = building.parameterModules + [name]
+        building.parameterMembers = building.parameterMembers + valueDeclarations.map { "$name.${it.name}" }
+        building.parameterSpecs = building.parameterSpecs.put(name, spec)
+        (p.name, spec)
+      }
+      building.parameters = building.parameters.put(f.name, found)
+    }
+    else -> Unit
+  }
+
+  // Spec<A, B> for a functor's parameter: an alias for each of the spec's types, in order, saying what
+  // it is, written where the functor is. A type that takes parameters takes a type that takes as many
+  // more: Monad<Option> makes M<A> an Option<A>. They go at the end, or where _ marks them:
+  // Monad<Result<_, String>> makes M<A> a Result<A, String>.
+  @Abandoning @Mutating private fixTypes(building: Building, parameterModule: String, f: Symbol, spec: Symbol, ref: TypeRef): Unit = when (ref) {
+    NamedType(at, _, arguments) -> {
+      types = when (spec.declaration.definition) {
+        SpecDefinition(ts, _, _, _, _) -> ts
+        _ -> []
+      }
+      specName = Symbols.simpleName(spec)
+      if (arguments.size > types.size) {
+        abandon(problem(f, at, "$specName has ${types.size} type${if (types.size == 1) "" else "s"}, so it takes at most that many type arguments, not ${arguments.size}"))
+      } else Unit
+      types.zip(arguments).forEach { t, argument ->
+        parameters = t.typeParameters.map { p -> NamedType(Positions.ofType(argument), p, []) }
+        target = if (parameters.isEmpty()) argument else when (argument) {
+          NamedType(argAt, argName, argArguments) -> {
+            holes = argArguments.count { isBlank(it) }
+            if (holes == 0) NamedType(argAt, argName, argArguments + parameters)
+            else if (holes != parameters.size) abandon(problem(f, argAt,
+              "$specName's ${t.name} takes ${parameters.size} type parameter${if (parameters.size == 1) "" else "s"}, so $argName needs ${parameters.size} '_', not $holes"))
+            else NamedType(argAt, argName, filled(argArguments, parameters))
+          }
+          _ -> abandon(problem(f, Positions.ofType(argument), "$specName's ${t.name} takes type parameters, so it needs a named type, like Option"))
+        }
+        aliasName = (f.path + ["${parameterModule.split(".").lastOrNone().getOrElse(parameterModule)}#${t.name}"]).joinToString(".")
+        alias = Symbol(aliasName, f.path, Declaration(Positions.ofType(argument), aliasName.split(".").lastOrNone().getOrElse(aliasName),
+          AliasDefinition(t.typeParameters, target)), f.file)
+        building.declarations = building.declarations + [alias]
+        building.fixedTypes = building.fixedTypes.put("$parameterModule.${t.name}", alias)
+      }
+    }
+    _ -> Unit
+  }
+
+  private isBlank(t: TypeRef): Boolean = when (t) {
+    NamedType(_, "_", []) -> true
+    _ -> false
+  }
+
+  // Each _ in the arguments by the next of those given.
+  private filled(arguments: List<TypeRef>, given: List<TypeRef>): List<TypeRef> = when (arguments) {
+    [] -> []
+    [first, *rest] -> when (given) {
+      [g, *more] if isBlank(first) -> [g, *filled(rest, more)]
+      _ -> [first, *filled(rest, given)]
+    }
+  }
+
+
+
+  // ---- Applications ----
+
+  // module X = F(A, G = B): a copy of F's declarations as X's, each parameter of F naming the module
+  // it's given, by position, then by name, or its default.
+  @Abandoning @Mutating private apply(building: Building, app: Symbol): Unit = when (app.declaration.definition) {
+    ModuleDefinition(_, spec, _, Some(Application(functorRef, arguments)), typeParameters) -> {
+      enclosingFunctor(building, app.path).forEach { outer ->
+        abandon(problem(app, app.declaration.at, "a functor can't be applied inside another functor (${Symbols.simpleName(outer)}) yet"))
+      }
+      place = Place(app.file, app.path)
+      (functorAt, functorName) = when (functorRef) {
+        NamedType(at, n, _) -> (at, n)
+        _ -> (Positions.ofType(functorRef), "")
+      }
+      functor = moduleAt(building, functorName, functorAt, place, app)
+      own = Symbols.simpleName(functor)
+      parameters = when (functor.declaration.definition) {
+        ModuleDefinition(_, _, ps, _, _) -> ps
+        _ -> []
+      }
+      if (parameters.isEmpty()) abandon(problem(app, functorAt, "$own isn't a functor: it takes no modules")) else Unit
+      positional = arguments.takeWhile { it.name.isNone() }
+      if (positional.size > parameters.size) {
+        abandon(problem(app, functorAt, "$own takes ${parameters.size} module${if (parameters.size == 1) "" else "s"}, not ${positional.size}"))
+      } else Unit
+      named = arguments.drop(positional.size)
+      named.forEach { a ->
+        argumentName = a.name.getOrElse("")
+        at = Positions.ofType(a.value)
+        index = parameters.indexOfFirst { it.name == argumentName }
+        if (a.name.isNone()) abandon(problem(app, at, "a module given by position goes before those given by name"))
+        else if (index < 0) abandon(problem(app, at, "$own has no module $argumentName: it takes ${parameters.map { it.name }.joinToString(", ")}"))
+        else if (index < positional.size || named.count { it.name == a.name } > 1) abandon(problem(app, at, "$own's $argumentName is given twice"))
+        else Unit
+      }
+      given = parameters.mapIndexed { i, p ->
+        written = positional.getOrNone(i).map { it.value }.orElse { named.find { it.name == Some(p.name) }.map { it.value } }
+        when (written) {
+          Some(ref) -> argumentModule(building, ref, place, app)
+          None -> when (p.default) {
+            // A default is named where the functor is declared, so it's the functor's own.
+            Some(ref) -> {
+              m = argumentModule(building, ref, Place(functor.file, functor.path), functor)
+              if (building.parameterModules.contains(m.name)) abandon(problem(functor, Positions.ofType(ref), "$own's ${p.name} can't default to another of its modules"))
+              else m
+            }
+            None -> {
+              specName = when (p.spec) {
+                NamedType(_, n, _) -> n
+                _ -> ""
+              }
+              abandon(problem(app, functorAt, "$own needs a module for ${p.name}, which follows $specName"))
+            }
+          }
+        }
+      }
+      copies = copiesOf(functor, app.name, building)
+      madeModule = Symbol(app.name, app.path, Declaration(app.declaration.at, app.declaration.name,
+        ModuleDefinition(copies.filter { c -> c.path == app.name.split(".") }.map { it.declaration }, spec, [], Some(Application(functorRef, arguments)), typeParameters),
+        app.declaration.visibility, app.declaration.opaque, app.declaration.annotations), app.file)
+      building.declarations = building.declarations.map { d -> if (d.name == app.name) madeModule else d } + copies
+      building.aliases = parameters.zip(given).fold(building.aliases) { m, entry ->
+        (p, givenModule) = entry
+        m.put("${app.name}.${p.name}", givenModule.name)
+      }
+      building.applications = building.applications.put(app.name, Made(functor, given))
+    }
+    _ -> Unit
+  }
+
+  // The module the name means, which must be one: a declared module, as a functor or a module given
+  // to one is.
+  @Abandoning private moduleAt(building: Building, name: String, at: Position, place: Place, at_: Symbol): Symbol =
+    when (Lookups.moduleNamed(name, place, building.namespace.copy(table = Symbols.rebuilt(building.namespace.table, building.declarations)), Refusing)) {
+      Found(DeclaredModule(m)) -> m
+      Refused(why) -> abandon(problem(at_, at, why))
+      _ -> abandon(problem(at_, at, "unknown module '$name'"))
+    }
+
+  // A module given to a functor: not a functor, nor generic in types of its own.
+  @Abandoning private argumentModule(building: Building, ref: TypeRef, place: Place, from: Symbol): Symbol = when (ref) {
+    NamedType(at, name, _) -> {
+      m = moduleAt(building, name, at, place, from)
+      own = Symbols.simpleName(m)
+      when (m.declaration.definition) {
+        ModuleDefinition(_, _, [_, *_], _, _) -> abandon(problem(from, at, "$own is a functor; give it modules first"))
+        ModuleDefinition(_, _, _, _, [_, *_]) -> {
+          typeParameters = when (m.declaration.definition) {
+            ModuleDefinition(_, _, _, _, ts) -> ts
+            _ -> []
+          }
+          abandon(problem(from, at, "$own takes type parameters, ${typeParameters.joinToString(", ")}, so it can't be given to a functor yet"))
+        }
+        _ -> m
+      }
+    }
+    _ -> abandon(problem(from, Positions.ofType(ref), "a functor takes its modules in parentheses: ${Symbols.simpleName(from)}(Module)"))
+  }
+
+  // The functor's declarations, each as a declaration of the module it makes, by the made module's
+  // name; with, for each type copied, what it's a copy of.
+  @Mutating private copiesOf(functor: Symbol, made: String, building: Building): List<Symbol> = {
+    inFunctor = building.declarations.filter { d -> d.name.startsWith("${functor.name}.") && !building.parameterModules.any { p -> d.name == p || d.name.startsWith("$p.") } }
+    copies = inFunctor.map { d ->
+      name = made + d.name.drop(functor.name.length)
+      Symbol(name, Symbols.pathOf(name), d.declaration, d.file)
+    }
+    building.copyOrigins = inFunctor.zip(copies).filter { original, _ -> Symbols.isType(original) || Symbols.isAnnotation(original) }
+      .fold(building.copyOrigins) { m, entry ->
+        (original, copy) = entry
+        m.put(copy.name, original.name)
+      }
+    copies
+  }
+
+  // ---- Applications in expressions ----
+
+  // A functor called in an expression, plugins = [FkTests.Plugin(Reporting = Quiet)], makes its module
+  // beside the declaration it's in, as module Plugin__1 = FkTests.Plugin(Reporting = Quiet) would; the
+  // call is that module, as a value of the functor's spec.
+  @Abandoning @Mutating private liftApplications(building: Building, d: Symbol): Unit = {
+    place = Place(d.file, d.path)
+    bodies = Signatures.bodyOf(d).toList() + Signatures.writtenParametersOf(d).getOrElse([]).mapNotNull { it.default }
+    bodies.flatMap { Calls.of(it) }.forEach { call ->
+      functor = References.dotted(call.callee).flatMap { name ->
+        when (Lookups.moduleNamed(name, place, building.namespace, Skipping)) {
+          Found(DeclaredModule(m)) if isFunctor(m) -> Some((name, m))
+          _ -> None
+        }
+      }
+      functor.forEach { entry ->
+        (name, m) = entry
+        if (enclosingFunctor(building, d.path).isSome()) abandon(problem(d, call.at, "a functor can't be applied inside another functor yet")) else Unit
+        if (enclosingApplication(building, d.path).isNone()) {
+          arguments = call.arguments.map { a ->
+            moduleName = References.dotted(a.value).filter { n -> Lookups.found(Lookups.moduleNamed(n, place, building.namespace, Skipping)).isSome() }
+            when (moduleName) {
+              Some(n) -> ModuleArgument(a.name, NamedType(Positions.of(a.value), n, []))
+              None -> abandon(problem(d, Positions.of(a.value), "${Symbols.simpleName(m)} takes modules, by name"))
+            }
+          }
+          building.liftedCount = building.liftedCount + 1
+          made = (d.path + ["${Symbols.simpleName(m)}__${building.liftedCount}"]).joinToString(".")
+          app = Symbol(made, d.path, Declaration(call.at, made.split(".").lastOrNone().getOrElse(made),
+            ModuleDefinition([], None, [], Some(Application(NamedType(Positions.of(call.callee), name, []), arguments)), []), Private), d.file)
+          building.declarations = building.declarations + [app]
+          apply(building, app)
+          building.lifted = building.lifted.put(CallSite(d.file.source.path, call.at), made)
+        } else Unit
+      }
+    }
+  }
+}

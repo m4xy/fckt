@@ -1,0 +1,20 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Ordered {
+  type T
+  compare(a: T, b: T): Int
+}
+module Twice(M: Ordered<Int>) {
+  f(a: Int, b: Int): Int = M.compare(a, b)
+}
+module I : Ordered {
+  opaque type T = Int
+  compare(a: Int, b: Int) = 0
+}
+module X = Twice(I)
+
+// error: Twice needs its T to be Int, but here it's I.T

@@ -1,0 +1,36 @@
+import fckt.parser.*
+
+// Where what's written starts, for an error about it.
+module Positions {
+  // Where an expression starts.
+  of(e: Expression): Position = when (e) {
+    IntConstant(at, _) -> at
+    FloatConstant(at, _) -> at
+    BooleanConstant(at, _) -> at
+    CharConstant(at, _) -> at
+    StringTemplate(at, _) -> at
+    Name(at, _) -> at
+    Tuple(at, _) -> at
+    ListOf(at, _) -> at
+    Spread(at, _) -> at
+    Call(at, _, _, _) -> at
+    Member(at, _, _) -> at
+    Binary(at, _, _, _) -> at
+    Unary(at, _, _) -> at
+    Assign(at, _, _) -> at
+    Lambda(at, _, _, _) -> at
+    Pipe(at, _, _) -> at
+    If(at, _, _, _, _) -> at
+    When(at, _, _) -> at
+    Block(at, _, _, _) -> at
+    Monadic(at, _, _) -> at
+    Handle(at, _, _, _) -> at
+  }
+  // Where a type as written starts.
+  ofType(t: TypeRef): Position = when (t) {
+    NamedType(at, _, _) -> at
+    FunctionType(at, _, _, _) -> at
+    TupleType(at, _) -> at
+    EffectsType(at, _) -> at
+  }
+}

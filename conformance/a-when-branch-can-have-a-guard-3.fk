@@ -1,0 +1,14 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f(x: Int): Int = when {
+  x > 0 -> 1
+  else if x < 0 -> 2
+  else -> 0
+}
+main() = Unit
+
+// error: a 'when' without a subject has conditions already

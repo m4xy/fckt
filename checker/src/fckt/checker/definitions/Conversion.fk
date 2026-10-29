@@ -117,9 +117,9 @@ module Conversion {
     else if (arguments.size == parameters.size) {
       parameters.zip(written).forEach { parameter, given ->
         if (parameter.startsWith("@") && !isEffectsRef(given))
-          abandon(problem(context, positionOf(given), "$name's ${parameter.removePrefix("@")} is effects, like $name<@Console>, not a type"))
+          abandon(problem(context, Positions.ofType(given), "$name's ${parameter.removePrefix("@")} is effects, like $name<@Console>, not a type"))
         else if (!parameter.startsWith("@") && isEffectsRef(given))
-          abandon(problem(context, positionOf(given), "$name's $parameter is a type, not effects"))
+          abandon(problem(context, Positions.ofType(given), "$name's $parameter is a type, not effects"))
         else Unit
       }
       arguments
@@ -144,12 +144,7 @@ module Conversion {
     else -> false
   }
 
-  positionOf(t: TypeRef): Position = when (t) {
-    NamedType(at, _, _) -> at
-    FunctionType(at, _, _, _) -> at
-    TupleType(at, _) -> at
-    EffectsType(at, _) -> at
-  }
+
 
   // The type parameters a type declaration declares.
   typeParametersOf(symbol: Symbol): List<String> = when (symbol.declaration.definition) {
@@ -165,22 +160,58 @@ module Conversion {
     withRegion(symbol, seenFrom(symbol, arguments, context, definitions), context, definitions)
 
   @Solving @Abandoning private seenFrom(symbol: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
-    if (isAbstractHere(symbol, context.place)) outside(symbol, arguments, context, definitions)
+    if (isAbstractHere(symbol, context.seenFrom.getOrElse(context.place), definitions) || (context.outsideView && isAbstract(symbol, definitions))) outsideType(symbol.path.joinToString("."), Symbols.simpleName(symbol), arguments, context, definitions)
     else when (symbol.declaration.definition) {
       AliasDefinition(_, _) -> expand(symbol, arguments, context, definitions)
       else -> Named(symbol.name, arguments, None)
     }
 
-  // Whether the type can be named here but not seen into: an opaque type outside its module.
-  isAbstractHere(symbol: Symbol, place: Place): Boolean = symbol.declaration.opaque && !Visibility.isInside(place, symbol.path)
+  // Whether the type can be named here but not seen into: an opaque type outside its module, or a
+  // functor's parameter's type, outside the module that stands for what it's given.
+  isAbstractHere(symbol: Symbol, place: Place, definitions: Definitions): Boolean =
+    isAbstract(symbol, definitions) && !Visibility.isInside(place, symbol.path)
 
-  // An opaque type, outside its module: a record or type with cases keeps its name, with only
-  // what's in it hidden; an alias is abstract, not what it stands for.
-  @Solving @Abandoning private outside(symbol: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
-    when (symbol.declaration.definition) {
-      AliasDefinition(_, _) -> Abstract(symbol.name, arguments)
-      else -> Named(symbol.name, arguments, None)
+  // Whether the type is abstract outside its module: opaque, or a functor's parameter's.
+  isAbstract(symbol: Symbol, definitions: Definitions): Boolean =
+    symbol.declaration.opaque || definitions.namespace.modules.parameterModules.contains(symbol.path.joinToString("."))
+
+  // Whether a module the path is in has an opaque alias, which its functions' inferred types show as
+  // what it stands for, and callers outside see as written.
+  isOpaqueAround(path: List<String>, definitions: Definitions): Boolean =
+    definitions.namespace.table.aliases.toList().any { _, a -> a.declaration.opaque && a.path.isNotEmpty() && path.take(a.path.size) == a.path }
+
+  // What the owner module's type of that name, applied to the arguments, is outside it: what its
+  // spec's type arguments say it is; or, for an opaque record or type with cases, itself, with only
+  // what's in it hidden; or abstract.
+  @Solving @Abandoning outsideType(owner: String, name: String, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type = {
+    modules = definitions.namespace.modules
+    table = definitions.namespace.table
+    full = "$owner.$name"
+    when (modules.fixedTypes.get(full)) {
+      Some(fixed) -> fixedType(fixed, name, arguments, context, definitions)
+      None -> {
+        declared = table.records.get(full).orElse { table.caseTypes.get(full) }.orElse { table.aliases.get(full) }
+          .filter { _ -> !modules.parameterModules.contains(owner) }
+        when (declared.map { d -> (d, d.declaration.definition) }) {
+          Some((d, AliasDefinition(_, _))) -> if (d.declaration.opaque) Abstract(full, arguments) else expand(d, arguments, context, definitions)
+          Some((d, _)) -> Named(d.name, arguments, None)
+          None -> Abstract(full, arguments)
+        }
+      }
     }
+  }
+
+  // A type a spec's type argument fixes: what the argument is, given the type's own arguments, which
+  // it must take as many more of as the type takes parameters.
+  @Solving @Abandoning private fixedType(fixed: Symbol, name: String, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type = {
+    n = typeParametersOf(fixed).size
+    when (Diagnostics.attempting { expand(fixed, arguments, context, definitions) }) {
+      Ok(t) -> t
+      Error(d) ->
+        if (n == 0) abandon(d)
+        else abandon(Diagnostic(d.file, d.at, "$name takes $n type parameter${if (n == 1) "" else "s"}, so its type argument must take $n more: ${d.message}"))
+    }
+  }
 
   // The type, of the declaration, with a region if its values can change: the one it's in, or its own.
   @Solving private withRegion(symbol: Symbol, t: Type, context: TypeContext, definitions: Definitions): Type = when (t) {
@@ -212,6 +243,9 @@ module Conversion {
             context.region,
             context.arrowEffects,
             context.expanding + [alias.name],
+            context.specTypes,
+            context.outsideView,
+            context.seenFrom,
           )
           typeOf(target, inner, definitions)
         }
@@ -259,7 +293,7 @@ module Conversion {
     annotations.flatMap { a ->
       namespace = definitions.namespace
       when (Annotations.declarationOf(a, context.place, namespace)) {
-        None -> abandon(problem(context, a.at, "unknown effect '${a.name}'"))
+        None -> abandon(problem(context, a.at, "unknown effect '${a.name}'${ImportHints.forName(a.name, namespace)}"))
         Some(declaration) if Symbols.isSpec(declaration) && a.typeArguments.isNotEmpty() ->
           [EffectLabel(declaration.name, a.typeArguments.map { typeOf(it, context, definitions) })]
         Some(_) -> when (Annotations.effectsOf([a], context.place, a.at, namespace)) {
@@ -271,11 +305,12 @@ module Conversion {
 
   // ---- Fields ----
 
-  // The types of a record's fields, for its type arguments, holding values in the region.
-  @Solving @Abandoning recordFields(record: Symbol, arguments: List<Type>, region: Option<Type>, definitions: Definitions): List<Type> =
+  // The types of a record's fields, for its type arguments, holding values in the region, as seen
+  // from the place, if it's given.
+  @Solving @Abandoning recordFields(record: Symbol, arguments: List<Type>, region: Option<Type>, definitions: Definitions, seenFrom: Option<Place> = None): List<Type> =
     when (record.declaration.definition) {
       RecordDefinition(typeParameters, fields, _, _, _) -> {
-        context = TypeContext(Place(record.file, record.path), typeParameters.zip(arguments).toMap(), region)
+        context = TypeContext(Place(record.file, record.path), typeParameters.zip(arguments).toMap(), region, None, [], emptyMap(), false, seenFrom)
         fields.map { typeOf(it.fieldType, context, definitions) }
       }
       else -> []
@@ -284,23 +319,24 @@ module Conversion {
   // The types of a case's fields, as the type with cases whose parameters are given has it, for
   // that type's arguments: an included case's in terms of the type it's included from, given the
   // type arguments it's included with.
-  @Solving @Abandoning caseFields(c: CaseInfo, parameters: List<String>, arguments: List<Type>, region: Option<Type>, definitions: Definitions): List<Type> =
+  @Solving @Abandoning caseFields(c: CaseInfo, parameters: List<String>, arguments: List<Type>, region: Option<Type>, definitions: Definitions, seenFrom: Option<Place> = None): List<Type> =
     when (c.source) {
       OwnCase -> {
-        context = TypeContext(Place(c.origin.file, c.origin.path), parameters.zip(arguments).toMap(), region)
+        context = TypeContext(Place(c.origin.file, c.origin.path), parameters.zip(arguments).toMap(), region, None, [], emptyMap(), false, seenFrom)
         c.definition.fields.map { typeOf(it.fieldType, context, definitions) }
       }
-      NamedCase(from) -> caseFields(from, [], [], region, definitions)
+      NamedCase(from) -> caseFields(from, [], [], region, definitions, seenFrom)
       IncludedCase(included, written, place, from) -> {
-        context = TypeContext(place, parameters.zip(arguments).toMap(), region)
-        caseFields(from, Cases.typeParametersOf(included), written.map { typeOf(it, context, definitions) }, region, definitions)
+        context = TypeContext(place, parameters.zip(arguments).toMap(), region, None, [], emptyMap(), false, seenFrom)
+        caseFields(from, Cases.typeParametersOf(included), written.map { typeOf(it, context, definitions) }, region, definitions, seenFrom)
       }
     }
 
-  // The cases of the type with cases, each with its fields' types for the type's arguments.
-  @Solving @Abandoning casesWithFields(caseType: Symbol, arguments: List<Type>, region: Option<Type>, definitions: Definitions): List<(CaseInfo, List<Type>)> =
+  // The cases of the type with cases, each with its fields' types for the type's arguments, as seen
+  // from the place, if it's given.
+  @Solving @Abandoning casesWithFields(caseType: Symbol, arguments: List<Type>, region: Option<Type>, definitions: Definitions, seenFrom: Option<Place> = None): List<(CaseInfo, List<Type>)> =
     definitions.cases.getOrDefault(caseType.name, []).map { c ->
-      (c, caseFields(c, Cases.typeParametersOf(caseType), arguments, region, definitions))
+      (c, caseFields(c, Cases.typeParametersOf(caseType), arguments, region, definitions, seenFrom))
     }
 
   private problem(context: TypeContext, at: Position, message: String): Diagnostic = Diagnostic(context.place.file.source.path, at, message)

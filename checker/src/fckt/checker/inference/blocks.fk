@@ -45,7 +45,7 @@ import fckt.parser.*
         None -> abandon(Globals.problem(context, positionOfMonad(m), "${nameOf(m)} has no pure, so its block needs a 'by' line"))
         Some(pure) -> when (resolved(Globals.typeOf(pure, positionOfMonad(m), context))) {
           FunctionOf([value], pureResult, _) -> {
-            expect(pureResult, done.rest, Defaults.positionOf(result), context)
+            expect(pureResult, done.rest, Positions.of(result), context)
             check(result, value, done.scope, context)
             whole
           }
@@ -144,7 +144,7 @@ private isBind(s: Statement): Boolean = when (s) {
         }
         refs = References.of(value, [])
         soFar.pending.flatMap { _, p, _ -> References.namesIn(p) }.find { refs.contains(it) }.forEach { used ->
-          abandon(Globals.problem(context, Defaults.positionOf(value), "${nameOf(m)} has no bind, so a step can't use $used from an earlier step"))
+          abandon(Globals.problem(context, Positions.of(value), "${nameOf(m)} has no bind, so a step can't use $used from an earlier step"))
         }
         (valueType, held) = step(m, value, soFar.scope, context)
         BlockSoFar(soFar.scope, soFar.rest, soFar.steps + [(valueType, held)], soFar.pending + [(at, pattern, held)], soFar.after, false)
@@ -154,7 +154,7 @@ private isBind(s: Statement): Boolean = when (s) {
         wanted = genericText(valueType)
         actual = infer(value, Some(valueType), soFar.scope, context)
         if (!isSubtype(actual.t, valueType, context)) {
-          abandon(Globals.problem(context, Defaults.positionOf(value), "${nameOf(m)} binds $wanted, but this is ${TypeText.shown(actual.t)}"))
+          abandon(Globals.problem(context, Positions.of(value), "${nameOf(m)} binds $wanted, but this is ${TypeText.shown(actual.t)}"))
         } else Unit
         (nextValue, nextResult) = when (next) {
           FunctionOf([p], r, _) -> (p, r)
@@ -216,12 +216,13 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 // Options { ... }: the block, with by going through the module's bind, and what it gives through its
 // pure; or, for a module that follows a handled effect's spec, the block with the effect handled.
 @Inferring inferMonadic(at: Position, monad: Expression, block: Expression, scope: Scope, context: Context): Type = {
-  monadAt = Defaults.positionOf(monad)
+  monadAt = Positions.of(monad)
   name = dottedUnbound(monad, scope)
   shown = name.getOrElse("this")
   found = name.flatMap { n -> Lookups.found(Lookups.moduleNamed(n, context.place, context.environment.definitions.namespace, Skipping)) }
   when (found) {
-    None -> abandon(Globals.problem(context, monadAt, "$shown isn't a module, so ${name.getOrElse("null")} { ... } has nothing to bind with"))
+    None -> abandon(Globals.problem(context, monadAt,
+      "$shown isn't a module, so ${name.getOrElse("null")} { ... } has nothing to bind with${name.map { n -> ImportHints.forName(n, context.environment.definitions.namespace) }.getOrElse("")}"))
     Some(m) -> {
       effect = when (m) {
         DeclaredModule(s) -> context.environment.moduleSpecs.get(s.name).filter { _ -> isEffectModule(m, context) }.map { spec -> (s, spec) }
@@ -289,7 +290,7 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
     wanted = genericText(mapped)
     actual = infer(value, Some(mapped), scope, context)
     if (!isSubtype(actual.t, mapped, context)) {
-      abandon(Globals.problem(context, Defaults.positionOf(value), "$name maps $wanted, but this is ${TypeText.shown(actual.t)}"))
+      abandon(Globals.problem(context, Positions.of(value), "$name maps $wanted, but this is ${TypeText.shown(actual.t)}"))
     } else (mapped, held)
   }
   Binding(_, _, _, _) -> (Variable(fresh()), Variable(fresh()))

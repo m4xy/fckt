@@ -1,0 +1,16 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec S {
+  type T<A>
+  f<A>(x: A): T<A>
+}
+module M : S {
+  type T<A> = List<A>
+  f(x: Int) = [x]
+}
+
+// error: but S needs (A) -> T<A>

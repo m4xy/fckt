@@ -1,0 +1,11 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Account(owner: String, var balance: Int)
+f() = { n = 1; n = 2; n }
+main() = assert(true)
+
+// error: to change it, declare it with var n = ...

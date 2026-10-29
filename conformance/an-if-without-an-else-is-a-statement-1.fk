@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+f(b: Boolean) = {
+  if (b) 1
+  2
+}
+main() = assert(true)
+
+// error: an 'if' without 'else' gives Unit, but this branch gives Int: add an 'else' to give a value

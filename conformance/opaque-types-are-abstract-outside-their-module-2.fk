@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module Percent {
+  opaque type T = Int
+  of(n: Int): Option<T> = if (n >= 0 && n <= 100) Some(n) else None
+  value(p: T): Int = p
+  twice(n: Int) = n * 2
+}
+x: Percent.T = 3
+
+// error: expected Percent.T but found Int

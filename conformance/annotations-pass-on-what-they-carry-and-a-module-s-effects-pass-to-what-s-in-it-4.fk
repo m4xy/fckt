@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+import fckt.values.Mutable
+effect Network
+@Console @Network annotation type Io
+@Io module M {
+  @Mutating f(a: Mutable<Int>) = { a.value = 1 }
+}
+main() = assert(true)
+
+// error: 'f' is in M, which may only do @Network @Console, so it can't be @Mutating

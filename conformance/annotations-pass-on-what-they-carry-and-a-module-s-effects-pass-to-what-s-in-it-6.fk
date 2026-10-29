@@ -1,0 +1,16 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+import fckt.values.Mutable
+effect Network
+@Console @Network annotation type Io
+annotation type A(v: String)
+@A("X") annotation type C
+@A("Y") annotation type D
+@C @D annotation type Z
+main() = assert(true)
+
+// error: this gets @A more than once, with different values: @A("X") through C, and @A("Y") through D; choose one by declaring @A here

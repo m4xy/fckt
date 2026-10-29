@@ -1,0 +1,14 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+type Alphabet { A, B, E }
+type Vowel { Alphabet.A, Alphabet.E }
+f(c: Alphabet) = when (c) {
+  is Vowel -> 1
+  Alphabet.B -> 2
+}
+
+// compiles

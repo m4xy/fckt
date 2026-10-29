@@ -1,0 +1,16 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Monad {
+  type M<A>
+  pure<A>(x: A): M<A>
+}
+module O : Monad<Option> {
+  type M<A> = Option<A>
+  pure(x) = Some(x)
+}
+
+// error: O says what its types are in its body, so write just : Monad
