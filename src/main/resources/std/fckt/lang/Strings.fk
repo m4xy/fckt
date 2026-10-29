@@ -21,9 +21,9 @@ module Strings {
   // Its characters, in order.
   external String.toList(): List<Char> =
     "(fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) this"
-  // The character at index: s[i].
-  external String.get(index: Int): Char =
-    "(fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in if n < 0 || i >= String.length s then invalid_arg (Printf.sprintf \"index %d is outside the string\" n) else Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s i))) this index"
+  // The character at index, or None if the string has none there.
+  external String.getOrNone(index: Int): Option<Char> =
+    "(fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in if n < 0 || i >= String.length s then None else Some (Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s i)))) this index"
   // The characters from start up to, not including, endIndex.
   String.substring(start: Int, endIndex: Int): String = this.drop(start).take(endIndex - start)
   // The first n characters, or all of them if there are fewer; and the rest.

@@ -98,7 +98,7 @@ tour of the core language, translated section by section.
 | `(x, y) = e` | `let (x, y) = e in` | Destructures a tuple, or a record's fields in declaration order. |
 | `[x, *xs]`, `xs + ys` | `x :: xs`, `xs @ ys` | `*` spreads a list into a list literal, like Kotlin's spread operator. |
 | `r.copy(a = x)` | `{ r with a = x }` | |
-| `'a'`, `'\u00e9'`, `'\u{1F600}'` | `0x61`, an `int` | A `Char` is one Unicode character, a code point, as OCaml's `int`, so `'😀'` is one. `\uXXXX` and `\u{...}` work in strings too. A `String` is UTF-8, and its `length`, `s[i]`, `take`, `drop`, `substring` and `indexOf` count characters, not bytes: `"ü".length` is 1. |
+| `'a'`, `'\u00e9'`, `'\u{1F600}'` | `0x61`, an `int` | A `Char` is one Unicode character, a code point, as OCaml's `int`, so `'😀'` is one. `\uXXXX` and `\u{...}` work in strings too. A `String` is UTF-8, and its `length`, `getOrNone(i)`, `take`, `drop`, `substring` and `indexOf` count characters, not bytes: `"ü".length` is 1. |
 | `"""raw"""` | a string | Raw strings have no escapes, but still interpolate. |
 | `65.toByte()` | `Char.unsafe_chr 65` | A `Byte` is 0 to 255, OCaml's `char`: an `Int`'s low eight bits, so `-1.toByte()` is 255; `b.toInt()` reads it. `fckt.text.Bytes` is a run of them. |
 | `lazy(~e)`, `l.value` | `Lazy.from_fun`, `Lazy.force` | |

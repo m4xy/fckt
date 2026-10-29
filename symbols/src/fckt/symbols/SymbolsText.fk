@@ -193,7 +193,13 @@ module SymbolsText : Format {
 
   // ---- Types and values, from a position in a line ----
 
-  @Fail private charAt(s: String, at: Int): Char = if (at < s.length) s.get(at) else fail("'$s' ends too soon")
+  @Fail private charAt(s: String, at: Int): Char = when (s.getOrNone(at)) {
+    Some(c) -> c
+    None -> fail("'$s' ends too soon")
+  }
+
+  // Whether s has a character at at that test holds of.
+  private holds(s: String, at: Int, test: (Char) -> Boolean): Boolean = s.getOrNone(at).map(test).getOrElse(false)
 
   private startsAt(s: String, at: Int, prefix: String): Boolean = s.drop(at).startsWith(prefix)
 
@@ -202,7 +208,7 @@ module SymbolsText : Format {
 
   // Where the name starting at at ends.
   private nameEnd(s: String, at: Int): Int =
-    if (at < s.length && !" ,()[]<>=".contains("${s.get(at)}")) nameEnd(s, at + 1) else at
+    if (holds(s, at) { !" ,()[]<>=".contains("$it") }) nameEnd(s, at + 1) else at
 
   @Fail private nameAt(s: String, at: Int): (String, Int) = {
     end = nameEnd(s, at)
@@ -229,7 +235,7 @@ module SymbolsText : Format {
       } else (TupleType(inside), next)
     } else {
       (name, next) = nameAt(s, at)
-      if (next < s.length && s.get(next) == '<') {
+      if (s.getOrNone(next) == Some('<')) {
         (arguments, after) = listAt(s, next + 1, '>') { s2, a -> typeAt(s2, a, parameters) }
         (Named(name, arguments), after)
       }
@@ -315,7 +321,7 @@ module SymbolsText : Format {
   }
 
   private numberEnd(s: String, at: Int): Int =
-    if (at < s.length && (s.get(at).isDigit() || ".eE-+".contains("${s.get(at)}"))) numberEnd(s, at + 1) else at
+    if (holds(s, at) { it.isDigit() || ".eE-+".contains("$it") }) numberEnd(s, at + 1) else at
 
   // The text up to the closing quote, unescaped, and where it ends.
   @Fail private quotedAt(s: String, at: Int, quote: Char, kept: String): (String, Int) = {

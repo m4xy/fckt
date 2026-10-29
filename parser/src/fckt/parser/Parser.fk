@@ -542,7 +542,10 @@ module Parser {
 
   // A capital letter, maybe with digits: A, T1.
   private typeParameterName(name: String): Boolean =
-    name.isNotEmpty() && name[0] >= 'A' && name[0] <= 'Z' && name.drop(1).toList().all { it.isDigit() }
+    when (name.toList()) {
+      [first, *rest] -> first >= 'A' && first <= 'Z' && rest.all { it.isDigit() }
+      [] -> false
+    }
 
   private typeNames(declarations: List<Declaration>): List<String> = declarations.flatMap { d ->
     when (d.definition) {
@@ -884,7 +887,11 @@ module Parser {
         BooleanConstant(at, false)
       }
       StringLiteral -> stringLiteral(s, next(s))
-      CharLiteral -> CharConstant(at, next(s).text[0])
+      // The lexer gives a character's token its one character as text.
+      CharLiteral -> when (next(s).text.getOrNone(0)) {
+        Some(c) -> CharConstant(at, c)
+        None -> reject(at, "empty character literal")
+      }
       Identifier -> Name(at, next(s).text)
       LeftParen -> {
         next(s)
@@ -1343,7 +1350,7 @@ module Parser {
     token.text
   }
 
-  private upper(name: String): Boolean = name.isNotEmpty() && name[0].isUpperCase()
+  private upper(name: String): Boolean = name.getOrNone(0).map { it.isUpperCase() }.getOrElse(false)
 
-  private lower(name: String): Boolean = name.isNotEmpty() && name[0].isLowerCase()
+  private lower(name: String): Boolean = name.getOrNone(0).map { it.isLowerCase() }.getOrElse(false)
 }

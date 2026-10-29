@@ -3,8 +3,10 @@ import fckt.text.Encodings.*
 main() = {
   s = "héllo wörld 😀"
   assertEquals(13, s.length)
-  assertEquals('é', s[1])
-  assertEquals('😀', s[12])
+  assertEquals(Some('é'), s.getOrNone(1))
+  assertEquals(Some('😀'), s.getOrNone(12))
+  assertEquals(None, s.getOrNone(13))
+  assertEquals(None, s.getOrNone(-1))
   assertEquals("héllo", s.take(5))
   assertEquals("wörld 😀", s.drop(6))
   assertEquals(6, s.indexOf("w"))
