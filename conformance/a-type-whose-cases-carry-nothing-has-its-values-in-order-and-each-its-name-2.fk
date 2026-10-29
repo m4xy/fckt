@@ -1,0 +1,4 @@
+type Shape { Dot, Circle(radius: Int) }
+shapes = Shape.values
+
+// error: only a type whose cases carry nothing has values and name, and Shape's Circle carries radius

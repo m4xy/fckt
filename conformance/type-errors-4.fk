@@ -1,0 +1,3 @@
+f(xs: List<Int>) = xs.size()
+
+// error: 'size' is a property

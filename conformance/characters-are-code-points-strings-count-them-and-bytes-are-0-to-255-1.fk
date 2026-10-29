@@ -1,0 +1,39 @@
+import fckt.text.Encodings.*
+
+main() = {
+  s = "héllo wörld 😀"
+  assertEquals(13, s.length)
+  assertEquals('é', s[1])
+  assertEquals('😀', s[12])
+  assertEquals("héllo", s.take(5))
+  assertEquals("wörld 😀", s.drop(6))
+  assertEquals(6, s.indexOf("w"))
+  assertEquals(9, s.lastIndexOf("l"))
+  assertEquals("éll", s.substring(1, 4))
+  assertEquals([104, 233], s.take(2).toList().map(c -> c.code))
+  assertEquals(128512, '\u{1F600}'.code)
+  assertEquals('é', '\u00e9')
+  assertEquals('A', 'a'.uppercase())
+  assert('9'.isDigit() && 'é'.isLetter() && ' '.isWhitespace() && 'A'.isUpperCase() && !'a'.isUpperCase() && 'a'.isLowerCase())
+  assertEquals(["a", "b", "", "c"], "a,b,,c".split(","))
+  assertEquals("a+b+c", "a-b-c".replace("-", "+"))
+  assertEquals(("key", "value=x"), ("key=value=x".substringBefore("="), "key=value=x".substringAfter("=")))
+  assertEquals(["one", "two", ""], "one\r\ntwo\n".lines())
+  assertEquals("ababab", "ab".repeat(3))
+  assertEquals("😀 dlröw", s.drop(6).reversed())
+  assertEquals(("hi  ", "  hi"), ("  hi  ".trimStart(), "  hi  ".trimEnd()))
+  assertEquals(("007", "ab  "), ("7".padStart(3, '0'), "ab".padEnd(4)))
+  assert(s.isNotEmpty() && " ".isEmpty() == false && !" ".isNotBlank())
+  assertEquals("x", when ('x') {
+    'a' -> "a"
+    'x' -> "x"
+    else -> "?"
+  })
+  assertEquals("ü 😀", "${'ü'} ${'😀'}")
+  // A byte is 0 to 255: an Int's low eight bits.
+  assertEquals(44, 300.toByte().toInt())
+  assertEquals(255, (-1).toByte().toInt())
+  assertEquals("195", "${"é".encodeToBytes()[0]}")
+  assertEquals(2, "é".encodeToBytes().size)
+}
+

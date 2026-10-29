@@ -1,0 +1,5 @@
+spec Loop : Loop {
+  f(): Int
+}
+
+// error: spec 'Loop' builds on itself

@@ -1,0 +1,12 @@
+a() = (1 +
+b() = 2
+c( = 3
+d() = {
+  x = )
+}
+e() = 1
+main() = Unit
+
+// error: 2:5: error: expected ')' but found '='
+// error: 3:4: error: expected a parameter name but found '='
+// error: 5:7: error: expected an expression but found ')'

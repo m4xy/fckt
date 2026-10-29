@@ -1,0 +1,4 @@
+effect Tagged<A>
+main() = Unit
+
+// error: only an effect with operations takes type parameters

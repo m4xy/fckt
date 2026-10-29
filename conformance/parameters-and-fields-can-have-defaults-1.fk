@@ -1,0 +1,21 @@
+import fckt.io.Console
+
+type Project(name: String, version: String = "0.1.0", sources: List<String> = ["src"], tests: List<String> = defaultTests())
+defaultTests(): List<String> = ["test"]
+greet(name: String, greeting: String = "hello", punctuation: String = "!") = "$greeting $name$punctuation"
+type Shape { Circle(radius: Float = 1.0), Square(side: Float) }
+List<Int>.scaled(by: Int = 2): List<Int> = this.map(x -> x * by)
+@Console loud(s: String = readLine()) = s.uppercase()
+main() = {
+  assertEquals(Project("shop", "0.1.0", ["src"], ["test"]), Project(name = "shop"))
+  assertEquals(Project("x", "2.0", ["src"], ["test"]), Project("x", version = "2.0"))
+  assertEquals("hello Ada!", greet("Ada"))
+  assertEquals("hi Ada!", greet("Ada", "hi"))
+  assertEquals("hello Ada?", greet("Ada", punctuation = "?"))
+  assertEquals(Circle(1.0), Circle())
+  assertEquals([2, 4], [1, 2].scaled())
+  assertEquals([3, 6], [1, 2].scaled(3))
+  // What a default does is done where the call leaves it out.
+  assertEquals("ADA", Console(print = s -> Unit, println = s -> Unit, readLine = ~"ada") { loud() })
+}
+

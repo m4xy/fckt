@@ -1,0 +1,11 @@
+import fckt.io.Console
+
+average(xs: List<Float>) = xs.sum() / xs.size
+sign(x: Float) = when {
+  x > 0 -> "positive"
+  x < 0 -> "negative"
+  else -> "zero"
+}
+main() = println("${average([1.0, 2.5])} ${sign(-2)} ${7 % 3} ${2 * 1.5}")
+
+// prints: 1.75 negative 1 3.0

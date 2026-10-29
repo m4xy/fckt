@@ -1,0 +1,4 @@
+greet(name: String, greeting: String = "hello") = name
+main() = assertEquals("", greet())
+
+// error: 'greet' is missing argument 'name'

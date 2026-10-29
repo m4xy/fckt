@@ -1,0 +1,6 @@
+effect Clock { now(): Int }
+type Box<@E>(run: @E () -> Unit)
+f<@E>(x: E) = x
+main() = assert(true)
+
+// error: 'E' is an effect parameter, written @E

@@ -1,0 +1,20 @@
+import fckt.io.Console
+
+spec Runner {
+  go<@E>(work: @E () -> Unit): Unit
+}
+
+module Twice : Runner {
+  go<@E>(work: @E () -> Unit): Unit = {
+    work()
+    work()
+  }
+}
+
+// Given as a value, it does what the work does.
+@Console runWith(runner: Runner) = runner.go { println("ran") }
+
+@Console main() = runWith(Twice)
+
+// prints: ran
+// prints: ran

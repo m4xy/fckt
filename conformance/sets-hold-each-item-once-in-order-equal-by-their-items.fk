@@ -1,0 +1,29 @@
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+main() = {
+  s = setOf([3, 1, 2, 3])
+  assertEquals("[1, 2, 3]", s.toString())
+  assertEquals(3, s.size)
+  assertEquals(s, emptySet().plus(2).plus(3).plus(1))
+  assert(s.contains(2) && !s.contains(4) && s.isNotEmpty() && emptySet().plus(1).minus(1).isEmpty())
+  assertEquals(setOf([1, 2, 3, 4]), s.union(setOf([4, 1])))
+  assertEquals(setOf([2, 3]), s.intersect(setOf([2, 3, 4])))
+  assertEquals(setOf([1]), s.subtract(setOf([2, 3])))
+  assertEquals([10, 20, 30], s.map { it * 10 })
+  assertEquals(setOf([2]), s.filter { it % 2 == 0 })
+  assertEquals([1, 2, 3], [2, 1, 2, 3].toSet().toList())
+  assertEquals([3, 1, 2], [3, 1, 3, 2, 1].distinct())
+  // Through the trees, as an item at a time would: equal, so the same shape, too.
+  a = setOf(upTo(300).map { it * 7 % 300 })
+  b = setOf(upTo(200).map { it * 3 })
+  assertEquals(setOf(a.toList().filter { b.contains(it) }), a.intersect(b))
+  assertEquals(setOf(a.toList().filter { !b.contains(it) }), a.subtract(b))
+  assertEquals(setOf(a.toList() + b.toList()), a.union(b))
+  assertEquals(setOf(b.toList() + a.toList()), b.union(a))
+  assertEquals(100, a.count { it % 3 == 0 })
+  assertEquals(setOf(upTo(100).map { it * 3 }), a.filter { it % 3 == 0 })
+  assertEquals(mapOf([(1, "a"), (2, "c"), (3, "d")]), mapOf([(1, "a"), (2, "b")]).putAll(mapOf([(2, "c"), (3, "d")])))
+}
+upTo(n: Int): List<Int> = if (n <= 0) [] else upTo(n - 1) + [n - 1]
+

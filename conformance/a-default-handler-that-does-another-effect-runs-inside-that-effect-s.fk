@@ -1,0 +1,9 @@
+import fckt.io.Console
+
+@HandledBy(Speaker) effect Voice { say(text: String): Unit }
+module Speaker : Voice { @Console say(text: String): Unit = println(text) }
+@Voice @HandledBy(Greeter) effect Greeting { greet(name: String): Unit }
+module Greeter : Greeting { @Voice greet(name: String): Unit = say("hello " + name) }
+main() = greet("there")
+
+// prints: hello there

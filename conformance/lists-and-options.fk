@@ -1,0 +1,12 @@
+import fckt.io.Console
+
+main() = {
+  xs = [1, 2, 3].map(x -> x * 2).filter(x -> x > 2)
+  println(xs.joinToString(", "))
+  println("${Some(1.5)} ${[Some("a"), None]} ${xs.fold(0, (acc, x) -> acc + x)}")
+  println(xs.find(x -> x > 10).getOrElse(-1).toString())
+}
+
+// prints: 4, 6
+// prints: Some(1.5) [Some(a), None] 10
+// prints: -1

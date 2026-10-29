@@ -1,0 +1,17 @@
+import fckt.io.Console
+
+type Meters(Int)
+type Name(String)
+type A { Done(x: Int) }
+type B { Done(y: String) }
+pick(a: A): B = when (a) {
+  Done(x) -> Done("got $x")
+}
+main() = {
+  m = Meters(3)
+  n = Name("ada")
+  b: B = Done("direct")
+  println("${m.value} ${n.value} ${pick(Done(1))} $b")
+}
+
+// prints: 3 ada Done(y=got 1) Done(y=direct)

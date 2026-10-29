@@ -1,0 +1,6 @@
+annotation type Route
+@Route f() = 1
+g(h: @Route () -> Unit) = h()
+main() = Unit
+
+// error: 'Route' isn't an effect; declare one with effect Route

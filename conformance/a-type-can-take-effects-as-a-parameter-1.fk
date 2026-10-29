@@ -1,0 +1,20 @@
+import fckt.io.Console
+
+effect Clock { now(): Int }
+type Box<@E>(run: @E () -> Unit)
+@Console @Clock both(b: Box<@Console @Clock>) = b.run()
+@Console logged<@E>(b: Box<@Console @E>) = {
+  println("running")
+  b.run()
+}
+runIt(b: Box) = b.run()
+@Console main() = Clock(now = ~7) {
+  both(Box(~println("tick ${now()}")))
+  logged(Box(~println("inside")))
+  runIt(Box(~println("anything")))
+}
+
+// prints: tick 7
+// prints: running
+// prints: inside
+// prints: anything

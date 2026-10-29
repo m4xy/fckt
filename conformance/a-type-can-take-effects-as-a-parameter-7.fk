@@ -1,0 +1,8 @@
+import fckt.io.Console
+
+effect Clock { now(): Int }
+type Box<@E>(run: @E () -> Unit)
+pureRun(b: Box<@Pure>) = b.run()
+@Console main() = pureRun(Box(~println("no")))
+
+// error: says it's pure

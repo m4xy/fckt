@@ -1,0 +1,6 @@
+effect Clock { now(): Int }
+type Box<@E>(run: @E () -> Unit)
+f(b: Box<Int>) = Unit
+main() = assert(true)
+
+// error: Box's E is effects, like Box<@Console>, not a type

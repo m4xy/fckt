@@ -1,0 +1,5 @@
+type A { X }
+type B { *A, Y }
+type C { *B, A.Z }
+
+// error: A has no case 'Z'

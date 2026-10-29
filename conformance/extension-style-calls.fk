@@ -1,0 +1,7 @@
+import fckt.io.Console
+
+type Box(value: Int)
+double(b: Box) = Box(b.value * 2)
+main() = println(Box(3).double().double().toString())
+
+// prints: Box(value=12)

@@ -185,7 +185,8 @@ ocaml examples/orders.ml
 `-o out.ml` picks the output file, and `-o -` prints the OCaml instead. A program that needs one of
 OCaml's other libraries, as one using `fckt.io` needs `unix`, is run with it: `ocaml -I +unix unix.cma out.ml`. `-I dir` adds a directory whose folders are packages, as the program's own directory's are. The generated code needs
 OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the result with `ocaml`
-when it's installed.
+when it's installed. Among them is [conformance](conformance/README.md): programs, each with what
+it prints or the error it's refused with, which say what any implementation of fckt does.
 
 ### Compiling separately
 

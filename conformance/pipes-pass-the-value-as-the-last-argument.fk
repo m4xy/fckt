@@ -1,0 +1,7 @@
+import fckt.io.Console
+
+add(a: Int, b: Int) = a + b
+label(x: Int) = "n=$x"
+main() = println(3 |> add(4) |> (x -> x * 2) |> label)
+
+// prints: n=14

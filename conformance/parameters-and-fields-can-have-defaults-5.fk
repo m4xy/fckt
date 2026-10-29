@@ -1,0 +1,7 @@
+import fckt.io.Console
+
+@Console f(s: String = readLine()) = s
+g() = f()
+main() = Unit
+
+// error: 'g' does @Console

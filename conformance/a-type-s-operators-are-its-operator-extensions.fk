@@ -1,0 +1,38 @@
+import fckt.collections.Sets.*
+
+
+            type Money(pence: Int)
+
+            // Used before they're declared, and from another module.
+            module Tills {
+              total(items: List<Money>): Money = items.fold(Money(0)) { sum, m -> sum + m }
+              owed(paid: Money, price: Money): Money = -(paid - price)
+            }
+
+            module Moneys {
+              operator Money.plus(other: Money): Money = Money(this.pence + other.pence)
+              operator Money.minus(other: Money): Money = Money(this.pence - other.pence)
+              operator Money.times(n: Int): Money = Money(this.pence * n)
+              operator Money.div(n: Int): Money = Money(this.pence / n)
+              operator Money.rem(n: Int): Money = Money(this.pence % n)
+              operator Money.unaryMinus(): Money = Money(-this.pence)
+            }
+
+            main() = {
+              assertEquals(Money(350), Tills.total([Money(100), Money(250)]))
+              assertEquals(Money(30), Tills.owed(Money(100), Money(130)))
+              // As numbers' do: * before +, and left to right.
+              assertEquals(Money(700), Money(100) + Money(200) * 3)
+              assertEquals(Money(25), Money(100) / 4 - Money(0))
+              assertEquals(Money(1), Money(7) % 2)
+              var m = Money(5)
+              m += Money(1)
+              assertEquals(Money(6), m)
+              // Numbers', strings' and lists' are as they were.
+              assertEquals(7, 3 + 4)
+              assertEquals("ab", "a" + "b")
+              assertEquals([1, 2], [1] + [2])
+              assertEquals(setOf([1, 2]), setOf([1]) + 2 - 3)
+              assertEquals(setOf([2]), setOf([1, 2]) - 1)
+            }
+

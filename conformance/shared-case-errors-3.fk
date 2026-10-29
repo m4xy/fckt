@@ -1,0 +1,9 @@
+type Alphabet { A, B, E }
+type Digit { Zero }
+type Vowel { Alphabet.A, Alphabet.E }
+f(v: Vowel) = when (v) {
+  Alphabet.B -> 1
+  else -> 2
+}
+
+// error: Vowel has no case 'Alphabet.B'

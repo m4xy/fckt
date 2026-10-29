@@ -1,0 +1,13 @@
+import fckt.io.Console
+
+type Shape {
+  Circle(radius: Float)
+  Square(side: Float)
+}
+area(s: Shape) = when (s) {
+  is Circle -> 3.0 * s.radius * s.radius
+  is Square -> s.side * s.side
+}
+main() = println(area(Square(3)).toString())
+
+// prints: 9.0

@@ -1,0 +1,4 @@
+f(a: Int, b: Int) = a
+main() = assertEquals(1, f(b = 2, 1))
+
+// error: an argument passed in order can't follow one passed by name

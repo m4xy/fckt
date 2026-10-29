@@ -1,0 +1,6 @@
+main() = {
+  f = (x: Int = 1) -> x
+  f(2)
+}
+
+// error: only a declared function's parameters can have a default

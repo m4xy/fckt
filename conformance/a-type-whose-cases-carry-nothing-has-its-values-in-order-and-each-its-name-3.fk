@@ -1,0 +1,7 @@
+import fckt.io.Console
+
+type Level { Debug, Loud }
+Level.name: String = "loud"
+main() = println(Loud.name)
+
+// prints: loud

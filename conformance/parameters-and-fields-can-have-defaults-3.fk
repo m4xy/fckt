@@ -1,0 +1,4 @@
+f(n: Int = "x") = n
+main() = Unit
+
+// error: expected Int but found String

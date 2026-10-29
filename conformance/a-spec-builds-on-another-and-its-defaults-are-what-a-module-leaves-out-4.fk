@@ -1,0 +1,5 @@
+spec A : Nowhere {
+  f(): Int
+}
+
+// error: unknown spec 'Nowhere'

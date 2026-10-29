@@ -1,0 +1,3 @@
+main() = println('ab')
+
+// error: a character literal holds one character

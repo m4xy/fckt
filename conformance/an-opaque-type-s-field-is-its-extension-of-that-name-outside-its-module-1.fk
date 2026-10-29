@@ -1,0 +1,12 @@
+import fckt.io.Console
+
+module Wallets {
+  opaque type Wallet(cash: Int, cards: Int)
+  empty = Wallet(150, 2)
+  // Inside, the field; outside, this.
+  Wallet.cash: String = "${this.cash / 100}.${this.cash % 100}"
+  Wallet.total(): Int = this.cash + this.cards
+}
+main() = println("${Wallets.empty.cash} ${Wallets.empty.total()}")
+
+// prints: 1.50 152

@@ -1,0 +1,4 @@
+type P(a: Int)
+f() = P(b = 1)
+
+// error: 'P' has no parameter 'b'

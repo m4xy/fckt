@@ -1,0 +1,4 @@
+type L<T> { Nil }
+type M { L.Nil }
+
+// error: can't take single cases from the generic type L

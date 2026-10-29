@@ -1,0 +1,4 @@
+f(a: Int, b: Int = a) = b
+main() = Unit
+
+// error: a default can't use the other parameters, as 'a' here

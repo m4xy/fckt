@@ -1,0 +1,6 @@
+type Alphabet { A, B, E }
+type Digit { Zero }
+type Vowel { Alphabet.A, Alphabet.E }
+f(flag: Boolean) = if (flag) Alphabet.A else Digit.Zero
+
+// error: no type has all of Alphabet.A, Digit.Zero

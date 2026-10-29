@@ -1,0 +1,6 @@
+type Alphabet { A, B, E }
+type Digit { Zero }
+type Vowel { Alphabet.A, Alphabet.E }
+f(a: Alphabet): Vowel = a
+
+// error: expected Vowel but found Alphabet

@@ -1,0 +1,3 @@
+f(x: Int) = x + "a"
+
+// error: expected String but found Int

@@ -1,0 +1,6 @@
+import fckt.io.Console
+
+@Effect spec Clock { now(): Int }
+@Console main() = Clock(now = ~7) { println(now().toString()) }
+
+// prints: 7

@@ -1,0 +1,10 @@
+import fckt.io.Console
+
+effect Clock { now(): Int }
+type Box<@E>(run: @E () -> Unit)
+@Console main() = {
+  b: Box<@Console> = Box(~println(now().toString()))
+  b.run()
+}
+
+// error: this does @Clock

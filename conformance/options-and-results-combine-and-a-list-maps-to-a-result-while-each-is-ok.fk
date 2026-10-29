@@ -1,0 +1,12 @@
+number(text: String): Result<Int, String> = text.toIntOrNone().toResult("not a number: $text")
+main() = {
+  assertEquals(Ok([1, 2]), ["1", "2"].mapResult { number(it) })
+  assertEquals(Error("not a number: x"), ["1", "x", "y"].mapResult { number(it) })
+  assertEquals(Ok(6), [1, 2, 3].foldResult(0) { sum, n -> if (n > 0) Ok(sum + n) else Error("$n") })
+  assertEquals(Error("0"), [1, 0, 3].foldResult(0) { sum, n -> if (n > 0) Ok(sum + n) else Error("$n") })
+  assertEquals(None, Some(3).filter { it > 5 })
+  assertEquals(Some(1), None.orElse { Some(1) })
+  assertEquals(Some(2), Some(2).orElse { Some(1) })
+  assertEquals([2], Some(2).toList())
+}
+

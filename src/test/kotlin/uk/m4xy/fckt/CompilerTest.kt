@@ -25,10 +25,6 @@ private val STD = File("std/src")
 private val TEST_IMPORTS = listOf("fckt.io.Console", "fckt.effects.Fail", "fckt.effects.Failure.*", "fckt.collections.Maps.*", "fckt.collections.Sets.*")
 
 class CompilerTest {
-    private val ocaml: String? = System.getenv("PATH").orEmpty().split(File.pathSeparator)
-        .map { File(it, "ocaml") }.firstOrNull { it.canExecute() }?.path
-        ?: File("/opt/homebrew/bin/ocaml").takeIf { it.canExecute() }?.path
-
     /** Compiles [source], runs the OCaml with the toplevel, and returns its standard output. */
     private fun run(source: String, args: List<String> = emptyList(), dir: File? = null): String = runOcaml(compile(source), args, dir)
 
@@ -44,39 +40,12 @@ class CompilerTest {
     /** Runs an example, as it is. */
     private fun runExample(source: String, args: List<String> = emptyList()): String = runOcaml(example(source), args)
 
-    /** Runs [ml] with the OCaml toplevel, in [dir] if given, and returns its standard output. */
-    private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null, env: Map<String, String> = emptyMap(), code: Int = 0): String {
-        assumeTrue(ocaml != null, "ocaml isn't installed")
-        val file = File.createTempFile("fckt", ".ml").apply { writeText(ml) }
-        try {
-            val libraries = ocamlLibraries(ml).flatMap { listOf("-I", "+$it", "$it.cma") }
-            val process = ProcessBuilder(listOf(ocaml, "-w", "+a-4-9-27-40-41-42-44-45-70", "-warn-error", "+8") + libraries + file.path + args)
-                .directory(dir).redirectErrorStream(true).apply { environment().putAll(env) }.start()
-            val output = process.inputStream.bufferedReader().readText()
-            process.waitFor(30, TimeUnit.SECONDS)
-            assertEquals(code, process.exitValue(), "OCaml failed:\n$output\n${excerpt(output, ml)}")
-            assertNoWarnings(output, ml)
-            return output
-        } finally {
-            file.delete()
-        }
-    }
+    private val ocaml: String? = Ocaml.path
 
-    /**
-     * The generated OCaml around the first line OCaml's [output] names, numbered: enough to see what
-     * it complains about, without the whole program.
-     */
-    private fun excerpt(output: String, ml: String): String {
-        val lines = ml.lines()
-        val line = Regex("line (\\d+)").find(output)?.groupValues?.get(1)?.toInt() ?: return "--- generated: ${lines.size} lines, no line named ---"
-        val from = maxOf(1, line - 8)
-        val to = minOf(lines.size, line + 4)
-        return "--- generated, lines $from-$to of ${lines.size} ---\n" + (from..to).joinToString("\n") { "%5d %s".format(it, lines[it - 1]) }
-    }
+    private fun excerpt(output: String, ml: String): String = Ocaml.excerpt(output, ml)
 
-    private fun assertNoWarnings(output: String, ml: String) {
-        if ("Warning" in output || "Error" in output) throw AssertionError("OCaml reported:\n$output\n${excerpt(output, ml)}")
-    }
+    private fun runOcaml(ml: String, args: List<String> = emptyList(), dir: File? = null, env: Map<String, String> = emptyMap(), code: Int = 0): String =
+        Ocaml.run(ml, args, dir, env, code)
 
     private fun error(source: String): String = assertFailsWith<CompileError> { compile(source) }.toString()
 
@@ -148,46 +117,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `generics, recursion and local functions`() {
-        val output = run(
-            """
-            type Tree<T> {
-              Leaf
-              Node(left: Tree<T>, value: T, right: Tree<T>)
-            }
-
-            size<T>(t: Tree<T>): Int = when (t) {
-              Leaf -> 0
-              Node(l, _, r) -> size(l) + 1 + size(r)
-            }
-
-            isEven(n: Int): Boolean = if (n == 0) true else isOdd(n - 1)
-            isOdd(n: Int): Boolean = if (n == 0) false else isEven(n - 1)
-
-            main() = {
-              fact(n: Int): Int = if (n <= 1) 1 else n * fact(n - 1)
-              t = Node(Node(Leaf, 1, Leaf), 2, Leaf)
-              println("${'$'}{size(t)} ${'$'}{fact(5)} ${'$'}{isEven(10)}")
-              println(t.toString())
-            }
-            """.trimIndent(),
-        )
-        assertEquals("2 120 true\nNode(left=Node(left=Leaf, value=1, right=Leaf), value=2, right=Leaf)\n", output)
-    }
-
-    @Test
-    fun `pipes pass the value as the last argument`() {
-        val output = run(
-            """
-            add(a: Int, b: Int) = a + b
-            label(x: Int) = "n=${'$'}x"
-            main() = println(3 |> add(4) |> (x -> x * 2) |> label)
-            """.trimIndent(),
-        )
-        assertEquals("n=14\n", output)
-    }
-
-    @Test
     fun `tilde makes a thunk`() {
         val source = """
             twice(f: () -> Int) = f() + f()
@@ -214,89 +143,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `numbers promote to float like Kotlin`() {
-        val output = run(
-            """
-            average(xs: List<Float>) = xs.sum() / xs.size
-            sign(x: Float) = when {
-              x > 0 -> "positive"
-              x < 0 -> "negative"
-              else -> "zero"
-            }
-            main() = println("${'$'}{average([1.0, 2.5])} ${'$'}{sign(-2)} ${'$'}{7 % 3} ${'$'}{2 * 1.5}")
-            """.trimIndent(),
-        )
-        assertEquals("1.75 negative 1 3.0\n", output)
-    }
-
-    @Test
-    fun `lists and options`() {
-        val output = run(
-            """
-            main() = {
-              xs = [1, 2, 3].map(x -> x * 2).filter(x -> x > 2)
-              println(xs.joinToString(", "))
-              println("${'$'}{Some(1.5)} ${'$'}{[Some("a"), None]} ${'$'}{xs.fold(0, (acc, x) -> acc + x)}")
-              println(xs.find(x -> x > 10).getOrElse(-1).toString())
-            }
-            """.trimIndent(),
-        )
-        assertEquals("4, 6\nSome(1.5) [Some(a), None] 10\n-1\n", output)
-    }
-
-    @Test
-    fun `smart cast after is reads the variant's fields`() {
-        val output = run(
-            """
-            type Shape {
-              Circle(radius: Float)
-              Square(side: Float)
-            }
-            area(s: Shape) = when (s) {
-              is Circle -> 3.0 * s.radius * s.radius
-              is Square -> s.side * s.side
-            }
-            main() = println(area(Square(3)).toString())
-            """.trimIndent(),
-        )
-        assertEquals("9.0\n", output)
-    }
-
-    @Test
-    fun `shared labels and constructors are disambiguated`() {
-        val output = run(
-            """
-            type Meters(Int)
-            type Name(String)
-            type A { Done(x: Int) }
-            type B { Done(y: String) }
-            pick(a: A): B = when (a) {
-              Done(x) -> Done("got ${'$'}x")
-            }
-            main() = {
-              m = Meters(3)
-              n = Name("ada")
-              b: B = Done("direct")
-              println("${'$'}{m.value} ${'$'}{n.value} ${'$'}{pick(Done(1))} ${'$'}b")
-            }
-            """.trimIndent(),
-        )
-        assertEquals("3 ada Done(y=got 1) Done(y=direct)\n", output)
-    }
-
-    @Test
-    fun `extension-style calls`() {
-        val output = run(
-            """
-            type Box(value: Int)
-            double(b: Box) = Box(b.value * 2)
-            main() = println(Box(3).double().double().toString())
-            """.trimIndent(),
-        )
-        assertEquals("Box(value=12)\n", output)
-    }
-
-    @Test
     fun `a failed assertion stops the program with both values`() {
         val ml = compile("main() = {\n  assert(1 < 2)\n  assertEquals([1, 2], [2, 1].reversed())\n  assertEquals(55, 54)\n}")
         assumeTrue(ocaml != null, "ocaml isn't installed")
@@ -315,18 +161,6 @@ class CompilerTest {
     @Test
     fun `types can share cases`() {
         assertEquals("", runExample(File("examples/shared-cases.fk").readText()))
-    }
-
-    @Test
-    fun `shared case errors`() {
-        val letters = "type Alphabet { A, B, E }\ntype Digit { Zero }\ntype Vowel { Alphabet.A, Alphabet.E }\n"
-        assertContains(error(letters + "f(flag: Boolean) = if (flag) Alphabet.A else Digit.Zero"), "no type has all of Alphabet.A, Digit.Zero")
-        assertContains(error(letters + "f(v: Vowel) = when (v) {\n  is Alphabet -> 1\n}"), "Alphabet isn't part of Vowel: Vowel has no Alphabet.B")
-        assertContains(error(letters + "f(v: Vowel) = when (v) {\n  Alphabet.B -> 1\n  else -> 2\n}"), "Vowel has no case 'Alphabet.B'")
-        assertContains(error(letters + "f(a: Alphabet): Vowel = a"), "expected Vowel but found Alphabet")
-        assertContains(error("type A { X }\ntype B { *A, Y }\ntype C { *B, A.Z }"), "A has no case 'Z'")
-        assertContains(error("type L<T> { Nil }\ntype M { L.Nil }"), "can't take single cases from the generic type L")
-        assertContains(error("type A { *B }\ntype B { *A }"), "includes itself")
     }
 
     @Test
@@ -506,37 +340,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `parameters and fields can have defaults`() {
-        val source = """
-            type Project(name: String, version: String = "0.1.0", sources: List<String> = ["src"], tests: List<String> = defaultTests())
-            defaultTests(): List<String> = ["test"]
-            greet(name: String, greeting: String = "hello", punctuation: String = "!") = "${'$'}greeting ${'$'}name${'$'}punctuation"
-            type Shape { Circle(radius: Float = 1.0), Square(side: Float) }
-            List<Int>.scaled(by: Int = 2): List<Int> = this.map(x -> x * by)
-            @Console loud(s: String = readLine()) = s.uppercase()
-            main() = {
-              assertEquals(Project("shop", "0.1.0", ["src"], ["test"]), Project(name = "shop"))
-              assertEquals(Project("x", "2.0", ["src"], ["test"]), Project("x", version = "2.0"))
-              assertEquals("hello Ada!", greet("Ada"))
-              assertEquals("hi Ada!", greet("Ada", "hi"))
-              assertEquals("hello Ada?", greet("Ada", punctuation = "?"))
-              assertEquals(Circle(1.0), Circle())
-              assertEquals([2, 4], [1, 2].scaled())
-              assertEquals([3, 6], [1, 2].scaled(3))
-              // What a default does is done where the call leaves it out.
-              assertEquals("ADA", Console(print = s -> Unit, println = s -> Unit, readLine = ~"ada") { loud() })
-            }
-        """.trimIndent()
-        assertEquals("", run(source))
-        assertContains(error("greet(name: String, greeting: String = \"hello\") = name\nmain() = assertEquals(\"\", greet())"), "'greet' is missing argument 'name'")
-        assertContains(error("f(n: Int = \"x\") = n\nmain() = Unit"), "expected Int but found String")
-        assertContains(error("f(a: Int, b: Int = a) = b\nmain() = Unit"), "a default can't use the other parameters, as 'a' here")
-        assertContains(error("@Console f(s: String = readLine()) = s\ng() = f()\nmain() = Unit"), "'g' does @Console")
-        assertContains(error("main() = {\n  f = (x: Int = 1) -> x\n  f(2)\n}"), "only a declared function's parameters can have a default")
-        assertContains(error("f(a: Int, b: Int) = a\nmain() = assertEquals(1, f(b = 2, 1))"), "an argument passed in order can't follow one passed by name")
-    }
-
-    @Test
     fun `a copy of an effect is a separate effect`() {
         val database = "effect Database { query(sql: String): List<String> }\neffect OrdersDb = Database\neffect UsersDb = Database\n"
         val source = database + """
@@ -614,162 +417,11 @@ class CompilerTest {
     }
 
     @Test
-    fun `effect declares an effect, with operations or without`() {
-        val source = """
-            effect Clock {
-              now(): Int
-            }
-            effect Database
-            @Database @Console annotation type Repository
-            @Database save(x: Int) = Unit
-            @Clock stamp() = now()
-            // Still a name for anything else.
-            effect(x: Int) = x + 1
-            @Console main() = Clock(now = ~7) { println((stamp() + effect(1)).toString()) }
-        """.trimIndent()
-        assertEquals("9\n", run(source))
-        // What it means, written out, works as before.
-        assertEquals("7\n", run("@Effect spec Clock { now(): Int }\n@Console main() = Clock(now = ~7) { println(now().toString()) }"))
-        assertContains(error("effect Clock(at: Int)\nmain() = Unit"), "an effect has no fields: its operations go in braces, as in effect Clock { op(x: Int): Unit }")
-        assertContains(error("effect Tagged<A>\nmain() = Unit"), "only an effect with operations takes type parameters")
-        assertContains(error("annotation type Route\n@Route f() = 1\ng(h: @Route () -> Unit) = h()\nmain() = Unit"), "'Route' isn't an effect; declare one with effect Route")
-    }
-
-    @Test
-    fun `every error is reported, not just the first`() {
-        val types = """
-            double(x: Int) = x * 2
-            broken(s: String): Int = s
-            usesBroken() = broken("a") + 1
-            alsoBad() = println("x")
-            wrongCall() = double("three")
-            main() = assert(double(3) == 6)
-        """.trimIndent()
-        // usesBroken is fine: broken's error is reported where it is, not again where it's used.
-        assertEquals(
-            "2:26: error: type mismatch: expected Int but found String\n" +
-                "4:1: error: 'alsoBad' does @Console, so it must say so: @Console alsoBad(...)\n" +
-                "5:22: error: type mismatch: expected Int but found String",
-            error(types),
-        )
-        val syntax = "a() = (1 +\nb() = 2\nc( = 3\nd() = {\n  x = )\n}\ne() = 1\nmain() = Unit"
-        assertEquals(
-            "2:5: error: expected ')' but found '='\n3:4: error: expected a parameter name but found '='\n5:7: error: expected an expression but found ')'",
-            error(syntax),
-        )
-    }
-
-    @Test
-    fun `a type can take effects as a parameter`() {
-        val box = "effect Clock { now(): Int }\ntype Box<@E>(run: @E () -> Unit)\n"
-        fun program(source: String) = error("$box$source")
-        // Given, as several effects, or one with a parameter's; left out, it's whatever's put in.
-        val source = box + """
-            @Console @Clock both(b: Box<@Console @Clock>) = b.run()
-            @Console logged<@E>(b: Box<@Console @E>) = {
-              println("running")
-              b.run()
-            }
-            runIt(b: Box) = b.run()
-            @Console main() = Clock(now = ~7) {
-              both(Box(~println("tick ${'$'}{now()}")))
-              logged(Box(~println("inside")))
-              runIt(Box(~println("anything")))
-            }
-        """.trimIndent()
-        assertEquals("tick 7\nrunning\ninside\nanything\n", run(source))
-        assertContains(program("@Console main() = {\n  b: Box<@Console> = Box(~println(now().toString()))\n  b.run()\n}"), "this does @Clock")
-        assertContains(program("f(b: Box<Int>) = Unit\nmain() = assert(true)"), "Box's E is effects, like Box<@Console>, not a type")
-        assertContains(program("f<@E>(b: Box<@E>): Box<@E> = Box(~println(\"x\"))\nmain() = assert(true)"), "effect parameter @E of 'f' always does @Console here")
-        assertContains(program("f<@E>(x: E) = x\nmain() = assert(true)"), "'E' is an effect parameter, written @E")
-        assertContains(program("f<@E, @F>(b: Box<@E @F>) = Unit\nmain() = assert(true)"), "effects can name only one effect parameter")
-        assertContains(program("pureRun(b: Box<@Pure>) = b.run()\n@Console main() = pureRun(Box(~println(\"no\")))"), "says it's pure")
-    }
-
-    @Test
     fun `an if without an else is a statement`() {
         assertEquals("big\n", run("@Console main() = {\n  if (2 > 1) println(\"big\")\n  if (1 > 2) println(\"small\")\n}"))
         // fail gives Nothing, which fits as Unit.
         assertEquals("", run("@Fail check(n: Int): Int = {\n  if (n < 0) fail(\"negative\")\n  n\n}\nmain() = assertEquals(Error(\"negative\"), attempt { check(-1) })"))
         assertContains(error("f(b: Boolean) = {\n  if (b) 1\n  2\n}\nmain() = assert(true)"), "an 'if' without 'else' gives Unit, but this branch gives Int: add an 'else' to give a value")
-    }
-
-    @Test
-    fun `a block after a call is its last argument`() {
-        val source = """
-            @Console prefixed<A>(prefix: String, block: @Console () -> A): A = Console(
-              print = s -> print("${'$'}prefix${'$'}s"),
-              println = line -> println("${'$'}prefix${'$'}line"),
-              readLine = readLine,
-            ) { block() }
-            twice(f: () -> Int): Int = f() + f()
-            @Console main() = {
-              prefixed("> ") { println("hello") }
-              println(twice { 21 }.toString())
-            }
-        """.trimIndent()
-        assertEquals("> hello\n42\n", run(source))
-    }
-
-    @Test
-    fun `the prelude's Fail and sequence pass on what their blocks do`() {
-        val source = """
-            import fckt.effects.Generators.*
-            import fckt.effects.Yielding
-            import fckt.collections.Streams.*
-
-            @Console main() = {
-              tried = attempt {
-                println("trying")
-                if (true) fail("nope")
-                1
-              }
-              assertEquals(Error("nope"), tried)
-              numbers = sequence {
-                println("making 1")
-                yield(1)
-                println("making 2")
-                yield(2)
-              }
-              println(numbers.take(1).toString())
-            }
-        """.trimIndent()
-        assertEquals("trying\nmaking 1\n[1]\n", run(source))
-    }
-
-    @Test
-    fun `lists have Kotlin's everyday functions`() {
-        val source = """
-            type Person(name: String, age: Int)
-            main() = {
-              xs = [3, 1, 2, 3, 1]
-              assertEquals([3, 1, 2], xs.distinct())
-              assertEquals([1, 1, 2, 3, 3], xs.sorted())
-              assertEquals([3, 3, 2, 1, 1], xs.sortedDescending())
-              assertEquals(Some(1), xs.lastOrNone())
-              assertEquals(Some(2), xs.getOrNone(2))
-              assertEquals(None, xs.getOrNone(-1))
-              assertEquals(2, xs.count(x -> x == 3))
-              assertEquals([(1, "a"), (2, "b")], [1, 2, 3].zip(["a", "b"]))
-              assertEquals([(0, "a"), (1, "b")], ["a", "b"].withIndex())
-              assertEquals([3, 1], xs.take(2))
-              assertEquals([3, 1], xs.drop(3))
-              assertEquals(["b", "a"], [Person("a", 30), Person("b", 20)].sortedBy(p -> p.age).map(p -> p.name))
-              assertEquals([[1, 2], [3, 4], [5]], [1, 2, 3, 4, 5].chunked(2))
-              assertEquals([(3, 1), (1, 2)], xs.take(3).zipWithNext())
-              assertEquals(([3, 2, 3], [1, 1]), xs.partition(x -> x > 1))
-              assertEquals((Some(1), Some(3)), (xs.minOrNone(), xs.maxOrNone()))
-              assertEquals(Some("a"), [Person("a", 30), Person("b", 20)].maxByOrNone(p -> p.age).map(p -> p.name))
-              assertEquals([1, 2, 3], [[1], [], [2, 3]].flatten())
-              assertEquals(([3, 1], [3, 1, 2]), (xs.takeLast(2), xs.dropLast(2)))
-              assertEquals([1, 3], ["1", "x", "3"].mapNotNull(s -> s.toIntOrNone()))
-              assertEquals(([1, 2], ["a", "b"]), [(1, "a"), (2, "b")].unzip())
-              assertEquals(2, xs.indexOfFirst(x -> x == 2))
-              assertEquals(10, xs.sumOf(x -> x))
-              assert(xs.isNotEmpty() && xs.none(x -> x > 3) && xs.filterNot(x -> x == 3) == [1, 2, 1])
-            }
-        """.trimIndent()
-        assertEquals("", run(source))
     }
 
     @Test
@@ -830,83 +482,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `maps hold a value for each key, equal and shown by their entries`() {
-        val source = """
-            type Person(name: String, age: Int)
-            main() = {
-              m = mapOf([("b", 2), ("a", 1), ("c", 3)])
-              assertEquals(Some(1), m["a"])
-              assertEquals(None, m.get("z"))
-              assertEquals(3, m.size)
-              assertEquals("{a=1, b=2, c=3}", m.toString())
-              // However they were put in, the same entries are the same map.
-              assertEquals(m, emptyMap().put("c", 3).put("a", 1).put("b", 2))
-              assertEquals(mapOf([("a", 1), ("c", 3)]), m.remove("b"))
-              assertEquals(m, m.remove("z"))
-              assertEquals(Some(20), m.put("b", 20)["b"])
-              assertEquals((["a", "b", "c"], [1, 2, 3]), (m.keys, m.values))
-              assertEquals([("a", 1), ("b", 2), ("c", 3)], m.entries)
-              assertEquals(7, m.getOrDefault("z", 7))
-              assert(m.containsKey("a") && !m.containsKey("z") && m.isNotEmpty() && emptyMap().put(1, 1).remove(1).isEmpty())
-              assertEquals(mapOf([("a", 10), ("b", 20), ("c", 30)]), m.mapValues((_, v) -> v * 10))
-              assertEquals(mapOf([("b", 2), ("c", 3)]), m.filter((_, v) -> v > 1))
-              assertEquals(["a1", "b2", "c3"], m.map((k, v) -> "${'$'}k${'$'}v"))
-              assertEquals(mapOf([("a", 1), ("b", 2), ("c", 3), ("d", 4)]), m.putAll(mapOf([("d", 4), ("a", 1)])))
-              assertEquals("{3=[3, 3], 1=[1, 1], 2=[2]}".length, [3, 1, 2, 3, 1].groupBy(x -> x).toString().length)
-              assertEquals(mapOf([(1, [1, 1]), (2, [2]), (3, [3, 3])]), [3, 1, 2, 3, 1].groupBy(x -> x))
-              assertEquals(mapOf([("a", Person("a", 30))]), [Person("a", 20), Person("a", 30)].associateBy(p -> p.name))
-              assertEquals(mapOf([(2, 4), (3, 9)]), [2, 3].associateWith(x -> x * x))
-              // A type shows as its own toString says, given how to show its type parameters.
-              assertEquals("box of 1, in {a=box of 2}", "${'$'}{Box(1)}, in ${'$'}{mapOf([("a", Box(2))])}")
-            }
-            type Box<A>(item: A)
-            Box<A>.toString(showItem: (A) -> String): String = "box of " + showItem(this.item)
-        """.trimIndent()
-        assertEquals("", run(source))
-    }
-
-    @Test
-    fun `a type's operators are its operator extensions`() {
-        val source = """
-            type Money(pence: Int)
-
-            // Used before they're declared, and from another module.
-            module Tills {
-              total(items: List<Money>): Money = items.fold(Money(0)) { sum, m -> sum + m }
-              owed(paid: Money, price: Money): Money = -(paid - price)
-            }
-
-            module Moneys {
-              operator Money.plus(other: Money): Money = Money(this.pence + other.pence)
-              operator Money.minus(other: Money): Money = Money(this.pence - other.pence)
-              operator Money.times(n: Int): Money = Money(this.pence * n)
-              operator Money.div(n: Int): Money = Money(this.pence / n)
-              operator Money.rem(n: Int): Money = Money(this.pence % n)
-              operator Money.unaryMinus(): Money = Money(-this.pence)
-            }
-
-            main() = {
-              assertEquals(Money(350), Tills.total([Money(100), Money(250)]))
-              assertEquals(Money(30), Tills.owed(Money(100), Money(130)))
-              // As numbers' do: * before +, and left to right.
-              assertEquals(Money(700), Money(100) + Money(200) * 3)
-              assertEquals(Money(25), Money(100) / 4 - Money(0))
-              assertEquals(Money(1), Money(7) % 2)
-              var m = Money(5)
-              m += Money(1)
-              assertEquals(Money(6), m)
-              // Numbers', strings' and lists' are as they were.
-              assertEquals(7, 3 + 4)
-              assertEquals("ab", "a" + "b")
-              assertEquals([1, 2], [1] + [2])
-              assertEquals(setOf([1, 2]), setOf([1]) + 2 - 3)
-              assertEquals(setOf([2]), setOf([1, 2]) - 1)
-            }
-        """
-        assertEquals("", run(source))
-    }
-
-    @Test
     fun `an operator is an extension marked operator, of one of the operators' names`() {
         fun error(source: String) = assertFailsWith<CompileError> { compile(source.trimIndent()) }.message!!
         assertContains(
@@ -919,74 +494,6 @@ class CompilerTest {
         assertContains(error("type Money(pence: Int)\noperator Money.plus(): Money = this\nmain() = Unit"), "plus takes one parameter")
         // A soft keyword: still a name.
         assertEquals("", run("operator(n: Int): Int = n\nmain() = assertEquals(1, operator(1))"))
-    }
-
-    @Test
-    fun `sets hold each item once, in order, equal by their items`() {
-        val source = """
-            main() = {
-              s = setOf([3, 1, 2, 3])
-              assertEquals("[1, 2, 3]", s.toString())
-              assertEquals(3, s.size)
-              assertEquals(s, emptySet().plus(2).plus(3).plus(1))
-              assert(s.contains(2) && !s.contains(4) && s.isNotEmpty() && emptySet().plus(1).minus(1).isEmpty())
-              assertEquals(setOf([1, 2, 3, 4]), s.union(setOf([4, 1])))
-              assertEquals(setOf([2, 3]), s.intersect(setOf([2, 3, 4])))
-              assertEquals(setOf([1]), s.subtract(setOf([2, 3])))
-              assertEquals([10, 20, 30], s.map { it * 10 })
-              assertEquals(setOf([2]), s.filter { it % 2 == 0 })
-              assertEquals([1, 2, 3], [2, 1, 2, 3].toSet().toList())
-              assertEquals([3, 1, 2], [3, 1, 3, 2, 1].distinct())
-              // Through the trees, as an item at a time would: equal, so the same shape, too.
-              a = setOf(upTo(300).map { it * 7 % 300 })
-              b = setOf(upTo(200).map { it * 3 })
-              assertEquals(setOf(a.toList().filter { b.contains(it) }), a.intersect(b))
-              assertEquals(setOf(a.toList().filter { !b.contains(it) }), a.subtract(b))
-              assertEquals(setOf(a.toList() + b.toList()), a.union(b))
-              assertEquals(setOf(b.toList() + a.toList()), b.union(a))
-              assertEquals(100, a.count { it % 3 == 0 })
-              assertEquals(setOf(upTo(100).map { it * 3 }), a.filter { it % 3 == 0 })
-              assertEquals(mapOf([(1, "a"), (2, "c"), (3, "d")]), mapOf([(1, "a"), (2, "b")]).putAll(mapOf([(2, "c"), (3, "d")])))
-            }
-            upTo(n: Int): List<Int> = if (n <= 0) [] else upTo(n - 1) + [n - 1]
-        """.trimIndent()
-        assertEquals("", run(source))
-    }
-
-    @Test
-    fun `options and results combine, and a list maps to a result while each is ok`() {
-        val source = """
-            number(text: String): Result<Int, String> = text.toIntOrNone().toResult("not a number: ${'$'}text")
-            main() = {
-              assertEquals(Ok([1, 2]), ["1", "2"].mapResult { number(it) })
-              assertEquals(Error("not a number: x"), ["1", "x", "y"].mapResult { number(it) })
-              assertEquals(Ok(6), [1, 2, 3].foldResult(0) { sum, n -> if (n > 0) Ok(sum + n) else Error("${'$'}n") })
-              assertEquals(Error("0"), [1, 0, 3].foldResult(0) { sum, n -> if (n > 0) Ok(sum + n) else Error("${'$'}n") })
-              assertEquals(None, Some(3).filter { it > 5 })
-              assertEquals(Some(1), None.orElse { Some(1) })
-              assertEquals(Some(2), Some(2).orElse { Some(1) })
-              assertEquals([2], Some(2).toList())
-            }
-        """.trimIndent()
-        assertEquals("", run(source))
-    }
-
-    @Test
-    fun `arguments run left to right, as in Kotlin`() {
-        val source = """
-            @Console f(s: String): Int = {
-              print(s)
-              1
-            }
-            g(a: Int, b: Int) = a + b
-            @Console main() = {
-              pair = (f("a"), f("b"))
-              sum = f("c") + g(b = f("d"), a = f("e"))
-              items = [f("f"), f("g")]
-              println("${'$'}{f("h")}${'$'}{f("i")} ${'$'}pair ${'$'}sum ${'$'}items")
-            }
-        """.trimIndent()
-        assertEquals("abcdefghi11 (1, 1) 3 [1, 1]\n", run(source))
     }
 
     @Test
@@ -1039,23 +546,6 @@ class CompilerTest {
             "'load' does @Clock, which needs a handler and has no default, so Store can't hide it: handle it inside Timed, or give Clock a default with @HandledBy",
         )
         compile("$clock${repository}module Timed : Store { load() = Clock(now = ~1) { now() } }\nmain() = assert(true)")
-    }
-
-    @Test
-    fun `an opaque type's field is its extension of that name outside its module`() {
-        val wallets = """
-            module Wallets {
-              opaque type Wallet(cash: Int, cards: Int)
-              empty = Wallet(150, 2)
-              // Inside, the field; outside, this.
-              Wallet.cash: String = "${'$'}{this.cash / 100}.${'$'}{this.cash % 100}"
-              Wallet.total(): Int = this.cash + this.cards
-            }
-
-        """.trimIndent()
-        assertEquals("1.50 152\n", run(wallets + "main() = println(\"${'$'}{Wallets.empty.cash} ${'$'}{Wallets.empty.total()}\")"))
-        // A field without an extension of its name is still hidden.
-        assertContains(error(wallets + "x = Wallets.empty.cards"), "Wallet is opaque outside Wallets")
     }
 
     @Test
@@ -1512,54 +1002,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `characters are code points, strings count them, and bytes are 0 to 255`() {
-        val source = """
-            import fckt.text.Encodings.*
-
-            main() = {
-              s = "héllo wörld 😀"
-              assertEquals(13, s.length)
-              assertEquals('é', s[1])
-              assertEquals('😀', s[12])
-              assertEquals("héllo", s.take(5))
-              assertEquals("wörld 😀", s.drop(6))
-              assertEquals(6, s.indexOf("w"))
-              assertEquals(9, s.lastIndexOf("l"))
-              assertEquals("éll", s.substring(1, 4))
-              assertEquals([104, 233], s.take(2).toList().map(c -> c.code))
-              assertEquals(128512, '\u{1F600}'.code)
-              assertEquals('é', '\u00e9')
-              assertEquals('A', 'a'.uppercase())
-              assert('9'.isDigit() && 'é'.isLetter() && ' '.isWhitespace() && 'A'.isUpperCase() && !'a'.isUpperCase() && 'a'.isLowerCase())
-              assertEquals(["a", "b", "", "c"], "a,b,,c".split(","))
-              assertEquals("a+b+c", "a-b-c".replace("-", "+"))
-              assertEquals(("key", "value=x"), ("key=value=x".substringBefore("="), "key=value=x".substringAfter("=")))
-              assertEquals(["one", "two", ""], "one\r\ntwo\n".lines())
-              assertEquals("ababab", "ab".repeat(3))
-              assertEquals("😀 dlröw", s.drop(6).reversed())
-              assertEquals(("hi  ", "  hi"), ("  hi  ".trimStart(), "  hi  ".trimEnd()))
-              assertEquals(("007", "ab  "), ("7".padStart(3, '0'), "ab".padEnd(4)))
-              assert(s.isNotEmpty() && " ".isEmpty() == false && !" ".isNotBlank())
-              assertEquals("x", when ('x') {
-                'a' -> "a"
-                'x' -> "x"
-                else -> "?"
-              })
-              assertEquals("ü 😀", "${'$'}{'ü'} ${'$'}{'😀'}")
-              // A byte is 0 to 255: an Int's low eight bits.
-              assertEquals(44, 300.toByte().toInt())
-              assertEquals(255, (-1).toByte().toInt())
-              assertEquals("195", "${'$'}{"é".encodeToBytes()[0]}")
-              assertEquals(2, "é".encodeToBytes().size)
-            }
-        """.trimIndent()
-        assertEquals("", run(source))
-        assertContains(error("main() = println('ab')"), "a character literal holds one character")
-        assertContains(error("main() = println(\"\\u12\")"), "\\u takes four hex digits")
-        assertContains(error("external f(x: Int): Int = \"g (x + 1)\"\nmain() = assertEquals(1, f(1))"), "an external's parameters are replaced only outside parentheses, so 'x' in (x + 1) isn't")
-    }
-
-    @Test
     fun `main fails with the reason, and file system operations can be answered`() {
         val ml = compile("main() = {\n  println(\"a\")\n  fail(\"boom\")\n}")
         assumeTrue(ocaml != null, "ocaml isn't installed")
@@ -1830,35 +1272,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `the time is an effect, which main asks the system and a test can answer`() {
-        val output = run(
-            """
-            import fckt.time.*
-            import fckt.time.Times.*
-
-            @Clock elapsed(): Duration = {
-              started = now()
-              started.until(now())
-            }
-
-            main() = {
-              var time = 0
-              took = Clock(now = () -> {
-                time = time + 7
-                Instant(time)
-              }) { elapsed() }
-              assertEquals(Duration(7), took)
-              assertEquals(Instant(10), Instant(3).plus(Duration(7)))
-              // main asks the system: after 2023, an Int's milliseconds.
-              assert(now().millis > 1700000000000)
-              println("ok")
-            }
-            """.trimIndent(),
-        )
-        assertEquals("ok\n", output)
-    }
-
-    @Test
     fun `folders are packages, and capitalised files are modules`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         val lib = File(dir.parentFile, dir.name + "-lib").apply { mkdir() }
@@ -1953,21 +1366,6 @@ class CompilerTest {
     }
 
     @Test
-    fun `type errors`() {
-        assertContains(error("f(x: Int) = x + \"a\""), "expected String but found Int")
-        assertContains(error("id<T>(x: T): Int = x"), "type parameter T of 'id' is always Int")
-        assertContains(error("f() = y"), "unknown name 'y'")
-        assertContains(error("f(xs: List<Int>) = xs.size()"), "'size' is a property")
-        assertContains(error("g(x) = x.foo"), "the receiver's type isn't known")
-        assertContains(error("type P(a: Int)\nf() = P(b = 1)"), "'P' has no parameter 'b'")
-        assertContains(error("x = x + 1"), "value 'x' is defined in terms of itself")
-        assertContains(
-            error("type A { E(x: Int) }\ntype B { E(y: Int) }\nf() = E(1)"),
-            "'E' is a case of A and B; write A.E",
-        )
-    }
-
-    @Test
     fun `syntax errors`() {
         assertContains(error("f(x: Int) = if (x > 0) 1"), "an 'if' without 'else' gives Unit, but this branch gives Int")
         assertContains(error("f(x: Int) = when { x > 0 -> 1 }"), "needs an 'else' branch")
@@ -1976,55 +1374,6 @@ class CompilerTest {
         assertContains(error("f() = {\n  y = 1\n}"), "must end with an expression")
         // A line break after '>' still continues a comparison.
         compile("f(x: Int) = {\n  big = x >\n    10\n  big\n}")
-    }
-
-    @Test
-    fun `a spec builds on another, and its defaults are what a module leaves out`() {
-        val specs = """
-            spec Sized {
-              type M<A>
-              size<A>(m: M<A>): Int
-              isEmpty<A>(m: M<A>): Boolean = size(m) == 0
-            }
-
-            spec Stack : Sized {
-              empty<A>(): M<A>
-              push<A>(m: M<A>, x: A): M<A>
-              // Each of xs, from the first.
-              pushAll<A>(m: M<A>, xs: List<A>): M<A> = xs.fold(m, (all, x) -> push(all, x))
-            }
-
-            module ListStack : Stack {
-              type M<A> = List<A>
-              size<A>(m: List<A>): Int = m.size
-              empty<A>(): List<A> = []
-              push<A>(m: List<A>, x: A): List<A> = [x, *m]
-            }
-
-            // A Stack is Sized, so it can be given where that's all that's wanted.
-            module Describe(S: Sized) {
-              describe<A>(m: S.M<A>): String = if (S.isEmpty(m)) "empty" else "${'$'}{S.size(m)} items"
-            }
-
-            module Stacks = Describe(ListStack)
-        """.trimIndent()
-        assertEquals(
-            "",
-            run(
-                specs + """
-
-                main() = {
-                  assertEquals([3, 2, 1], ListStack.pushAll(ListStack.empty(), [1, 2, 3]))
-                  assertEquals(true, ListStack.isEmpty(ListStack.empty()))
-                  assertEquals("2 items", Stacks.describe([1, 2]))
-                }
-                """.trimIndent(),
-            ),
-        )
-        // What it builds on still has to be there.
-        assertContains(error(specs + "\nmodule Bad : Stack {\n  type M<A> = List<A>\n  empty<A>(): List<A> = []\n  push<A>(m: List<A>, x: A): List<A> = m\n}"), "Bad doesn't define 'size', which its spec Stack needs")
-        assertContains(error("spec Loop : Loop {\n  f(): Int\n}"), "spec 'Loop' builds on itself")
-        assertContains(error("spec A : Nowhere {\n  f(): Int\n}"), "unknown spec 'Nowhere'")
     }
 
     @Test
@@ -2179,68 +1528,6 @@ class CompilerTest {
         } finally {
             dir.deleteRecursively()
         }
-    }
-
-    @Test
-    fun `an external type that's a tuple is one value, as an operation's parameter too`() {
-        val source = """
-            external type Pair = "int * string"
-            external makePair(n: Int): Pair = "(fun n -> (n, string_of_int n)) n"
-            external second(p: Pair): String = "(fun (_, s) -> s) p"
-            effect Store { keep(p: Pair): String }
-            main() = Store(keep = p -> second(p)) { println(keep(makePair(7))) }
-        """.trimIndent()
-        assertEquals("7\n", run(source))
-    }
-
-    @Test
-    fun `a default handler that does another effect runs inside that effect's`() {
-        // Greeting's default speaks through Voice, so main handles Voice around Greeting.
-        val source = """
-            @HandledBy(Speaker) effect Voice { say(text: String): Unit }
-            module Speaker : Voice { @Console say(text: String): Unit = println(text) }
-            @Voice @HandledBy(Greeter) effect Greeting { greet(name: String): Unit }
-            module Greeter : Greeting { @Voice greet(name: String): Unit = say("hello " + name) }
-            main() = greet("there")
-        """.trimIndent()
-        assertEquals("hello there\n", run(source))
-    }
-
-    @Test
-    fun `a branch that ends in a when, after a value it names, keeps the branches after it`() {
-        val source = """
-            describe(x: Option<Int>, flag: Boolean): String = when (x) {
-              Some(n) if n > 0 -> {
-                doubled = n * 2
-                when (flag) {
-                  true -> "big " + doubled.toString()
-                  false -> "small " + doubled.toString()
-                }
-              }
-              _ if flag -> "flagged"
-              _ -> "other"
-            }
-            main() = println([describe(Some(2), true), describe(None, true), describe(None, false), describe(Some(0), false)].joinToString(" "))
-        """.trimIndent()
-        assertEquals("big 4 flagged other other\n", run(source))
-    }
-
-    @Test
-    fun `a type whose cases carry nothing has its values, in order, and each its name`() {
-        val source = """
-            type Level { Debug, Info, Warn }
-            type Alphabet { A, B, E }
-            type Vowel { Alphabet.A, Alphabet.E }
-            main() = {
-              println(Level.values.map { it.name }.joinToString(" "))
-              println(Info.name)
-              println(Vowel.values.map { it.name }.joinToString(" "))
-            }
-        """.trimIndent()
-        assertEquals("Debug Info Warn\nInfo\nA E\n", run(source))
-        assertContains(error("type Shape { Dot, Circle(radius: Int) }\nshapes = Shape.values"), "only a type whose cases carry nothing has values and name, and Shape's Circle carries radius")
-        // A type's own name for a case is its own.
-        assertEquals("loud\n", run("type Level { Debug, Loud }\nLevel.name: String = \"loud\"\nmain() = println(Loud.name)"))
     }
 
     @Test
@@ -2560,80 +1847,4 @@ class CompilerTest {
         )
     }
 
-    @Test
-    fun `a spec's function can take an effect parameter, which a module's does as the spec's would`() {
-        val output = run(
-            """
-            spec Runner {
-              go<@E>(work: @E () -> Unit): Unit
-            }
-
-            module Twice : Runner {
-              go<@E>(work: @E () -> Unit): Unit = {
-                work()
-                work()
-              }
-            }
-
-            // Given as a value, it does what the work does.
-            @Console runWith(runner: Runner) = runner.go { println("ran") }
-
-            @Console main() = runWith(Twice)
-            """.trimIndent(),
-        )
-        assertEquals("ran\nran\n", output)
-    }
-
-    @Test
-    fun `a block after a call is its last parameter's, those before it left to their defaults`() {
-        val output = run(
-            """
-            module Greeting {
-              greet(name: String = "you", punctuation: String = "!", say: (String) -> String): String = say(name) + punctuation
-            }
-
-            twice(times: Int = 2, f: () -> String): String = if (times <= 1) f() else f() + " " + twice(times - 1, f)
-
-            String.framed(left: String = "[", right: String = "]", inside: (String) -> String): String = left + inside(this) + right
-
-            @Console main() = {
-              println(Greeting.greet { "hello ${'$'}it" })
-              println(Greeting.greet("Ada") { "hi ${'$'}it" })
-              println(twice { "again" })
-              println("x".framed { it + it })
-              println("x".framed("<") { it })
-            }
-            """.trimIndent(),
-        )
-        assertEquals("hello you!\nhi Ada!\nagain again\n[xx]\n<x]\n", output)
-    }
-
-    @Test
-    fun `a spec's parameters can have defaults, which its values and modules have`() {
-        val output = run(
-            """
-            spec Greeter {
-              greet(name: String = "you", punctuation: String = "!"): String
-            }
-
-            module Plain : Greeter {
-              greet(name: String, punctuation: String): String = "hello ${'$'}name${'$'}punctuation"
-            }
-
-            // Its own default, in place of the spec's.
-            module Quiet : Greeter {
-              greet(name: String, punctuation: String = "."): String = "hi ${'$'}name${'$'}punctuation"
-            }
-
-            @Console said(greeter: Greeter) = println(greeter.greet(punctuation = "?") + " " + greeter.greet())
-
-            @Console main() = {
-              said(Plain)
-              println(Plain.greet("Ada"))
-              println(Quiet.greet())
-            }
-            """.trimIndent(),
-        )
-        assertEquals("hello you? hello you!\nhello Ada!\nhi you.\n", output)
-    }
 }

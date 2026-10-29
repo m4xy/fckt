@@ -1,0 +1,5 @@
+type A { E(x: Int) }
+type B { E(y: Int) }
+f() = E(1)
+
+// error: 'E' is a case of A and B; write A.E

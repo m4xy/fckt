@@ -1,0 +1,14 @@
+import fckt.io.Console
+
+type Level { Debug, Info, Warn }
+type Alphabet { A, B, E }
+type Vowel { Alphabet.A, Alphabet.E }
+main() = {
+  println(Level.values.map { it.name }.joinToString(" "))
+  println(Info.name)
+  println(Vowel.values.map { it.name }.joinToString(" "))
+}
+
+// prints: Debug Info Warn
+// prints: Info
+// prints: A E

@@ -1,0 +1,4 @@
+effect Clock(at: Int)
+main() = Unit
+
+// error: an effect has no fields: its operations go in braces, as in effect Clock { op(x: Int): Unit }

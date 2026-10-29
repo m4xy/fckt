@@ -1,0 +1,8 @@
+type Alphabet { A, B, E }
+type Digit { Zero }
+type Vowel { Alphabet.A, Alphabet.E }
+f(v: Vowel) = when (v) {
+  is Alphabet -> 1
+}
+
+// error: Alphabet isn't part of Vowel: Vowel has no Alphabet.B

@@ -1,0 +1,27 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+
+import fckt.effects.Generators.*
+import fckt.effects.Yielding
+import fckt.collections.Streams.*
+
+@Console main() = {
+  tried = attempt {
+    println("trying")
+    if (true) fail("nope")
+    1
+  }
+  assertEquals(Error("nope"), tried)
+  numbers = sequence {
+    println("making 1")
+    yield(1)
+    println("making 2")
+    yield(2)
+  }
+  println(numbers.take(1).toString())
+}
+
+// prints: trying
+// prints: making 1
+// prints: [1]

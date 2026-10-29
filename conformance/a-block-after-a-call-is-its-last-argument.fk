@@ -1,0 +1,15 @@
+import fckt.io.Console
+
+@Console prefixed<A>(prefix: String, block: @Console () -> A): A = Console(
+  print = s -> print("$prefix$s"),
+  println = line -> println("$prefix$line"),
+  readLine = readLine,
+) { block() }
+twice(f: () -> Int): Int = f() + f()
+@Console main() = {
+  prefixed("> ") { println("hello") }
+  println(twice { 21 }.toString())
+}
+
+// prints: > hello
+// prints: 42

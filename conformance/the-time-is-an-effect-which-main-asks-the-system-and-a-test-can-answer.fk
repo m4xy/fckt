@@ -1,0 +1,24 @@
+import fckt.io.Console
+
+import fckt.time.*
+import fckt.time.Times.*
+
+@Clock elapsed(): Duration = {
+  started = now()
+  started.until(now())
+}
+
+main() = {
+  var time = 0
+  took = Clock(now = () -> {
+    time = time + 7
+    Instant(time)
+  }) { elapsed() }
+  assertEquals(Duration(7), took)
+  assertEquals(Instant(10), Instant(3).plus(Duration(7)))
+  // main asks the system: after 2023, an Int's milliseconds.
+  assert(now().millis > 1700000000000)
+  println("ok")
+}
+
+// prints: ok

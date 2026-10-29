@@ -1,0 +1,16 @@
+import fckt.io.Console
+
+describe(x: Option<Int>, flag: Boolean): String = when (x) {
+  Some(n) if n > 0 -> {
+    doubled = n * 2
+    when (flag) {
+      true -> "big " + doubled.toString()
+      false -> "small " + doubled.toString()
+    }
+  }
+  _ if flag -> "flagged"
+  _ -> "other"
+}
+main() = println([describe(Some(2), true), describe(None, true), describe(None, false), describe(Some(0), false)].joinToString(" "))
+
+// prints: big 4 flagged other other

@@ -1,0 +1,33 @@
+spec Sized {
+  type M<A>
+  size<A>(m: M<A>): Int
+  isEmpty<A>(m: M<A>): Boolean = size(m) == 0
+}
+
+spec Stack : Sized {
+  empty<A>(): M<A>
+  push<A>(m: M<A>, x: A): M<A>
+  // Each of xs, from the first.
+  pushAll<A>(m: M<A>, xs: List<A>): M<A> = xs.fold(m, (all, x) -> push(all, x))
+}
+
+module ListStack : Stack {
+  type M<A> = List<A>
+  size<A>(m: List<A>): Int = m.size
+  empty<A>(): List<A> = []
+  push<A>(m: List<A>, x: A): List<A> = [x, *m]
+}
+
+// A Stack is Sized, so it can be given where that's all that's wanted.
+module Describe(S: Sized) {
+  describe<A>(m: S.M<A>): String = if (S.isEmpty(m)) "empty" else "${S.size(m)} items"
+}
+
+module Stacks = Describe(ListStack)
+module Bad : Stack {
+  type M<A> = List<A>
+  empty<A>(): List<A> = []
+  push<A>(m: List<A>, x: A): List<A> = m
+}
+
+// error: Bad doesn't define 'size', which its spec Stack needs

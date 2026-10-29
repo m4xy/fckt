@@ -1,0 +1,3 @@
+main() = println("\u12")
+
+// error: \u takes four hex digits

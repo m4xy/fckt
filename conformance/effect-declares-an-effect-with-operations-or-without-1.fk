@@ -1,0 +1,14 @@
+import fckt.io.Console
+
+effect Clock {
+  now(): Int
+}
+effect Database
+@Database @Console annotation type Repository
+@Database save(x: Int) = Unit
+@Clock stamp() = now()
+// Still a name for anything else.
+effect(x: Int) = x + 1
+@Console main() = Clock(now = ~7) { println((stamp() + effect(1)).toString()) }
+
+// prints: 9

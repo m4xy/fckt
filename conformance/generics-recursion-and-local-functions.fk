@@ -1,0 +1,24 @@
+import fckt.io.Console
+
+type Tree<T> {
+  Leaf
+  Node(left: Tree<T>, value: T, right: Tree<T>)
+}
+
+size<T>(t: Tree<T>): Int = when (t) {
+  Leaf -> 0
+  Node(l, _, r) -> size(l) + 1 + size(r)
+}
+
+isEven(n: Int): Boolean = if (n == 0) true else isOdd(n - 1)
+isOdd(n: Int): Boolean = if (n == 0) false else isEven(n - 1)
+
+main() = {
+  fact(n: Int): Int = if (n <= 1) 1 else n * fact(n - 1)
+  t = Node(Node(Leaf, 1, Leaf), 2, Leaf)
+  println("${size(t)} ${fact(5)} ${isEven(10)}")
+  println(t.toString())
+}
+
+// prints: 2 120 true
+// prints: Node(left=Node(left=Leaf, value=1, right=Leaf), value=2, right=Leaf)

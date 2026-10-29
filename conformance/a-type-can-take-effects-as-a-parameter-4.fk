@@ -1,0 +1,8 @@
+import fckt.io.Console
+
+effect Clock { now(): Int }
+type Box<@E>(run: @E () -> Unit)
+f<@E>(b: Box<@E>): Box<@E> = Box(~println("x"))
+main() = assert(true)
+
+// error: effect parameter @E of 'f' always does @Console here

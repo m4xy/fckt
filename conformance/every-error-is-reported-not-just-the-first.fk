@@ -1,0 +1,13 @@
+import fckt.io.Console
+
+double(x: Int) = x * 2
+broken(s: String): Int = s
+// usesBroken is fine: broken's error is reported where it is, not again where it's used.
+usesBroken() = broken("a") + 1
+alsoBad() = println("x")
+wrongCall() = double("three")
+main() = assert(double(3) == 6)
+
+// error: 4:26: error: type mismatch: expected Int but found String
+// error: 7:1: error: 'alsoBad' does @Console, so it must say so: @Console alsoBad(...)
+// error: 8:22: error: type mismatch: expected Int but found String

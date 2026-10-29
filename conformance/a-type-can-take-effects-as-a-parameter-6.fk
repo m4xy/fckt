@@ -1,0 +1,6 @@
+effect Clock { now(): Int }
+type Box<@E>(run: @E () -> Unit)
+f<@E, @F>(b: Box<@E @F>) = Unit
+main() = assert(true)
+
+// error: effects can name only one effect parameter
