@@ -1,0 +1,15 @@
+// One of the shapes a value can have, as far as checking that a when covers every value goes.
+type Shape {
+  // A case of a type with cases, by the full name of the type that declares it, so a case that
+  // several types share is one case: Circle of geometry.Shape.
+  CaseShape(owner: String, name: String),
+  BooleanShape(value: Boolean),
+  EmptyList,
+  // A list with a first item, then the rest of it: its two fields.
+  NonEmptyList,
+  TupleShape(size: Int),
+  // A record, by its type's full name.
+  RecordShape(name: String),
+  // A number, string or character, as written: there are always more than any when lists.
+  LiteralShape(text: String),
+}

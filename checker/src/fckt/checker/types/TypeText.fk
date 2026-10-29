@@ -1,0 +1,57 @@
+import fckt.checker.types.Types.*
+
+// Types as messages show them, as Kotlin would write them: List<Int>, (A, B) -> R, @Console
+// (String) -> Unit. An unknown is T1, T2 and so on, in the order they're met.
+module TypeText {
+  // The type, written out.
+  @Solving shown(t: Type): String = render(t, Naming([]))
+
+  // Each of the types, written out, sharing names for unknowns, so the same one is called the same
+  // in each: as an error says what was expected and what was found.
+  @Solving shownTogether(types: List<Type>): List<String> = {
+    naming = Naming([])
+    types.map { render(it, naming) }
+  }
+
+  // The unknowns named so far, in the order they were: the first is T1.
+  private type Naming(var named: List<TypeVariable>)
+
+  @Mutating private nameOf(v: TypeVariable, naming: Naming): String = when (naming.named.indexOf(v)) {
+    -1 -> {
+      naming.named = naming.named + [v]
+      "T${naming.named.size}"
+    }
+    else -> "T${naming.named.indexOf(v) + 1}"
+  }
+
+  @Solving @Mutating private render(t: Type, naming: Naming): String = when (resolved(t)) {
+    Variable(v) -> nameOf(v, naming)
+    Parameter(name) -> name
+    Named(name, [], _) -> name
+    Named(name, arguments, _) -> "$name<${renderAll(arguments, naming)}>"
+    TupleOf(elements) -> "(${renderAll(elements, naming)})"
+    // Only what calling it does is shown, not whether it may do more.
+    FunctionOf(parameters, result, effects) -> {
+      does = effectNames(effects).sorted().map { "@${lastPart(it)} " }.joinToString("")
+      "$does(${renderAll(parameters, naming)}) -> ${render(result, naming)}"
+    }
+    // As a type argument: Queue<@Console>, Queue<@T1>, or Queue<@Pure> for none.
+    Effects(row) -> {
+      flat = flattened(row)
+      labels = flat.labels.map { "@${lastPart(it.name)}" }
+      rest = when (flat.rest) {
+        Some(v) -> ["@${nameOf(v, naming)}"]
+        None -> []
+      }
+      when (labels + rest) {
+        [] -> "@Pure"
+        all -> all.joinToString(" ")
+      }
+    }
+  }
+
+  @Solving @Mutating private renderAll(types: List<Type>, naming: Naming): String = types.map { render(it, naming) }.joinToString(", ")
+
+  // The last part of a full name: Console, for fckt.io.Console.
+  private lastPart(name: String): String = name.split(".").lastOrNone().getOrElse(name)
+}

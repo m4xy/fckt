@@ -1,0 +1,82 @@
+import fckt.checker.types.Types.*
+
+// Making two types the same, by solving the unknowns in them: unification, as Hindley and Milner
+// have it, with rows of effects as Rémy has them, so a function that may do more can't be used
+// where one that does less is wanted.
+module Unification {
+  // Whether the two types can be made the same, solving unknowns in them so they are. If they
+  // can't, what was solved before finding out stays solved: what failed is an error, which says
+  // what the types had been found to be.
+  @Solving unify(a: Type, b: Type): Boolean = unifyResolved(resolved(a), resolved(b))
+
+  @Solving private unifyResolved(x: Type, y: Type): Boolean = when (x, y) {
+    (Variable(v), Variable(w)) -> v == w || bind(v, y)
+    (Effects(r), Effects(s)) -> unifyRows(r, s)
+    // An unknown standing for effects, as a type parameter like @E does, is an open row of nothing.
+    (Variable(v), Effects(s)) -> unifyRows(Row([], Some(v)), s)
+    (Effects(r), Variable(w)) -> unifyRows(r, Row([], Some(w)))
+    (Variable(v), _) -> bind(v, y)
+    (_, Variable(w)) -> bind(w, x)
+    (Parameter(n), Parameter(m)) -> n == m
+    // Regions are only checked where both types have one.
+    (Named(n, xs, xRegion), Named(m, ys, yRegion)) -> n == m && unifyAll(xs, ys) && when (xRegion, yRegion) {
+      (Some(p), Some(q)) -> unify(p, q)
+      else -> true
+    }
+    (TupleOf(xs), TupleOf(ys)) -> unifyAll(xs, ys)
+    (FunctionOf(xs, xResult, xEffects), FunctionOf(ys, yResult, yEffects)) ->
+      unifyAll(xs, ys) && unify(xResult, yResult) && unifyRows(xEffects, yEffects)
+    else -> false
+  }
+
+  // Whether the lists are as long as each other and each pair can be made the same, in order,
+  // stopping at the first that can't.
+  @Solving private unifyAll(xs: List<Type>, ys: List<Type>): Boolean = when (xs, ys) {
+    ([], []) -> true
+    ([x, *moreX], [y, *moreY]) -> unify(x, y) && unifyAll(moreX, moreY)
+    else -> false
+  }
+
+  // Makes two rows the same set of effects: what's in one but not the other must be in the other's
+  // rest, so a closed row can't take more. Two open rows share a new rest. The same generic effect
+  // in both has the same type arguments in both.
+  @Solving unifyRows(a: Row, b: Row): Boolean = {
+    x = flattened(a)
+    y = flattened(b)
+    onlyX = x.labels.filter { e -> y.labels.none { sameEffect(it, e) } }
+    onlyY = y.labels.filter { e -> x.labels.none { sameEffect(it, e) } }
+    sameArguments(x.labels, y.labels) && when (x.rest, y.rest) {
+      (None, None) -> onlyX.isEmpty() && onlyY.isEmpty()
+      (Some(v), Some(w)) ->
+        if (v == w) onlyX.isEmpty() && onlyY.isEmpty()
+        else {
+          rest = fresh()
+          bind(v, Effects(Row(onlyY, Some(rest)))) && bind(w, Effects(Row(onlyX, Some(rest))))
+        }
+      (None, Some(w)) -> onlyY.isEmpty() && bind(w, Effects(Row(onlyX, None)))
+      (Some(v), None) -> onlyX.isEmpty() && bind(v, Effects(Row(onlyY, None)))
+    }
+  }
+
+  // Whether each generic effect in xs, but Mutating, has the type arguments the effect of that name
+  // in ys has, if ys has it.
+  @Solving private sameArguments(xs: List<EffectLabel>, ys: List<EffectLabel>): Boolean = when (xs) {
+    [] -> true
+    [label, *more] -> {
+      generic = label.name != mutating && label.arguments.isNotEmpty()
+      counterpart = ys.filter { it.name == label.name && it.arguments.size == label.arguments.size }
+      when (counterpart) {
+        [other, *_] if generic -> unifyAll(label.arguments, other.arguments) && sameArguments(more, ys)
+        else -> sameArguments(more, ys)
+      }
+    }
+  }
+
+  // Solves the unknown as the type, unless the type holds it: no type holds itself.
+  @Solving private bind(v: TypeVariable, t: Type): Boolean =
+    if (variablesIn(t).contains(v)) false
+    else {
+      solve(v, t)
+      true
+    }
+}

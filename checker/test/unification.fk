@@ -1,0 +1,94 @@
+import uk.m4xy.fktests.api.Test
+import fckt.collections.Maps.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+import fckt.checker.types.Unification.*
+
+// Unifying types, and what that solves.
+
+@Test solvesAnUnknownAsWhatItsUnifiedWith() = assertEquals(Some(listOf(int)), Solutions.solving {
+  v = Variable(fresh())
+  if (unify(v, listOf(int))) Some(resolvedFully(v)) else None
+})
+
+@Test solvesUnknownsInsideTypes() = assertEquals((true, int, string), Solutions.solving {
+  a = Variable(fresh())
+  b = Variable(fresh())
+  unified = unify(FunctionOf([a], b, pure), FunctionOf([int], string, pure))
+  (unified, resolvedFully(a), resolvedFully(b))
+})
+
+@Test doesntUnifyDifferentTypes() = Solutions.solving {
+  assert(!unify(int, string))
+  assert(!unify(listOf(int), optionOf(int)))
+  assert(!unify(TupleOf([int, int]), TupleOf([int])))
+  assert(!unify(FunctionOf([int], int, pure), FunctionOf([], int, pure)))
+  assert(!unify(Parameter("A"), Parameter("B")))
+  assert(unify(Parameter("A"), Parameter("A")))
+}
+
+@Test noTypeHoldsItself() = Solutions.solving {
+  v = Variable(fresh())
+  assert(!unify(v, listOf(v)))
+  assertEquals(v, resolved(v))
+}
+
+@Test ignoresRegionsUnlessBothHaveOne() = Solutions.solving {
+  r = Variable(fresh())
+  assert(unify(Named("Counter", [], Some(r)), Named("Counter", [], None)))
+  assert(unify(Named("Counter", [], Some(r)), Named("Counter", [], Some(globalRegion))))
+  assertEquals(globalRegion, resolved(r))
+}
+
+@Test anOpenRowTakesWhatTheOtherHas() = assertEquals(["fckt.io.Console", "fckt.io.FileSystem"], Solutions.solving {
+  rest = fresh()
+  assert(unifyRows(Row([EffectLabel("fckt.io.Console", [])], Some(rest)), rowOf(["fckt.io.Console", "fckt.io.FileSystem"], None)))
+  effectNames(Row([EffectLabel("fckt.io.Console", [])], Some(rest)))
+})
+
+@Test aClosedRowTakesNoMore() = Solutions.solving {
+  assert(!unifyRows(rowOf(["fckt.io.Console"], None), rowOf(["fckt.io.Console", "fckt.io.FileSystem"], None)))
+  assert(!unifyRows(rowOf(["fckt.io.Console"], None), rowOf(["fckt.io.FileSystem"], Some(fresh()))))
+  assert(unifyRows(rowOf(["fckt.io.Console"], None), rowOf(["fckt.io.Console"], None)))
+}
+
+@Test twoOpenRowsShareWhatsLeft() = assertEquals((["A", "B"], ["A", "B"]), Solutions.solving {
+  r = fresh()
+  s = fresh()
+  assert(unifyRows(rowOf(["A"], Some(r)), rowOf(["B"], Some(s))))
+  (effectNames(rowOf(["A"], Some(r))).sorted(), effectNames(rowOf(["B"], Some(s))).sorted())
+})
+
+@Test aGenericEffectHasTheSameArgumentsInBoth() = assertEquals(int, Solutions.solving {
+  v = Variable(fresh())
+  assert(unifyRows(Row([EffectLabel("Yielding", [int])], None), Row([EffectLabel("Yielding", [v])], None)))
+  assert(!unifyRows(Row([EffectLabel("Yielding", [int])], None), Row([EffectLabel("Yielding", [string])], None)))
+  resolvedFully(v)
+})
+
+@Test changingOneRegionIsntChangingAnother() = Solutions.solving {
+  r = Variable(fresh())
+  s = Variable(fresh())
+  assert(!unifyRows(Row([EffectLabel(mutating, [r])], None), Row([EffectLabel(mutating, [s])], None)))
+  assert(unifyRows(Row([EffectLabel(mutating, [r])], None), Row([EffectLabel(mutating, [r])], None)))
+  // A written @Mutating, with no region, is any.
+  assert(unifyRows(Row([EffectLabel(mutating, [])], None), Row([EffectLabel(mutating, [s])], None)))
+}
+
+@Test effectsAsATypeArgumentAreARow() = assertEquals(Effects(rowOf(["A"], None)), Solutions.solving {
+  e = Variable(fresh())
+  assert(unify(Named("Queue", [e], None), Named("Queue", [Effects(rowOf(["A"], None))], None)))
+  resolvedFully(e)
+})
+
+@Test instantiatingGivesNewUnknowns() = Solutions.solving {
+  a = fresh()
+  scheme = Scheme([a], FunctionOf([Variable(a)], Variable(a), pure))
+  first = instantiate(scheme)
+  second = instantiate(scheme)
+  assert(first != second)
+  assert(unify(first, FunctionOf([int], int, pure)))
+  assert(unify(second, FunctionOf([string], string, pure)))
+  // A type given for a variable is used in its place.
+  assertEquals(FunctionOf([boolean], boolean, pure), instantiate(scheme, mapOf([(a, boolean)])))
+}

@@ -1,0 +1,179 @@
+import fckt.collections.Maps.*
+
+// The types the language itself gives meaning to, and what a type is once what's been solved so far
+// is taken into account.
+module Types {
+  // ---- The language's own types ----
+
+  int: Type = Named("Int", [], None)
+  float: Type = Named("Float", [], None)
+  string: Type = Named("String", [], None)
+  boolean: Type = Named("Boolean", [], None)
+  unit: Type = Named("Unit", [], None)
+  // A Unicode character, a code point.
+  char: Type = Named("Char", [], None)
+  // A byte, 0 to 255.
+  byte: Type = Named("Byte", [], None)
+  // The type with no values: what a call that never returns gives.
+  nothing: Type = Named("Nothing", [], None)
+
+  listOf(element: Type): Type = Named("List", [element], None)
+  optionOf(element: Type): Type = Named("Option", [element], None)
+  resultOf(value: Type, error: Type): Type = Named("Result", [value, error], None)
+  lazyOf(element: Type): Type = Named("Lazy", [element], None)
+
+  // The types every file can name without importing them, and how many arguments each takes.
+  // Double is another name for Float.
+  builtins: Map<String, Int> = mapOf([
+    ("Int", 0), ("Float", 0), ("Double", 0), ("String", 0), ("Boolean", 0), ("Unit", 0), ("Char", 0),
+    ("Byte", 0), ("Nothing", 0), ("List", 1), ("Option", 1), ("Lazy", 1), ("Result", 2),
+  ])
+
+  // The effect of changing a var someone else can see; its argument is the region changed.
+  mutating: String = "fckt.lang.Mutating"
+
+  // Where the program's top-level values live, which outlive every function.
+  globalRegion: Type = Named("global region", [], None)
+
+  // Whether type is the named type, whatever its region and arguments.
+  isNamed(t: Type, name: String): Boolean = when (t) {
+    Named(n, _, _) -> n == name
+    else -> false
+  }
+
+  // A row of no effects: what a pure function does.
+  pure: Row = Row([], None)
+
+  // A row that's the effects named, and, if open, whatever rest turns out to be.
+  rowOf(names: List<String>, rest: Option<TypeVariable>): Row = Row(names.sorted().map { EffectLabel(it, []) }, rest)
+
+  // ---- What's been solved ----
+
+  // The type, or, if it's an unknown that's been solved, what it's been found to be, followed as
+  // far as solutions go: never an unknown with a solution.
+  @Solving resolved(t: Type): Type = when (t) {
+    Variable(v) -> when (solutionOf(v)) {
+      Some(solution) -> resolved(solution)
+      None -> t
+    }
+    else -> t
+  }
+
+  // The type with every unknown in it that's been solved replaced by its solution, all the way
+  // down: what it means outside the solving that found it.
+  @Solving resolvedFully(t: Type): Type = when (resolved(t)) {
+    Variable(v) -> Variable(v)
+    Parameter(name) -> Parameter(name)
+    Named(name, arguments, region) -> Named(name, arguments.map { resolvedFully(it) }, region.map { resolvedFully(it) })
+    TupleOf(elements) -> TupleOf(elements.map { resolvedFully(it) })
+    FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { resolvedFully(it) }, resolvedFully(result), resolvedRowFully(effects))
+    Effects(row) -> Effects(resolvedRowFully(row))
+  }
+
+  // The row with its rest followed, and each of its effects' arguments resolved fully.
+  @Solving resolvedRowFully(row: Row): Row = {
+    flat = flattened(row)
+    Row(flat.labels.map { EffectLabel(it.name, it.arguments.map { a -> resolvedFully(a) }) }, flat.rest)
+  }
+
+  // The row's effects, once each, with those its rest has been found to have, and the unknown for
+  // the rest of it, if it's still open.
+  @Solving flattened(row: Row): Row = flattenedInto(row.labels, [], row.rest)
+
+  @Solving private flattenedInto(labels: List<EffectLabel>, done: List<EffectLabel>, rest: Option<TypeVariable>): Row = {
+    found = labels.fold(done) { acc, label -> if (acc.any { sameEffect(it, label) }) acc else acc + [label] }
+    when (rest) {
+      None -> Row(found, None)
+      Some(v) -> when (solutionOf(v)) {
+        None -> Row(found, rest)
+        Some(Effects(more)) -> flattenedInto(more.labels, found, more.rest)
+        Some(Variable(other)) -> flattenedInto([], found, Some(other))
+        // Only a row can be what a row's rest is.
+        Some(_) -> Row(found, None)
+      }
+    }
+  }
+
+  // The full names of the effects in the row.
+  @Solving effectNames(row: Row): List<String> = flattened(row).labels.map { it.name }
+
+  // Whether two effects in rows are the same one: a row has one of each, so a generic effect's type
+  // arguments are one choice for the row, Yielding<Int> or Yielding<String>. Mutating is the
+  // exception: one for each region, as a function may change several values. One without a
+  // region is any.
+  @Solving sameEffect(a: EffectLabel, b: EffectLabel): Boolean =
+    if (a.name != b.name) false
+    else if (a.name != mutating) true
+    else when (a.arguments, b.arguments) {
+      ([x, *_], [y, *_]) -> sameRegion(resolved(x), resolved(y))
+      else -> true
+    }
+
+  private sameRegion(x: Type, y: Type): Boolean = when (x, y) {
+    (Variable(v), Variable(w)) -> v == w
+    (Named(n, _, _), Named(m, _, _)) -> n == m
+    else -> false
+  }
+
+  // The unknowns in the type that haven't been solved, each once, in the order they're first met.
+  @Solving variablesIn(t: Type): List<TypeVariable> = variablesInto(t, [])
+
+  @Solving private variablesInto(t: Type, found: List<TypeVariable>): List<TypeVariable> = when (resolved(t)) {
+    Variable(v) -> if (found.contains(v)) found else found + [v]
+    Parameter(_) -> found
+    Named(_, arguments, region) -> {
+      inArguments = arguments.fold(found) { acc, a -> variablesInto(a, acc) }
+      when (region) {
+        Some(r) -> variablesInto(r, inArguments)
+        None -> inArguments
+      }
+    }
+    TupleOf(elements) -> elements.fold(found) { acc, e -> variablesInto(e, acc) }
+    FunctionOf(parameters, result, effects) ->
+      rowVariablesInto(effects, variablesInto(result, parameters.fold(found) { acc, p -> variablesInto(p, acc) }))
+    Effects(row) -> rowVariablesInto(row, found)
+  }
+
+  @Solving private rowVariablesInto(row: Row, found: List<TypeVariable>): List<TypeVariable> = {
+    flat = flattened(row)
+    inLabels = flat.labels.fold(found) { acc, label -> label.arguments.fold(acc) { inner, a -> variablesInto(a, inner) } }
+    when (flat.rest) {
+      Some(v) -> if (inLabels.contains(v)) inLabels else inLabels + [v]
+      None -> inLabels
+    }
+  }
+
+  // ---- Generic types ----
+
+  // The scheme's type with a new unknown for each of its variables, or the type given for one.
+  @Solving instantiate(scheme: Scheme, given: Map<TypeVariable, Type> = emptyMap()): Type =
+    if (scheme.variables.isEmpty()) scheme.template
+    else substitute(scheme.template, scheme.variables.map { v -> (v, given.getOrElse(v) { Variable(fresh()) }) }.toMap())
+
+  // The type with each unknown the mapping has replaced by what it maps it to.
+  @Solving substitute(t: Type, mapping: Map<TypeVariable, Type>): Type = when (resolved(t)) {
+    Variable(v) -> mapping.getOrDefault(v, Variable(v))
+    Parameter(name) -> Parameter(name)
+    Named(name, arguments, region) -> Named(name, arguments.map { substitute(it, mapping) }, region.map { substitute(it, mapping) })
+    TupleOf(elements) -> TupleOf(elements.map { substitute(it, mapping) })
+    FunctionOf(parameters, result, effects) ->
+      FunctionOf(parameters.map { substitute(it, mapping) }, substitute(result, mapping), substituteRow(effects, mapping))
+    Effects(row) -> Effects(substituteRow(row, mapping))
+  }
+
+  // A row's rest mapped to a row is that row's effects added to it; mapped to another unknown, it's
+  // that unknown.
+  @Solving private substituteRow(row: Row, mapping: Map<TypeVariable, Type>): Row = {
+    flat = flattened(row)
+    labels = flat.labels.map { EffectLabel(it.name, it.arguments.map { a -> substitute(a, mapping) }) }
+    when (flat.rest) {
+      None -> Row(labels, None)
+      Some(v) -> when (mapping.get(v)) {
+        None -> Row(labels, Some(v))
+        Some(Variable(w)) -> Row(labels, Some(w))
+        Some(Effects(more)) -> flattened(Row(labels + more.labels, more.rest))
+        Some(_) -> Row(labels, None)
+      }
+    }
+  }
+}

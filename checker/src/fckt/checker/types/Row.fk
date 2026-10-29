@@ -1,0 +1,3 @@
+// What calling a function may do: the effects in labels, and, if the row is open, whatever more
+// rest turns out to be. A closed row can't take more.
+type Row(labels: List<EffectLabel>, rest: Option<TypeVariable>)

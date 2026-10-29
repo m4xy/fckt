@@ -1,0 +1,3 @@
+// What a pattern matches, as coverage sees it: values of a shape, with what each of its fields
+// matches, or, with no shape, anything at all, as _ and a name do.
+type Matches(shape: Option<Shape>, fields: List<Matches>)

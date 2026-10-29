@@ -1,0 +1,62 @@
+import uk.m4xy.fktests.api.Test
+import fckt.checker.coverage.*
+import fckt.checker.coverage.Coverage.*
+
+// Whether patterns cover every value, over types of a test's own: coverage needs only to be told
+// what shapes each type's values have.
+
+type Sample {
+  Flag,
+  Number,
+  Maybe(element: Sample),
+  Many(element: Sample),
+  Pair(first: Sample, second: Sample),
+}
+
+alternativesOf(t: Sample): Option<List<Alternative<Sample>>> = when (t) {
+  Flag -> Some([Alternative(BooleanShape(true), []), Alternative(BooleanShape(false), [])])
+  Number -> None
+  Maybe(e) -> Some([Alternative(CaseShape("Option", "Some"), [e]), Alternative(CaseShape("Option", "None"), [])])
+  Many(e) -> Some([Alternative(EmptyList, []), Alternative(NonEmptyList, [e, t])])
+  Pair(a, b) -> Some([Alternative(TupleShape(2), [a, b])])
+}
+
+shape(s: Shape, fields: List<Matches> = []): Matches = Matches(Some(s), fields)
+some(m: Matches): Matches = shape(CaseShape("Option", "Some"), [m])
+none: Matches = shape(CaseShape("Option", "None"))
+flag(value: Boolean): Matches = shape(BooleanShape(value))
+cons(head: Matches, tail: Matches): Matches = shape(NonEmptyList, [head, tail])
+nil: Matches = shape(EmptyList)
+
+missed(patterns: List<Matches>, t: Sample): List<String> = missing(patterns, t, alternativesOf).map { shown(it) }
+
+@Test anythingCoversEverything() = assertEquals([], missed([anything], Maybe(Number)))
+
+@Test saysWhichCasesArentCovered() = {
+  assertEquals(["None"], missed([some(anything)], Maybe(Number)))
+  assertEquals([], missed([some(anything), none], Maybe(Number)))
+  assertEquals(["false"], missed([flag(true)], Flag))
+}
+
+@Test looksInsideCases() = {
+  assertEquals(["Some(false)"], missed([some(flag(true)), none], Maybe(Flag)))
+  assertEquals(["Some(None)"], missed([some(some(anything)), none], Maybe(Maybe(Number))))
+}
+
+@Test numbersAreNeverAllListed() = {
+  assertEquals(["_"], missed([shape(LiteralShape("1")), shape(LiteralShape("2"))], Number))
+  assertEquals([], missed([shape(LiteralShape("1")), anything], Number))
+}
+
+@Test showsListsAsTheyreWritten() = {
+  assertEquals(["[_, *_]"], missed([nil], Many(Flag)))
+  assertEquals(["[_, _, *_]"], missed([nil, cons(anything, nil)], Many(Flag)))
+  assertEquals(["[]"], missed([cons(anything, anything)], Many(Flag)))
+}
+
+@Test checksEachPartOfATuple() = {
+  pair = Pair(Flag, Flag)
+  tuple = (a: Boolean, b: Boolean) -> shape(TupleShape(2), [flag(a), flag(b)])
+  assertEquals(["(false, false)"], missed([tuple(true, true), tuple(true, false), tuple(false, true)], pair))
+  assertEquals(["(false, _)"], missed([tuple(true, true), tuple(true, false)], pair))
+}

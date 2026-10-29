@@ -1,0 +1,3 @@
+// One of the shapes a value of some type can have, with the types of its fields, of whatever T
+// the checker's types are: Some, with one field of the option's element type.
+type Alternative<T>(shape: Shape, fields: List<T>)

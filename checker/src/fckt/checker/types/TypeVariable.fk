@@ -1,0 +1,2 @@
+// A type not known yet, which solving finds out: one unknown, told apart from the others by its id.
+type TypeVariable(id: Int)

@@ -1,0 +1,11 @@
+// Working types out: making unknowns, and learning what each one is. What's learned so far is the
+// handler's, as Solutions.solving keeps it; Unification learns it, and Types reads it.
+effect Solving {
+  // A new unknown, no other.
+  fresh(): TypeVariable
+  // What the unknown has been found to be, if anything yet.
+  solutionOf(variable: TypeVariable): Option<Type>
+  // Learns that the unknown is the type. Unification only says so of one with no solution yet,
+  // and never of a type that holds it.
+  solve(variable: TypeVariable, t: Type): Unit
+}

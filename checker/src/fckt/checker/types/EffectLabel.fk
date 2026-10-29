@@ -1,0 +1,4 @@
+// One effect in a row of effects: the effect's full name and its type arguments, as fckt.io.Console,
+// or fckt.effects.Yielding with Int. Mutating's one argument is the region it changes; without one,
+// a written @Mutating, it's any region.
+type EffectLabel(name: String, arguments: List<Type>)

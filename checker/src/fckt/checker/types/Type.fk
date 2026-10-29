@@ -1,0 +1,20 @@
+// A type, as the checker works with it: what a written TypeRef means, once its names are resolved,
+// and what inference finds an expression to be.
+type Type {
+  // A type not known yet; what solving has found it to be, if anything, is the Solving effect's.
+  Variable(variable: TypeVariable),
+  // A type parameter, as the body of what declares it sees it: some type it knows nothing of, so
+  // the same only as itself.
+  Parameter(name: String),
+  // A named type applied to its arguments: Int, List<A>, geometry.Shape, by its full name. A type
+  // whose values can change, a record with a var field or a type holding one, has a region: where
+  // its values live, so that changing one is changing that region. Regions are only checked, so
+  // two types differing only in them are the same type.
+  Named(name: String, arguments: List<Type>, region: Option<Type>),
+  // (A, B)
+  TupleOf(elements: List<Type>),
+  // (A, B) -> R, and what calling it may do.
+  FunctionOf(parameters: List<Type>, result: Type, effects: Row),
+  // Effects as a type's argument, as Queue<@Console> has: a type parameter like @E stands for some.
+  Effects(row: Row),
+}

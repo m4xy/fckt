@@ -1,0 +1,117 @@
+// Whether a when's patterns cover every value of its subject, by Maranget's usefulness check
+// ("Warnings for pattern matching", 2007), as OCaml's compiler does: patterns cover everything
+// when a pattern that matches anything would match nothing they don't.
+//
+// It knows nothing of types but what it's told: alternatives says what shapes a value of a type
+// can have, with the types of their fields, or None when there are too many to list, as there are
+// Ints.
+module Coverage {
+  // The pattern that matches anything.
+  anything: Matches = Matches(None, [])
+
+  // Examples of values of type t that none of the patterns match, one for each shape that has
+  // some: nothing, if they cover every value.
+  missing<T>(patterns: List<Matches>, t: T, alternatives: (T) -> Option<List<Alternative<T>>>): List<Matches> = {
+    rows = patterns.map { [it] }
+    when (alternatives(t)) {
+      None -> unmatched(rows, [t], alternatives).map { found -> found.firstOrNone().toList() }.getOrElse([])
+      Some(shapes) -> shapes.mapNotNull { a ->
+        unmatched(specialized(rows, a.shape, a.fields.size), a.fields, alternatives).map { found -> Matches(Some(a.shape), found) }
+      }
+    }
+  }
+
+  // A row of values, of the types given, that no row of patterns matches, or None if every row of
+  // values is matched by one of them. A value in it that any value would do for is anything.
+  private unmatched<T>(rows: List<List<Matches>>, types: List<T>, alternatives: (T) -> Option<List<Alternative<T>>>): Option<List<Matches>> =
+    when (types) {
+      [] -> if (rows.isEmpty()) Some([]) else None
+      [t, *rest] -> {
+        heads = rows.mapNotNull { row -> firstOf(row).shape }.distinct()
+        when (alternatives(t)) {
+          // Every shape is matched by some row: what's missing, if anything, is inside one.
+          Some(shapes) if heads.isNotEmpty() && shapes.all { heads.contains(it.shape) } -> insideOne(rows, shapes, rest, alternatives)
+          shapes -> unmatchedByAny(rows, heads, shapes, rest, alternatives)
+        }
+      }
+    }
+
+  // The first shape, in order, with values inside it that no row matches, and those values.
+  private insideOne<T>(
+    rows: List<List<Matches>>,
+    shapes: List<Alternative<T>>,
+    rest: List<T>,
+    alternatives: (T) -> Option<List<Alternative<T>>>,
+  ): Option<List<Matches>> = when (shapes) {
+    [] -> None
+    [a, *others] -> when (unmatched(specialized(rows, a.shape, a.fields.size), a.fields + rest, alternatives)) {
+      Some(found) -> Some([Matches(Some(a.shape), found.take(a.fields.size)), *found.drop(a.fields.size)])
+      None -> insideOne(rows, others, rest, alternatives)
+    }
+  }
+
+  // Where some shape isn't matched by any row's first pattern, the rows whose first pattern matches
+  // anything decide. The example given first is a shape no row names, or, if no row looks at this
+  // value at all, anything.
+  private unmatchedByAny<T>(
+    rows: List<List<Matches>>,
+    heads: List<Shape>,
+    shapes: Option<List<Alternative<T>>>,
+    rest: List<T>,
+    alternatives: (T) -> Option<List<Alternative<T>>>,
+  ): Option<List<Matches>> = {
+    open = rows.filter { row -> firstOf(row).shape.isNone() }.map { it.drop(1) }
+    unmatched(open, rest, alternatives).map { found ->
+      example = if (heads.isEmpty()) anything else when (shapes.flatMap { s -> s.find { !heads.contains(it.shape) } }) {
+        Some(a) -> Matches(Some(a.shape), anythings(a.fields.size))
+        None -> anything
+      }
+      [example, *found]
+    }
+  }
+
+  // The rows that can match a value of the shape, with patterns for its fields in place of their
+  // first: those of a row that names the shape, or anything, for one that matches anything.
+  private specialized(rows: List<List<Matches>>, shape: Shape, arity: Int): List<List<Matches>> = rows.mapNotNull { row ->
+    head = firstOf(row)
+    when (head.shape) {
+      None -> Some(anythings(arity) + row.drop(1))
+      Some(s) if s == shape -> Some(head.fields + row.drop(1))
+      else -> None
+    }
+  }
+
+  // As many patterns as are asked for, each matching anything.
+  private anythings(count: Int): List<Matches> = if (count <= 0) [] else [anything, *anythings(count - 1)]
+
+  // A row's first pattern; rows are never empty where this is asked.
+  private firstOf(row: List<Matches>): Matches = row.firstOrNone().getOrElse(anything)
+
+  // A pattern as fckt writes it: B, Some(Error(_)), [_, *_], (true, _).
+  shown(m: Matches): String = when (m.shape) {
+    None -> "_"
+    Some(CaseShape(_, name)) -> if (m.fields.isEmpty()) name else "$name(${shownAll(m.fields)})"
+    Some(BooleanShape(value)) -> "$value"
+    Some(TupleShape(_)) -> "(${shownAll(m.fields)})"
+    Some(RecordShape(name)) -> "${name.split(".").lastOrNone().getOrElse(name)}(${shownAll(m.fields)})"
+    Some(LiteralShape(text)) -> text
+    Some(EmptyList) -> "[]"
+    // A list's items up to its end, or up to the rest of it: [a, b] or [a, *_].
+    Some(NonEmptyList) -> {
+      (items, end) = listItems(m, [])
+      when (end.shape) {
+        Some(EmptyList) -> "[${items.joinToString(", ")}]"
+        else -> "[${(items + ["*${shown(end)}"]).joinToString(", ")}]"
+      }
+    }
+  }
+
+  private shownAll(ms: List<Matches>): String = ms.map { shown(it) }.joinToString(", ")
+
+  // The items shown of a list pattern, and what's after them: the empty list, or what matches the
+  // rest of it.
+  private listItems(m: Matches, items: List<String>): (List<String>, Matches) = when (m.shape, m.fields) {
+    (Some(NonEmptyList), [item, rest]) -> listItems(rest, items + [shown(item)])
+    else -> (items, m)
+  }
+}

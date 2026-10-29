@@ -1,0 +1,20 @@
+import fckt.collections.Maps.*
+
+// Where what's learned while solving is kept.
+module Solutions {
+  // What block gives, with every unknown it makes and solves kept here while it runs. What it
+  // gives may hold unknowns this knew the solutions to, so it should resolve them first, with
+  // Types.resolvedFully, if they're to mean anything outside.
+  solving<A>(block: @Solving () -> A): A = {
+    var made = 0
+    var solutions: Map<TypeVariable, Type> = emptyMap()
+    Solving(
+      fresh = () -> {
+        made = made + 1
+        TypeVariable(made)
+      },
+      solutionOf = variable -> solutions.get(variable),
+      solve = (variable, t) -> { solutions = solutions.put(variable, t) },
+    ) { block() }
+  }
+}

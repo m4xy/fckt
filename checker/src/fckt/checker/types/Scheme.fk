@@ -1,0 +1,3 @@
+// A type that's generic in some of its variables, as a function's is once it's checked: each use
+// of it gets new variables in their place.
+type Scheme(variables: List<TypeVariable>, template: Type)
