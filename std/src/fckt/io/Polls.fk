@@ -31,7 +31,7 @@ module Polls {
         came
       },
     ) {
-      executor.runWith(() -> waitForAny(), block)
+      executor.run(idle = () -> waitForAny(), block = block)
     }
   }
 

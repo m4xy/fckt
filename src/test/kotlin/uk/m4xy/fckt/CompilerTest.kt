@@ -2607,4 +2607,33 @@ class CompilerTest {
         )
         assertEquals("hello you!\nhi Ada!\nagain again\n[xx]\n<x]\n", output)
     }
+
+    @Test
+    fun `a spec's parameters can have defaults, which its values and modules have`() {
+        val output = run(
+            """
+            spec Greeter {
+              greet(name: String = "you", punctuation: String = "!"): String
+            }
+
+            module Plain : Greeter {
+              greet(name: String, punctuation: String): String = "hello ${'$'}name${'$'}punctuation"
+            }
+
+            // Its own default, in place of the spec's.
+            module Quiet : Greeter {
+              greet(name: String, punctuation: String = "."): String = "hi ${'$'}name${'$'}punctuation"
+            }
+
+            @Console said(greeter: Greeter) = println(greeter.greet(punctuation = "?") + " " + greeter.greet())
+
+            @Console main() = {
+              said(Plain)
+              println(Plain.greet("Ada"))
+              println(Quiet.greet())
+            }
+            """.trimIndent(),
+        )
+        assertEquals("hello you? hello you!\nhello Ada!\nhi you.\n", output)
+    }
 }

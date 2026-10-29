@@ -14,7 +14,7 @@ module InTurn : Executor {
     var next: Int,
   )
 
-  @Fail runWith<A, @E>(idle: @E () -> List<Waker>, block: @Concurrent<@E> @E () -> A): A = {
+  @Fail run<A, @E>(idle: @E () -> List<Waker>, block: @Concurrent<@E> @E () -> A): A = {
     state = Run([], emptyMap(), emptyMap(), [], 1)
     var result = None
     task(state, 0) { result = Some(block()) }

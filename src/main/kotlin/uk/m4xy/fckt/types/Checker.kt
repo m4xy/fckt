@@ -606,18 +606,48 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Decl.Sealed -> listOf(d) + d.variants.flatMap { v ->
                 v.fields.mapNotNull { f -> f.default?.let { defaultOf("${d.name}$${v.name}", f.name, f.pos, f.type, it, d.typeParams) } }
             }
+            // A spec's function's, which every module that follows it has, and a value of it.
+            is Decl.Spec -> listOf(d) + d.values.flatMap { v ->
+                v.params.orEmpty().mapNotNull { p ->
+                    p.default?.let { value ->
+                        p.type?.let { namesIn(it) }?.firstOrNull { name -> d.types.any { it.name == name } }?.let {
+                            throw CompileError(value.pos, "a default is worked out on its own, so it can't be a $it, which each module says what it is")
+                        }
+                        defaultOf("${d.name}$${v.name}", p.name, p.pos, p.type, value, v.typeParams)
+                    }
+                }
+            }
             else -> listOf(d)
         }
     }
 
     private fun defaultName(owner: String, name: String) = "$owner\$default\$$name"
 
+    /** The names of the types [t] is written with. */
+    private fun namesIn(t: TypeRef): List<String> = when (t) {
+        is TypeRef.Named -> listOf(t.name) + t.args.flatMap { namesIn(it) }
+        is TypeRef.Function -> t.params.flatMap { namesIn(it) } + namesIn(t.result)
+        is TypeRef.Tuple -> t.elements.flatMap { namesIn(it) }
+        is TypeRef.Effects -> emptyList()
+    }
+
+    /**
+     * Each of [global]'s parameters, whether it has a default, and whose: its own, or, where it
+     * gives none, its module's spec's function's, which it has as Kotlin's overrides do.
+     */
+    private fun paramDefaults(global: Decl.Function): Pair<List<Pair<String, Boolean>>, Map<String, String>> {
+        val spec = moduleSpecs[global.path.joinToString(".")]
+        val inSpec = spec?.values?.firstOrNull { it.name == global.simpleName }?.params.orEmpty().filter { it.default != null }.map { it.name }.toSet()
+        val owners = global.params.orEmpty().filter { it.default == null && it.name in inSpec }.associate { it.name to "${spec!!.name}$${global.simpleName}" }
+        return global.params.orEmpty().map { it.name to (it.default != null || it.name in owners) } to owners
+    }
+
     /**
      * A block written after a call, `f(a) { ... }`, is its last parameter's, as in Kotlin, however
      * many before it are left to their defaults, if each it skips has one: by name, or, for a
      * method, whose arguments are all in order, after a call to the default of each.
      */
-    private fun trailingLast(e: Expr.Call, params: List<Pair<String, Boolean>>, owner: String, named: Boolean) {
+    private fun trailingLast(e: Expr.Call, params: List<Pair<String, Boolean>>, owner: String, named: Boolean, owners: Map<String, String>) {
         val block = e.args.lastOrNull()?.takeIf { it.name == null && (it.value as? Expr.Lambda)?.trailing == true } ?: return
         if (e.args.size >= params.size) return
         // Only where what it skips can be left out: otherwise it's the next one's, as it always was.
@@ -627,22 +657,22 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             e.args = e.args.dropLast(1) + block.copy(name = params.last().first)
             return
         }
-        e.args = e.args.dropLast(1) + skipped.map { (name, _) -> Arg(null, Expr.Call(e.pos, Expr.Name(e.pos, defaultName(owner, name)), emptyList())) } + block
+        e.args = e.args.dropLast(1) + skipped.map { (name, _) -> Arg(null, Expr.Call(e.pos, Expr.Name(e.pos, defaultName(owners[name] ?: owner, name)), emptyList())) } + block
     }
 
     /**
      * [e] with a call to the default of each of [params] it leaves out that has one: those after
      * the ones passed in order, and not passed by name. [owner] is the full name defaults are named for.
      */
-    private fun withDefaultArgs(e: Expr.Call, params: List<Pair<String, Boolean>>, owner: String, named: Boolean = true) {
-        trailingLast(e, params, owner, named)
+    private fun withDefaultArgs(e: Expr.Call, params: List<Pair<String, Boolean>>, owner: String, named: Boolean = true, owners: Map<String, String> = emptyMap()) {
+        trailingLast(e, params, owner, named, owners)
         val inOrder = e.args.takeWhile { it.name == null }.size
         val byName = e.args.mapNotNull { it.name }.toSet()
         val missing = params.drop(inOrder).filter { (name, hasDefault) -> hasDefault && name !in byName }.map { it.first }
         if (missing.isEmpty()) return
         // A method call passes everything in order, so only those at the end can be left out.
         val defaults = missing.map { name ->
-            Arg(if (named) name else null, Expr.Call(e.pos, Expr.Name(e.pos, defaultName(owner, name)), emptyList()))
+            Arg(if (named) name else null, Expr.Call(e.pos, Expr.Name(e.pos, defaultName(owners[name] ?: owner, name)), emptyList()))
         }
         if (!named && params.drop(inOrder).map { it.first } != missing) return
         e.args = e.args + defaults
@@ -3348,7 +3378,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 else -> {}
             }
             callee.type = fn
-            withDefaultArgs(e, global.params.map { it.name to (it.default != null) }, global.name)
+            val (params, owners) = paramDefaults(global)
+            withDefaultArgs(e, params, global.name, owners = owners)
             val order = argOrder(e.args.map { it.name to it.value.pos }, global.params.map { it.name }, e.pos, "'${global.simpleName}'")
             checkArgs(e.args, order, fn.params, scope)
             e.resolved = CallRef.Function(order)
@@ -3420,6 +3451,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         field(member, receiver, scope)?.let { (ref, type) ->
             member.resolved = ref
             member.type = type
+            // A spec's function, given its parameters by name and its defaults, then in order.
+            if (ref is MemberRef.OfModule) ref.value.params?.let { params ->
+                withDefaultArgs(e, params.map { it.name to (it.default != null) }, "${ref.spec.name}$${ref.value.name}")
+                val order = argOrder(e.args.map { it.name to it.value.pos }, params.map { it.name }, e.pos, "'${ref.value.name}'")
+                e.args = order.map { e.args[it].copy(name = null) }
+            }
             return null // Called like any other function value.
         }
         if (member.name == "copy" && receiver is Type.Con && receiver.name in records) {

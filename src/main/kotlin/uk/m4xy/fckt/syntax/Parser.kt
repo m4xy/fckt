@@ -453,7 +453,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 val valueName = ident("a type or a value in the spec")
                 if (valueName[0].isUpperCase()) throw error("functions and values start with a lower-case letter", memberPos)
                 val typeParams = typeParams()
-                val params = if (at(T.LPAREN)) params() else null
+                val params = if (at(T.LPAREN)) params(defaults = true) else null
                 params?.firstOrNull { it.type == null }?.let { throw error("a spec's parameters need types: ${it.name}: Type", it.pos) }
                 expect(T.COLON, if (params == null) "':' and the value's type" else "':' and the result type")
                 val type = type()

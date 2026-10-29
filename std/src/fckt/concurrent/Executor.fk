@@ -6,9 +6,7 @@ import fckt.effects.Fail
 spec Executor {
   // What block gives, once it and every task it launched, and they launched, have ended. When no
   // task is ready, but some are parked, idle waits for something to wake them, and says the wakers
-  // of what came; where it can wait for nothing, none would ever go on, which fails.
-  @Fail runWith<A, @E>(idle: @E () -> List<Waker>, block: @Concurrent<@E> @E () -> A): A
-
-  // The same, its tasks waking only each other.
-  @Fail run<A, @E>(block: @Concurrent<@E> @E () -> A): A = runWith(() -> [], block)
+  // of what came; where it can wait for nothing, none would ever go on, which fails. Without idle,
+  // tasks wake only each other.
+  @Fail run<A, @E>(idle: @E () -> List<Waker> = () -> [], block: @Concurrent<@E> @E () -> A): A
 }
