@@ -1,0 +1,5 @@
+// Giving up on a source: reject(at, message) never returns, and what's reading it gives a
+// SyntaxError.
+effect Rejecting {
+  reject(at: Position, message: String): Nothing
+}

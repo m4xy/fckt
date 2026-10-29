@@ -1,0 +1,3 @@
+x = """never closed
+
+// error: 1:5: error: unterminated raw string

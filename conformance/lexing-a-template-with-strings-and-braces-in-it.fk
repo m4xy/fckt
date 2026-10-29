@@ -1,0 +1,10 @@
+import fckt.io.Console
+
+main() = {
+  name = "fckt"
+  println("${if (name == "}") "{" else "${name.length} letters"} in \"$name\" \u{1F600}")
+  println("""raw: ${"""x"""} $name \n""")
+}
+
+// prints: 4 letters in "fckt" 😀
+// prints: raw: x fckt \n

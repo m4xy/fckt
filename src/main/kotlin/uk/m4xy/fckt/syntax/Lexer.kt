@@ -311,7 +311,8 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
             if (src[i] == '\n') {
                 line++
                 col = 1
-            } else {
+            } else if (!src[i].isLowSurrogate()) {
+                // A column is a character, a code point, as fckt's are: one past U+FFFF is two of Kotlin's chars.
                 col++
             }
             i++

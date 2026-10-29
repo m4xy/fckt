@@ -1,0 +1,3 @@
+// A word, number, string or symbol of a source, what kind it is, and where it starts. A string's
+// text is empty, and its pieces are its parts.
+type Token(kind: Kind, text: String, at: Position, parts: List<StringPart> = [])

@@ -1,0 +1,2 @@
+// Where something is in a source: its line and column, from 1.
+type Position(line: Int, column: Int)

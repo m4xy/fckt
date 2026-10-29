@@ -307,6 +307,14 @@ its type arguments, `Option<shop.Address>`; a tuple, `(Int, String)`; or a funct
 or `spec <name>`; a record or case made of constants, `make <name>(<field> = <value>, ...)`; an
 annotation, `@<name>(<field> = <value>, ...)`; or a list, `[...]`, or tuple, `(...)`, of them.
 
+### fckt in fckt
+
+[fckt.parser](parser) is fckt's source read as this compiler reads it, written in fckt, toward a
+compiler that compiles itself. So far it's the lexer: `Lexer.tokens(source)` gives each `Token`,
+its `Kind`, text and `Position`, a string's parts, and the `End`; or a `SyntaxError`. `LexerTest`
+holds it to this compiler's lexer, token for token, over the conformance cases, the core, std, the
+examples, and these libraries, its own source among them.
+
 ## Building a project
 
 Building projects, their tests and their dependencies, and publishing libraries, is

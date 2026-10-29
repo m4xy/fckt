@@ -1,0 +1,454 @@
+import fckt.collections.Array
+import fckt.collections.Arrays.*
+
+// Splitting a source into tokens. A line break is a token, Newline, only where it can end a
+// statement: directly inside braces, or at the top level; not after an operator, an opening bracket
+// or another break, nor before a line that starts with . or |>, and not before a }, which ends its
+// line's statement itself.
+module Lexer {
+  // The source's tokens, the last of them End; or why it can't be split.
+  tokens(source: String): Result<List<Token>, SyntaxError> = {
+    scan = Scan(source.toList().toArray(), 0, 1, 1, [], [])
+    Rejecting(reject = (at, message, _) -> Error(SyntaxError(at, message))) { Ok(all(scan)) }
+  }
+
+  // How far splitting has got: the source's characters, the next one's index, line and column; the
+  // tokens so far, the latest first; and the brackets open, the innermost first.
+  private type Scan(chars: Array<Char>, var index: Int, var line: Int, var column: Int, var tokens: List<Token>, var open: List<Kind>)
+
+  // A string literal's pieces so far, the latest first: its parts, and the text since the last.
+  private type Pieces(var parts: List<StringPart>, var text: List<Char>)
+
+  // The kinds after which a line break never ends a statement. Not >, which can close a type's
+  // arguments at the end of a line, type S<A>; after a comparison, a parser skips the break.
+  private continuesLine: List<Kind> = [
+    Comma, Dot, Colon, Assign, OperatorAssign, Arrow, Pipe, Tilde, Bang, Plus, Minus, Star, Slash,
+    Percent, Equal, NotEqual, Less, LessOrEqual, GreaterOrEqual, And, Or, LeftParen, LeftBracket, LeftBrace,
+    Semicolon, Newline,
+  ]
+
+  @Rejecting @Mutating private all(s: Scan): List<Token> = {
+    skipSpaceAndComments(s)
+    if (ended(s)) {
+      add(s, Token(End, "", position(s)))
+      s.tokens.reversed()
+    } else {
+      start = position(s)
+      c = current(s)
+      when {
+        c == '\n' -> {
+          advance(s)
+          newline(s, start)
+        }
+        c.isLetter() || c == '_' -> identifier(s, start)
+        c.isDigit() -> number(s, start)
+        looking(s, "\"\"\"") -> rawString(s, start)
+        c == '"' -> string(s, start)
+        c == '\'' -> char(s, start)
+        else -> symbol(s, start)
+      }
+      all(s)
+    }
+  }
+
+  @Mutating private newline(s: Scan, start: Position): Unit = {
+    inBraces = when (s.open) {
+      [] -> true
+      [innermost, *_] -> innermost == LeftBrace
+    }
+    continues = when (s.tokens) {
+      [] -> true
+      [last, *_] -> continuesLine.contains(last.kind)
+    }
+    if (inBraces && !continues && !nextLineContinues(s, s.index)) add(s, Token(Newline, "\n", start))
+  }
+
+  // Whether the next line, past blank ones and comments, goes on with the one before: starts with
+  // . (but not ..) or |>.
+  private nextLineContinues(s: Scan, from: Int): Boolean = {
+    at = pastSpace(s.chars, from)
+    if (startsWith(s, at, "//")) nextLineContinues(s, lineEnd(s.chars, at))
+    else (startsWith(s, at, ".") && !startsWith(s, at, "..")) || startsWith(s, at, "|>")
+  }
+
+  private pastSpace(chars: Array<Char>, at: Int): Int = if (at < chars.size && chars[at].isWhitespace()) pastSpace(chars, at + 1) else at
+
+  private lineEnd(chars: Array<Char>, at: Int): Int = if (at < chars.size && chars[at] != '\n') lineEnd(chars, at + 1) else at
+
+  @Rejecting @Mutating private skipSpaceAndComments(s: Scan): Unit = if (!ended(s)) {
+    c = current(s)
+    when {
+      c == ' ' || c == '\t' || c == '\r' -> {
+        advance(s)
+        skipSpaceAndComments(s)
+      }
+      looking(s, "//") -> {
+        skipWhile(s) { it != '\n' }
+        skipSpaceAndComments(s)
+      }
+      looking(s, "/*") -> {
+        start = position(s)
+        advanceBy(s, 2)
+        skipUntil(s, "*/")
+        if (ended(s)) reject(start, "unterminated comment")
+        advanceBy(s, 2)
+        skipSpaceAndComments(s)
+      }
+      else -> Unit
+    }
+  }
+
+  // ---- Words and numbers ----
+
+  @Mutating private identifier(s: Scan, start: Position): Unit = {
+    from = s.index
+    skipWhile(s) { it.isLetterOrDigit() || it == '_' }
+    word = text(s, from, s.index)
+    add(s, Token(if (word == "_") Underscore else keyword(word).getOrElse(Identifier), word, start))
+  }
+
+  private keyword(word: String): Option<Kind> = when (word) {
+    "type" -> Some(TypeKeyword)
+    "module" -> Some(ModuleKeyword)
+    "private" -> Some(PrivateKeyword)
+    "when" -> Some(WhenKeyword)
+    "if" -> Some(IfKeyword)
+    "else" -> Some(ElseKeyword)
+    "is" -> Some(IsKeyword)
+    "true" -> Some(TrueKeyword)
+    "false" -> Some(FalseKeyword)
+    else -> None
+  }
+
+  // Digits, which _ can separate, and maybe a fraction, an exponent, or both, which make it a Float.
+  @Mutating private number(s: Scan, start: Position): Unit = {
+    from = s.index
+    skipWhile(s) { it.isDigit() || it == '_' }
+    fraction = ahead(s, 0) == Some('.') && ahead(s, 1).map { it.isDigit() }.getOrElse(false)
+    if (fraction) {
+      advance(s)
+      skipWhile(s) { it.isDigit() }
+    }
+    exponent = ahead(s, 0) == Some('e') || ahead(s, 0) == Some('E')
+    if (exponent) {
+      advance(s)
+      if (ahead(s, 0) == Some('+') || ahead(s, 0) == Some('-')) advance(s)
+      skipWhile(s) { it.isDigit() }
+    }
+    add(s, Token(if (fraction || exponent) FloatLiteral else IntLiteral, text(s, from, s.index).replace("_", ""), start))
+  }
+
+  // ---- Characters and strings ----
+
+  // The character a backslash, just passed, and what's after it stand for, as text.
+  @Rejecting @Mutating private escape(s: Scan, start: Position): String = when (ahead(s, 0)) {
+    None -> reject(start, "unterminated literal")
+    Some(e) -> {
+      advance(s)
+      when (e) {
+        'n' -> "\n"
+        't' -> "\t"
+        'r' -> "\r"
+        '\\' -> "\\"
+        '"' -> "\""
+        '\'' -> "'"
+        '$' -> "\$"
+        'u' -> unicode(s, start)
+        else -> reject(Position(s.line, s.column - 1), "unknown escape \\$e")
+      }
+    }
+  }
+
+  // A, four hex digits, as in Kotlin, or \u{1F600}, any code point.
+  @Rejecting @Mutating private unicode(s: Scan, start: Position): String = {
+    braced = ahead(s, 0) == Some('{')
+    if (braced) advance(s)
+    from = s.index
+    hexDigits(s, from, braced)
+    hex = text(s, from, s.index)
+    if (braced) {
+      if (ahead(s, 0) != Some('}')) reject(start, "\\u{...} needs its closing }")
+      advance(s)
+    }
+    when ("0x$hex".toIntOrNone()) {
+      Some(code) if (braced || hex.length == 4) && code >= 0 && code <= 1114111 && (code < 55296 || code > 57343) -> code.toChar().toString()
+      else -> reject(start, "\\u takes four hex digits, as \\u00e9, or a code point in braces, as \\u{1F600}")
+    }
+  }
+
+  @Mutating private hexDigits(s: Scan, from: Int, braced: Boolean): Unit =
+    if (!ended(s) && current(s).isLetterOrDigit() && (braced || s.index - from < 4)) {
+      advance(s)
+      hexDigits(s, from, braced)
+    }
+
+  @Rejecting @Mutating private char(s: Scan, start: Position): Unit = {
+    advance(s)
+    c = when (ahead(s, 0)) {
+      None, Some('\n'), Some('\'') -> reject(start, "empty or unterminated character literal")
+      Some('\\') -> {
+        advance(s)
+        escape(s, start)
+      }
+      Some(one) -> {
+        advance(s)
+        one.toString()
+      }
+    }
+    if (ahead(s, 0) != Some('\'')) reject(start, "a character literal holds one character")
+    advance(s)
+    add(s, Token(CharLiteral, c, start))
+  }
+
+  // """text""": no escapes, and it can span lines, but $name and ${expression} still interpolate,
+  // as in Kotlin.
+  @Rejecting @Mutating private rawString(s: Scan, start: Position): Unit = {
+    advanceBy(s, 3)
+    pieces = Pieces([], [])
+    rawBody(s, start, pieces)
+    add(s, Token(StringLiteral, "", start, finished(pieces)))
+  }
+
+  @Rejecting @Mutating private rawBody(s: Scan, start: Position, pieces: Pieces): Unit = {
+    if (ended(s)) reject(start, "unterminated raw string")
+    if (looking(s, "\"\"\"") && !looking(s, "\"\"\"\"")) advanceBy(s, 3)
+    else {
+      if (!template(s, start, pieces)) {
+        pieces.text = [current(s), *pieces.text]
+        advance(s)
+      }
+      rawBody(s, start, pieces)
+    }
+  }
+
+  @Rejecting @Mutating private string(s: Scan, start: Position): Unit = {
+    advance(s)
+    pieces = Pieces([], [])
+    quotedBody(s, start, pieces)
+    add(s, Token(StringLiteral, "", start, finished(pieces)))
+  }
+
+  @Rejecting @Mutating private quotedBody(s: Scan, start: Position, pieces: Pieces): Unit = {
+    if (ended(s) || current(s) == '\n') reject(start, "unterminated string")
+    if (current(s) == '"') advance(s)
+    else {
+      if (current(s) == '\\') {
+        advance(s)
+        pieces.text = escape(s, start).toList().reversed() + pieces.text
+      } else if (!template(s, start, pieces)) {
+        pieces.text = [current(s), *pieces.text]
+        advance(s)
+      }
+      quotedBody(s, start, pieces)
+    }
+  }
+
+  // Reads a $name or ${expression} at the cursor into pieces, after the text before it; false if
+  // there's none.
+  @Rejecting @Mutating private template(s: Scan, start: Position, pieces: Pieces): Boolean = {
+    opens = current(s) == '$' && when (ahead(s, 1)) {
+      Some(next) -> next == '{' || next.isLetter() || next == '_'
+      None -> false
+    }
+    if (opens) {
+      flush(pieces)
+      if (ahead(s, 1) == Some('{')) {
+        advanceBy(s, 2)
+        at = position(s)
+        from = s.index
+        templateEnd(s, start, 1)
+        pieces.parts = [Code(text(s, from, s.index), at), *pieces.parts]
+        advance(s)
+      } else {
+        advance(s)
+        at = position(s)
+        from = s.index
+        skipWhile(s) { it.isLetterOrDigit() || it == '_' }
+        pieces.parts = [Code(text(s, from, s.index), at), *pieces.parts]
+      }
+    }
+    opens
+  }
+
+  // Moves to the } that closes a ${, past strings in it, whose braces and quotes aren't its own.
+  @Rejecting @Mutating private templateEnd(s: Scan, start: Position, depth: Int): Unit =
+    if (ended(s)) reject(start, "unterminated string template")
+    else if (current(s) == '"') {
+      skipString(s, start)
+      templateEnd(s, start, depth)
+    } else if (current(s) == '{') {
+      advance(s)
+      templateEnd(s, start, depth + 1)
+    } else if (current(s) == '}') {
+      if (depth > 1) {
+        advance(s)
+        templateEnd(s, start, depth - 1)
+      }
+    } else {
+      advance(s)
+      templateEnd(s, start, depth)
+    }
+
+  @Rejecting @Mutating private skipString(s: Scan, start: Position): Unit =
+    if (looking(s, "\"\"\"")) {
+      advanceBy(s, 3)
+      skipRaw(s)
+      if (ended(s)) reject(start, "unterminated raw string")
+      advanceBy(s, 3)
+    } else {
+      advance(s)
+      skipQuoted(s)
+      if (ended(s) || current(s) == '\n') reject(start, "unterminated string")
+      advance(s)
+    }
+
+  @Mutating private skipRaw(s: Scan): Unit = if (!ended(s) && !(looking(s, "\"\"\"") && !looking(s, "\"\"\"\""))) {
+    advance(s)
+    skipRaw(s)
+  }
+
+  @Mutating private skipQuoted(s: Scan): Unit = if (!ended(s) && current(s) != '"' && current(s) != '\n') {
+    advanceBy(s, if (current(s) == '\\') 2 else 1)
+    skipQuoted(s)
+  }
+
+  @Mutating private flush(pieces: Pieces): Unit = if (pieces.text.isNotEmpty()) {
+    pieces.parts = [Text(pieces.text.reversed().map { it.toString() }.joinToString("")), *pieces.parts]
+    pieces.text = []
+  }
+
+  @Mutating private finished(pieces: Pieces): List<StringPart> = {
+    flush(pieces)
+    pieces.parts.reversed()
+  }
+
+  // ---- Symbols ----
+
+  @Rejecting @Mutating private symbol(s: Scan, start: Position): Unit = {
+    two = if (s.index + 1 < s.chars.size) text(s, s.index, s.index + 2) else ""
+    when (pair(two)) {
+      Some(kind) -> {
+        advanceBy(s, 2)
+        add(s, Token(kind, two, start))
+      }
+      None -> {
+        c = current(s)
+        kind = when (single(c)) {
+          Some(kind) -> kind
+          None -> reject(start, "unexpected character '$c'")
+        }
+        advance(s)
+        when (kind) {
+          LeftParen, LeftBrace, LeftBracket -> {
+            s.open = [kind, *s.open]
+          }
+          RightParen, RightBrace, RightBracket -> {
+            s.open = s.open.drop(1)
+            // } ends whatever statement was open on its line.
+            if (kind == RightBrace) when (s.tokens) {
+              [last, *rest] if last.kind == Newline -> {
+                s.tokens = rest
+              }
+              else -> Unit
+            }
+          }
+          else -> Unit
+        }
+        add(s, Token(kind, c.toString(), start))
+      }
+    }
+  }
+
+  private pair(text: String): Option<Kind> = when (text) {
+    "->" -> Some(Arrow)
+    "|>" -> Some(Pipe)
+    "==" -> Some(Equal)
+    "!=" -> Some(NotEqual)
+    "<=" -> Some(LessOrEqual)
+    ">=" -> Some(GreaterOrEqual)
+    "&&" -> Some(And)
+    "||" -> Some(Or)
+    "+=", "-=", "*=", "/=", "%=" -> Some(OperatorAssign)
+    else -> None
+  }
+
+  private single(c: Char): Option<Kind> = when (c) {
+    '(' -> Some(LeftParen)
+    ')' -> Some(RightParen)
+    '{' -> Some(LeftBrace)
+    '}' -> Some(RightBrace)
+    '[' -> Some(LeftBracket)
+    ']' -> Some(RightBracket)
+    ',' -> Some(Comma)
+    '.' -> Some(Dot)
+    ':' -> Some(Colon)
+    ';' -> Some(Semicolon)
+    '=' -> Some(Assign)
+    '~' -> Some(Tilde)
+    '!' -> Some(Bang)
+    '+' -> Some(Plus)
+    '-' -> Some(Minus)
+    '*' -> Some(Star)
+    '/' -> Some(Slash)
+    '%' -> Some(Percent)
+    '<' -> Some(Less)
+    '>' -> Some(Greater)
+    '@' -> Some(At)
+    else -> None
+  }
+
+  // ---- The cursor ----
+
+  @Mutating private add(s: Scan, token: Token): Unit = {
+    s.tokens = [token, *s.tokens]
+  }
+
+  private ended(s: Scan): Boolean = s.index >= s.chars.size
+
+  private current(s: Scan): Char = s.chars[s.index]
+
+  // The character n past the cursor, if the source goes that far.
+  private ahead(s: Scan, n: Int): Option<Char> = if (s.index + n < s.chars.size) Some(s.chars[s.index + n]) else None
+
+  private position(s: Scan): Position = Position(s.line, s.column)
+
+  private looking(s: Scan, text: String): Boolean = startsWith(s, s.index, text)
+
+  private startsWith(s: Scan, at: Int, text: String): Boolean = matches(s.chars, at, text.toList())
+
+  private matches(chars: Array<Char>, at: Int, text: List<Char>): Boolean = when (text) {
+    [] -> true
+    [c, *rest] -> at < chars.size && chars[at] == c && matches(chars, at + 1, rest)
+  }
+
+  // The characters from index from up to, not including, to.
+  private text(s: Scan, from: Int, to: Int): String = charsBetween(s.chars, from, to, []).map { it.toString() }.joinToString("")
+
+  private charsBetween(chars: Array<Char>, from: Int, to: Int, after: List<Char>): List<Char> =
+    if (to <= from) after else charsBetween(chars, from, to - 1, [chars[to - 1], *after])
+
+  @Mutating private advance(s: Scan): Unit = {
+    if (s.chars[s.index] == '\n') {
+      s.line += 1
+      s.column = 1
+    } else {
+      s.column += 1
+    }
+    s.index += 1
+  }
+
+  @Mutating private advanceBy(s: Scan, n: Int): Unit = if (n > 0 && !ended(s)) {
+    advance(s)
+    advanceBy(s, n - 1)
+  }
+
+  @Mutating private skipWhile(s: Scan, keep: (Char) -> Boolean): Unit = if (!ended(s) && keep(current(s))) {
+    advance(s)
+    skipWhile(s, keep)
+  }
+
+  @Mutating private skipUntil(s: Scan, text: String): Unit = if (!ended(s) && !looking(s, text)) {
+    advance(s)
+    skipUntil(s, text)
+  }
+}

@@ -1,0 +1,3 @@
+main() = println("a\qb")
+
+// error: 1:21: error: unknown escape \q

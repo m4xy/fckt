@@ -1,0 +1,8 @@
+// fckt.parser: fckt's source read as fckt's own compiler reads it, written in fckt, toward a compiler
+// that compiles itself. kiln publishLocal publishes it.
+import uk.m4xy.kiln.fckt.Fckt
+import uk.m4xy.fktests.kiln.*
+
+project = Project(name = "parser", group = "fckt", version = "0.1.0")
+
+plugins = [Fckt(), FkTests()]

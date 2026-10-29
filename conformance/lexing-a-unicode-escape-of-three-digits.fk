@@ -1,0 +1,3 @@
+main() = println("\u00e")
+
+// error: 1:18: error: \u takes four hex digits, as \u00e9, or a code point in braces, as \u{1F600}

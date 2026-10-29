@@ -1,0 +1,26 @@
+import fckt.io.Paths.*
+import fckt.io.Files.*
+import fckt.parser.*
+
+// Writes to the first argument each other file's tokens, as fckt.parser's Lexer splits it, a line each, for LexerTest to set
+// beside what fckt's own lexer makes of it: "# file", then "line:column Kind "text"", with a
+// string's parts after it, or "error line:column message".
+main(args: List<String>) = when (args) {
+  [] -> Unit
+  [out, *files] -> path(out).writeText(files.map { file ->
+    "# $file\n" + when (Lexer.tokens(path(file).readText())) {
+      Ok(tokens) -> tokens.map { described(it) + "\n" }.joinToString("")
+      Error(SyntaxError(at, message)) -> "error ${at.line}:${at.column} $message\n"
+    }
+  }.joinToString(""))
+}
+
+described(t: Token): String =
+  "${t.at.line}:${t.at.column} ${t.kind.name} ${quoted(t.text)}" + t.parts.map { " " + partOf(it) }.joinToString("")
+
+partOf(part: StringPart): String = when (part) {
+  Text(text) -> "text ${quoted(text)}"
+  Code(source, at) -> "code ${quoted(source)} ${at.line}:${at.column}"
+}
+
+quoted(text: String): String = "\"" + text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"") + "\""

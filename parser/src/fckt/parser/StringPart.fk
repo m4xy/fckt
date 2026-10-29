@@ -1,0 +1,6 @@
+// A piece of a string literal: text as it is, or the source of what's interpolated, $name or
+// ${expression}, with where that source starts.
+type StringPart {
+  Text(text: String),
+  Code(source: String, at: Position),
+}

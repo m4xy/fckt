@@ -1,0 +1,2 @@
+// Why a source can't be read, and where.
+type SyntaxError(at: Position, message: String)

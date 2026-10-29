@@ -1,0 +1,3 @@
+main() = println("\u{1F600")
+
+// error: 1:18: error: \u{...} needs its closing }

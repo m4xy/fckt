@@ -1,0 +1,3 @@
+main() = println("${1 + ")
+
+// error: 1:18: error: unterminated string

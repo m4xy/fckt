@@ -1,0 +1,17 @@
+import fckt.io.Console
+
+main() = {
+  total = 1 +
+    2
+  doubled = [1, 2]
+    .map { it * 2 }
+    // a comment between
+    .sum()
+  println("$total $doubled")
+  a = 3; b = 4
+  println((a < b &&
+    b > a).toString())
+}
+
+// prints: 3 6
+// prints: true

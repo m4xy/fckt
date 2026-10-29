@@ -1,0 +1,3 @@
+x = ''
+
+// error: 1:5: error: empty or unterminated character literal
