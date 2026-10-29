@@ -1,0 +1,231 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.sources.*
+import fckt.checker.types.Types
+import fckt.parser.*
+
+// Naming every declaration in a program's files by its full name, and finding those declared twice.
+// A name declared twice gives up on the program, as nothing that names it can be checked.
+module Symbols {
+  // The declarations of the workspace's files, by kind and full name.
+  @Abandoning table(workspace: Workspace): SymbolTable = {
+    declared = ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file) }
+    modules = moduleTable(workspace, declared)
+    specs = uniquely(declared.filter { isSpec(it) }) { s -> "spec '${simpleName(s)}' is declared twice" }
+    types = typeTables(declared)
+    functions = functionTable(declared)
+    SymbolTable(modules, types.records, types.caseTypes, types.aliases, types.annotationTypes, specs, functions, caseTable(types))
+  }
+
+  // The files in the order their declarations are taken: each package's, then the program's own
+  // file last, so that of two declarations of one name, it's the program's that's said to be the
+  // second.
+  private ordered(workspace: Workspace): List<LoadedFile> = when (workspace.files) {
+    [] -> []
+    [own, *others] -> others + [own]
+  }
+
+  // What comes before the names a package's files declare: geometry., or nothing for the
+  // program's own package.
+  private prefixOf(pkg: List<String>): String = if (pkg.isEmpty()) "" else pkg.joinToString(".") + "."
+
+  // Each declaration, and each inside the modules among them, by its full name.
+  private symbolsIn(declarations: List<Declaration>, prefix: String, file: LoadedFile): List<Symbol> = declarations.flatMap { d ->
+    name = prefix + ownName(d)
+    symbol = Symbol(name, pathOf(name), d, file)
+    when (d.definition) {
+      ModuleDefinition(inside, _, _, _, _) -> [symbol, *symbolsIn(inside, "$name.", file)]
+      else -> [symbol]
+    }
+  }
+
+  // A declaration's own name: as written, but an extension's, which is its receiver's type's and
+  // its method's, List$second, or ListInt$sum for List<Int>'s.
+  ownName(d: Declaration): String = when (d.definition) {
+    FunctionDefinition(typeParameters, Some(receiver), _, _, _, _, _) -> "${mangled(receiver, typeParameters)}$${d.name}"
+    else -> d.name
+  }
+
+  // A receiver's type as it's named in an extension's name: its type parameters left out.
+  private mangled(t: TypeRef, typeParameters: List<String>): String = when (t) {
+    NamedType(_, name, arguments) ->
+      if (typeParameters.contains(name)) "" else lastPart(name) + arguments.map { mangled(it, typeParameters) }.joinToString("")
+    TupleType(_, elements) -> "Tuple" + elements.map { mangled(it, typeParameters) }.joinToString("")
+    FunctionType(_, _, _, _) -> "Function"
+    EffectsType(_, _) -> ""
+  }
+
+  // The modules a full name is inside: geometry and Shapes, for geometry.Shapes.area.
+  pathOf(name: String): List<String> = name.split(".").dropLast(1)
+
+  // What a declaration is called where it's written: area, for geometry.Shapes.area.
+  simpleName(symbol: Symbol): String = lastPart(symbol.name)
+
+  private lastPart(name: String): String = name.split(".").lastOrNone().getOrElse(name)
+
+  // ---- Modules ----
+
+  // Every module: each package, as its folder, and each that a file declares.
+  @Abandoning private moduleTable(workspace: Workspace, declared: List<Symbol>): Map<String, ModuleSymbol> = {
+    packages = workspace.files.map { it.package }.filter { it.isNotEmpty() }.flatMap { pkg -> prefixes(pkg) }.distinct()
+      .map { pkg -> PackageModule(pkg.joinToString(".")) }
+    modules = declared.filter { isModule(it) }.map { DeclaredModule(it) }
+    (packages + modules).fold(emptyMap()) { table, m ->
+      name = moduleName(m)
+      when (m) {
+        DeclaredModule(symbol) if table.containsKey(name) -> abandon(at(symbol, "module '${simpleName(symbol)}' is declared twice"))
+        else -> table.put(name, m)
+      }
+    }
+  }
+
+  // A module's full name.
+  moduleName(m: ModuleSymbol): String = when (m) {
+    PackageModule(name) -> name
+    DeclaredModule(symbol) -> symbol.name
+  }
+
+  // geometry, then geometry.shapes, for geometry.shapes.
+  private prefixes(pkg: List<String>): List<List<String>> = pkg.mapIndexed { i, _ -> pkg.take(i + 1) }
+
+  // ---- Types ----
+
+  // The type declarations, each kind apart, with each name declared once among all of them.
+  private type TypeTables(
+    records: Map<String, Symbol>,
+    caseTypes: Map<String, Symbol>,
+    aliases: Map<String, Symbol>,
+    annotationTypes: Map<String, Symbol>,
+  )
+
+  @Abandoning private typeTables(declared: List<Symbol>): TypeTables = {
+    types = declared.filter { isType(it) }
+    checkTypeNames(types, [])
+    tables = TypeTables(
+      byName(types.filter { isRecord(it) && !isAnnotation(it) }),
+      byName(types.filter { isCaseType(it) }),
+      byName(types.filter { isAlias(it) }),
+      byName(types.filter { isAnnotation(it) }),
+    )
+    checkCaseNames(tables)
+    tables
+  }
+
+  // That no type is named as a built-in one is, nor declared twice, and that each is sound alone.
+  @Abandoning private checkTypeNames(types: List<Symbol>, seen: List<String>): Unit = when (types) {
+    [] -> Unit
+    [symbol, *rest] -> {
+      own = simpleName(symbol)
+      if (Types.builtins.containsKey(own)) abandon(at(symbol, "'$own' is a built-in type"))
+      else if (seen.contains(symbol.name)) abandon(at(symbol, "type '$own' is declared twice"))
+      else {
+        checkCases(symbol)
+        checkTypeNames(rest, seen + [symbol.name])
+      }
+    }
+  }
+
+  // That a type with cases has some, and none called what Option's are.
+  @Abandoning private checkCases(symbol: Symbol): Unit = when (symbol.declaration.definition) {
+    CasesDefinition(_, [], [], []) -> abandon(at(symbol, "type '${simpleName(symbol)}' has no cases"))
+    CasesDefinition(_, cases, _, _) -> cases.forEach { c ->
+      if (c.name == "Some" || c.name == "None") abandon(Diagnostic(symbol.file.source.path, c.at, "'${c.name}' is reserved for Option"))
+      else Unit
+    }
+    else -> Unit
+  }
+
+  // That no case is named as a record beside its type is, and no type has two cases of one name.
+  @Abandoning private checkCaseNames(tables: TypeTables): Unit = tables.caseTypes.toList().forEach { entry ->
+    (_, owner) = entry
+    cases = casesOf(owner)
+    cases.forEach { c ->
+      if (tables.records.containsKey((owner.path + [c.name]).joinToString("."))) {
+        abandon(Diagnostic(owner.file.source.path, c.at, "'${c.name}' is both a type and a variant"))
+      } else Unit
+    }
+    cases.forEachIndexed { i, c ->
+      if (cases.take(i).any { it.name == c.name }) {
+        abandon(Diagnostic(owner.file.source.path, c.at, "variant '${c.name}' is declared twice in ${owner.name}"))
+      } else Unit
+    }
+  }
+
+  // The cases a type declares itself.
+  casesOf(symbol: Symbol): List<CaseDefinition> = when (symbol.declaration.definition) {
+    CasesDefinition(_, cases, _, _) -> cases
+    else -> []
+  }
+
+  // Each case, by its type's full name and its own.
+  private caseTable(types: TypeTables): Map<String, CaseSymbol> = types.caseTypes.toList().flatMap { entry ->
+    (name, owner) = entry
+    casesOf(owner).map { c -> ("$name.${c.name}", CaseSymbol("$name.${c.name}", owner, c)) }
+  }.toMap()
+
+  // ---- Functions ----
+
+  // Functions and values, each name once: an extension's for its receiver's type.
+  @Abandoning private functionTable(declared: List<Symbol>): Map<String, Symbol> = declared.filter { isFunction(it) }.fold(emptyMap()) { table, symbol ->
+    if (!table.containsKey(symbol.name)) table.put(symbol.name, symbol)
+    else when (symbol.declaration.definition) {
+      FunctionDefinition(_, Some(receiver), _, _, _, _, _) ->
+        abandon(at(symbol, "'${symbol.declaration.name}' is declared twice for ${Written.typeRef(receiver)}"))
+      else -> abandon(at(symbol, "'${simpleName(symbol)}' is declared twice"))
+    }
+  }
+
+  // ---- Kinds ----
+
+  isModule(s: Symbol): Boolean = when (s.declaration.definition) {
+    ModuleDefinition(_, _, _, _, _) -> true
+    else -> false
+  }
+
+  isSpec(s: Symbol): Boolean = when (s.declaration.definition) {
+    SpecDefinition(_, _, _, _, _) -> true
+    else -> false
+  }
+
+  isFunction(s: Symbol): Boolean = when (s.declaration.definition) {
+    FunctionDefinition(_, _, _, _, _, _, _) -> true
+    else -> false
+  }
+
+  // A record, type with cases, alias or annotation type.
+  isType(s: Symbol): Boolean = isRecord(s) || isCaseType(s) || isAlias(s)
+
+  // A record, or an annotation type, which is written as one.
+  isRecord(s: Symbol): Boolean = when (s.declaration.definition) {
+    RecordDefinition(_, _, _, _, _) -> true
+    else -> false
+  }
+
+  isAnnotation(s: Symbol): Boolean = when (s.declaration.definition) {
+    RecordDefinition(_, _, _, annotation, _) -> annotation
+    else -> false
+  }
+
+  isCaseType(s: Symbol): Boolean = when (s.declaration.definition) {
+    CasesDefinition(_, _, _, _) -> true
+    else -> false
+  }
+
+  isAlias(s: Symbol): Boolean = when (s.declaration.definition) {
+    AliasDefinition(_, _) -> true
+    else -> false
+  }
+
+  // ---- Helpers ----
+
+  private byName(symbols: List<Symbol>): Map<String, Symbol> = symbols.map { (it.name, it) }.toMap()
+
+  // The symbols by name, giving up at the first whose name is taken, with what duplicate says.
+  @Abandoning private uniquely(symbols: List<Symbol>, duplicate: (Symbol) -> String): Map<String, Symbol> =
+    symbols.fold(emptyMap()) { table, symbol ->
+      if (table.containsKey(symbol.name)) abandon(at(symbol, duplicate(symbol))) else table.put(symbol.name, symbol)
+    }
+
+  // An error at a declaration.
+  at(symbol: Symbol, message: String): Diagnostic = Diagnostic(symbol.file.source.path, symbol.declaration.at, message)
+}

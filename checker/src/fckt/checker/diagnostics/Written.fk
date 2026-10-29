@@ -1,0 +1,15 @@
+import fckt.parser.*
+
+// What's written in a program as messages quote it, without where it's written.
+module Written {
+  // A type as written: Map<String, Int>, (Int) -> Unit, (A, B), @Console.
+  typeRef(t: TypeRef): String = when (t) {
+    NamedType(_, name, []) -> name
+    NamedType(_, name, arguments) -> "$name<${typeRefs(arguments)}>"
+    FunctionType(_, parameters, result, _) -> "(${typeRefs(parameters)}) -> ${typeRef(result)}"
+    TupleType(_, elements) -> "(${typeRefs(elements)})"
+    EffectsType(_, effects) -> effects.map { "@${it.name}" }.joinToString(" ")
+  }
+
+  private typeRefs(ts: List<TypeRef>): String = ts.map { typeRef(it) }.joinToString(", ")
+}

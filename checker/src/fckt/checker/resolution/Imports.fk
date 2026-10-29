@@ -1,0 +1,142 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.sources.*
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// What each file's imports bring in. A declaration imported by name, or by its as, is what that
+// name means; a module brings its types, and their cases, with it; a type with cases brings its
+// cases; a handled effect, its operations; and .* all of a package or module. One named outright
+// comes before one brought in with something else, and a name two bring in means neither, until
+// it's imported by name.
+module Imports {
+  // What the file's imports bring in, or, giving up, why one names nothing.
+  @Abandoning of(file: LoadedFile, table: SymbolTable): FileImports = {
+    known = knownNames(table)
+    (named, implied) = file.imports.fold((emptyMap(), emptyMap())) { acc, i ->
+      (n, imp) = acc
+      bring(i, file, n, imp, known, table)
+    }
+    FileImports(
+      implied.filter { _, targets -> targets.size == 1 }.toList().map { name, targets -> (name, targets.firstOrNone().getOrElse("")) }
+        .toMap().putAll(named),
+      implied.filter { name, targets -> targets.size > 1 && !named.containsKey(name) },
+    )
+  }
+
+  // What a full name can name, for an import.
+  private type Known {
+    KnownModule,
+    KnownType(symbol: Symbol),
+    KnownSpec(symbol: Symbol),
+    KnownFunction(symbol: Symbol),
+  }
+
+  // Everything that can be imported, by its full name.
+  private knownNames(table: SymbolTable): Map<String, Known> = {
+    declared = [table.records, table.caseTypes, table.aliases, table.annotationTypes].flatMap { it.toList() }
+      .map { name, symbol -> (name, KnownType(symbol)) }
+    specs = table.specs.toList().map { name, symbol -> (name, KnownSpec(symbol)) }
+    functions = table.functions.toList().map { name, symbol -> (name, KnownFunction(symbol)) }
+    modules = table.modules.toList().map { name, _ -> (name, KnownModule) }
+    (declared + specs + functions + modules).toMap()
+  }
+
+  // The import's names added to those named outright and those brought in with something else.
+  @Abandoning private bring(
+    i: Import,
+    file: LoadedFile,
+    named: Map<String, String>,
+    implied: Map<String, List<String>>,
+    known: Map<String, Known>,
+    table: SymbolTable,
+  ): (Map<String, String>, Map<String, List<String>>) = {
+    full = i.path.joinToString(".")
+    if (i.wildcard) {
+      if (!table.modules.containsKey(full)) abandon(Diagnostic(file.source.path, i.at, "import $full.* names no package or module"))
+      else (named, implying(implied, members(full, known, table)))
+    } else if (!known.containsKey(full) && !table.cases.containsKey(full) && isMethodOf(i.path, table)) {
+      // A method, by its name: its module brings in its extensions, as importing the module would.
+      (named, implied)
+    } else if (!known.containsKey(full) && !table.cases.containsKey(full)) {
+      abandon(Diagnostic(file.source.path, i.at, "import $full names nothing"))
+    } else {
+      name = i.alias.getOrElse(i.path.lastOrNone().getOrElse(full))
+      when (named.get(name)) {
+        Some(other) if other != full ->
+          abandon(Diagnostic(file.source.path, i.at, "'$name' is imported already, as $other; import this one as another name, with as"))
+        else -> (named.put(name, full), implying(implied, alongside(full, known, table)))
+      }
+    }
+  }
+
+  // What importing the declaration by name brings in with it: a module's types and their cases, an
+  // effect's operations, a type's cases.
+  private alongside(full: String, known: Map<String, Known>, table: SymbolTable): List<(String, String)> = {
+    types = when (known.get(full)) {
+      Some(KnownModule) -> typesIn(full, known, table)
+      else -> []
+    }
+    cases = when (table.caseTypes.get(full)) {
+      Some(owner) -> Symbols.casesOf(owner).map { c -> (c.name, "$full.${c.name}") }
+      None -> []
+    }
+    types + operationsOf(full, known) + cases
+  }
+
+  // Whether the path is a module's and one of its extensions' method name.
+  private isMethodOf(path: List<String>, table: SymbolTable): Boolean = {
+    parent = path.dropLast(1)
+    method = path.lastOrNone().getOrElse("")
+    table.functions.any { _, s -> s.path == parent && s.declaration.name == method && isExtension(s) }
+  }
+
+  private isExtension(s: Symbol): Boolean = when (s.declaration.definition) {
+    FunctionDefinition(_, Some(_), _, _, _, _, _) -> true
+    else -> false
+  }
+
+  // Each name in the module or package, with its full name: what's declared directly in it, the
+  // cases of its types, and the operations of its effects.
+  private members(of: String, known: Map<String, Known>, table: SymbolTable): List<(String, String)> = {
+    inside = known.toList().filter { name, _ -> parentOf(name) == of }.map { name, _ -> (lastPart(name), name) }
+    cases = table.caseTypes.toList().filter { name, _ -> parentOf(name) == of }.flatMap { name, owner ->
+      Symbols.casesOf(owner).map { c -> (c.name, "$name.${c.name}") }
+    }
+    inside + cases + inside.flatMap { _, full -> operationsOf(full, known) }
+  }
+
+  // The members of a module that are types or specs, or the cases and operations that come with them.
+  private typesIn(of: String, known: Map<String, Known>, table: SymbolTable): List<(String, String)> =
+    members(of, known, table).filter { _, full ->
+      when (known.get(full)) {
+        None -> true
+        Some(KnownType(_)) -> true
+        Some(KnownSpec(_)) -> true
+        else -> false
+      }
+    }
+
+  // A handled effect's operations, which come with it, by the names they're called by: beside the
+  // effect, as fckt.io.println is beside fckt.io.Console.
+  private operationsOf(full: String, known: Map<String, Known>): List<(String, String)> = when (known.get(full)) {
+    Some(KnownSpec(Symbol(_, _, Declaration(_, _, SpecDefinition(_, values, _, _, _), _, _, annotations), _))) if annotations.any { it.name == "Effect" } -> {
+      prefix = if (parentOf(full).isEmpty()) "" else parentOf(full) + "."
+      values.map { v -> (v.name, prefix + v.name) }
+    }
+    else -> []
+  }
+
+  // The names added to those brought in with something else, each target once.
+  private implying(implied: Map<String, List<String>>, more: List<(String, String)>): Map<String, List<String>> =
+    more.fold(implied) { acc, entry ->
+      (name, target) = entry
+      existing = acc.getOrDefault(name, [])
+      if (existing.contains(target)) acc else acc.put(name, existing + [target])
+    }
+
+  // The full name of what a full name is in, empty for the top of the program's own package.
+  private parentOf(full: String): String = full.split(".").dropLast(1).joinToString(".")
+
+  private lastPart(full: String): String = full.split(".").lastOrNone().getOrElse(full)
+}

@@ -1,0 +1,6 @@
+import fckt.collections.Maps.*
+import fckt.checker.symbols.SymbolTable
+
+// What looking names up needs: every declaration, and what each file's imports bring in, by the
+// file's path, None for the program's own.
+type Namespace(table: SymbolTable, imports: Map<Option<String>, FileImports>)

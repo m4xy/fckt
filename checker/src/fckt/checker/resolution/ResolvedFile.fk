@@ -1,0 +1,4 @@
+import fckt.checker.sources.LoadedFile
+
+// A file, with what each type's name written in it means.
+type ResolvedFile(file: LoadedFile, types: List<ResolvedType>)

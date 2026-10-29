@@ -1,0 +1,3 @@
+// A file of source code: where it is, as positions name it, None for the program's own text; the
+// project it's in; and what it says.
+type SourceText(path: Option<String>, project: Project, text: String)

@@ -1,0 +1,178 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.parser.*
+
+// Reading the files a program uses: its own, every file of its own package, and every file of each
+// package it imports, and so of each package those files import, and so on. A package is used
+// whole, whatever of it is used, so that what a program means doesn't depend on what it happens to
+// mention.
+module Loader {
+  // The program's own file and the files it uses, from the tree, with each error found in reading
+  // them: what can't be parsed, a capitalised file that declares more than what it's named for,
+  // and an import of what isn't there.
+  @Reporting load(entry: SourceText, tree: SourceTree): Workspace = {
+    loading = Loading(tree, entry, [], [], emptyMap())
+    when (parsed(entry)) {
+      Some(file) -> {
+        own = LoadedFile(entry, [], EntryFile, file.imports + defaultImports, file.declarations)
+        loading.files = [own]
+        before = loading.files.size
+        loadPackage(loading, [])
+        follow(loading, [own] + loading.files.drop(before))
+      }
+      None -> Unit
+    }
+    Workspace(loading.files, loading.apart)
+  }
+
+  // What every file imports: the core, what the language relies on, and the methods of its own
+  // types. Anything else, the standard library included, a file imports itself.
+  defaultImports: List<Import> = [
+    "fckt.lang.Effect", "fckt.lang.HandledBy", "fckt.lang.Pure", "fckt.lang.Propagates", "fckt.lang.Encapsulates",
+    "fckt.lang.Mutating", "fckt.lang.Repeatable", "fckt.lang.Meta", "fckt.lang.Monad", "fckt.lang.Applicative",
+    "fckt.lang.Functions.*", "fckt.lang.Lists.*", "fckt.lang.Strings.*", "fckt.lang.Maths.*", "fckt.lang.Options.*",
+    "fckt.lang.Results.*", "fckt.lang.Lazies.*",
+  ].map { written -> Import(Position(1, 1), written.removeSuffix(".*").split("."), written.endsWith(".*"), None) }
+
+  // How far loading has got: the files read so far, the packages whose files they are, and what
+  // the files beside the program's own that are programs of their own declare.
+  private type Loading(
+    tree: SourceTree,
+    entry: SourceText,
+    var packages: List<List<String>>,
+    var files: List<LoadedFile>,
+    var apart: Map<String, String>,
+  )
+
+  // Loads what each of the files' imports names, and what the files that brings in import in turn.
+  @Reporting @Mutating private follow(loading: Loading, files: List<LoadedFile>): Unit = files.forEach { file ->
+    file.imports.forEach { i ->
+      before = loading.files.size
+      followImport(loading, file, i)
+      follow(loading, loading.files.drop(before))
+    }
+  }
+
+  @Reporting @Mutating private followImport(loading: Loading, file: LoadedFile, i: Import): Unit = when (packageOf(loading.tree, i.path)) {
+    None -> report(Diagnostic(file.source.path, i.at, "import ${shown(i)} names no package: a package is a folder, as geometry is for geometry/Shapes.fk"))
+    Some(pkg) -> {
+      rest = i.path.drop(pkg.size)
+      if (rest.isEmpty() && !i.wildcard) {
+        dotted = i.path.joinToString(".")
+        report(Diagnostic(file.source.path, i.at, "$dotted is a package; import what's in it, as in import $dotted.*"))
+      } else {
+        loadPackage(loading, pkg)
+        checkImported(loading, file, i, pkg, rest)
+      }
+    }
+  }
+
+  // The longest start of the path that's a package: what comes after it is in it.
+  private packageOf(tree: SourceTree, path: List<String>): Option<List<String>> =
+    if (path.isEmpty()) None
+    else if (tree.packages.containsKey(path)) Some(path)
+    else packageOf(tree, path.dropLast(1))
+
+  // That what the import names after its package is there: a module, by its file, or what one of
+  // the package's lower-case files declares. Only the core's modules' members are looked for
+  // here; what the others have, the checker looks for.
+  @Reporting private checkImported(loading: Loading, importer: LoadedFile, i: Import, pkg: List<String>, rest: List<String>): Unit = when (rest) {
+    [] -> Unit
+    [first, *members] -> {
+      inPackage = loading.files.filter { it.package == pkg }
+      when (inPackage.find { it.role == ModuleFile(first) }) {
+        Some(moduleFile) -> when (members) {
+          [member, *_] if moduleFile.source.project == CoreProject && !hasMember(moduleFile, first, member) ->
+            report(Diagnostic(importer.source.path, i.at, "${(pkg + [first]).joinToString(".")} has no '$member'"))
+          else -> Unit
+        }
+        None ->
+          if (inPackage.none { it.role == DeclarationsFile && it.declarations.any { d -> d.name == first } })
+            report(Diagnostic(importer.source.path, i.at, "${pkg.joinToString(".")} has no '$first'"))
+          else Unit
+      }
+    }
+  }
+
+  // Whether the module file's module declares the member, or, if it declares something else, as
+  // a file for a type does, whether that is the member.
+  private hasMember(file: LoadedFile, name: String, member: String): Boolean = when (file.declarations.find { it.name == name }) {
+    Some(Declaration(_, _, ModuleDefinition(declarations, _, _, _, _), _, _, _)) -> declarations.any { it.name == member }
+    else -> false
+  }
+
+  // Reads each file of the package, once.
+  @Reporting @Mutating private loadPackage(loading: Loading, pkg: List<String>): Unit =
+    if (loading.packages.contains(pkg)) Unit
+    else {
+      loading.packages = loading.packages + [pkg]
+      loading.tree.packages.getOrDefault(pkg, [])
+        .filter { it.path != loading.entry.path }
+        .forEach { source -> loadFile(loading, pkg, source) }
+    }
+
+  @Reporting @Mutating private loadFile(loading: Loading, pkg: List<String>, source: SourceText): Unit = when (parsed(source)) {
+    None -> Unit
+    Some(file) -> {
+      name = fileName(source)
+      if (startsCapitalised(name)) {
+        checkDeclaresOnly(source, name, file.declarations)
+        add(loading, LoadedFile(source, pkg, ModuleFile(name), file.imports + defaultImports, file.declarations))
+      } else if (file.declarations.any { isMain(it) }) {
+        // A program of its own: what it declares is its own, not its package's.
+        if (pkg.isEmpty()) {
+          loading.apart = file.declarations.fold(loading.apart) { found, d ->
+            if (found.containsKey(d.name)) found else found.put(d.name, source.path.getOrElse("a file"))
+          }
+        }
+      } else add(loading, LoadedFile(source, pkg, DeclarationsFile, file.imports + defaultImports, file.declarations))
+    }
+  }
+
+  @Mutating private add(loading: Loading, file: LoadedFile): Unit = {
+    loading.files = loading.files + [file]
+  }
+
+  private isMain(d: Declaration): Boolean = d.name == "main" && when (d.definition) {
+    FunctionDefinition(_, _, _, _, _, _, _) -> true
+    else -> false
+  }
+
+  // That a capitalised file declares what it's named for, a module, type, spec or effect, and
+  // nothing else but what's private to it.
+  @Reporting private checkDeclaresOnly(source: SourceText, name: String, declarations: List<Declaration>): Unit = {
+    main = declarations.find { d -> d.name == name && d.visibility != Private && !isExtension(d) }
+    when (main) {
+      None -> report(Diagnostic(source.path, Position(1, 1), "$name.fk must declare $name, which it's named for: a module, type, spec or effect"))
+      Some(_) -> Unit
+    }
+    declarations.filter { d -> Some(d) != main && d.visibility != Private }.forEach { d ->
+      report(Diagnostic(source.path, d.at,
+        if (startsCapitalised(d.name)) "${d.name} belongs in its own file, ${d.name}.fk; or make it private to $name.fk"
+        else "'${d.name}' is outside $name: a capitalised file declares only what it's named for, so put it in a module, or make it private to $name.fk"
+      ))
+    }
+  }
+
+  private isExtension(d: Declaration): Boolean = when (d.definition) {
+    FunctionDefinition(_, Some(_), _, _, _, _, _) -> true
+    else -> false
+  }
+
+  // The file's declarations and imports, or None, with why it can't be read reported.
+  @Reporting private parsed(source: SourceText): Option<SourceFile> = when (Parser.parse(source.text)) {
+    Ok(file) -> Some(file)
+    Error(errors) -> {
+      errors.forEach { report(Diagnostic(source.path, it.at, it.message)) }
+      None
+    }
+  }
+
+  // The file's name, without its folder or extension: Shapes, for geometry/Shapes.fk.
+  fileName(source: SourceText): String =
+    source.path.getOrElse("").substringAfterLast("/").removeSuffix(".fk").removeSuffix(".fki")
+
+  private startsCapitalised(name: String): Boolean = name.getOrNone(0).map { it.isUpperCase() }.getOrElse(false)
+
+  private shown(i: Import): String = i.path.joinToString(".") + (if (i.wildcard) ".*" else "")
+}

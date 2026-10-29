@@ -1,0 +1,5 @@
+// Finding what's wrong with a program: each error is reported, and checking goes on, so a
+// program's errors are found together.
+effect Reporting {
+  report(diagnostic: Diagnostic): Unit
+}

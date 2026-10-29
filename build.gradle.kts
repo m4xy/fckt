@@ -34,8 +34,8 @@ distributions { main { contents { from("std") { into("std"); exclude("build", ".
 
 tasks.test {
     useJUnitPlatform()
-    // What the tests read besides their classes: a change to a case, std or fckt.parser runs them again.
-    listOf("conformance", "std/src", "examples", "symbols/src", "parser/src", "src/test/fckt").forEach {
+    // What the tests read besides their classes: a change to a case, std, fckt.parser or fckt.checker runs them again.
+    listOf("conformance", "std/src", "examples", "symbols/src", "parser/src", "checker/src", "src/test/fckt").forEach {
         inputs.dir(it).withPropertyName("sources:$it").withPathSensitivity(PathSensitivity.RELATIVE)
     }
 }

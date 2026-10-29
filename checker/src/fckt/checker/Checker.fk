@@ -1,0 +1,18 @@
+import fckt.checker.diagnostics.*
+import fckt.checker.sources.*
+import fckt.checker.resolution.*
+
+// Checking a program: reading the files it uses, then working out what its names mean, each stage
+// from what the one before found. Each error is reported, and checking goes as far as it can.
+module Checker {
+  // What each type's name written in each file the program uses means, file by file, the
+  // program's own first, and every error found on the way.
+  typeNames(entry: SourceText, tree: SourceTree): (List<ResolvedFile>, List<Diagnostic>) = Diagnostics.collecting {
+    workspace = Loader.load(entry, tree)
+    resolved = Diagnostics.recovering {
+      namespace = Resolution.namespace(workspace)
+      workspace.files.map { file -> ResolvedFile(file, Resolution.resolvedTypes(file, namespace)) }
+    }
+    resolved.getOrElse([])
+  }
+}

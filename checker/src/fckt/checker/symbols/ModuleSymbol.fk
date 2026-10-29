@@ -1,0 +1,7 @@
+// A module: one a file declares, or a package, which is a module named for its folder, holding
+// what its files declare.
+type ModuleSymbol {
+  // geometry, or geometry.shapes inside it, by its full name.
+  PackageModule(name: String),
+  DeclaredModule(symbol: Symbol),
+}

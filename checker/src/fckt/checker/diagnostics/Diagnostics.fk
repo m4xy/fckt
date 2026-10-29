@@ -1,0 +1,16 @@
+// Collecting what's wrong, and carrying on after it.
+module Diagnostics {
+  // What block gives, with every error it reports, in the order it reports them.
+  collecting<A>(block: @Reporting () -> A): (A, List<Diagnostic>) = {
+    var found = []
+    result = Reporting(report = diagnostic -> { found = found + [diagnostic] }) { block() }
+    (result, found)
+  }
+
+  // What block gives, or, if it gives up, None, with why it did reported.
+  @Reporting recovering<A>(block: @Abandoning () -> A): Option<A> =
+    Abandoning(abandon = (diagnostic, _) -> {
+      report(diagnostic)
+      None
+    }) { Some(block()) }
+}

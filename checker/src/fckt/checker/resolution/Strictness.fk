@@ -1,0 +1,3 @@
+// What looking a name up does with a declaration of that name that can't be used from where it's
+// looked up from: skip it and look further, or refuse, saying why.
+type Strictness { Skipping, Refusing }

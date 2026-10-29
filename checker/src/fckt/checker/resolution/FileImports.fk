@@ -1,0 +1,6 @@
+import fckt.collections.Maps.*
+
+// What a file's imports bring in: each name, with the full name of what it means there; and the
+// names that two or more bring in, with what each means, which the file must import by name to
+// use.
+type FileImports(named: Map<String, String>, ambiguous: Map<String, List<String>>)

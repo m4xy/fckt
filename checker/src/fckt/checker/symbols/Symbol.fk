@@ -1,0 +1,8 @@
+import fckt.parser.Declaration
+import fckt.checker.sources.LoadedFile
+
+// A declaration, by the name it has everywhere: the names of the packages and modules it's in,
+// its path, then its own, as geometry.Shapes.area. One at the top of the program's own package
+// has just its own. An extension's own name is its receiver's type's and its method's, as
+// List$second, so that each type's can be told apart.
+type Symbol(name: String, path: List<String>, declaration: Declaration, file: LoadedFile)

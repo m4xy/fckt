@@ -1,0 +1,5 @@
+// Giving up on what's being checked, as an error can make going on meaningless: the error is
+// reported where checking recovers, and what comes after it is checked.
+effect Abandoning {
+  abandon(diagnostic: Diagnostic): Nothing
+}

@@ -1,0 +1,2 @@
+// A type's name, as written, with what it means.
+type ResolvedType(written: WrittenType, meaning: TypeMeaning)

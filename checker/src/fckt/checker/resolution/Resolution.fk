@@ -1,0 +1,27 @@
+import fckt.collections.Maps.*
+import fckt.checker.diagnostics.*
+import fckt.checker.sources.*
+import fckt.checker.symbols.*
+
+// Working out what names mean, from the files a program is checked with.
+module Resolution {
+  // Every declaration, and what each file's imports bring in; or, giving up, why a name is
+  // declared twice or an import names nothing.
+  @Abandoning namespace(workspace: Workspace): Namespace = {
+    table = Symbols.table(workspace)
+    Namespace(table, workspace.files.map { file -> (file.source.path, Imports.of(file, table)) }.toMap())
+  }
+
+  // What each type's name written in the file means, with an error for each that means nothing
+  // it can be used as.
+  @Reporting resolvedTypes(file: LoadedFile, namespace: Namespace): List<ResolvedType> = WrittenTypes.inFile(file, namespace).mapNotNull { written ->
+    when (TypeNames.meaning(written.name, written.scope, namespace)) {
+      Found(meaning) -> Some(ResolvedType(written, meaning))
+      Refused(why) -> {
+        report(Diagnostic(file.source.path, written.at, why))
+        None
+      }
+      NotFound -> None
+    }
+  }
+}

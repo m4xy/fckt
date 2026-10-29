@@ -1,0 +1,4 @@
+import fckt.parser.Position
+
+// A type's name, as written in a file, with what it can name there.
+type WrittenType(at: Position, name: String, scope: TypeScope)

@@ -1,0 +1,5 @@
+import fckt.collections.Maps.*
+
+// Every package a program could use: each by its path, with the files directly in its folder, in
+// order of their names. A folder with only folders in it is a package too, with no files.
+type SourceTree(packages: Map<List<String>, List<SourceText>>)

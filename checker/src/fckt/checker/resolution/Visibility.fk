@@ -1,0 +1,77 @@
+import fckt.collections.Maps.*
+import fckt.checker.sources.*
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// Who can see a declaration. A private one is seen inside its module, or, at the top of a package,
+// in its file; an internal one, in its project; one at the top of the program's own package, only
+// in the program, which other projects are no part of; one inside a functor, only in it, as it's
+// used through the modules it makes. And none is seen where the module it's in isn't.
+module Visibility {
+  // Why the declaration can't be seen from the place, if it can't.
+  whyHidden(symbol: Symbol, place: Place, table: SymbolTable): Option<String> = {
+    own = Symbols.simpleName(symbol)
+    if (isForeign(symbol, place)) Some("'$own' is the program's own, which other projects' code can't see")
+    else if (symbol.declaration.visibility == Internal && symbol.file.source.project != place.file.source.project)
+      Some("'$own' is internal to its project, ${projectName(symbol.file.source.project)}")
+    else if (symbol.declaration.visibility == Private && !isInside(place, symbol.path))
+      Some("'$own' is private to ${if (symbol.path.isEmpty()) "this file" else symbol.path.joinToString(".")}")
+    else if (symbol.declaration.visibility == Private && !Symbols.isModule(symbol) && isInPackage(symbol, table) && symbol.file.source.path != place.file.source.path)
+      Some("'$own' is private to ${symbol.file.source.path.getOrElse("the program's file")}")
+    else when (enclosingFunctor(symbol.path, table)) {
+      Some(functor) if !isInside(place, Symbols.pathOf(functor.name) + [Symbols.simpleName(functor)]) -> {
+        name = Symbols.simpleName(functor)
+        Some("'$own' is in the functor $name, which makes modules: use it through one, made with module Name = $name(...)")
+      }
+      else -> hiddenModuleAround(symbol.path, 1, place, table)
+    }
+  }
+
+  // Why a module around a declaration at the path can't be seen, the outermost first, if one can't.
+  private hiddenModuleAround(path: List<String>, length: Int, place: Place, table: SymbolTable): Option<String> =
+    if (length > path.size) None
+    else when (table.modules.get(path.take(length).joinToString("."))) {
+      Some(DeclaredModule(m)) -> whyHidden(m, place, table).orElse { hiddenModuleAround(path, length + 1, place, table) }
+      else -> hiddenModuleAround(path, length + 1, place, table)
+    }
+
+  // Whether the declaration is the program's own, at its top level, and the place isn't: the
+  // core's, or another project's, which a program's declarations are no part of. Not its modules,
+  // which it gives a library's functors, or follows a library's specs with.
+  isForeign(symbol: Symbol, place: Place): Boolean =
+    symbol.path.isEmpty() && !Symbols.isModule(symbol) && symbol.file.source.project == ProgramProject &&
+      place.file.source.project != ProgramProject
+
+  // Whether the place is in the module at the path, or in one inside it.
+  isInside(place: Place, path: List<String>): Boolean = place.path.take(path.size) == path
+
+  // Whether the declaration is directly in a package, the program's or a folder's, not in a module.
+  private isInPackage(symbol: Symbol, table: SymbolTable): Boolean =
+    symbol.path.isEmpty() || when (table.modules.get(symbol.path.joinToString("."))) {
+      Some(PackageModule(_)) -> true
+      else -> false
+    }
+
+  // The functor a declaration at the path is in, if any: the outermost module around it that takes
+  // modules.
+  enclosingFunctor(path: List<String>, table: SymbolTable): Option<Symbol> = path.mapIndexed { i, _ ->
+    table.modules.get(path.take(i + 1).joinToString("."))
+  }.mapNotNull { found ->
+    when (found) {
+      Some(DeclaredModule(m)) if isFunctor(m) -> Some(m)
+      else -> None
+    }
+  }.firstOrNone()
+
+  private isFunctor(m: Symbol): Boolean = when (m.declaration.definition) {
+    ModuleDefinition(_, _, [_, *_], _, _) -> true
+    else -> false
+  }
+
+  // A project as messages name it.
+  projectName(project: Project): String = when (project) {
+    ProgramProject -> "program"
+    CoreProject -> "core"
+    OtherProject(root) -> root
+  }
+}

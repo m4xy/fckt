@@ -1,0 +1,25 @@
+import fckt.collections.Maps.*
+import fckt.checker.symbols.*
+import fckt.parser.*
+
+// What specs have, with what those they build on have: spec Stack : Sized has Sized's types too.
+module Specs {
+  // The names of the spec's own types, then those of each it builds on, as they're found from
+  // where it's written.
+  ownTypes(spec: Declaration, place: Place, namespace: Namespace): List<String> = ownTypesSeen(spec, place, namespace, [])
+
+  private ownTypesSeen(spec: Declaration, place: Place, namespace: Namespace, seen: List<String>): List<String> = when (spec.definition) {
+    SpecDefinition(types, _, _, _, parents) -> types.map { it.name } + parents.flatMap { parent ->
+      when (parent) {
+        NamedType(_, name, _) -> when (Names.find(name, namespace.table.specs, s -> Some(s), full -> namespace.table.specs.containsKey(full), place, namespace, Skipping)) {
+          // One it builds on already, through another, adds nothing, nor does one that builds on itself.
+          Found(found) if !seen.contains(found.name) ->
+            ownTypesSeen(found.declaration, Place(found.file, found.path), namespace, seen + [found.name])
+          else -> []
+        }
+        else -> []
+      }
+    }
+    else -> []
+  }
+}

@@ -1,0 +1,49 @@
+import fckt.collections.Maps.*
+import fckt.checker.symbols.*
+import fckt.checker.types.Types
+
+// What the name of a type, as written, means: a type parameter or a spec's own type where it's
+// written, one of the language's own, a declared type, or a spec, as the type of the modules that
+// follow it.
+module TypeNames {
+  meaning(name: String, scope: TypeScope, namespace: Namespace): Lookup<TypeMeaning> =
+    if (scope.typeParameters.contains(name)) Found(TypeParameterType(name))
+    else if (scope.specTypes.contains(name)) Found(SpecOwnType(name))
+    else if (Types.builtins.containsKey(name)) Found(BuiltinType(name))
+    else when (declared(name, scope.place, namespace)) {
+      Found(symbol) -> Found(DeclaredType(symbol))
+      Refused(why) -> Refused(why)
+      NotFound -> notDeclared(name, scope, namespace)
+    }
+
+  // A record's, then a type with cases', then an alias's of that name, refusing one that's there
+  // but can't be used here.
+  private declared(name: String, place: Place, namespace: Namespace): Lookup<Symbol> = {
+    table = namespace.table
+    isType = (full: String) -> table.records.containsKey(full) || table.caseTypes.containsKey(full) || table.aliases.containsKey(full)
+    inTable = (entries: Map<String, Symbol>) -> Names.find(name, entries, s -> Some(s), isType, place, namespace, Refusing)
+    when (inTable(table.records)) {
+      NotFound -> when (inTable(table.caseTypes)) {
+        NotFound -> inTable(table.aliases)
+        other -> other
+      }
+      other -> other
+    }
+  }
+
+  // What a name that's no type means: a spec, as its modules' type; or why it can't be a type.
+  private notDeclared(name: String, scope: TypeScope, namespace: Namespace): Lookup<TypeMeaning> = {
+    table = namespace.table
+    quietly = (entries: Map<String, Symbol>) -> Names.find(name, entries, s -> Some(s), full -> entries.containsKey(full), scope.place, namespace, Skipping)
+    when (quietly(table.specs)) {
+      Found(spec) -> Found(SpecModuleType(spec))
+      else -> when (quietly(table.annotationTypes)) {
+        Found(_) -> Refused("'$name' is an annotation, written @$name(...) before a declaration; no value has its type")
+        else ->
+          if (scope.typeParameters.contains("@$name")) Refused("'$name' is an effect parameter, written @$name, as in @$name () -> Unit")
+          else if (name == "_") Refused("'_' only marks a spec type's parameters, as in Monad<Result<_, String>>")
+          else Refused("unknown type '$name'")
+      }
+    }
+  }
+}

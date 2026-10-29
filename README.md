@@ -317,6 +317,11 @@ gives each `SyntaxError`. `LexerTest` and `ParserTest` hold them to this compile
 parser, token for token and declaration for declaration, over the conformance cases, the core,
 std, the examples, and these libraries, their own source among them.
 
+[fckt.checker](checker) is the checker, being written the same way, a stage at a time: reading
+the files a program uses, naming its declarations, and working out what its names mean, then what
+type everything is. `NamesTest` holds it to this compiler over the conformance cases and every
+package here: each type's name must mean the same declaration.
+
 ## Building a project
 
 Building projects, their tests and their dependencies, and publishing libraries, is

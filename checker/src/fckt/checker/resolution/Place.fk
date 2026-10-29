@@ -1,0 +1,5 @@
+import fckt.checker.sources.LoadedFile
+
+// Where a name is written, which decides what it means and what can be seen from there: the file
+// it's in, and the full path of the module it's in, empty at the top of the program's own package.
+type Place(file: LoadedFile, path: List<String>)

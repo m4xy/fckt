@@ -1,0 +1,126 @@
+import fckt.collections.Maps.*
+import fckt.checker.symbols.*
+
+// Finding what a name means among the declarations of one kind, from where it's written.
+module Names {
+  // What the name, maybe dotted, means among the entries, looked up from the place. In module A.B,
+  // x could be A.B.x, A.x or x, innermost first, but no further out than the place's package, so
+  // a file never sees another package's declarations but through imports; written in full from a
+  // package, as fckt.io.Files.readFile, it's looked for from the top too. Then what the file
+  // imports: Shapes.area, with import geometry.Shapes, is geometry.Shapes.area. Two imports
+  // bringing in the name matter only if both mean something alike, which alike says of a full
+  // name: two types, for a type.
+  find<A>(
+    name: String,
+    entries: Map<String, A>,
+    symbolOf: (A) -> Option<Symbol>,
+    alike: (String) -> Boolean,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<A> = when (around(name, reach(name, place, namespace.table), entries, symbolOf, place, namespace.table, strictness)) {
+    NotFound -> imported(name, entries, symbolOf, alike, place, namespace, strictness)
+    other -> other
+  }
+
+  // The first of the full names the reach gives that's an entry that can be seen; with Refusing,
+  // the first that's an entry, refused if it can't be seen.
+  private around<A>(
+    name: String,
+    depths: List<Int>,
+    entries: Map<String, A>,
+    symbolOf: (A) -> Option<Symbol>,
+    place: Place,
+    table: SymbolTable,
+    strictness: Strictness,
+  ): Lookup<A> = when (depths) {
+    [] -> NotFound
+    [depth, *further] -> {
+      next = () -> around(name, further, entries, symbolOf, place, table, strictness)
+      when (entries.get((place.path.take(depth) + [name]).joinToString("."))) {
+        None -> next()
+        Some(entry) -> when (symbolOf(entry)) {
+          Some(symbol) if Visibility.isForeign(symbol, place) -> next()
+          Some(symbol) -> when (Visibility.whyHidden(symbol, place, table)) {
+            None -> Found(entry)
+            Some(why) -> when (strictness) {
+              Skipping -> next()
+              Refusing -> Refused(why)
+            }
+          }
+          None -> Found(entry)
+        }
+      }
+    }
+  }
+
+  // How far out from the place's module, by how many of its path's names are kept, the name is
+  // looked for: out to its package, and from the top if it's written in full from a package.
+  private reach(name: String, place: Place, table: SymbolTable): List<Int> = {
+    depth = packageDepth(place.path, 0, table)
+    first = name.split(".").firstOrNone().getOrElse(name)
+    full = depth > 0 && isPackage(first, table)
+    descending(place.path.size, depth) + (if (full) [0] else [])
+  }
+
+  // From the first number down to the last, both included.
+  private descending(from: Int, to: Int): List<Int> = if (from < to) [] else [from, *descending(from - 1, to)]
+
+  // How many of the path's names, from the first, are packages: fckt.io in fckt.io.Files.
+  private packageDepth(path: List<String>, depth: Int, table: SymbolTable): Int =
+    if (depth < path.size && isPackage(path.take(depth + 1).joinToString("."), table)) packageDepth(path, depth + 1, table)
+    else depth
+
+  private isPackage(name: String, table: SymbolTable): Boolean = when (table.modules.get(name)) {
+    Some(PackageModule(_)) -> true
+    else -> false
+  }
+
+  // What the name means through the file's imports, if it starts with a name they bring in.
+  private imported<A>(
+    name: String,
+    entries: Map<String, A>,
+    symbolOf: (A) -> Option<Symbol>,
+    alike: (String) -> Boolean,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<A> = {
+    names = importedNames(name, place, namespace)
+    found = names.filter { entries.containsKey(it) }.distinct()
+    similar = names.filter { alike(it) }.distinct()
+    first = name.split(".").firstOrNone().getOrElse(name)
+    if (similar.size > 1 || found.size > 1) {
+      clashing = if (similar.size > 1) similar else found
+      when (strictness) {
+        Skipping -> NotFound
+        Refusing -> Refused("'$first' is imported from ${clashing.joinToString(" and ")}; import the one you mean by name")
+      }
+    } else when (found) {
+      [full] -> when (entries.get(full)) {
+        None -> NotFound
+        Some(entry) -> when (symbolOf(entry).flatMap { Visibility.whyHidden(it, place, namespace.table) }) {
+          None -> Found(entry)
+          Some(why) -> when (strictness) {
+            Skipping -> NotFound
+            Refusing -> Refused(why)
+          }
+        }
+      }
+      else -> NotFound
+    }
+  }
+
+  // The full names the name may mean through the place's file's imports, if it starts with a name
+  // they bring in: several, if they bring that name in from several places.
+  importedNames(name: String, place: Place, namespace: Namespace): List<String> = {
+    first = name.split(".").firstOrNone().getOrElse(name)
+    rest = name.removePrefix(first)
+    imports = namespace.imports.getOrDefault(place.file.source.path, FileImports(emptyMap(), emptyMap()))
+    targets = when (imports.named.get(first)) {
+      Some(target) -> [target]
+      None -> imports.ambiguous.getOrDefault(first, [])
+    }
+    targets.map { it + rest }
+  }
+}

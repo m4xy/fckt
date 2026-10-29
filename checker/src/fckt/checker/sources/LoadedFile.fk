@@ -1,0 +1,6 @@
+import fckt.parser.Declaration
+import fckt.parser.Import
+
+// A file the program uses, read: its package, what it is to the package, what it imports, every
+// file's default imports included, and what it declares.
+type LoadedFile(source: SourceText, package: List<String>, role: FileRole, imports: List<Import>, declarations: List<Declaration>)

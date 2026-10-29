@@ -1,0 +1,11 @@
+// The project a file is in: what can see its internal declarations, and whose its top-level
+// declarations are.
+type Project {
+  // The program being checked: the file it's checked from, and its own folders.
+  ProgramProject,
+  // The language's core, fckt.lang, which every file imports from.
+  CoreProject,
+  // Another project checked with the program, as the standard library is, by its folder as
+  // messages name it.
+  OtherProject(root: String),
+}

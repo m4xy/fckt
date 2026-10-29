@@ -1,0 +1,4 @@
+import fckt.parser.CaseDefinition
+
+// A case of a type with cases, by its type's full name and its own: geometry.Shape.Circle.
+type CaseSymbol(name: String, owner: Symbol, definition: CaseDefinition)

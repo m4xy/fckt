@@ -1,0 +1,9 @@
+// What a file is to its package.
+type FileRole {
+  // The file the program is checked from.
+  EntryFile,
+  // A capitalised file, Shapes.fk, which declares the one thing it's named for.
+  ModuleFile(name: String),
+  // A lower-case file, whose declarations are its package's own.
+  DeclarationsFile,
+}

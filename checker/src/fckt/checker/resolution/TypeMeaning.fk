@@ -1,0 +1,15 @@
+import fckt.checker.symbols.Symbol
+
+// What a type's name, as written, means.
+type TypeMeaning {
+  // One of the type parameters of what it's written in.
+  TypeParameterType(name: String),
+  // One of a spec's own types, written in the spec, which each module that follows it says.
+  SpecOwnType(name: String),
+  // One of the language's own types: Int, List, Result.
+  BuiltinType(name: String),
+  // A record, a type with cases, or an alias.
+  DeclaredType(symbol: Symbol),
+  // A module that follows the spec, as a value: Plugin, for any module that follows Plugin.
+  SpecModuleType(spec: Symbol),
+}

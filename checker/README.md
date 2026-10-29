@@ -9,23 +9,25 @@ those that come after it.
 
 ## Packages
 
+Each stage in the order it runs, then what any stage may use:
+
 | Package | What it's for |
 |---|---|
+| `fckt.checker.sources` | Reading the files a program uses: `Loader.load` takes its own file and a `SourceTree`, every package it could use, and reads its own package and each it imports, and so each those import, whole. A `LoadedFile` is a file read, with its package, its `FileRole` and its `Project`. |
+| `fckt.checker.symbols` | Naming every declaration by its full name, `geometry.Shapes.area`, as a `Symbol`, in a `SymbolTable` of each kind: modules, packages among them, records, types with cases, aliases, annotation types, specs, functions and cases. A name declared twice gives up. |
+| `fckt.checker.resolution` | What names mean. `Imports` works out what each file's imports bring in; `Visibility` says who can see a declaration; `Names.find` looks a name up from a `Place`, out to its package and then through its file's imports; `TypeNames` says what a type's name means; `WrittenTypes` finds each type's name written in a file. |
+| `fckt.checker` | `Checker`, which runs the stages in turn. |
 | `fckt.checker.types` | The `Type` model, `Scheme`s, and working types out: the `Solving` effect, whose handler, `Solutions.solving`, keeps what's been learned; `Unification`, which makes two types the same, rows of effects included; `Types`, the language's own types and what a type is once solutions are followed; `TypeText`, types as messages show them. |
 | `fckt.checker.coverage` | Whether a `when`'s patterns cover every value, by Maranget's usefulness check. It knows nothing of types: it's told the `Alternative` shapes a value can have. |
+| `fckt.checker.diagnostics` | Errors, as data: a `Diagnostic` says where and why, worded as the compiler words it. `Reporting` reports one and goes on; `Abandoning` gives up on what's being checked, and `Diagnostics.recovering` carries on after it. |
 
 Still to come, in this order, each held to the compiler before the next starts:
 
 | Package | What it's for |
 |---|---|
-| `fckt.checker.diagnostics` | Errors, as data: where and why, worded as the compiler words them. |
-| `fckt.checker.sources` | Finding and parsing every package a program imports, whole. |
-| `fckt.checker.symbols` | Every declaration, by its full name, with who can see it. |
-| `fckt.checker.resolution` | What each import, type name and module path refers to. |
 | `fckt.checker.inference` | The type of every expression, pattern and declaration. |
 | `fckt.checker.effects` | What functions do: rows of effects, annotations, handlers and regions. |
 | `fckt.checker.modules` | Specs, functors and opaque types. |
-| `fckt.checker` | `Checker`, which runs the stages in turn. |
 
 ## How it's written
 
@@ -38,6 +40,7 @@ is a case of its own here.
 
 ## Tests
 
-`test/` holds unit tests for each package, which `kiln build` runs. From the next stage on,
-fckt's own tests hold the checker to the compiler over every source in the repository, as they do
-the lexer and parser.
+`test/` holds unit tests for each package, which `kiln build` runs. fckt's own tests hold the
+checker to the compiler over every source in the repository, as they do the lexer and parser:
+`NamesTest` checks each type's name means the same declaration in each conformance case and each
+package, fckt.checker's own among them.

@@ -1,0 +1,7 @@
+// What a name was found to mean: what it names, nothing, or something it can't be used for here,
+// with why.
+type Lookup<A> {
+  Found(value: A),
+  NotFound,
+  Refused(message: String),
+}

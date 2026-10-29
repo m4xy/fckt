@@ -1,0 +1,18 @@
+import fckt.collections.Maps.*
+
+// Every declaration in the files a program is checked with, each kind by full name, as names are
+// looked up in one kind at a time: a type, a spec, a function, a module.
+type SymbolTable(
+  modules: Map<String, ModuleSymbol>,
+  records: Map<String, Symbol>,
+  // Types with cases.
+  caseTypes: Map<String, Symbol>,
+  aliases: Map<String, Symbol>,
+  // annotation types, which are only checked: no value has one.
+  annotationTypes: Map<String, Symbol>,
+  // Specs, effects among them.
+  specs: Map<String, Symbol>,
+  // Functions and values, extensions among them.
+  functions: Map<String, Symbol>,
+  cases: Map<String, CaseSymbol>,
+)

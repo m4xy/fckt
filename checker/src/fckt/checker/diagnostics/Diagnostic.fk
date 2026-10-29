@@ -1,0 +1,5 @@
+import fckt.parser.Position
+
+// Something wrong with a program: the file it's in, None for the program's own file, where in
+// it, and why, worded as fckt's compiler words it.
+type Diagnostic(file: Option<String>, at: Position, message: String)
