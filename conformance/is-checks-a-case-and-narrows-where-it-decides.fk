@@ -1,0 +1,50 @@
+import fckt.io.Console
+
+type Shape {
+  Circle(radius: Int),
+  Square(side: Int),
+  Dot,
+}
+
+type Round { Shape.Circle, Shape.Dot }
+
+// A value: is gives true or false, !is the other way round.
+kinds(s: Shape): String = "${s is Circle} ${s !is Circle} ${s is Round}"
+
+// An if on it narrows s in its branch.
+size(s: Shape): Int = if (s is Circle) s.radius else if (s !is Square) 0 else s.side
+
+// After &&, and after || for !is, s is narrowed.
+big(s: Shape): Boolean = s is Circle && s.radius > 5
+notSmall(s: Shape): Boolean = s !is Square || s.side > 2
+
+// An if on a chain of them narrows each in what follows, and in its branch.
+both(a: Shape, b: Shape): Int = if (a is Circle && b is Square && a.radius > b.side) a.radius - b.side else 0
+
+// A when without a subject narrows in a branch on one.
+describe(s: Shape): String = when {
+  s is Circle -> "circle of ${s.radius}"
+  s is Square && s.side > 9 -> "big square"
+  s is Square -> "square of ${s.side}"
+  else -> "dot"
+}
+
+main() = {
+  println(kinds(Circle(1)))
+  println(kinds(Dot))
+  println("${size(Circle(3))} ${size(Square(4))} ${size(Dot)}")
+  println("${big(Circle(9))} ${big(Circle(1))} ${big(Dot)}")
+  println("${notSmall(Square(1))} ${notSmall(Square(5))} ${notSmall(Dot)}")
+  println("${both(Circle(9), Square(2))} ${both(Circle(1), Square(2))} ${both(Dot, Square(2))}")
+  println([Circle(2), Square(12), Square(3), Dot].map { describe(it) }.joinToString(", "))
+  if (Dot is Round) println("a dot is round")
+}
+
+// prints: true false true
+// prints: false true true
+// prints: 3 4 0
+// prints: true false false
+// prints: false true true
+// prints: 7 0 0
+// prints: circle of 2, big square, square of 3, dot
+// prints: a dot is round

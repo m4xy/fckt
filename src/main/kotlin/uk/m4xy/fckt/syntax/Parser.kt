@@ -9,6 +9,15 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
     /** The `get` calls written `xs[i]`, which `xs[i] = v` turns into a `set`. */
     private val indexes = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Expr, Boolean>())
 
+    /** `e is T` or `e !is T`, as read: what's checked, the check, and whether it's `!is`. */
+    private class Check(val subject: Expr, val pattern: Pattern.Constructor, val negated: Boolean)
+
+    /** The `when`s `x is T` is read as, by what they check, so what decides on one can narrow x. */
+    private val checks = java.util.IdentityHashMap<Expr, Check>()
+
+    /** The `&&` chains that start with a check, by their operands and the `&&`s', so an `if` on one can narrow in its branch. */
+    private val conjunctions = java.util.IdentityHashMap<Expr, Pair<List<Expr>, List<Pos>>>()
+
     companion object {
         fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize(), file).file()
 
@@ -789,10 +798,84 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         return left
     }
 
-    private fun or(): Expr = binaryLevel(setOf(T.OR)) { and() }
-    private fun and(): Expr = binaryLevel(setOf(T.AND)) { equality() }
+    private fun or(): Expr = logical(T.OR) { and() }
+    private fun and(): Expr = logical(T.AND) { equality() }
     private fun equality(): Expr = binaryLevel(setOf(T.EQ, T.NEQ)) { comparison() }
-    private fun comparison(): Expr = binaryLevel(setOf(T.LT, T.GT, T.LE, T.GE)) { additive() }
+    private fun comparison(): Expr = binaryLevel(setOf(T.LT, T.GT, T.LE, T.GE)) { typeCheck() }
+
+    /**
+     * `e is T`, or `e !is T`, as Kotlin's: whether e is a case T, or of the type with cases T. It's
+     * a `when` on e, `when (e) { is T -> true; else -> false }`, so where it decides something,
+     * as an `if`'s condition, before `&&` or `||`, or a `when`'s branch, it's read as a `when` on
+     * e deciding that, in whose branch for T e is narrowed, as `is T ->` narrows it.
+     */
+    private fun typeCheck(): Expr {
+        var e = additive()
+        while (at(T.IS) || (at(T.BANG) && peekAt(1).kind == T.IS)) {
+            val negated = accept(T.BANG) != null
+            val pos = next().pos
+            val check = Check(e, checkPattern(pos), negated)
+            e = decide(check, pos, Expr.BoolLit(pos, true), Expr.BoolLit(pos, false))
+            checks[e] = check
+        }
+        return e
+    }
+
+    /** `when (e) { is T -> yes; else -> no }`, from [check]: for `!is`, the other way round. */
+    private fun decide(check: Check, pos: Pos, yes: Expr, no: Expr): Expr {
+        val (onT, otherwise) = if (check.negated) no to yes else yes to no
+        return Expr.When(pos, check.subject, listOf(Branch(pos, listOf(check.pattern), null, onT), Branch(pos, emptyList(), null, otherwise)))
+    }
+
+    /**
+     * `a && b && c`, or `||`, left to right. Where a check is among them, the rest go in its `when`,
+     * where what it checks is narrowed: `x is T && x.ready` reads x as a T after the `&&`.
+     */
+    private fun logical(op: T, operand: () -> Expr): Expr {
+        val first = operand()
+        if (!at(op)) return first
+        val operands = mutableListOf(first)
+        val positions = mutableListOf<Pos>()
+        while (at(op)) {
+            positions += next().pos
+            skipNewlines()
+            operands += operand()
+        }
+        val text = if (op == T.AND) "&&" else "||"
+        if (operands.none { it in checks }) return operands.drop(1).withIndex().fold(first) { left, (i, right) -> Expr.Binary(positions[i], text, left, right) }
+        return chain(op, operands, positions, 0).also { if (op == T.AND && operands.first() in checks) conjunctions[it] = operands to positions }
+    }
+
+    /** [operands] from the [i]th, joined by [op]: after a check, in its `when`. */
+    private fun chain(op: T, operands: List<Expr>, positions: List<Pos>, i: Int): Expr {
+        val operand = operands[i]
+        if (i == operands.size - 1) return operand
+        val rest = chain(op, operands, positions, i + 1)
+        val check = checks[operand] ?: return Expr.Binary(positions[i], if (op == T.AND) "&&" else "||", operand, rest)
+        return if (op == T.AND) decide(check, operand.pos, rest, Expr.BoolLit(operand.pos, false))
+        else decide(check, operand.pos, Expr.BoolLit(operand.pos, true), rest)
+    }
+
+    /**
+     * `if (x is T && ...) then else otherwise`, from the chain's [i]th operand on: each check a
+     * `when` that narrows what it checks in the rest, and in then; otherwise is where any fails.
+     */
+    private fun ifChain(pos: Pos, operands: List<Expr>, positions: List<Pos>, i: Int, then: Expr, otherwise: Expr, hasElse: Boolean, copies: Copier): Expr {
+        val check = checks[operands[i]]
+            ?: return Expr.If(pos, chain(T.AND, operands, positions, i), then, copies.expr(otherwise), hasElse)
+        val inside = if (i == operands.size - 1) then else ifChain(pos, operands, positions, i + 1, then, otherwise, hasElse, copies)
+        return decide(check, operands[i].pos, inside, if (i == 0) otherwise else copies.expr(otherwise))
+    }
+
+    /** The type after `is`, which may be qualified: `is Circle`, `is Shapes.Circle`. */
+    private fun checkPattern(pos: Pos): Pattern.Constructor {
+        val path = mutableListOf(upperIdent("a type after 'is'"))
+        while (at(T.DOT) && peekAt(1).kind == T.IDENT && peekAt(1).text[0].isUpperCase()) {
+            next()
+            path += next().text
+        }
+        return Pattern.Constructor(pos, path.last(), null, isCheck = true, qualifier = path.dropLast(1).joinToString(".").ifEmpty { null })
+    }
     private fun additive(): Expr = binaryLevel(setOf(T.PLUS, T.MINUS)) { multiplicative() }
     private fun multiplicative(): Expr = binaryLevel(setOf(T.STAR, T.SLASH, T.PERCENT)) { unary() }
 
@@ -920,12 +1003,13 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         val save = p
         skipNewlines()
         // Without an else, it's done for what it does, and gives Unit.
-        if (accept(T.ELSE) == null) {
-            p = save
-            return Expr.If(pos, condition, then, Expr.Name(pos, "Unit"), hasElse = false)
-        }
-        skipNewlines()
-        return Expr.If(pos, condition, then, expr())
+        val hasElse = accept(T.ELSE) != null
+        if (!hasElse) p = save else skipNewlines()
+        val otherwise = if (hasElse) expr() else Expr.Name(pos, "Unit")
+        // On a check, a `when` on what it checks, narrowed in then.
+        checks[condition]?.let { return decide(it, condition.pos, then, otherwise) }
+        conjunctions[condition]?.let { (operands, positions) -> return ifChain(pos, operands, positions, 0, then, otherwise, hasElse, Copier({ name -> name })) }
+        return Expr.If(pos, condition, then, otherwise, hasElse)
     }
 
     private fun whenExpr(): Expr {
@@ -969,7 +1053,22 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
             }
         }
         expect(T.RBRACE, "'}'")
-        return Expr.When(pos, subject, branches)
+        return if (subject == null) checkedBranches(pos, branches) else Expr.When(pos, subject, branches)
+    }
+
+    /**
+     * A `when` without a subject, whose branch on a check, `x is T ->`, decides on x: the branches
+     * before it, then a `when` on x, narrowed in that branch, and with the branches after it as
+     * its else. Without an else to end them, it's as written.
+     */
+    private fun checkedBranches(pos: Pos, branches: List<Branch>): Expr {
+        val at = branches.indexOfFirst { it.condition != null && it.condition in checks }
+        if (at < 0 || branches.last().condition != null) return Expr.When(pos, null, branches)
+        val branch = branches[at]
+        val rest = branches.drop(at + 1)
+        val otherwise = rest.singleOrNull()?.body ?: checkedBranches(rest.first().pos, rest)
+        val decided = decide(checks.getValue(branch.condition), branch.pos, branch.body, otherwise)
+        return if (at == 0) decided else Expr.When(pos, null, branches.take(at) + Branch(branch.pos, emptyList(), null, decided))
     }
 
     /** `if n > 0` after a branch's patterns, as Kotlin 2.1 writes a guard. Not expr(): `ready ->` isn't a lambda here. */

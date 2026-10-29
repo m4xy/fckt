@@ -103,6 +103,7 @@ tour of the core language, translated section by section.
 | `65.toByte()` | `Char.unsafe_chr 65` | A `Byte` is 0 to 255, OCaml's `char`: an `Int`'s low eight bits, so `-1.toByte()` is 255; `b.toInt()` reads it. `fckt.text.Bytes` is a run of them. |
 | `lazy(~e)`, `l.value` | `Lazy.from_fun`, `Lazy.force` | |
 | `is V -> x.field` | `V x__v -> x__v.field` | `is` narrows a variable, so the branch can read the variant's fields. |
+| `x is Circle`, `x !is Circle` | `match x with Circle _ -> true \| _ -> false` | Whether a value is a case, or of a type with cases, as Kotlin's `is`: a `when` on it. Where it decides something, it narrows what it checks as `is` in a `when` does: in an `if`'s branch, `if (x is Circle) x.radius else 0`, or with `!is` its `else`; after `&&`, `x is Circle && x.radius > 1`, or after `\|\|` for `!is`; in an `if` on a chain of them, `if (a is Circle && b is Square) ...`; and in a branch of a `when` without a subject, `x is Circle -> x.radius`. |
 | `when { c -> e; else -> e }` | `if c then e else ...` | |
 | `if (c) a else b` | `if c then a else b` | Without `else`, `if (c) println("x")` is a statement, and its branch must be `Unit` (or `Nothing`, as `if (bad) fail("why")`). |
 | `x.f(a)` | `f x a` | Calls a top-level `f` on `x` when `x` has no member `f`. |

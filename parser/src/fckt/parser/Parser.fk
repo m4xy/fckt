@@ -10,7 +10,7 @@ module Parser {
   parse(source: String): Result<SourceFile, List<SyntaxError>> = when (Lexer.tokens(source)) {
     Error(error) -> Error([error])
     Ok(tokens) -> {
-      s = Parsing(tokens.toArray(), 0, [])
+      s = Parsing(tokens.toArray(), 0, [], [], [])
       Rejecting(reject = (at, message, _) -> Error([SyntaxError(at, message)])) {
         skipNewlines(s)
         imports = importList(s)
@@ -22,8 +22,19 @@ module Parser {
   }
 
   // How far reading has got: the tokens, the next one's index, and where each xs[i] read so far
-  // starts, which xs[i] = v makes a set.
-  private type Parsing(tokens: Array<Token>, var index: Int, var indexes: List<Position>)
+  // starts, which xs[i] = v makes a set; each x is T read so far, with what it's read as, so what
+  // decides on one can narrow x; and each && chain that starts with one, with its operands and
+  // where its &&s are, so an if on one can narrow in its branch.
+  private type Parsing(
+    tokens: Array<Token>,
+    var index: Int,
+    var indexes: List<Position>,
+    var checks: List<(Expression, Check)>,
+    var conjunctions: List<(Expression, List<Expression>, List<Position>)>,
+  )
+
+  // e is T, or e !is T, as read: what's checked, the check, and whether it's !is.
+  private type Check(subject: Expression, pattern: Pattern, negated: Boolean)
 
   private builtinTypes: List<String> = ["Int", "Float", "Double", "String", "Boolean", "Unit", "Char", "Byte", "Nothing", "List", "Option", "Lazy", "Result"]
 
@@ -200,7 +211,7 @@ module Parser {
   @Rejecting private externalFunction(s: Parsing, d: Declaration): Declaration = when (d.definition) {
     FunctionDefinition(typeParameters, receiver, parameters, result, body, _, operator) -> {
       ocaml = when (body) {
-        StringTemplate(_, parts) if parts.all { constantText(it) } -> parts.map { part ->
+        StringTemplate(_, parts) if parts.all { it is TemplateText } -> parts.map { part ->
           when (part) {
             TemplateText(text) -> text
             else -> ""
@@ -610,7 +621,7 @@ module Parser {
       looking(s, StringLiteral) -> {
         e = primary(s)
         when (e) {
-          StringTemplate(_, parts) if parts.all { constantText(it) } -> Constant(e)
+          StringTemplate(_, parts) if parts.all { it is TemplateText } -> Constant(e)
           else -> reject(at, "an annotation's strings are constants, without templates")
         }
       }
@@ -770,10 +781,142 @@ module Parser {
       binaryRest(s, kinds, operand, Binary(op.at, op.text, left, operand()))
     } else left
 
-  @Rejecting @Mutating private disjunction(s: Parsing): Expression = binaryLevel(s, [Or]) { conjunction(s) }
-  @Rejecting @Mutating private conjunction(s: Parsing): Expression = binaryLevel(s, [And]) { equality(s) }
+  @Rejecting @Mutating private disjunction(s: Parsing): Expression = logical(s, Or) { conjunction(s) }
+  @Rejecting @Mutating private conjunction(s: Parsing): Expression = logical(s, And) { equality(s) }
   @Rejecting @Mutating private equality(s: Parsing): Expression = binaryLevel(s, [Equal, NotEqual]) { comparison(s) }
-  @Rejecting @Mutating private comparison(s: Parsing): Expression = binaryLevel(s, [Less, Greater, LessOrEqual, GreaterOrEqual]) { additive(s) }
+  @Rejecting @Mutating private comparison(s: Parsing): Expression = binaryLevel(s, [Less, Greater, LessOrEqual, GreaterOrEqual]) { typeCheck(s) }
+
+  // e is T, or e !is T, as Kotlin's: whether e is a case T, or of the type with cases T. It's a
+  // when on e, when (e) { is T -> true; else -> false }, so where it decides something, as an if's
+  // condition, before && or ||, or a when's branch, it's read as a when on e deciding that, in
+  // whose branch for T e is narrowed, as is T -> narrows it.
+  @Rejecting @Mutating private typeCheck(s: Parsing): Expression = typeChecks(s, additive(s))
+
+  @Rejecting @Mutating private typeChecks(s: Parsing, e: Expression): Expression =
+    if (looking(s, IsKeyword) || (looking(s, Bang) && peekAt(s, 1).kind == IsKeyword)) {
+      negated = accepts(s, Bang)
+      at = next(s).at
+      check = Check(e, checkPattern(s, at), negated)
+      checked = decide(check, at, BooleanConstant(at, true), BooleanConstant(at, false))
+      s.checks = [(checked, check), *s.checks]
+      typeChecks(s, checked)
+    } else e
+
+  // when (e) { is T -> yes; else -> no }, from check: for !is, the other way round.
+  private decide(check: Check, at: Position, yes: Expression, no: Expression): Expression = {
+    (onT, otherwise) = if (check.negated) (no, yes) else (yes, no)
+    When(at, Some(check.subject), [Branch(at, [check.pattern], None, onT, None), Branch(at, [], None, otherwise, None)])
+  }
+
+  // The check e was read as, if it was one.
+  private checkOf(s: Parsing, e: Expression): Option<Check> = s.checks.find { read, _ -> read == e }.map { _, check -> check }
+
+  // The && chain e was read as, if it was one that starts with a check: its operands and where its &&s are.
+  private conjunctionOf(s: Parsing, e: Expression): Option<(List<Expression>, List<Position>)> =
+    s.conjunctions.find { read, _, _ -> read == e }.map { _, operands, positions -> (operands, positions) }
+
+  // The type after is, which may be qualified: is Circle, is Shapes.Circle.
+  @Rejecting @Mutating private checkPattern(s: Parsing, at: Position): Pattern = {
+    path = checkPath(s, [upperIdent(s, "a type after 'is'")])
+    CasePattern(at, path.lastOrNone().getOrElse(""), None, true, qualifier(path))
+  }
+
+  @Mutating private checkPath(s: Parsing, path: List<String>): List<String> =
+    if (looking(s, Dot) && peekAt(s, 1).kind == Identifier && upper(peekAt(s, 1).text)) {
+      next(s)
+      checkPath(s, path + [next(s).text])
+    } else path
+
+  // a && b && c, or ||, left to right. Where a check is among them, the rest go in its when, where
+  // what it checks is narrowed: x is T && x.ready reads x as a T after the &&.
+  @Rejecting @Mutating private logical(s: Parsing, op: Kind, operand: () -> Expression): Expression = {
+    first = operand()
+    if (!looking(s, op)) first
+    else {
+      (more, positions) = logicalOperands(s, op, operand, [], [])
+      if (!checkOf(s, first).isSome() && more.all { checkOf(s, it).isNone() }) leftFolded(textOf(op), first, more, positions)
+      else {
+        result = chain(s, op, first, more, positions)
+        if (op == And && checkOf(s, first).isSome()) {
+          s.conjunctions = [(result, [first, *more], positions), *s.conjunctions]
+        }
+        result
+      }
+    }
+  }
+
+  private textOf(op: Kind): String = if (op == And) "&&" else "||"
+
+  @Rejecting @Mutating private logicalOperands(s: Parsing, op: Kind, operand: () -> Expression, more: List<Expression>, positions: List<Position>): (List<Expression>, List<Position>) =
+    if (looking(s, op)) {
+      at = next(s).at
+      skipNewlines(s)
+      next = operand()
+      logicalOperands(s, op, operand, more + [next], positions + [at])
+    } else (more, positions)
+
+  private leftFolded(text: String, left: Expression, more: List<Expression>, positions: List<Position>): Expression = when (more) {
+    [right, *after] -> when (positions) {
+      [at, *later] -> leftFolded(text, Binary(at, text, left, right), after, later)
+      [] -> left
+    }
+    [] -> left
+  }
+
+  // operand and those after it, joined by op: after a check, in its when.
+  private chain(s: Parsing, op: Kind, operand: Expression, more: List<Expression>, positions: List<Position>): Expression = when (more) {
+    [] -> operand
+    [next, *after] -> {
+      rest = chain(s, op, next, after, positions.drop(1))
+      when (checkOf(s, operand)) {
+        Some(check) ->
+          if (op == And) decide(check, atOf(operand), rest, BooleanConstant(atOf(operand), false))
+          else decide(check, atOf(operand), BooleanConstant(atOf(operand), true), rest)
+        None -> Binary(positions.firstOrNone().getOrElse(atOf(operand)), textOf(op), operand, rest)
+      }
+    }
+  }
+
+  // if (x is T && ...) then else otherwise, from operand on: each check a when that narrows what
+  // it checks in the rest, and in then; otherwise is where any fails.
+  private ifChain(s: Parsing, at: Position, operand: Expression, more: List<Expression>, positions: List<Position>, then: Expression, otherwise: Expression, hasElse: Boolean): Expression =
+    when (checkOf(s, operand)) {
+      None -> If(at, chain(s, And, operand, more, positions), then, otherwise, hasElse)
+      Some(check) -> {
+        inside = when (more) {
+          [next, *after] -> ifChain(s, at, next, after, positions.drop(1), then, otherwise, hasElse)
+          [] -> then
+        }
+        decide(check, atOf(operand), inside, otherwise)
+      }
+    }
+
+  // A when without a subject, whose branch on a check, x is T ->, decides on x: the branches
+  // before it, then a when on x, narrowed in that branch, and with the branches after it as its
+  // else. Without an else to end them, it's as written.
+  private checkedBranches(s: Parsing, at: Position, branches: List<Branch>): Expression = {
+    index = branches.indexOfFirst { b -> b.condition.map { checkOf(s, it).isSome() }.getOrElse(false) }
+    endsInElse = branches.lastOrNone().map { it.condition.isNone() }.getOrElse(false)
+    if (index < 0 || !endsInElse) When(at, None, branches)
+    else when (branches.drop(index)) {
+      [branch, *rest] -> {
+        check = branch.condition.flatMap { checkOf(s, it) }
+        otherwise = when (rest) {
+          [only] -> only.body
+          [first, *_] -> checkedBranches(s, first.at, rest)
+          [] -> branch.body
+        }
+        when (check) {
+          Some(c) -> {
+            decided = decide(c, branch.at, branch.body, otherwise)
+            if (index == 0) decided else When(at, None, branches.take(index) + [Branch(branch.at, [], None, decided, None)])
+          }
+          None -> When(at, None, branches)
+        }
+      }
+      [] -> When(at, None, branches)
+    }
+  }
   @Rejecting @Mutating private additive(s: Parsing): Expression = binaryLevel(s, [Plus, Minus]) { multiplicative(s) }
   @Rejecting @Mutating private multiplicative(s: Parsing): Expression = binaryLevel(s, [Star, Slash, Percent]) { unary(s) }
 
@@ -796,7 +939,7 @@ module Parser {
     }
     // emptyMap<String, Int>(): types for the function's type parameters, if what's between < and >
     // is types and a call follows; otherwise < compares.
-    looking(s, Less) && nameOrMember(e) -> when (callTypeArguments(s)) {
+    looking(s, Less) && (e is Name || e is Member) -> when (callTypeArguments(s)) {
       Some(types) -> {
         at = peek(s).at
         postfix(s, Call(at, e, argumentList(s), types))
@@ -821,21 +964,6 @@ module Parser {
       postfix(s, Handle(atOf(e), e, block, parameters))
     }
     else -> e
-  }
-
-  private constantText(part: TemplatePart): Boolean = when (part) {
-    TemplateText(_) -> true
-    Interpolation(_) -> false
-  }
-
-  private nameOrMember(e: Expression): Boolean = when (e) {
-    Name(_, _), Member(_, _, _) -> true
-    else -> false
-  }
-
-  private tuplePattern(p: Pattern): Boolean = when (p) {
-    TuplePattern(_, _) -> true
-    else -> false
   }
 
   private modulePath(e: Expression): Boolean = when (e) {
@@ -925,7 +1053,7 @@ module Parser {
       Code(source, at) -> when (Lexer.tokens(source, at)) {
         Error(error) -> reject(error.at, error.message)
         Ok(tokens) -> {
-          inner = Parsing(tokens.toArray(), 0, [])
+          inner = Parsing(tokens.toArray(), 0, [], [], [])
           e = expression(inner)
           if (!looking(inner, End)) reject(peek(inner).at, "unexpected ${describe(peek(inner))} in string template")
           Interpolation(e)
@@ -944,12 +1072,18 @@ module Parser {
     before = s.index
     skipNewlines(s)
     // Without an else, it's done for what it does, and gives Unit.
-    if (accepts(s, ElseKeyword)) {
-      skipNewlines(s)
-      If(at, condition, then, expression(s), true)
-    } else {
+    hasElse = accepts(s, ElseKeyword)
+    if (hasElse) skipNewlines(s) else {
       s.index = before
-      If(at, condition, then, Name(at, "Unit"), false)
+    }
+    otherwise = if (hasElse) expression(s) else Name(at, "Unit")
+    // On a check, a when on what it checks, narrowed in then.
+    when (checkOf(s, condition)) {
+      Some(check) -> decide(check, atOf(condition), then, otherwise)
+      None -> when (conjunctionOf(s, condition)) {
+        Some(([first, *more], positions)) -> ifChain(s, at, first, more, positions, then, otherwise, hasElse)
+        else -> If(at, condition, then, otherwise, hasElse)
+      }
     }
   }
 
@@ -969,7 +1103,7 @@ module Parser {
     skipNewlines(s)
     branches = branchList(s, subject, [])
     expect(s, RightBrace, "'}'")
-    When(at, subject, branches)
+    if (subject.isNone()) checkedBranches(s, at, branches) else When(at, subject, branches)
   }
 
   @Rejecting @Mutating private branchList(s: Parsing, subject: Option<Expression>, before: List<Branch>): List<Branch> =
@@ -1174,7 +1308,7 @@ module Parser {
   @Rejecting @Mutating private evaluation(s: Parsing, at: Position, e: Expression): Statement =
     if (looking(s, Assign) || looking(s, OperatorAssign)) {
       index = indexed(s, e)
-      if (!nameOrMember(e) && index.isNone()) reject(peek(s).at, "only a var, a var field or an index can be assigned to")
+      if (e !is Name && e !is Member && index.isNone()) reject(peek(s).at, "only a var, a var field or an index can be assigned to")
       op = next(s)
       skipNewlines(s)
       written = expression(s)
@@ -1214,7 +1348,7 @@ module Parser {
     start = s.index
     found = trying(s) {
       read = pattern(s)
-      if (tuplePattern(read) && accepts(s, Assign)) Some(read) else None
+      if (read is TuplePattern && accepts(s, Assign)) Some(read) else None
     }.flatMap { it }
     if (found.isNone()) {
       s.index = start
