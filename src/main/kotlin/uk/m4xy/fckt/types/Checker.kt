@@ -2533,11 +2533,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 if (ref.startsWith("operator ")) return@flatMap extensions[ref.removePrefix("operator ")].orEmpty().filter { it.isOperator && visible(it) && inScope(it) }.also { found ->
                     guessed += found.filter { onlyAsPackageMate(it) == true }
                 }
-                // A method's name may be any extension of that name.
-                // A module used as a handler or a value: its functions.
+                // A module used as a handler or a value: its functions. A plain name is never an
+                // extension, which is only reached through what it extends, as .name.
                 (lookupModule(ref, null)?.takeIf { m -> moduleSpecs[m.name]?.let { isEffect(it) || valueSpec(it) } == true }
-                    ?.let { m -> globals.values.filter { it.path == m.name.split('.') } }.orEmpty() +
-                extensions[ref].orEmpty().filter { visible(it) } + listOfNotNull(
+                    ?.let { m -> globals.values.filter { it.path == m.name.split('.') } }.orEmpty() + listOfNotNull(
                     lookupGlobal(ref, null) ?: ref.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }?.let { module ->
                         lookupModule(module, null)?.let { m -> globals[m.name + "." + ref.substringAfterLast('.')]?.takeIf { visible(it) } }
                     },

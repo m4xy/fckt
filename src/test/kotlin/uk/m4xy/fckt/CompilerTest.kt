@@ -919,7 +919,25 @@ class CompilerTest {
     }
 
     @Test
-    fun `a package's type can hold a type of a package inside it`() {
+    fun `a function called by name doesn't use extensions of the same name`() {
+        // Parsing's group is a function of its own; Api's Match.group, which calls parse, isn't it, so
+        // the modules don't use each other.
+        val source = """
+            module Parsing {
+              private group(): Int = 1
+              parse(): Int = group() + 1
+            }
+            module Api {
+              type Match(n: Int)
+              Match.group(): Int = Parsing.parse() + this.n
+            }
+            main() = assertEquals(3, Match(1).group())
+        """.trimIndent()
+        assertEquals("", run(source.replace("Match(1)", "Api.Match(1)")))
+    }
+
+    @Test
+        fun `a package's type can hold a type of a package inside it`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
         try {

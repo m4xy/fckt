@@ -70,8 +70,8 @@ module Groups {
       found = Globals.extensionsNamed(name.removePrefix("operator "), context).filter { Signatures.isOperator(it) }
       NameUses(found, found.filter { isOnlyPackageMates(it, context) }, [])
     } else {
+      // A plain name is never an extension, which is only reached through what it extends, as .name.
       found = moduleFunctions(name, context) +
-        context.environment.extensions.getOrDefault(name, []).filter { Globals.visible(it, context) } +
         declaredOrMember(name, context).toList() +
         defaultsUsed(name, context)
       NameUses(found, [], found)
