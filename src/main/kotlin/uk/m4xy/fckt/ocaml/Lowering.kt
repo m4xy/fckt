@@ -55,6 +55,28 @@ private fun concat(parts: List<Gen>): Gen {
     return if (merged.isEmpty()) Gen.Str("") else merged.reduceRight { part, rest -> Gen.Op("^", part, rest) }
 }
 
+/** The operators an asserted comparison is one of, whose sides a failed assertion shows. */
+private val COMPARISONS = setOf("==", "!=", "<", "<=", ">", ">=")
+
+/**
+ * What a failed assertion says after its message, for a test runner to say more than the message
+ * can: a line `fckt-assertion 1`, the format's version, then a line for each fact, its key, a space
+ * and its value, with a backslash and a line break in it written as \\ and \n:
+ *
+ *   assertion   assert or assertEquals
+ *   where       where it is, as the message says: prices.fk line 5
+ *   source      the call as written, assertEquals(0, Prices.total([])), where it's known
+ *   expected    assertEquals's first value, shown
+ *   actual      its second, shown
+ *   operand     a side of an asserted comparison as written, xs.size, but a constant, followed by
+ *   value       that side's value, shown
+ */
+private const val ASSERTION_FACTS = "fckt-assertion 1"
+
+/** OCaml that defines assertion_facts, which writes facts, pairs of a key and a value, as [ASSERTION_FACTS] has them. */
+private const val ASSERTION_FACTS_OCAML =
+    """let assertion_facts facts = let escape v = let b = Buffer.create (String.length v) in String.iter (function '\\' -> Buffer.add_string b "\\\\" | '\n' -> Buffer.add_string b "\\n" | c -> Buffer.add_char b c) v; Buffer.contents b in "\n$ASSERTION_FACTS" ^ String.concat "" (List.map (fun (k, v) -> "\n" ^ k ^ " " ^ escape v) facts)"""
+
 /** OCaml's name for fckt's Nothing, the type with no values. */
 private const val NOTHING = "fk_nothing"
 
@@ -1139,20 +1161,56 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     }
 
     /**
-     * `assert(c)` is `if c then () else failwith "line N: assertion failed"`, and
+     * `assert(c)` is `if c then () else failwith "line N: assertion failed: c"`, and
      * `assertEquals(e, a)` calls a helper that shows both values, in Kotlin's words, when they differ.
+     * Either message is followed by what a test runner needs to say more, as [ASSERTION_FACTS] has
+     * it: where, what's written, and the values shown, of both sides of an assertEquals, or of each
+     * side of an asserted comparison, `xs.size == 3`, which are computed once, left first.
      */
     private fun assertion(e: Expr.Call, name: String): Gen {
         // Another file's assertions say which file; the program's own just the line.
         val where = (e.pos.file?.let { java.io.File(it).name + " " } ?: "") + "line ${e.pos.line}"
         val args = e.args.map { it.value }
+        val texts = e.args.map { it.text }
+        val written = if (texts.all { it != null }) "$name(${texts.joinToString(", ")})" else null
         if (name == ASSERT) {
-            return Gen.If(Gen.Src(args[0]), Gen.Lit("()"), Gen.App(Gen.Id("failwith"), listOf(Gen.Str("$where: assertion failed"))))
+            val summary = "$where: assertion failed" + (texts[0]?.let { ": $it" } ?: "")
+            val facts = listOf("assertion" to Gen.Str(name), "where" to Gen.Str(where)) + listOfNotNull(written?.let { "source" to Gen.Str(it) })
+            val c = args[0] as? Expr.Binary
+            val operands = e.args[0].operands
+            val shows = if (c == null || c.call != null || c.op !in COMPARISONS || operands == null) null
+            else runCatching { listOf(show(c.left.type!!, c.left), show(c.right.type!!, c.right)) }.getOrNull()
+            if (c == null || shows == null || operands == null) {
+                return Gen.If(Gen.Src(args[0]), Gen.Lit("()"), Gen.App(Gen.Id(helper("fk_assertion_failed")), listOf(Gen.Str(summary), factList(facts))))
+            }
+            // Each side, but a constant, which says what it is: its text, and its value shown.
+            val sides = listOf(Triple(c.left, "fk_left", 0), Triple(c.right, "fk_right", 1)).filter { !isConstant(it.first) }.flatMap { (_, v, i) ->
+                listOf("operand" to Gen.Str(operands[i]), "value" to Gen.App(shows[i], listOf(Gen.Id(v))))
+            }
+            val r = c.resolved!!
+            fun side(v: String, promote: Boolean): Gen = if (promote) Gen.App(Gen.Id("float_of_int"), listOf(Gen.Id(v))) else Gen.Id(v)
+            val check = Gen.If(
+                Gen.Op(r.ocamlOp, side("fk_left", r.promoteLeft), side("fk_right", r.promoteRight)),
+                Gen.Lit("()"),
+                Gen.App(Gen.Id(helper("fk_assertion_failed")), listOf(Gen.Str(summary), factList(facts + sides))),
+            )
+            return Gen.Match(Gen.Src(c.left), listOf("fk_left" to Gen.Match(Gen.Src(c.right), listOf("fk_right" to check))))
         }
         return Gen.App(
             Gen.Id(helper("fk_assert_equals")),
-            listOf(show(args[1].type!!, args[1]), Gen.Str(where), Gen.Src(args[0]), Gen.Src(args[1])),
+            listOf(show(args[1].type!!, args[1]), Gen.Str(where), Gen.Str(written ?: ""), Gen.Src(args[0]), Gen.Src(args[1])),
         )
+    }
+
+    /** facts, as the list of pairs fk_assertion_failed takes. */
+    private fun factList(facts: List<Pair<String, Gen>>): Gen = Gen.ListOf(facts.map { (key, value) -> Gen.Tuple(listOf(Gen.Str(key), value)) })
+
+    /** Whether [e] is a constant, which says what its value is: 3, "three", -1. */
+    private fun isConstant(e: Expr): Boolean = when (e) {
+        is Expr.IntLit, is Expr.FloatLit, is Expr.BoolLit, is Expr.CharLit -> true
+        is Expr.StringLit -> e.parts.none { it is StringPart.Interpolated }
+        is Expr.Unary -> e.call == null && (e.operand is Expr.IntLit || e.operand is Expr.FloatLit)
+        else -> false
     }
 
     /** `[a, b]`, `a :: rest` or `xs @ rest`: elements are consed on, and a spread list is appended. */
@@ -1761,25 +1819,24 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                     literal("let b = Buffer.create 4 in Buffer.add_utf_8_uchar b (Uchar.of_int c); Buffer.contents b")
                 }
             }
+            if ("fk_assertion_failed" in helpers) {
+                binding("fk_assertion_failed") {
+                    params = listOf("summary", "facts")
+                    literal("$ASSERTION_FACTS_OCAML in failwith (summary ^ assertion_facts facts)")
+                }
+            }
             if ("fk_assert_equals" in helpers) {
                 binding("fk_assert_equals") {
-                    params = listOf("show", "where", "expected", "actual")
-                    gen(
-                        Gen.If(
-                            Gen.Op("=", Gen.Id("expected"), Gen.Id("actual")),
-                            Gen.Lit("()"),
-                            Gen.App(
-                                Gen.Id("failwith"),
-                                listOf(
-                                    concat(
-                                        listOf(
-                                            Gen.Id("where"), Gen.Str(": expected:<"), Gen.App(Gen.Id("show"), listOf(Gen.Id("expected"))),
-                                            Gen.Str("> but was:<"), Gen.App(Gen.Id("show"), listOf(Gen.Id("actual"))), Gen.Str(">"),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
+                    params = listOf("show", "where", "source", "expected", "actual")
+                    literal(
+                        """
+                        if expected = actual then () else
+                          $ASSERTION_FACTS_OCAML in
+                          let e = show expected and a = show actual in
+                          let source = if source = "" then [] else [("source", source)] in
+                          failwith (where ^ ": expected:<" ^ e ^ "> but was:<" ^ a ^ ">"
+                            ^ assertion_facts ([("assertion", "assertEquals"); ("where", where)] @ source @ [("expected", e); ("actual", a)]))
+                        """.trimIndent(),
                     )
                 }
             }

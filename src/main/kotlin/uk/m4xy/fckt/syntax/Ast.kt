@@ -511,7 +511,11 @@ sealed interface StringPart {
     data class Interpolated(val expr: Expr) : StringPart
 }
 
-data class Arg(val name: String?, val value: Expr)
+/**
+ * An argument: its name, if it's passed by name; its value; and, where the source is known, what's
+ * written for the value, and for an operator's, what's written either side of it.
+ */
+data class Arg(val name: String?, val value: Expr, val text: String? = null, val operands: List<String>? = null)
 
 sealed interface Statement {
     val pos: Pos

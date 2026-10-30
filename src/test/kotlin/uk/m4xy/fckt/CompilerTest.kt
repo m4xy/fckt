@@ -126,6 +126,43 @@ class CompilerTest {
     }
 
     @Test
+    fun `a failed assertion says, after its message, what a runner needs to say more`() {
+        val source = """
+            size(xs: List<Int>): Int = xs.size
+            external caught(body: () -> Unit): String = "(fun f -> try f (); \"\" with Failure m -> m) body"
+            main() = {
+              xs = [1, 2]
+              println(caught { assert(size(xs) == 3) })
+              println(caught { assertEquals("a\nb", "a\\c") })
+            }
+        """.trimIndent()
+        // Each side of a comparison is computed once, before it's compared; a constant says what it is.
+        assertContains(compile(source), "match size xs with")
+        // A value's backslashes and line breaks are written as \\ and \n, so each fact is a line.
+        assertEquals(
+            """
+            line 5: assertion failed: size(xs) == 3
+            fckt-assertion 1
+            assertion assert
+            where line 5
+            source assert(size(xs) == 3)
+            operand size(xs)
+            value 2
+            line 6: expected:<a
+            b> but was:<a\c>
+            fckt-assertion 1
+            assertion assertEquals
+            where line 6
+            source assertEquals("a\\nb", "a\\\\c")
+            expected a\nb
+            actual a\\c
+
+            """.trimIndent(),
+            run(source),
+        )
+    }
+
+    @Test
     fun `a failed assertion stops the program with both values`() {
         val ml = compile("main() = {\n  assert(1 < 2)\n  assertEquals([1, 2], [2, 1].reversed())\n  assertEquals(55, 54)\n}")
         assumeTrue(ocaml != null, "ocaml isn't installed")
@@ -745,13 +782,13 @@ class CompilerTest {
             val roots = listOf(File(dir, "src"), File(dir, "lib"))
             val ml = compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), TEST_IMPORTS, others = listOf(STD))
             assertEquals(
-                "files.fk\n  passed missing at line 6\nprices.fk\n  passed sums at line 4\n  FAILED empty: prices.fk line 5: expected:<1> but was:<0>\n" +
+                "files.fk\n  passed missing at line 6 doing fckt.io.FileSystem\nprices.fk\n  passed sums at line 4\n  FAILED empty: prices.fk line 5: expected:<1> but was:<0>\n" +
                     "  FAILED divides: Division_by_zero\n  FAILED fails: on purpose\n3 failed\n",
                 runOcaml(ml),
             )
             assertEquals("files.fk\nprices.fk\n  passed sums at line 4\n0 failed\n", runOcaml(ml, listOf("sums")))
             // The runner's own tests use it.
-            write("test/runner.fk", "import check.Test\nimport runs.plan.Case\n@Test casesAreValues() = assert(Case(\"a.fk\", [], \"b\", 1, () -> Unit).line == 1)\n")
+            write("test/runner.fk", "import check.Test\nimport runs.plan.Case\n@Test casesAreValues() = assert(Case(\"a.fk\", [], \"b\", 1, [], () -> Unit).line == 1)\n")
             assertContains(runOcaml(compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), TEST_IMPORTS, runnerTests = true, others = listOf(STD)), listOf("casesAreValues")), "  passed casesAreValues")
             File(test, "runner.fk").delete()
             write("test/bad.fk", "import check.Test\n@Test private a() = Unit\n@Test b(x: Int) = Unit\n@Test c = Unit\n")
@@ -775,7 +812,7 @@ class CompilerTest {
     /** A runner, runs.Runner, in lib, as fckt --test calls one, which prints how each test went. */
     private fun writeRunner(write: (String, String) -> Unit) {
         // Its types are its own, as it likes them: fckt makes them only through the runner.
-        write("lib/runs/plan/Case.fk", "type Case<@E>(file: String, sections: List<String>, name: String, line: Int, body: @Fail @E () -> Unit)\n")
+        write("lib/runs/plan/Case.fk", "type Case<@E>(file: String, sections: List<String>, name: String, line: Int, effects: List<String>, body: @Fail @E () -> Unit)\n")
         write(
             "lib/runs/Runner.fk",
             """
@@ -783,7 +820,21 @@ class CompilerTest {
 
             module Runner {
               type Outcome { Passed, Failed }
-              test<@E>(file: String, sections: List<String>, name: String, line: Int, body: @Fail @E () -> Unit): Case<@E> = Case(file, sections, name, line, body)
+              test<@E>(file: String, sections: List<String>, name: String, line: Int, effects: List<String>, body: @Fail @E () -> Unit): Case<@E> =
+                Case(file, sections, name, line, effects, body)
+              // A test that gives its cases, each run inside its fixtures by around: one case here, which runs each.
+              cases<@E, @F>(
+                file: String,
+                sections: List<String>,
+                name: String,
+                line: Int,
+                effects: List<String>,
+                rows: @Fail @F () -> List<(String, @Fail @E () -> Unit)>,
+                around: @Fail @F (@Fail @E () -> Unit) -> Unit,
+              ): Case<@F> = Case(file, sections, name, line, effects, () -> rows().forEach(row -> {
+                (_, check) = row
+                around(check)
+              }))
               suite<@E>(file: String, tests: List<Case<@E>>): List<Case<@E>> = tests
               plan<@E>(suites: List<List<Case<@E>>>): List<List<Case<@E>>> = suites
               @Console main<@E>(args: List<String>, plan: List<List<Case<@E>>>): Unit = {
@@ -796,8 +847,8 @@ class CompilerTest {
               @Console check<@E>(c: Case<@E>): Outcome = {
                 name = (c.sections + [c.name]).joinToString(".")
                 when (attempt { caught(c.body).map(reason -> fail(reason)).getOrElse(Unit) }) {
-                  Ok(_) -> { println("  passed ${'$'}name at line ${'$'}{c.line}"); Passed }
-                  Error(reason) -> { println("  FAILED ${'$'}name: ${'$'}reason"); Failed }
+                  Ok(_) -> { println("  passed ${'$'}name at line ${'$'}{c.line}${'$'}{c.effects.map(e -> " doing " + e).joinToString("")}"); Passed }
+                  Error(reason) -> { println("  FAILED ${'$'}name: ${'$'}{reason.split("\n").firstOrNone().getOrElse(reason)}"); Failed }
                 }
               }
               private external caught(body: () -> Unit): Option<String> =
@@ -852,6 +903,9 @@ class CompilerTest {
                   module Deeper {
                     @Test @Tally deep() = assertEquals(1, count())
                   }
+
+                  // A test that gives its cases: each runs on its own, inside the fixtures.
+                  @Test rows() = [("first", () -> assertEquals(1, count())), ("second", () -> assertEquals(1, count()))]
                 }
                 """.trimIndent(),
             )
@@ -859,11 +913,15 @@ class CompilerTest {
             val roots = listOf(File(dir, "lib"))
             fun tests() = compileTests(test, "check.Test", "runs.Runner", roots, emptyList(), TEST_IMPORTS, fixtures = "check.Fixtures", others = listOf(STD))
             assertEquals(
-                "counts.fk\n  passed plain at line 21\n  passed Counting.once at line 25\n  (noisy)\n  passed Counting.twice at line 27\n  passed Counting.Deeper.deep at line 33\n0 failed\n",
+                "counts.fk\n  passed plain at line 21\n  passed Counting.once at line 25 doing Tally\n  (noisy)\n  passed Counting.twice at line 27 doing Tally\n" +
+                    "  passed Counting.Deeper.deep at line 33 doing Tally\n  passed Counting.rows at line 37 doing Tally\n0 failed\n",
                 runOcaml(tests()),
             )
             // Each fixture runs the rest, the section's outermost.
             assertContains(tests(), "counting (fun () -> noisy (fun () -> Counting.twice ()))")
+            // A test that gives its cases is told what it does, and each case runs inside the fixtures, not the test.
+            assertContains(tests(), "Counting.rows ())")
+            assertContains(tests(), "counting (fun () -> check ())")
             fun errors() = assertFailsWith<CompileError> { tests() }.errors.joinToString("\n") { it.message.orEmpty() }
             val counts = File(test, "counts.fk").readText()
             // A fixture runs the test: it takes it, and is seen from outside its file.

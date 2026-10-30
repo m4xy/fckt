@@ -236,10 +236,36 @@ import pricing.Prices
 `fckt --test test --marker uk.m4xy.fktests.api.Test --runner uk.m4xy.fktests.runner.Runner -I src`
 compiles the functions in a folder's files marked with `--marker`'s annotation to one program,
 whose main has `--runner`'s module make a plan of them, with its `test`, `suite` and `plan`, and
-run it, with its `main` (see `compileTests`); the plan's types are the runner's own. A test can't use the runner's package, unless it's the runner's own, with
+run it, with its `main` (see `compileTests`); the plan's types are the runner's own. Each test is
+told the full names of the effects it does, `["fckt.io.FileSystem"]`, so a runner can choose by
+them. A test that gives anything but `Unit` gives its cases, `[("empty", () -> ...), ...]`, which
+the runner's `cases` is given instead of `test`, with a function that runs a case inside the
+test's fixtures, so each runs on its own. A test can't use the runner's package, unless it's the runner's own, with
 `--runner-tests`. It takes no parameters, and its effects are main's, handled as main's are; the
 folder's other files are what the tests share, and a file with a `main` is a program of its own.
 Tests in a module are in its section, which the runner's `test` is told, outermost first.
+
+A failed `assert` or `assertEquals` says where it is and what failed, `prices.fk line 5:
+expected:<0> but was:<1>`, then, for a runner to say more, a line `fckt-assertion 1`, the format's
+version, and a line for each fact, its key, a space, and its value, with a backslash and a line
+break in it written `\\` and `\n`:
+
+```
+fckt-assertion 1
+assertion assert
+where prices.fk line 5
+source assert(Prices.total(items) == 6)
+operand Prices.total(items)
+value 7
+```
+
+| Key | What it is |
+| --- | --- |
+| `assertion` | `assert` or `assertEquals` |
+| `where` | Where it is, as the message says |
+| `source` | The call as written, where it's known |
+| `expected`, `actual` | `assertEquals`'s values, shown |
+| `operand`, `value` | A side of an asserted comparison as written, `==`, `!=`, `<`, `<=`, `>` or `>=`, and its value, shown; a constant's isn't. Each side is computed once, the left first |
 
 With `--fixtures uk.m4xy.fktests.api.Fixtures`, a test runs inside the functions that annotation
 lists, each given the rest to run, the first outermost: its sections', as the annotation

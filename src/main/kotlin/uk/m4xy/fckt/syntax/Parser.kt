@@ -3,8 +3,11 @@ package uk.m4xy.fckt.syntax
 import uk.m4xy.fckt.types.BUILTIN_TYPES
 
 /** Recursive-descent parser for `.fk` source. */
-class Parser(private val tokens: List<Token>, private val file: String? = null, private val isInterface: Boolean = false) {
+class Parser(private val tokens: List<Token>, private val file: String? = null, private val isInterface: Boolean = false, private val source: String? = null) {
     private var p = 0
+
+    /** The source's lines, for the text of what's written, where the source is known. */
+    private val lines by lazy { source?.split('\n') }
 
     /** The `get` calls written `xs[i]`, which `xs[i] = v` turns into a `set`. */
     private val indexes = java.util.Collections.newSetFromMap(java.util.IdentityHashMap<Expr, Boolean>())
@@ -19,7 +22,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
     private val conjunctions = java.util.IdentityHashMap<Expr, Pair<List<Expr>, List<Pos>>>()
 
     companion object {
-        fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize(), file).file()
+        fun parse(source: String, file: String? = null): SourceFile = Parser(Lexer(source, Pos(1, 1, file)).tokenize(), file, source = source).file()
 
         /**
          * A library's interface, as `fckt --library` writes it: declarations without their code. A
@@ -945,12 +948,37 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         val args = mutableListOf<Arg>()
         while (!at(T.RPAREN)) {
             val name = if (at(T.IDENT) && peekAt(1).kind == T.ASSIGN) next().text.also { next() } else null
-            args += Arg(name, expr())
+            val start = peek.pos
+            val value = expr()
+            // An operator's operands, as written either side of it: what an assertion of a comparison shows.
+            val operands = (value as? Expr.Binary)?.let { b ->
+                listOfNotNull(text(start, b.pos), text(Pos(b.pos.line, b.pos.col + b.op.length), peek.pos)).takeIf { it.size == 2 }
+            }
+            args += Arg(name, value, text(start, peek.pos), operands)
             if (accept(T.COMMA) == null) break
         }
         // As in Kotlin, those passed in order come first; the checker says if one follows a named one.
         expect(T.RPAREN, "')'")
         return args
+    }
+
+    /**
+     * What's written from [from] up to [to], on one line however many it's on, or null where the
+     * source isn't known: what an assertion says it checked.
+     */
+    private fun text(from: Pos, to: Pos): String? {
+        val lines = lines ?: return null
+        if (from.line > to.line || to.line > lines.size) return null
+        fun offset(line: String, col: Int) = runCatching { line.offsetByCodePoints(0, col - 1) }.getOrNull()
+        val written = if (from.line == to.line) {
+            val line = lines[from.line - 1]
+            line.substring(offset(line, from.col) ?: return null, offset(line, to.col) ?: return null)
+        } else {
+            val first = lines[from.line - 1].let { it.substring(offset(it, from.col) ?: return null) }
+            val last = lines[to.line - 1].let { it.substring(0, offset(it, to.col) ?: return null) }
+            (listOf(first) + lines.subList(from.line, to.line - 1) + last).joinToString(" ") { it.trim() }
+        }
+        return written.trim().removeSuffix(",").trim()
     }
 
     private fun primary(): Expr {

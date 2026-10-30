@@ -229,14 +229,26 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
     for ((file, tests) in found.toSortedMap()) {
         out.append("  $module.suite(${string(file)}, [\n")
         for (t in tests.sortedBy { it.decl.pos.line }) {
-            // Each fixture runs the rest: the first, the second, ..., the test.
-            val body = t.fixtures.foldRight("${t.decl.name}()") { f, inner -> "${f.decl.name}(() -> $inner)" }
-            out.append("    $module.test(${string(file)}, [${t.sections.joinToString(", ") { string(it) }}], ${string(t.decl.simpleName)}, ${t.decl.pos.line}, () -> $body),\n")
+            // Each fixture runs the rest: the first, the second, ..., the test, or each of its cases.
+            fun inFixtures(inner: String) = t.fixtures.foldRight(inner) { f, rest -> "${f.decl.name}(() -> $rest)" }
+            val type = program.functionTypes[t.decl]?.prune() as? Type.Fn
+            val effects = type?.let { effectsIn(it) }.orEmpty().sorted().joinToString(", ", "[", "]") { string(it) }
+            val id = "${string(file)}, [${t.sections.joinToString(", ") { string(it) }}], ${string(t.decl.simpleName)}, ${t.decl.pos.line}, $effects"
+            // A test that gives anything but Unit gives its cases, each run on its own.
+            if (type == null || type.result.prune() == Type.UNIT) out.append("    $module.test($id, () -> ${inFixtures("${t.decl.name}()")}),\n")
+            else out.append("    $module.cases($id, () -> ${t.decl.name}(), check -> ${inFixtures("check()")}),\n")
         }
         out.append("  ]),\n")
     }
     out.append("]))\n")
     return out.toString()
+}
+
+/** The full names of the effects [type] does, and those of the functions in what it takes and gives: a test's, and its cases'. */
+private fun effectsIn(type: Type): Set<String> = when (val t = type.prune()) {
+    is Type.Fn -> Type.row(t.effects).first.map { it.name }.filter { " " !in it }.toSet() + t.params.flatMap { effectsIn(it) } + effectsIn(t.result)
+    is Type.Con -> if (t.name == Type.EFFECTS) emptySet() else t.args.flatMap { effectsIn(it) }.toSet()
+    is Type.Var -> emptySet()
 }
 
 /**

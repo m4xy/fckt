@@ -54,7 +54,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
         is Expr.Spread -> Expr.Spread(e.pos, expr(e.list))
         is Expr.Name -> Expr.Name(e.pos, e.name)
         is Expr.ListLit -> Expr.ListLit(e.pos, e.items.map(::expr))
-        is Expr.Call -> Expr.Call(e.pos, expr(e.callee), e.args.map { Arg(it.name, expr(it.value)) }, e.typeArgs.map(::type))
+        is Expr.Call -> Expr.Call(e.pos, expr(e.callee), e.args.map { Arg(it.name, expr(it.value), it.text, it.operands) }, e.typeArgs.map(::type))
         is Expr.Member -> Expr.Member(e.pos, expr(e.target), e.name)
         is Expr.Binary -> Expr.Binary(e.pos, e.op, expr(e.left), expr(e.right))
         is Expr.Unary -> Expr.Unary(e.pos, e.op, expr(e.operand))
