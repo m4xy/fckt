@@ -21,7 +21,10 @@ module Processes {
   }
 
   // Runs command with args to the end: its exit code, and everything it printed.
-  @Process run(command: String, args: List<String>): Exit<String> = streaming(command, args) { remainingText() }
+  @Process run(
+    command: String,
+    args: List<String>,
+  ): Exit<String> = streaming(command, args) { remainingText() }
 
   // The programs of the machine the program runs on, which main uses.
   module Local : Process {

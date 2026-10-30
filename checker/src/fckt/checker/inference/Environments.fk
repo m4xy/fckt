@@ -22,7 +22,9 @@ module Environments {
     }
     casesByName = table.declarations.filter { Symbols.isCaseType(it) }.flatMap { owner ->
       Symbols.casesOf(owner).map { c -> CaseSymbol("${owner.name}.${c.name}", owner, c) }
-    }.fold(emptyMap()) { m, c -> m.put(c.definition.name, m.getOrDefault(c.definition.name, []) + [c]) }
+    }.fold(
+      emptyMap(),
+    ) { m, c -> m.put(c.definition.name, m.getOrDefault(c.definition.name, []) + [c]) }
     moduleSpecs = definitions.namespace.modules.specs
     specs = table.declarations.filter { Symbols.isSpec(it) }
     specTypes = specs.map { s -> (s.name, specTypesOf(s, definitions)) }.toMap()
@@ -39,12 +41,17 @@ module Environments {
 
   // A functor's parameter's values, as the functor sees them: with the types their parameter's spec
   // gives them, its own types abstract, or as its type arguments say they are.
-  @Solving @Abandoning private parameterMembersSeen(definitions: Definitions, specTypes: Map<String, SpecTypes>): Map<String, Scheme> = {
+  @Solving @Abandoning private parameterMembersSeen(
+    definitions: Definitions,
+    specTypes: Map<String, SpecTypes>,
+  ): Map<String, Scheme> = {
     modules = definitions.namespace.modules
     modules.parameterMembers.mapNotNull { member ->
       owner = Symbols.pathOf(member).joinToString(".")
       definitions.namespace.table.functions.get(member).flatMap { f ->
-        wanted = modules.specs.get(owner).flatMap { spec -> specTypes.get(spec.name) }.flatMap { types -> types.values.get(f.declaration.name) }
+        wanted = modules.specs.get(
+          owner,
+        ).flatMap { spec -> specTypes.get(spec.name) }.flatMap { types -> types.values.get(f.declaration.name) }
         wanted.map { scheme ->
           context = TypeContext(Place(f.file, f.path), emptyMap())
           (member, Scheme(scheme.variables, withOwnTypesOutside(scheme.template, owner, context, definitions)))
@@ -55,13 +62,40 @@ module Environments {
 
   // A type a spec says, with each of the spec's own types as the module's of that name is seen from
   // outside it.
-  @Solving @Abandoning withOwnTypesOutside(t: Type, owner: String, context: TypeContext, definitions: Definitions): Type = when (resolved(t)) {
-    SpecOwnType(name, arguments) -> Conversion.outsideType(owner, name, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, context, definitions)
-    Named(n, arguments, region) -> Named(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, region)
-    Abstract(n, arguments) -> Abstract(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
-    ModuleValue(n, arguments, own) -> ModuleValue(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, own)
-    Handler(n, arguments) -> Handler(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
-    TupleOf(elements) -> TupleOf(elements.map { withOwnTypesOutside(it, owner, context, definitions) })
+  @Solving @Abandoning withOwnTypesOutside(
+    t: Type,
+    owner: String,
+    context: TypeContext,
+    definitions: Definitions,
+  ): Type = when (resolved(t)) {
+    SpecOwnType(name, arguments) -> Conversion.outsideType(
+      owner,
+      name,
+      arguments.map { withOwnTypesOutside(it, owner, context, definitions) },
+      context,
+      definitions,
+    )
+    Named(n, arguments, region) -> Named(
+      n,
+      arguments.map { withOwnTypesOutside(it, owner, context, definitions) },
+      region,
+    )
+    Abstract(n, arguments) -> Abstract(
+      n,
+      arguments.map { withOwnTypesOutside(it, owner, context, definitions) },
+    )
+    ModuleValue(n, arguments, own) -> ModuleValue(
+      n,
+      arguments.map { withOwnTypesOutside(it, owner, context, definitions) },
+      own,
+    )
+    Handler(n, arguments) -> Handler(
+      n,
+      arguments.map { withOwnTypesOutside(it, owner, context, definitions) },
+    )
+    TupleOf(elements) -> TupleOf(
+      elements.map { withOwnTypesOutside(it, owner, context, definitions) },
+    )
     FunctionOf(parameters, result, effects) ->
       FunctionOf(
         parameters.map { withOwnTypesOutside(it, owner, context, definitions) },
@@ -81,7 +115,10 @@ module Environments {
   // What the spec says its values are: each generic in the spec's type parameters, its own, and the
   // rest of what it may do, which is what it says it does and what its function parameters do; its
   // own types as SpecOwnTypes.
-  @Solving @Abandoning specTypesOf(spec: Symbol, definitions: Definitions): SpecTypes = when (spec.declaration.definition) {
+  @Solving @Abandoning specTypesOf(
+    spec: Symbol,
+    definitions: Definitions,
+  ): SpecTypes = when (spec.declaration.definition) {
     SpecDefinition(types, values, typeParameters, _, _) -> {
       place = Place(spec.file, spec.path)
       context = Context(
@@ -109,7 +146,12 @@ module Environments {
         own = v.typeParameters.map { p -> (p, fresh()) }
         rest = fresh()
         effects = Annotations.effectsOf(v.annotations, place, v.at, definitions.namespace)
-        declared = if (effects.isEmpty()) Annotations.effectsOf(spec.declaration.annotations, place, spec.declaration.at, definitions.namespace) else effects
+        declared = if (effects.isEmpty()) Annotations.effectsOf(
+          spec.declaration.annotations,
+          place,
+          spec.declaration.at,
+          definitions.namespace,
+        ) else effects
         row = rowOf(declared, Some(rest))
         typeContext = TypeContext(
           place,

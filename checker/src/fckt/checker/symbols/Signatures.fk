@@ -25,7 +25,9 @@ module Signatures {
 
   // What it's called with: an extension's receiver, this, then its parameters; none, for a value.
   parametersOf(s: Symbol): Option<List<Parameter>> = when (receiverOf(s)) {
-    Some(receiver) -> Some([Parameter(s.declaration.at, "this", Some(receiver)), *writtenParametersOf(s).getOrElse([])])
+    Some(receiver) -> Some(
+      [Parameter(s.declaration.at, "this", Some(receiver)), *writtenParametersOf(s).getOrElse([])],
+    )
     None -> writtenParametersOf(s)
   }
 

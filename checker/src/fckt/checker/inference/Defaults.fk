@@ -54,7 +54,9 @@ module Defaults {
 
   @Abandoning private ofAnnotation(s: Symbol): List<Symbol> = when (s.declaration.definition) {
     RecordDefinition(_, fields, _, _, _) -> when (fields.find { it.default.isSome() }) {
-      Some(f) -> abandon(Diagnostic(s.file.source.path, f.at, "an annotation's fields can't have defaults"))
+      Some(f) -> abandon(
+        Diagnostic(s.file.source.path, f.at, "an annotation's fields can't have defaults"),
+      )
       None -> []
     }
     else -> []
@@ -101,7 +103,15 @@ module Defaults {
 
   // The default's function, of no parameters, giving the type written for what it's the default
   // of, beside its owner and as private as it.
-  private made(owner: Symbol, ownerName: String, name: String, at: Position, valueType: Option<TypeRef>, value: Expression, typeParameters: List<String>): Symbol = {
+  private made(
+    owner: Symbol,
+    ownerName: String,
+    name: String,
+    at: Position,
+    valueType: Option<TypeRef>,
+    value: Expression,
+    typeParameters: List<String>,
+  ): Symbol = {
     full = nameOf(ownerName, name)
     definition = FunctionDefinition(typeParameters, None, Some([]), valueType, value, None, false)
     visibility = if (owner.declaration.visibility == Private) Private else Public

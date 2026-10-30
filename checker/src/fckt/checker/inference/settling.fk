@@ -13,8 +13,15 @@ import fckt.checker.types.Types.*
   GlobalRead(_) -> c
   ExternalRead(_) -> c
   Applied(function, arguments) -> Applied(settledCore(function), arguments.map { settledCore(it) })
-  ExternalApplied(function, arguments) -> ExternalApplied(function, arguments.map { settledCore(it) })
-  Performed(effect, operation, arguments) -> Performed(effect, operation, arguments.map { settledCore(it) })
+  ExternalApplied(function, arguments) -> ExternalApplied(
+    function,
+    arguments.map { settledCore(it) },
+  )
+  Performed(effect, operation, arguments) -> Performed(
+    effect,
+    operation,
+    arguments.map { settledCore(it) },
+  )
   Operated(primitive, operands) -> Operated(primitive, operands.map { settledCore(it) })
   Shown(value, t) -> Shown(settledCore(value), resolvedFully(t))
   ListMade(items) -> ListMade(items.map { item ->
@@ -24,29 +31,72 @@ import fckt.checker.types.Types.*
     }
   })
   TupleMade(parts) -> TupleMade(parts.map { settledCore(it) })
-  Constructed(constructor, fields, t) -> Constructed(constructor, fields.map { settledCore(it) }, resolvedFully(t))
+  Constructed(constructor, fields, t) -> Constructed(
+    constructor,
+    fields.map { settledCore(it) },
+    resolvedFully(t),
+  )
   FieldRead(record, owner, field) -> FieldRead(settledCore(record), owner, field)
-  Copied(record, owner, changes) -> Copied(settledCore(record), owner, changes.map { name, value -> (name, settledCore(value)) })
-  FieldWritten(record, owner, field, value) -> FieldWritten(settledCore(record), owner, field, settledCore(value))
-  NarrowedWritten(local, caseName, caseType, field, value) -> NarrowedWritten(local, caseName, caseType, field, settledCore(value))
+  Copied(record, owner, changes) -> Copied(
+    settledCore(record),
+    owner,
+    changes.map { name, value -> (name, settledCore(value)) },
+  )
+  FieldWritten(record, owner, field, value) -> FieldWritten(
+    settledCore(record),
+    owner,
+    field,
+    settledCore(value),
+  )
+  NarrowedWritten(local, caseName, caseType, field, value) -> NarrowedWritten(
+    local,
+    caseName,
+    caseType,
+    field,
+    settledCore(value),
+  )
   CaseName(value, cases) -> CaseName(settledCore(value), cases)
-  Matched(subject, branches) -> Matched(settledCore(subject), branches.map { b -> MatchBranch(b.patterns, b.guard.map { settledCore(it) }, settledCore(b.body)) })
+  Matched(subject, branches) -> Matched(
+    settledCore(subject),
+    branches.map { b -> MatchBranch(b.patterns, b.guard.map { settledCore(it) }, settledCore(b.body)) },
+  )
   NarrowedRead(_, _, _, _) -> c
-  Joined(list, separator, element) -> Joined(settledCore(list), settledCore(separator), resolvedFully(element))
+  Joined(list, separator, element) -> Joined(
+    settledCore(list),
+    settledCore(separator),
+    resolvedFully(element),
+  )
   Assertion(condition, where) -> Assertion(settledCore(condition), where)
-  EqualityAssertion(expected, actual, t, where) -> EqualityAssertion(settledCore(expected), settledCore(actual), resolvedFully(t), where)
-  Conditional(condition, then, otherwise) -> Conditional(settledCore(condition), settledCore(then), settledCore(otherwise))
+  EqualityAssertion(expected, actual, t, where) -> EqualityAssertion(
+    settledCore(expected),
+    settledCore(actual),
+    resolvedFully(t),
+    where,
+  )
+  Conditional(condition, then, otherwise) -> Conditional(
+    settledCore(condition),
+    settledCore(then),
+    settledCore(otherwise),
+  )
   Bound(pattern, value, body) -> Bound(pattern, settledCore(value), settledCore(body))
   VarBound(name, value, body) -> VarBound(name, settledCore(value), settledCore(body))
   VarWritten(name, value) -> VarWritten(name, settledCore(value))
-  FunctionBound(name, parameters, body, rest) -> FunctionBound(name, parameters, settledCore(body), settledCore(rest))
+  FunctionBound(name, parameters, body, rest) -> FunctionBound(
+    name,
+    parameters,
+    settledCore(body),
+    settledCore(rest),
+  )
   Sequenced(first, then) -> Sequenced(settledCore(first), settledCore(then))
   FunctionValue(parameters, body, drops) -> FunctionValue(parameters, settledCore(body), drops)
   Absurd(call) -> Absurd(settledCore(call))
   Widened(value, t) -> Widened(settledCore(value), resolvedFully(t))
   ModulePacked(_, _) -> c
   ModuleMemberRead(value, spec, member) -> ModuleMemberRead(settledCore(value), spec, member)
-  HandlerMade(effect, answers) -> HandlerMade(effect, answers.map { a -> a.copy(answer = settledCore(a.answer)) })
+  HandlerMade(effect, answers) -> HandlerMade(
+    effect,
+    answers.map { a -> a.copy(answer = settledCore(a.answer)) },
+  )
   ModuleHandler(_, _) -> c
   Handled(effect, handler, block) -> Handled(effect, settledCore(handler), settledCore(block))
   Pending(_) -> c

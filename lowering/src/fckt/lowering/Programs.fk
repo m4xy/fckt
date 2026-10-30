@@ -34,7 +34,9 @@ module Programs {
     standard = if (whole) [] else aliases(program)
     functors = functorsOf(program, whole)
     // A functor's own code isn't lowered: each module it makes is a copy of it, with the modules given.
-    lowered = (s: Symbol) -> isOwn(s) && functors.none { f -> s.path.size >= f.size && s.path.take(f.size) == f }
+    lowered = (s: Symbol) -> isOwn(
+      s,
+    ) && functors.none { f -> s.path.size >= f.size && s.path.take(f.size) == f }
     own = OwnCode(
       groups.mapNotNull { g, functions ->
         kept = functions.filter { f, _, _ -> lowered(f) }
@@ -43,7 +45,10 @@ module Programs {
       program.types.filter { t -> lowered(Declarations.declaredAt(t)) },
       program.effects.filter { e -> lowered(e.effect) },
       program.specs.filter { s -> lowered(s.spec) },
-      modulesOf(program, whole).filter { m -> functors.none { f -> m.size >= f.size && m.take(f.size) == f } } + (if (standard.isEmpty()) [] else [["fckt"]]),
+      modulesOf(
+        program,
+        whole,
+      ).filter { m -> functors.none { f -> m.size >= f.size && m.take(f.size) == f } } + (if (standard.isEmpty()) [] else [["fckt"]]),
       standard.map { (["fckt"], it) },
     )
     main = program.functions.find { f -> isOwn(f.function) && f.function.path.isEmpty() && Naming.ownName(f.function) == "main" }.map { f ->
@@ -85,7 +90,10 @@ module Programs {
   private functorsOf(program: CheckedProgram, whole: Boolean): List<List<String>> =
     program.workspace.files.filter { f -> whole || f.source.project == ProgramProject }.flatMap { f -> functorsIn(f.declarations, f.package) }
 
-  private functorsIn(declarations: List<Declaration>, path: List<String>): List<List<String>> = declarations.flatMap { d ->
+  private functorsIn(
+    declarations: List<Declaration>,
+    path: List<String>,
+  ): List<List<String>> = declarations.flatMap { d ->
     when (d.definition) {
       ModuleDefinition(_, _, [_, *_], _, _) -> [path + [d.name]]
       ModuleDefinition(inner, _, [], None, _) -> functorsIn(inner, path + [d.name])
@@ -93,9 +101,15 @@ module Programs {
     }
   }
 
-  private modulesIn(declarations: List<Declaration>, path: List<String>): List<List<String>> = declarations.flatMap { d ->
+  private modulesIn(
+    declarations: List<Declaration>,
+    path: List<String>,
+  ): List<List<String>> = declarations.flatMap { d ->
     when (d.definition) {
-      ModuleDefinition(inner, _, _, None, _) -> [path + [d.name]] + modulesIn(inner, path + [d.name])
+      ModuleDefinition(inner, _, _, None, _) -> [path + [d.name]] + modulesIn(
+        inner,
+        path + [d.name],
+      )
       else -> []
     }
   }

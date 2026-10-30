@@ -17,7 +17,12 @@ module Maps {
 
   // Whether a node with key a and priority p goes above one with key b and priority q: the higher
   // priority does, or of two the same, the smaller key.
-  private above<K>(p: Int, a: K, q: Int, b: K): Boolean = p > q || (p == q && compareValues(a, b) < 0)
+  private above<K>(
+    p: Int,
+    a: K,
+    q: Int,
+    b: K,
+  ): Boolean = p > q || (p == q && compareValues(a, b) < 0)
 
   // A map with nothing in it; with the entries in the list, the last of any with the same key.
   emptyMap<K, V>(): Map<K, V> = MapTip
@@ -61,13 +66,33 @@ module Maps {
         // The new node rises above this one if it should: a right rotation, or a left one.
         put = l.put(key, value)
         when (put) {
-          MapNode(ll, lk, lv, lr, _, lp) -> if (above(lp, lk, p, k)) node(ll, lk, lv, node(lr, k, v, r)) else node(put, k, v, r)
+          MapNode(ll, lk, lv, lr, _, lp) -> if (above(lp, lk, p, k)) node(
+            ll,
+            lk,
+            lv,
+            node(lr, k, v, r),
+          ) else node(
+            put,
+            k,
+            v,
+            r,
+          )
           MapTip -> this
         }
       } else {
         put = r.put(key, value)
         when (put) {
-          MapNode(rl, rk, rv, rr, _, rp) -> if (above(rp, rk, p, k)) node(node(l, k, v, rl), rk, rv, rr) else node(l, k, v, put)
+          MapNode(rl, rk, rv, rr, _, rp) -> if (above(rp, rk, p, k)) node(
+            node(l, k, v, rl),
+            rk,
+            rv,
+            rr,
+          ) else node(
+            l,
+            k,
+            v,
+            put,
+          )
           MapTip -> this
         }
       }
@@ -129,7 +154,15 @@ module Maps {
     MapTip -> this
     MapNode(l, k, v, r, _, _) -> {
       c = compareValues(key, k)
-      if (c < 0) node(l.remove(key), k, v, r) else if (c > 0) node(l, k, v, r.remove(key)) else joined(l, r)
+      if (c < 0) node(l.remove(key), k, v, r) else if (c > 0) node(
+        l,
+        k,
+        v,
+        r.remove(key),
+      ) else joined(
+        l,
+        r,
+      )
     }
   }
 
@@ -138,7 +171,12 @@ module Maps {
     (MapTip, _) -> right
     (_, MapTip) -> left
     (MapNode(ll, lk, lv, lr, _, lp), MapNode(rl, rk, rv, rr, _, rp)) ->
-      if (above(lp, lk, rp, rk)) node(ll, lk, lv, joined(lr, right)) else node(joined(left, rl), rk, rv, rr)
+      if (above(lp, lk, rp, rk)) node(ll, lk, lv, joined(lr, right)) else node(
+        joined(left, rl),
+        rk,
+        rv,
+        rr,
+      )
   }
 
   // Its entries, keys and values, in the keys' order.
@@ -192,7 +230,9 @@ module Maps {
     MapNode(l, k, v, r, n, p) -> MapNode(l.mapValues(f), k, f(k, v), r.mapValues(f), n, p)
   }
   // Each key made into another; of keys that become the same, the last's value.
-  Map<K, V>.mapKeys<J>(f: (K, V) -> J): Map<J, V> = this.entries.map { k, v -> (f(k, v), v) }.toMap()
+  Map<K, V>.mapKeys<J>(
+    f: (K, V) -> J,
+  ): Map<J, V> = this.entries.map { k, v -> (f(k, v), v) }.toMap()
   // What f makes of each entry, in the keys' order.
   Map<K, V>.map<R>(f: (K, V) -> R): List<R> = this.entries.map { k, v -> f(k, v) }
 

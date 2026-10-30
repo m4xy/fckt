@@ -9,40 +9,83 @@ import fckt.parser.*
 module WrittenTypes {
   // Each type's name written in the file: not in what a module there borrows from its spec, which
   // is written in the spec's file, by its full name in borrowed.
-  inFile(file: LoadedFile, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
+  inFile(
+    file: LoadedFile,
+    namespace: Namespace,
+    borrowed: Map<String, LoadedFile>,
+  ): List<WrittenType> =
     inDeclarations(file.declarations, Place(file, file.package), [], namespace, borrowed) +
       // What modules elsewhere borrow from what's written here, read in each of them.
       borrowed.toList().filter { _, from -> from.source.path == file.source.path }.flatMap { name, _ ->
-        namespace.table.functions.get(name).map { f -> inDeclaration(f.declaration, Place(file, f.path), [], namespace, emptyMap()) }.getOrElse([])
+        namespace.table.functions.get(
+          name,
+        ).map { f -> inDeclaration(f.declaration, Place(file, f.path), [], namespace, emptyMap()) }.getOrElse([])
       }
 
   // The declarations' types, in modules whose type parameters are those given, as Results<E>'s E.
-  private inDeclarations(declarations: List<Declaration>, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
+  private inDeclarations(
+    declarations: List<Declaration>,
+    place: Place,
+    moduleTypeParameters: List<String>,
+    namespace: Namespace,
+    borrowed: Map<String, LoadedFile>,
+  ): List<WrittenType> =
     declarations.filter { d -> !borrowed.containsKey((place.path + [d.name]).joinToString(".")) }
       .flatMap { inDeclaration(it, place, moduleTypeParameters, namespace, borrowed) }
 
-  private inDeclaration(d: Declaration, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> =
-    inAnnotations(d.annotations, place, namespace) + inAnnotated(d, place, namespace) + inDefinition(d, place, moduleTypeParameters, namespace, borrowed)
+  private inDeclaration(
+    d: Declaration,
+    place: Place,
+    moduleTypeParameters: List<String>,
+    namespace: Namespace,
+    borrowed: Map<String, LoadedFile>,
+  ): List<WrittenType> =
+    inAnnotations(d.annotations, place, namespace) + inAnnotated(
+      d,
+      place,
+      namespace,
+    ) + inDefinition(
+      d,
+      place,
+      moduleTypeParameters,
+      namespace,
+      borrowed,
+    )
 
   // The annotations on what a declaration holds: its fields, cases, parameters and values.
-  private inAnnotated(d: Declaration, place: Place, namespace: Namespace): List<WrittenType> = when (d.definition) {
+  private inAnnotated(
+    d: Declaration,
+    place: Place,
+    namespace: Namespace,
+  ): List<WrittenType> = when (d.definition) {
     RecordDefinition(_, fields, _, _, _) -> fields.flatMap { inAnnotations(it.annotations, place, namespace) }
     CasesDefinition(_, cases, _, _) -> cases.flatMap { c -> inAnnotations(c.annotations, place, namespace) + c.fields.flatMap { inAnnotations(it.annotations, place, namespace) } }
-    FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters.getOrElse([]).flatMap { inAnnotations(it.annotations, place, namespace) }
+    FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters.getOrElse(
+      [],
+    ).flatMap { inAnnotations(it.annotations, place, namespace) }
     SpecDefinition(_, values, _, _, _) -> values.flatMap { inAnnotations(it.annotations, place, namespace) }
     _ -> []
   }
 
   // The types given as annotations' arguments, where the field they're for holds a Type, or a list or
   // tuple of them, and in the annotations given as arguments.
-  private inAnnotations(annotations: List<Annotation>, place: Place, namespace: Namespace): List<WrittenType> = annotations.flatMap { a ->
+  private inAnnotations(
+    annotations: List<Annotation>,
+    place: Place,
+    namespace: Namespace,
+  ): List<WrittenType> = annotations.flatMap { a ->
     when (Lookups.annotationType(a.name, place, namespace, Skipping)) {
       Found(declared) -> inArguments(a.arguments, declared, place, namespace)
       _ -> []
     }
   }
 
-  private inArguments(arguments: List<AnnotationArgument>, annotation: Symbol, place: Place, namespace: Namespace): List<WrittenType> = {
+  private inArguments(
+    arguments: List<AnnotationArgument>,
+    annotation: Symbol,
+    place: Place,
+    namespace: Namespace,
+  ): List<WrittenType> = {
     fields = when (annotation.declaration.definition) {
       RecordDefinition(_, fs, _, _, _) -> fs
       _ -> []
@@ -58,10 +101,24 @@ module WrittenTypes {
   }
 
   // The types written in an argument for a field of the type: one item of a vararg field's list.
-  private inArgument(v: AnnotationValue, fieldType: TypeRef, item: Boolean, scope: TypeScope, namespace: Namespace): List<WrittenType> = when ((fieldType, v)) {
+  private inArgument(
+    v: AnnotationValue,
+    fieldType: TypeRef,
+    item: Boolean,
+    scope: TypeScope,
+    namespace: Namespace,
+  ): List<WrittenType> = when ((fieldType, v)) {
     (NamedType(_, "List", [itemType]), ValueList(_, items)) if !item -> items.flatMap { inArgument(it, itemType, false, scope, namespace) }
-    (NamedType(_, "List", [itemType]), _) if item -> inArgument(v, itemType, false, scope, namespace)
-    (TupleType(_, elements), ValueTuple(_, items)) -> items.zip(elements).flatMap { value, t -> inArgument(value, t, false, scope, namespace) }
+    (NamedType(_, "List", [itemType]), _) if item -> inArgument(
+      v,
+      itemType,
+      false,
+      scope,
+      namespace,
+    )
+    (TupleType(_, elements), ValueTuple(_, items)) -> items.zip(
+      elements,
+    ).flatMap { value, t -> inArgument(value, t, false, scope, namespace) }
     (NamedType(_, "Type", []), _) -> typeRefOf(v).map { inTypeRef(it, scope) }.getOrElse([])
     (NamedType(_, name, []), Reference(_, n, None, Some(nested))) -> when (Lookups.annotationType(name, scope.place, namespace, Skipping)) {
       Found(annotation) -> inArguments(nested, annotation, scope.place, namespace)
@@ -72,7 +129,9 @@ module WrittenTypes {
 
   // An argument as a type: User, List<User>, (Int, String).
   private typeRefOf(v: AnnotationValue): Option<TypeRef> = when (v) {
-    Reference(at, name, typeArguments, None) -> Some(NamedType(at, name, typeArguments.getOrElse([])))
+    Reference(at, name, typeArguments, None) -> Some(
+      NamedType(at, name, typeArguments.getOrElse([])),
+    )
     ValueTuple(at, items) -> {
       refs = items.mapNotNull { typeRefOf(it) }
       if (refs.size == items.size) Some(TupleType(at, refs)) else None
@@ -80,15 +139,27 @@ module WrittenTypes {
     _ -> None
   }
 
-  private inDefinition(d: Declaration, place: Place, moduleTypeParameters: List<String>, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<WrittenType> = when (d.definition) {
+  private inDefinition(
+    d: Declaration,
+    place: Place,
+    moduleTypeParameters: List<String>,
+    namespace: Namespace,
+    borrowed: Map<String, LoadedFile>,
+  ): List<WrittenType> = when (d.definition) {
     // An annotation's fields can refer to what only the compiler knows, Type, Module<Spec>, Case<T>.
     RecordDefinition(typeParameters, fields, _, true, _) -> fields.flatMap { inMetaTypeRef(it.fieldType, TypeScope(place, typeParameters, []), namespace) }
-    RecordDefinition(typeParameters, fields, _, _, _) -> inFields(fields, TypeScope(place, typeParameters, []))
+    RecordDefinition(typeParameters, fields, _, _, _) -> inFields(
+      fields,
+      TypeScope(place, typeParameters, []),
+    )
     CasesDefinition(typeParameters, cases, _, includes) -> {
       scope = TypeScope(place, typeParameters, [])
       cases.flatMap { inFields(it.fields, scope) } + includes.flatMap { inTypeRef(it, scope) }
     }
-    AliasDefinition(typeParameters, target) -> inTypeRef(target, TypeScope(place, moduleTypeParameters + typeParameters, []))
+    AliasDefinition(typeParameters, target) -> inTypeRef(
+      target,
+      TypeScope(place, moduleTypeParameters + typeParameters, []),
+    )
     // A function in a module with type parameters takes them too, as expansion has it.
     FunctionDefinition(typeParameters, receiver, parameters, result, body, _, _) -> {
       scope = TypeScope(place, typeParameters, [], parameters.getOrElse([]).map { it.name })
@@ -115,7 +186,9 @@ module WrittenTypes {
       scope = TypeScope(place, typeParameters, Specs.ownTypes(d, place, namespace))
       values.flatMap { v ->
         inner = TypeScope(place, scope.typeParameters + v.typeParameters, scope.specTypes)
-        v.parameters.getOrElse([]).flatMap { inParameter(it, inner) } + inTypeRef(v.valueType, inner) +
+        v.parameters.getOrElse(
+          [],
+        ).flatMap { inParameter(it, inner) } + inTypeRef(v.valueType, inner) +
           v.default.toList().flatMap { inExpression(it, inner) }
       }
     }
@@ -124,7 +197,11 @@ module WrittenTypes {
   // A type an annotation's field has. Type, Spec and Function name nothing written; Module<S> names
   // a spec, as a spec; Case<T> and Field<R, T> name types; a list's items are of such types too;
   // and another annotation's name is that annotation. Anything else is a type.
-  private inMetaTypeRef(t: TypeRef, scope: TypeScope, namespace: Namespace): List<WrittenType> = when (t) {
+  private inMetaTypeRef(
+    t: TypeRef,
+    scope: TypeScope,
+    namespace: Namespace,
+  ): List<WrittenType> = when (t) {
     TupleType(_, elements) -> elements.flatMap { inMetaTypeRef(it, scope, namespace) }
     NamedType(_, "Type", _) -> []
     NamedType(_, "Spec", _) -> []
@@ -162,7 +239,10 @@ module WrittenTypes {
     GivenType(_, _, given) -> inTypeRef(given, scope)
   }
 
-  private inExpressions(es: List<Expression>, scope: TypeScope): List<WrittenType> = es.flatMap { inExpression(it, scope) }
+  private inExpressions(
+    es: List<Expression>,
+    scope: TypeScope,
+  ): List<WrittenType> = es.flatMap { inExpression(it, scope) }
 
   private inExpression(e: Expression, scope: TypeScope): List<WrittenType> = when (e) {
     IntConstant(_, _) -> []
@@ -180,7 +260,10 @@ module WrittenTypes {
     ListOf(_, items) -> inExpressions(items, scope)
     Spread(_, list) -> inExpression(list, scope)
     Call(_, callee, arguments, typeArguments) ->
-      inExpression(callee, scope) + typeArguments.flatMap { inTypeRef(it, scope) } + inExpressions(arguments.map { it.value }, scope)
+      inExpression(
+        callee,
+        scope,
+      ) + typeArguments.flatMap { inTypeRef(it, scope) } + inExpressions(arguments.map { it.value }, scope)
     Member(_, target, _) -> inExpression(target, scope)
     Binary(_, _, left, right) -> inExpression(left, scope) + inExpression(right, scope)
     Unary(_, _, operand) -> inExpression(operand, scope)
@@ -195,7 +278,9 @@ module WrittenTypes {
     Block(_, statements, result, _) -> statements.flatMap { inStatement(it, scope) } + inExpression(result, scope)
     Monadic(_, monad, block) -> inExpression(monad, scope) + inExpression(block, scope)
     Handle(_, handler, block, parameters) ->
-      inExpression(handler, scope) + parameters.getOrElse([]).flatMap { inParameter(it, scope) } + inExpression(block, scope)
+      inExpression(handler, scope) + parameters.getOrElse(
+        [],
+      ).flatMap { inParameter(it, scope) } + inExpression(block, scope)
   }
 
   private inPattern(p: Pattern, scope: TypeScope): List<WrittenType> = when (p) {
@@ -208,7 +293,9 @@ module WrittenTypes {
 
   private inStatement(s: Statement, scope: TypeScope): List<WrittenType> = when (s) {
     Binding(_, _, parameters, valueType, value, _) ->
-      parameters.getOrElse([]).flatMap { inParameter(it, scope) } + valueType.toList().flatMap { inTypeRef(it, scope) } + inExpression(value, scope)
+      parameters.getOrElse(
+        [],
+      ).flatMap { inParameter(it, scope) } + valueType.toList().flatMap { inTypeRef(it, scope) } + inExpression(value, scope)
     Evaluation(_, e) -> inExpression(e, scope)
     Destructuring(_, pattern, value) -> inPattern(pattern, scope) + inExpression(value, scope)
     Bind(_, pattern, value) -> inPattern(pattern, scope) + inExpression(value, scope)

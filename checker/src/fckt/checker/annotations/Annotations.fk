@@ -17,7 +17,15 @@ module Annotations {
   // The annotation type or effect the annotation names, written at the place.
   declarationOf(a: Annotation, place: Place, namespace: Namespace): Option<Symbol> = {
     table = namespace.table
-    quietly = (entries: Map<String, Symbol>) -> Names.find(a.name, entries, s -> Some(s), full -> entries.containsKey(full), place, namespace, Skipping)
+    quietly = (entries: Map<String, Symbol>) -> Names.find(
+      a.name,
+      entries,
+      s -> Some(s),
+      full -> entries.containsKey(full),
+      place,
+      namespace,
+      Skipping,
+    )
     when (quietly(table.annotationTypes)) {
       Found(s) -> Some(s)
       else -> when (quietly(table.specs)) {
@@ -40,7 +48,12 @@ module Annotations {
   // The annotations, written at the place, with every annotation they pass on. The same annotation
   // reached twice with different arguments is an error, unless it's @Repeatable, or written here
   // directly, which chooses; so is an annotation type annotated, through others, with itself.
-  @Abandoning reached(annotations: List<Annotation>, place: Place, at: Position, namespace: Namespace): List<Reached> = {
+  @Abandoning reached(
+    annotations: List<Annotation>,
+    place: Place,
+    at: Position,
+    namespace: Namespace,
+  ): List<Reached> = {
     all = walk(annotations, place, [], namespace)
     direct = all.filter { it.via.isEmpty() }.map { it.declaration.name }
     kept = all.filter { r -> r.via.isEmpty() || !direct.contains(r.declaration.name) }
@@ -58,7 +71,12 @@ module Annotations {
     kept
   }
 
-  @Abandoning private walk(annotations: List<Annotation>, place: Place, via: List<Symbol>, namespace: Namespace): List<Reached> =
+  @Abandoning private walk(
+    annotations: List<Annotation>,
+    place: Place,
+    via: List<Symbol>,
+    namespace: Namespace,
+  ): List<Reached> =
     annotations.flatMap { a ->
       when (declarationOf(a, place, namespace)) {
         None -> []
@@ -69,7 +87,11 @@ module Annotations {
               "annotations can't be annotated in a circle: ${loop.map { "@${Symbols.simpleName(it)}" }.joinToString(" -> ")}"))
           } else {
             passedOn = declaration.declaration.annotations.filter { inner ->
-              !declarationOf(inner, placeOf(declaration), namespace).map { t -> isMarked(t, meta, namespace) }.getOrElse(false)
+              !declarationOf(
+                inner,
+                placeOf(declaration),
+                namespace,
+              ).map { t -> isMarked(t, meta, namespace) }.getOrElse(false)
             }
             [Reached(declaration, a, via), *walk(passedOn, placeOf(declaration), via + [declaration], namespace)]
           }
@@ -79,8 +101,18 @@ module Annotations {
 
   // The full names of the effects the annotations, written at the place, allow, directly or
   // through the annotations they're made of.
-  @Abandoning effectsOf(annotations: List<Annotation>, place: Place, at: Position, namespace: Namespace): List<String> =
-    reached(annotations, place, at, namespace).filter { isEffect(it.declaration, namespace) }.map { it.declaration.name }.distinct()
+  @Abandoning effectsOf(
+    annotations: List<Annotation>,
+    place: Place,
+    at: Position,
+    namespace: Namespace,
+  ): List<String> =
+    reached(
+      annotations,
+      place,
+      at,
+      namespace,
+    ).filter { isEffect(it.declaration, namespace) }.map { it.declaration.name }.distinct()
 
   // An annotation as written, to tell apart two with different arguments: Route("/a", greet).
   text(a: Annotation): String = lastPart(a.name) + when (a.arguments) {

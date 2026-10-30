@@ -48,7 +48,9 @@ module TypeItems {
       )
   }
 
-  @Lowering private field(f: DeclaredField): FieldDeclaration = FieldDeclaration(Naming.snake(f.name), OcamlTypes.typexpr(f.t), f.variable)
+  @Lowering private field(
+    f: DeclaredField,
+  ): FieldDeclaration = FieldDeclaration(Naming.snake(f.name), OcamlTypes.typexpr(f.t), f.variable)
 
   // show_point show_a (v : 'a point): what the value is, as text, given how to show each of its type
   // parameters.
@@ -71,7 +73,9 @@ module TypeItems {
           [one] -> Some(VariablePat(one))
           _ -> Some(TuplePat(names.map { VariablePat(it) }))
         }
-        shown = if (c.fields.isEmpty()) ConstantExpr(StringConstant(name)) else Shows.joined([ConstantExpr(StringConstant("$name("))] + c.fields.mapIndexed { i, f ->
+        shown = if (c.fields.isEmpty()) ConstantExpr(
+          StringConstant(name),
+        ) else Shows.joined([ConstantExpr(StringConstant("$name("))] + c.fields.mapIndexed { i, f ->
           [
             ConstantExpr(StringConstant((if (i > 0) ", " else "") + f.name + "=")),
             Application(Shows.show(f.t), [Identifier("x$i")]),
@@ -82,14 +86,20 @@ module TypeItems {
     DeclaredCases(caseType, parameters, cases) ->
       Some(showFunction(caseType.name, parameters, Match(Identifier("v"), cases.map { c ->
         name = c.case.definition.name
-        if (c.fields.isEmpty()) Case(ConstructorPat(name, None), None, ConstantExpr(StringConstant(name)))
+        if (c.fields.isEmpty()) Case(
+          ConstructorPat(name, None),
+          None,
+          ConstantExpr(StringConstant(name)),
+        )
         else Case(
           ConstructorPat(name, Some(VariablePat("r"))),
           None,
           fieldsText(name, c.fields, Identifier("r")),
         )
       })))
-    DeclaredAlias(alias, parameters, target) -> Some(showFunction(alias.name, parameters, Application(Shows.show(target), [Identifier("v")])))
+    DeclaredAlias(alias, parameters, target) -> Some(
+      showFunction(alias.name, parameters, Application(Shows.show(target), [Identifier("v")])),
+    )
     DeclaredExternal(external, parameters, _) ->
       Some(
         showFunction(

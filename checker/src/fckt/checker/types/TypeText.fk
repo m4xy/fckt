@@ -16,7 +16,10 @@ module TypeText {
   // The unknowns named so far, in the order they were: the first is T1.
   private type Naming(var named: List<TypeVariable>)
 
-  @Mutating private nameOf(v: TypeVariable, naming: Naming): String = when (naming.named.indexOf(v)) {
+  @Mutating private nameOf(
+    v: TypeVariable,
+    naming: Naming,
+  ): String = when (naming.named.indexOf(v)) {
     -1 -> {
       naming.named = naming.named + [v]
       "T${naming.named.size}"
@@ -58,7 +61,10 @@ module TypeText {
   @Solving @Mutating private applied(name: String, arguments: List<Type>, naming: Naming): String =
     if (arguments.isEmpty()) name else "$name<${renderAll(arguments, naming)}>"
 
-  @Solving @Mutating private renderAll(types: List<Type>, naming: Naming): String = types.map { render(it, naming) }.joinToString(", ")
+  @Solving @Mutating private renderAll(
+    types: List<Type>,
+    naming: Naming,
+  ): String = types.map { render(it, naming) }.joinToString(", ")
 
   // The last part of a full name: Console, for fckt.io.Console.
   private lastPart(name: String): String = name.split(".").lastOrNone().getOrElse(name)

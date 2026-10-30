@@ -22,7 +22,12 @@ import fckt.parser.*
   Scheme(opened, widenedType)
 }
 
-@Solving private widenedIn(t: Type, positive: Boolean, open: @Solving (Row) -> Row, table: SymbolTable): Type = when (t) {
+@Solving private widenedIn(
+  t: Type,
+  positive: Boolean,
+  open: @Solving (Row) -> Row,
+  table: SymbolTable,
+): Type = when (t) {
   FunctionOf(parameters, result, effects) ->
     FunctionOf(
       parameters.map { widenedIn(it, !positive, open, table) },
@@ -47,12 +52,27 @@ import fckt.parser.*
 private isCovariant(name: String, index: Int, table: SymbolTable): Boolean =
   if (["List", "Option", "Result", "Lazy"].contains(name)) true
   else when (table.records.get(name).orElse { table.caseTypes.get(name) }.map { it.declaration.definition }) {
-    Some(RecordDefinition(parameters, fields, _, _, None)) -> holdsOnlyGiven(parameters, fields, index, lastPart(name))
-    Some(CasesDefinition(parameters, cases, _, _)) -> holdsOnlyGiven(parameters, cases.flatMap { it.fields }, index, lastPart(name))
+    Some(RecordDefinition(parameters, fields, _, _, None)) -> holdsOnlyGiven(
+      parameters,
+      fields,
+      index,
+      lastPart(name),
+    )
+    Some(CasesDefinition(parameters, cases, _, _)) -> holdsOnlyGiven(
+      parameters,
+      cases.flatMap { it.fields },
+      index,
+      lastPart(name),
+    )
     _ -> false
   }
 
-private holdsOnlyGiven(parameters: List<String>, fields: List<Field>, index: Int, own: String): Boolean = when (parameters.getOrNone(index)) {
+private holdsOnlyGiven(
+  parameters: List<String>,
+  fields: List<Field>,
+  index: Int,
+  own: String,
+): Boolean = when (parameters.getOrNone(index)) {
   Some(p) -> fields.all { f -> if (f.variable) !mentions(f.fieldType, p) else only(f.fieldType, p, true, own) }
   None -> false
 }

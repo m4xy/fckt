@@ -26,7 +26,9 @@ import fckt.parser.*
 ): Typed = {
   blockArgument = CallArgument(None, TrailingBlock(Positions.of(block), parameters, block))
   makesHandler = when (handler) {
-    Call(_, Name(_, name), _, _) -> Scopes.lookup(scope, name).isNone() && Lookups.found(Globals.find(name, context, Skipping)).isNone() &&
+    Call(_, Name(_, name), _, _) -> Scopes.lookup(scope, name).isNone() && Lookups.found(
+      Globals.find(name, context, Skipping),
+    ).isNone() &&
       effectSpecNamed(name, context).isSome()
     else -> false
   }
@@ -77,17 +79,28 @@ import fckt.parser.*
   }
 }
 
-private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLowerCase() }.getOrElse(false)
+private startsLowerCase(
+  name: String,
+): Boolean = name.getOrNone(0).map { it.isLowerCase() }.getOrElse(false)
 
 // The name of a declared function's last parameter, if the block is to be given as it by name, so
 // that those before it can be left to their defaults.
-@Abandoning private blockAsLastByName(callee: Expression, given: List<CallArgument>, scope: Scope, context: Context): Option<String> = when (callee) {
-  Name(_, name) if Scopes.lookup(scope, name).isNone() -> Lookups.found(Globals.find(name, context, Skipping)).flatMap { declared ->
+@Abandoning private blockAsLastByName(
+  callee: Expression,
+  given: List<CallArgument>,
+  scope: Scope,
+  context: Context,
+): Option<String> = when (callee) {
+  Name(_, name) if Scopes.lookup(scope, name).isNone() -> Lookups.found(
+    Globals.find(name, context, Skipping),
+  ).flatMap { declared ->
     parameters = Signatures.parametersOf(declared).getOrElse([])
     parameters.lastOrNone().map { it.name }.filter { last ->
       inOrder = given.takeWhile { it.name.isNone() }.size
       parameters.size > given.size + 1 && given.none { it.name == Some(last) } &&
-        parameters.dropLast(1).drop(inOrder).all { p -> p.default.isSome() || given.any { it.name == Some(p.name) } }
+        parameters.dropLast(1).drop(
+          inOrder,
+        ).all { p -> p.default.isSome() || given.any { it.name == Some(p.name) } }
     }
   }
   else -> None
@@ -107,7 +120,12 @@ private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLo
   context: Context,
 ): Typed = {
   asLast = when (handler) {
-    Call(_, callee, arguments, typeArguments) if !makesHandler -> when (resolved(infer(callee, None, scope, context).t)) {
+    Call(
+      _,
+      callee,
+      arguments,
+      typeArguments,
+    ) if !makesHandler -> when (resolved(infer(callee, None, scope, context).t)) {
       FunctionOf(ps, _, _) if ps.size == arguments.size + 1 ->
         Some(
           inferCall(
@@ -129,16 +147,33 @@ private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLo
     None -> {
       handlerTyped = infer(handler, None, scope, context)
       when (resolved(handlerTyped.t)) {
-        FunctionOf([_], _, _) -> inferCall(at, handler, [blockArgument], [], expected, scope, context)
+        FunctionOf([_], _, _) -> inferCall(
+          at,
+          handler,
+          [blockArgument],
+          [],
+          expected,
+          scope,
+          context,
+        )
         Handler(effect, arguments) -> {
-          if (parameters.isSome()) abandon(Globals.problem(context, Positions.of(block), "a handler's block runs with the effect handled, so it takes no parameters")) else Unit
+          if (parameters.isSome()) abandon(
+            Globals.problem(
+              context,
+              Positions.of(block),
+              "a handler's block runs with the effect handled, so it takes no parameters",
+            ),
+          ) else Unit
           n = arguments.size
           handled = handling(effect, arguments.take(n - 2), arguments.getOrNone(n - 2).getOrElse(Variable(fresh())),
             arguments.getOrNone(n - 1).getOrElse(Variable(fresh())), block, expected, scope, at, context)
           Typed(
             handled.t,
             None,
-            effectNamed(effect, context).map { e -> Handled(e, handlerTyped.core, handled.core) }.getOrElse(Pending("a handler of an unknown effect")),
+            effectNamed(
+              effect,
+              context,
+            ).map { e -> Handled(e, handlerTyped.core, handled.core) }.getOrElse(Pending("a handler of an unknown effect")),
           )
         }
       else -> abandon(Globals.problem(context, Positions.of(handler),
@@ -149,14 +184,30 @@ private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLo
 }
 
 // The handled effect of the full name.
-effectNamed(name: String, context: Context): Option<Symbol> = context.environment.definitions.namespace.table.specs.get(name)
+effectNamed(
+  name: String,
+  context: Context,
+): Option<Symbol> = context.environment.definitions.namespace.table.specs.get(name)
 
 // The block, run with the effect, with these type arguments, handled: inside, it may do the effect;
 // outside, what's left of what it does is done here, as is what the handler's answers do. The block
 // gives the handler's answer, as does every handler that doesn't resume.
-@Inferring handling(effect: String, arguments: List<Type>, answer: Type, answers: Type, block: Expression, expected: Option<Type>, scope: Scope, at: Position, context: Context): Typed = {
+@Inferring handling(
+  effect: String,
+  arguments: List<Type>,
+  answer: Type,
+  answers: Type,
+  block: Expression,
+  expected: Option<Type>,
+  scope: Scope,
+  at: Position,
+  context: Context,
+): Typed = {
   rest = fresh()
-  typed = doingIn(Row([EffectLabel(effect, arguments)], Some(rest)), context) { infer(block, expected.orElse { known(Some(answer)) }, scope, context) }
+  typed = doingIn(
+    Row([EffectLabel(effect, arguments)], Some(rest)),
+    context,
+  ) { infer(block, expected.orElse { known(Some(answer)) }, scope, context) }
   assign(block, typed, answer, context)
   perform(Row([], Some(rest)), at)
   perform(asRow(answers), at)
@@ -172,10 +223,17 @@ effectNamed(name: String, context: Context): Option<Symbol> = context.environmen
   operations = context.environment.operations
   namespace = context.environment.definitions.namespace
   aroundHere = Names.reach(name, context.place, namespace.table).map { n ->
-    operations.getOrDefault((context.place.path.take(n) + [name]).joinToString("."), []).filter { Globals.visible(it.effect, context) }
+    operations.getOrDefault(
+      (context.place.path.take(n) + [name]).joinToString("."),
+      [],
+    ).filter { Globals.visible(it.effect, context) }
   }.find { it.isNotEmpty() }
   found = aroundHere.getOrElse(
-    Names.importedNames(name, context.place, namespace).flatMap { operations.getOrDefault(it, []) }.filter { Globals.visible(it.effect, context) }
+    Names.importedNames(
+      name,
+      context.place,
+      namespace,
+    ).flatMap { operations.getOrDefault(it, []) }.filter { Globals.visible(it.effect, context) }
       .distinctBy { it.effect.name }
   )
   when (found) {
@@ -187,7 +245,13 @@ effectNamed(name: String, context: Context): Option<Symbol> = context.environmen
 }
 
 // Console.println: an operation named through its effect.
-@Abandoning qualifiedOperation(at: Position, target: Expression, name: String, scope: Scope, context: Context): Option<Operation> =
+@Abandoning qualifiedOperation(
+  at: Position,
+  target: Expression,
+  name: String,
+  scope: Scope,
+  context: Context,
+): Option<Operation> =
   dottedUnbound(target, scope).flatMap { d -> effectSpecNamed(d, context) }.map { spec ->
     when (specValues(spec).find { it.name == name }) {
       Some(value) -> Operation(spec, value)
@@ -200,7 +264,9 @@ effectNamed(name: String, context: Context): Option<Symbol> = context.environmen
 // The handled effect the name means, if it means one.
 effectSpecNamed(name: String, context: Context): Option<Symbol> = {
   namespace = context.environment.definitions.namespace
-  Lookups.found(Lookups.spec(name, context.place, namespace, Skipping)).filter { Annotations.isEffect(it, namespace) }
+  Lookups.found(
+    Lookups.spec(name, context.place, namespace, Skipping),
+  ).filter { Annotations.isEffect(it, namespace) }
 }
 
 // What a spec says its values are.
@@ -211,7 +277,11 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
 
 // A new instance of the operation's type, and the effect using it does: its effect with the type
 // arguments it's used with.
-@Solving @Abandoning private operationType(operation: Operation, at: Position, context: Context): (Type, EffectLabel) =
+@Solving @Abandoning private operationType(
+  operation: Operation,
+  at: Position,
+  context: Context,
+): (Type, EffectLabel) =
   when (context.environment.specTypes.get(operation.effect.name).flatMap { types -> types.values.get(operation.value.name).map { s -> (types, s) } }) {
     Some((types, scheme)) -> {
       mapping = scheme.variables.map { v -> (v, Variable(fresh())) }.toMap()
@@ -227,7 +297,13 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
   }
 
 // println("hi"): does Console's println, so the code it's in does @Console.
-@Inferring callOperation(at: Position, operation: Operation, arguments: List<CallArgument>, scope: Scope, context: Context): Typed = {
+@Inferring callOperation(
+  at: Position,
+  operation: Operation,
+  arguments: List<CallArgument>,
+  scope: Scope,
+  context: Context,
+): Typed = {
   (t, label) = operationType(operation, at, context)
   name = operation.value.name
   when (t) {
@@ -262,13 +338,26 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
 // what's around that catches it, not what's around the handler.
 @Abandoning failsAtCall(spec: Symbol, value: SpecValue, context: Context): Boolean =
   value.parameters.isSome() &&
-    Annotations.effectsOf(value.annotations, Annotations.placeOf(spec), value.at, context.environment.definitions.namespace).contains(failEffect)
+    Annotations.effectsOf(
+      value.annotations,
+      Annotations.placeOf(spec),
+      value.at,
+      context.environment.definitions.namespace,
+    ).contains(
+      failEffect,
+    )
 
 failEffect: String = "fckt.effects.Fail"
 
 // What performing the operation does: its effect, and, if it may fail, Fail.
-@Abandoning private performed(operation: Operation, label: EffectLabel, context: Context): List<EffectLabel> =
-  [label] + (if (failsAtCall(operation.effect, operation.value, context)) [EffectLabel(failEffect, [])] else [])
+@Abandoning private performed(
+  operation: Operation,
+  label: EffectLabel,
+  context: Context,
+): List<EffectLabel> =
+  [
+    label,
+  ] + (if (failsAtCall(operation.effect, operation.value, context)) [EffectLabel(failEffect, [])] else [])
 
 // An answer's effects: the handler's, but failing, where the operation says it may, is the
 // operation's caller's.
@@ -278,13 +367,20 @@ failEffect: String = "fckt.effects.Fail"
   answers: Row,
   context: Context,
 ): Row =
-  if (failsAtCall(spec, value, context)) Row([EffectLabel(failEffect, [])], answers.rest) else answers
+  if (failsAtCall(spec, value, context)) Row(
+    [EffectLabel(failEffect, [])],
+    answers.rest,
+  ) else answers
 
 // An operation used as a value, as in xs.forEach(println): a function that does it when called.
 @Inferring operationValue(operation: Operation, at: Position, context: Context): Type = {
   (t, label) = operationType(operation, at, context)
   when (t) {
-    FunctionOf(parameters, result, _) -> FunctionOf(parameters, result, Row(performed(operation, label, context), Some(fresh())))
+    FunctionOf(parameters, result, _) -> FunctionOf(
+      parameters,
+      result,
+      Row(performed(operation, label, context), Some(fresh())),
+    )
     else -> {
       perform(Row([label], None), at)
       t
@@ -299,7 +395,13 @@ failEffect: String = "fckt.effects.Fail"
 // of the handled block, which it calls with the operation's result, later, or never. What the block
 // gives, and so what resume does, is the handler's answer; its answers run where it handles, so what
 // they do is its last argument.
-@Inferring makeHandler(at: Position, spec: Symbol, arguments: List<CallArgument>, scope: Scope, context: Context): Typed = {
+@Inferring makeHandler(
+  at: Position,
+  spec: Symbol,
+  arguments: List<CallArgument>,
+  scope: Scope,
+  context: Context,
+): Typed = {
   types = context.environment.specTypes.getOrDefault(spec.name, SpecTypes(emptyMap(), []))
   given = types.parameters.map { Variable(fresh()) }
   answer = Variable(fresh())
@@ -311,7 +413,16 @@ failEffect: String = "fckt.effects.Fail"
     when ((types.values.get(value.name), arguments.getOrNone(index))) {
       (Some(scheme), Some(argument)) -> {
         mapping = (scheme.variables.map { v -> (v, Variable(fresh())) } + types.parameters.zip(given)).toMap()
-        (core, resumes) = answering(spec, value, substitute(scheme.template, mapping), argument.value, answer, answers, scope, context)
+        (core, resumes) = answering(
+          spec,
+          value,
+          substitute(scheme.template, mapping),
+          argument.value,
+          answer,
+          answers,
+          scope,
+          context,
+        )
         Some(Answer(value.name, core, resumes))
       }
       else -> None
@@ -326,7 +437,16 @@ failEffect: String = "fckt.effects.Fail"
 
 // That the argument answers the operation: a value, for a value; for a function, a function of its
 // parameters, or of them and resume.
-@Inferring private answering(spec: Symbol, value: SpecValue, t: Type, argument: ArgumentValue, answer: Type, answers: Row, scope: Scope, context: Context): (Core, Boolean) = when (t) {
+@Inferring private answering(
+  spec: Symbol,
+  value: SpecValue,
+  t: Type,
+  argument: ArgumentValue,
+  answer: Type,
+  answers: Row,
+  scope: Scope,
+  context: Context,
+): (Core, Boolean) = when (t) {
   FunctionOf(parameters, result, _) -> {
     // A function with one more parameter than the operation takes resume. A lambda says by how many
     // it's written with; anything else, by its type.
@@ -344,7 +464,15 @@ failEffect: String = "fckt.effects.Fail"
       (_, Some(FunctionOf(ps, _, _))) -> ps.size == parameters.size + 1
       else -> false
     }
-    field = if (resuming) FunctionOf(parameters + [FunctionOf([result], answer, answers)], answer, answers) else FunctionOf(parameters, result, answeringIn(spec, value, answers, context))
+    field = if (resuming) FunctionOf(
+      parameters + [FunctionOf([result], answer, answers)],
+      answer,
+      answers,
+    ) else FunctionOf(
+      parameters,
+      result,
+      answeringIn(spec, value, answers, context),
+    )
     attempt = Diagnostics.attempting {
       when ((given, givenTyped)) {
         (Some(g), Some(typed)) -> {
@@ -367,9 +495,22 @@ failEffect: String = "fckt.effects.Fail"
 }
 
 // What an argument was found to be, worked out on its own.
-@Inferring private argumentTyped(argument: ArgumentValue, scope: Scope, context: Context): Typed = when (argument) {
+@Inferring private argumentTyped(
+  argument: ArgumentValue,
+  scope: Scope,
+  context: Context,
+): Typed = when (argument) {
   WrittenValue(e) -> infer(e, None, scope, context)
-  TrailingBlock(at, parameters, block) -> inferLambda(at, parameters, block, false, true, None, scope, context)
+  TrailingBlock(at, parameters, block) -> inferLambda(
+    at,
+    parameters,
+    block,
+    false,
+    true,
+    None,
+    scope,
+    context,
+  )
   DefaultValue(at, function) -> infer(Call(at, Name(at, function), [], []), None, scope, context)
 }
 

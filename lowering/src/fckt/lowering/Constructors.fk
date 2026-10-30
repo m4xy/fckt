@@ -33,7 +33,11 @@ module Constructors {
 
   // What the constructor matches, given what its fields must, or, for is Case, nothing of them; on a
   // local, the case's record is bound, for what's matched to read its fields.
-  @Lowering pattern(constructor: Constructor, fields: Option<List<Pat>>, narrowed: Option<String>): Pat = when (constructor) {
+  @Lowering pattern(
+    constructor: Constructor,
+    fields: Option<List<Pat>>,
+    narrowed: Option<String>,
+  ): Pat = when (constructor) {
     RecordConstructor(record) -> when (fields) {
       Some(ps) -> TypedPat(RecordPat(fieldNames(record).zip(ps).mapIndexed { i, entry ->
         (name, p) = entry
@@ -55,16 +59,25 @@ module Constructors {
     CaseConstructor(c) ->
       if (c.definition.fields.isEmpty()) ConstructorPat(caseName(c), None)
       else ConstructorPat(caseName(c), Some(when (fields) {
-        Some(ps) -> RecordPat(c.definition.fields.map { it.name }.zip(ps).map { name, p -> FieldPat(Naming.snake(name), p) }, false)
+        Some(ps) -> RecordPat(
+          c.definition.fields.map { it.name }.zip(ps).map { name, p -> FieldPat(Naming.snake(name), p) },
+          false,
+        )
         None -> narrowed.map { local -> VariablePat(narrowedName(local, c.definition.name)) }.getOrElse(AnyPat)
       }))
     BuiltinCase("None") -> ConstructorPat("None", None)
-    BuiltinCase(name) -> ConstructorPat(name, Some(fields.flatMap { it.firstOrNone() }.getOrElse(AnyPat)))
+    BuiltinCase(name) -> ConstructorPat(
+      name,
+      Some(fields.flatMap { it.firstOrNone() }.getOrElse(AnyPat)),
+    )
   }
 
   // A record, annotated with its type, its type arguments whatever they are, so OCaml can tell its
   // labels from another record's of the same name.
-  @Lowering annotatedRecord(record: Expr, owner: Symbol): Expr = Annotated(record, recordType(owner))
+  @Lowering annotatedRecord(
+    record: Expr,
+    owner: Symbol,
+  ): Expr = Annotated(record, recordType(owner))
 
   @Lowering private recordType(owner: Symbol): Typexpr = {
     parameters = OcamlTypes.ocamlParameters(
@@ -77,7 +90,9 @@ module Constructors {
   // its cases, its tag.
   @Lowering caseName(c: CaseSymbol): String =
     if (isShared(c.owner.name)) tag(c)
-    else (Naming.relative(c.owner.path).map { Naming.moduleName(it) } + [c.definition.name]).joinToString(".")
+    else (Naming.relative(c.owner.path).map { Naming.moduleName(it) } + [c.definition.name]).joinToString(
+      ".",
+    )
 
   // A shared case's tag, named after the type that declares it: `Alphabet_A.
   tag(c: CaseSymbol): String = "`" + tagName(c)
@@ -86,10 +101,18 @@ module Constructors {
   tagName(c: CaseSymbol): String = c.owner.name.replace(".", "_") + "_" + c.definition.name
 
   // A record's field's label, written from the module it's used in: x, or Geometry.x.
-  @Lowering label(record: Symbol, field: String): String = (Naming.relative(record.path).map { Naming.moduleName(it) } + [Naming.snake(field)]).joinToString(".")
+  @Lowering label(
+    record: Symbol,
+    field: String,
+  ): String = (Naming.relative(record.path).map { Naming.moduleName(it) } + [Naming.snake(field)]).joinToString(
+    ".",
+  )
 
   // What a local found by is to be a case is called while it's so: its case's record.
-  narrowedName(local: String, caseName: String): String = Naming.snake(local) + "_as_" + Naming.snake(caseName).removeSuffix("_")
+  narrowedName(
+    local: String,
+    caseName: String,
+  ): String = Naming.snake(local) + "_as_" + Naming.snake(caseName).removeSuffix("_")
 
   private fieldNames(record: Symbol): List<String> = when (record.declaration.definition) {
     RecordDefinition(_, fields, _, _, _) -> fields.map { it.name }
@@ -97,7 +120,11 @@ module Constructors {
   }
 
   // The fields, by their labels, the first through the modules its record is in.
-  @Lowering private labelled(record: Symbol, names: List<String>, values: List<Expr>): List<FieldValue> =
+  @Lowering private labelled(
+    record: Symbol,
+    names: List<String>,
+    values: List<Expr>,
+  ): List<FieldValue> =
     names.zip(values).mapIndexed { i, entry ->
       (name, value) = entry
       FieldValue(if (i == 0) label(record, name) else Naming.snake(name), value)

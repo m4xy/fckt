@@ -26,11 +26,19 @@ module MetaTypes {
     }.toMap()
 
   // The meta type a field is written with.
-  @Solving @Abandoning metaTypeOf(t: TypeRef, context: TypeContext, definitions: Definitions): MetaType = when (t) {
+  @Solving @Abandoning metaTypeOf(
+    t: TypeRef,
+    context: TypeContext,
+    definitions: Definitions,
+  ): MetaType = when (t) {
     TupleType(_, elements) -> tupleOf(elements.map { metaTypeOf(it, context, definitions) })
     NamedType(at, name, arguments) -> {
-      problem = (message: String) -> abandon(Diagnostic(context.place.file.source.path, at, message))
-      arity = (n: Int) -> if (arguments.size != n) problem("'$name' takes $n type argument${if (n == 1) "" else "s"}, not ${arguments.size}") else Unit
+      problem = (message: String) -> abandon(
+        Diagnostic(context.place.file.source.path, at, message),
+      )
+      arity = (n: Int) -> if (arguments.size != n) problem(
+        "'$name' takes $n type argument${if (n == 1) "" else "s"}, not ${arguments.size}",
+      ) else Unit
       when (name) {
         "Type" -> {
           arity(0)
@@ -94,7 +102,13 @@ module MetaTypes {
             Named(n, _, _) -> definitions.namespace.table.records.containsKey(n)
             _ -> false
           }
-          if (!isRecord) abandon(Diagnostic(context.place.file.source.path, Positions.ofType(recordRef), "Field<R, T> takes a record type as R, not ${TypeText.shown(record)}")) else Unit
+          if (!isRecord) abandon(
+            Diagnostic(
+              context.place.file.source.path,
+              Positions.ofType(recordRef),
+              "Field<R, T> takes a record type as R, not ${TypeText.shown(record)}",
+            ),
+          ) else Unit
           MetaField(record, when (valueRef) {
             NamedType(_, "_", []) -> None
             _ -> Some(Conversion.typeOf(valueRef, context, definitions))

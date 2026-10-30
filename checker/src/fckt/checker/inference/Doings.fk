@@ -31,12 +31,20 @@ module Doings {
   // Adds what the row does to effects, the code's: a row with no rest of its own gets one, so the
   // code can do other things too. It fails only where the code must do no more than a written type
   // says: a lambda given where an @Console (String) -> Unit is wanted can't also write files.
-  @Solving @Abandoning private performIn(performed: Row, effects: Row, at: Position, file: Option<String>): Unit = {
+  @Solving @Abandoning private performIn(
+    performed: Row,
+    effects: Row,
+    at: Position,
+    file: Option<String>,
+  ): Unit = {
     flat = flattened(performed)
     own = flattened(effects).rest
     // Doing what may include what the function does anyway, as a parameter's @Fail () -> A does, is
     // doing its own effects.
-    open = if (flat.rest.isNone() || flat.rest == own) Row(flat.labels, Some(fresh())) else performed
+    open = if (flat.rest.isNone() || flat.rest == own) Row(
+      flat.labels,
+      Some(fresh()),
+    ) else performed
     if (!unifyRows(open, effects)) {
       allowed = effectNames(effects)
       extra = flat.labels.map { it.name }.filter { !allowed.contains(it) }.distinct()
@@ -52,7 +60,11 @@ module Doings {
   }
 
   // Adds each rest that's someone else's to the row, now nothing more of the code's own will be.
-  @Solving @Abandoning private include(row: Row, rests: List<(TypeVariable, Position)>, file: Option<String>): Unit = rests.forEach { entry ->
+  @Solving @Abandoning private include(
+    row: Row,
+    rests: List<(TypeVariable, Position)>,
+    file: Option<String>,
+  ): Unit = rests.forEach { entry ->
     (v, at) = entry
     theirs = flattened(Row([], Some(v)))
     if (theirs.labels.isNotEmpty()) performIn(Row(theirs.labels, None), row, at, file) else Unit
@@ -61,7 +73,12 @@ module Doings {
       (None, _) -> Unit
       (Some(rest), Some(mine)) if rest == mine -> Unit
       // Closed: E may do only what the row says.
-      (Some(rest), None) -> if (!unifyRows(Row([], Some(rest)), row)) performIn(Row([], Some(rest)), row, at, file) else Unit
+      (Some(rest), None) -> if (!unifyRows(Row([], Some(rest)), row)) performIn(
+        Row([], Some(rest)),
+        row,
+        at,
+        file,
+      ) else Unit
       // Open: the row's rest is E, with whatever else gets added to it.
       (Some(rest), Some(mine)) -> {
         unify(Variable(mine), Variable(rest))
@@ -71,5 +88,7 @@ module Doings {
   }
 
   // Effects as they're written: @Console @FileSystem.
-  shown(names: List<String>): String = names.distinct().sorted().map { "@" + it.split(".").lastOrNone().getOrElse(it) }.joinToString(" ")
+  shown(
+    names: List<String>,
+  ): String = names.distinct().sorted().map { "@" + it.split(".").lastOrNone().getOrElse(it) }.joinToString(" ")
 }

@@ -80,9 +80,15 @@ module Cores {
     Joined(list, separator, _) -> references(list) + references(separator)
     Assertion(condition, _) -> references(condition)
     EqualityAssertion(expected, actual, _, _) -> references(expected) + references(actual)
-    Matched(subject, branches) -> references(subject) + branches.flatMap { b -> b.guard.map { references(it) }.getOrElse([]) + references(b.body) }
+    Matched(subject, branches) -> references(
+      subject,
+    ) + branches.flatMap { b -> b.guard.map { references(it) }.getOrElse([]) + references(b.body) }
     NarrowedRead(_, _, _, _) -> []
-    Conditional(condition, then, otherwise) -> references(condition) + references(then) + references(otherwise)
+    Conditional(condition, then, otherwise) -> references(condition) + references(
+      then,
+    ) + references(
+      otherwise,
+    )
     Bound(_, value, body) -> references(value) + references(body)
     VarBound(_, value, body) -> references(value) + references(body)
     VarWritten(_, value) -> references(value)

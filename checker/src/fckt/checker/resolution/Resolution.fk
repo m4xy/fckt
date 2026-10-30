@@ -11,7 +11,10 @@ module Resolution {
     table = Symbols.table(workspace)
     Namespace(
       table,
-      Imports.allOf(workspace.files, table).map { file, imports -> (file.source.path, imports) }.toMap(),
+      Imports.allOf(
+        workspace.files,
+        table,
+      ).map { file, imports -> (file.source.path, imports) }.toMap(),
       noModules,
       Hints(tree, workspace.apart),
     )
@@ -31,7 +34,11 @@ module Resolution {
 
   // What each type's name written in the file means, with an error for each that means nothing
   // it can be used as.
-  @Reporting resolvedTypes(file: LoadedFile, namespace: Namespace, borrowed: Map<String, LoadedFile>): List<ResolvedType> = WrittenTypes.inFile(file, namespace, borrowed).mapNotNull { written ->
+  @Reporting resolvedTypes(
+    file: LoadedFile,
+    namespace: Namespace,
+    borrowed: Map<String, LoadedFile>,
+  ): List<ResolvedType> = WrittenTypes.inFile(file, namespace, borrowed).mapNotNull { written ->
     when (TypeNames.meaning(written.name, written.scope, namespace)) {
       Found(meaning) -> Some(ResolvedType(written, meaning))
       Refused(why) -> {

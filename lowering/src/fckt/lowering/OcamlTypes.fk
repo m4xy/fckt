@@ -9,10 +9,15 @@ module OcamlTypes {
   // The type, with each unknown named as given, as a signature's values are; any other, whatever
   // OCaml works out.
   @Lowering typexprNaming(t: Type, variables: List<(TypeVariable, String)>): Typexpr = when (t) {
-    Variable(v) -> TypeVar(variables.find { variable, _ -> variable == v }.map { _, name -> name }.getOrElse("_"))
+    Variable(v) -> TypeVar(
+      variables.find { variable, _ -> variable == v }.map { _, name -> name }.getOrElse("_"),
+    )
     TypeParameter(name) -> TypeVar("'" + name.lowercase())
     // A spec's own type, in its module type.
-    SpecOwnType(name, arguments) -> TypeApplication(Naming.snake(name).removeSuffix("_"), arguments.map { typexprNaming(it, variables) })
+    SpecOwnType(name, arguments) -> TypeApplication(
+      Naming.snake(name).removeSuffix("_"),
+      arguments.map { typexprNaming(it, variables) },
+    )
     // A module given as a value of a spec: (module Format with type t = point), its own types as its
     // type arguments say.
     ModuleValue(spec, arguments, _) ->
@@ -27,16 +32,25 @@ module OcamlTypes {
     Abstract(name, arguments) -> named(name, arguments, variables)
     TupleOf(parts) -> Product(parts.map { typexprNaming(it, variables) })
     FunctionOf(parameters, result, _) ->
-      (if (parameters.isEmpty()) [TypeApplication("unit", [])] else parameters.map { typexprNaming(it, variables) }).reversed().fold(typexprNaming(result, variables)) { r, p -> Arrow(p, r) }
+      (if (parameters.isEmpty()) [TypeApplication("unit", [])] else parameters.map { typexprNaming(it, variables) }).reversed().fold(
+        typexprNaming(result, variables),
+      ) { r, p -> Arrow(p, r) }
     // What OCaml can work out for itself.
     _ -> TypeVar("_")
   }
 
-  @Lowering private named(name: String, arguments: List<Type>, variables: List<(TypeVariable, String)>): Typexpr = {
+  @Lowering private named(
+    name: String,
+    arguments: List<Type>,
+    variables: List<(TypeVariable, String)>,
+  ): Typexpr = {
     given = ocamlArguments(name, arguments).map { typexprNaming(it, variables) }
     when (declarationOf(name)) {
       // OCaml's own type, as its OCaml is written, each type parameter P, written 'p, replaced.
-      Some(DeclaredExternal(_, parameters, ocaml)) -> TypeApplication("(" + externalText(ocaml, parameters, given) + ")", [])
+      Some(DeclaredExternal(_, parameters, ocaml)) -> TypeApplication(
+        "(" + externalText(ocaml, parameters, given) + ")",
+        [],
+      )
       _ -> builtinOrDeclared(name, given)
     }
   }
@@ -69,7 +83,9 @@ module OcamlTypes {
   // A declared type, by its full name, written from the module it's used in: Geometry.shape.
   @Lowering typeReference(full: String): String = {
     parts = full.split(".")
-    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [Naming.snake(parts.lastOrNone().getOrElse(full))]).joinToString(".")
+    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [Naming.snake(parts.lastOrNone().getOrElse(full))]).joinToString(
+      ".",
+    )
   }
 
   // A spec's module type, by its full name, written from the module it's used in: Formats.Format.
@@ -81,7 +97,11 @@ module OcamlTypes {
     }.joinToString("")
 
   // The spec's own types, as OCaml names them.
-  @Lowering ownTypes(spec: String): List<String> = specOf(spec).map { d -> d.types.map { name, _ -> Naming.snake(name).removeSuffix("_") } }.getOrElse([])
+  @Lowering ownTypes(
+    spec: String,
+  ): List<String> = specOf(
+    spec,
+  ).map { d -> d.types.map { name, _ -> Naming.snake(name).removeSuffix("_") } }.getOrElse([])
 
   @Lowering typeModuleReference(full: String): String = {
     parts = full.split(".")
@@ -92,8 +112,13 @@ module OcamlTypes {
   ownName(full: String): String = Naming.snake(full.split(".").lastOrNone().getOrElse(full))
 
   // A type's arguments that OCaml has: not those for its effect parameters, nor effects.
-  @Lowering ocamlArguments(name: String, arguments: List<Type>): List<Type> = when (declarationOf(name).map { Declarations.parameters(it) }) {
-    Some(parameters) if parameters.size == arguments.size -> parameters.zip(arguments).filter { p, _ -> !p.startsWith("@") }.map { _, a -> a }
+  @Lowering ocamlArguments(
+    name: String,
+    arguments: List<Type>,
+  ): List<Type> = when (declarationOf(name).map { Declarations.parameters(it) }) {
+    Some(parameters) if parameters.size == arguments.size -> parameters.zip(
+      arguments,
+    ).filter { p, _ -> !p.startsWith("@") }.map { _, a -> a }
     _ -> arguments.filter { it !is Effects }
   }
 

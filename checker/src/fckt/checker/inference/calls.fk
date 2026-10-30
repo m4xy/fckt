@@ -31,7 +31,9 @@ import fckt.parser.*
 // The module made for a functor applied in an expression, if the call at the position is one.
 private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   namespace = context.environment.definitions.namespace
-  namespace.modules.lifted.get(CallSite(context.place.file.source.path, at)).flatMap { made -> namespace.table.modules.get(made) }
+  namespace.modules.lifted.get(
+    CallSite(context.place.file.source.path, at),
+  ).flatMap { made -> namespace.table.modules.get(made) }
 }
 
 @Inferring private inferUnlifted(
@@ -43,11 +45,23 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   scope: Scope,
   context: Context,
 ): Typed = when (declaredCallee(callee, scope, context)) {
-  Some(global) if Signatures.isFunction(global) -> callDeclared(at, global, arguments, typeArguments, scope, context)
+  Some(global) if Signatures.isFunction(global) -> callDeclared(
+    at,
+    global,
+    arguments,
+    typeArguments,
+    scope,
+    context,
+  )
   declared -> {
     callable = if (declared.isSome()) None else operationCalled(callee, scope, context)
     when (callable) {
-      Some(operation) -> withoutTypeArguments(typeArguments, at, context, callOperation(at, operation, arguments, scope, context))
+      Some(operation) -> withoutTypeArguments(
+        typeArguments,
+        at,
+        context,
+        callOperation(at, operation, arguments, scope, context),
+      )
       None -> withoutTypeArguments(
         typeArguments,
         at,
@@ -60,15 +74,31 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
 
 // What's called, if it's a declared function or value: by name, unless a local hides it, or
 // through its module.
-@Inferring private declaredCallee(callee: Expression, scope: Scope, context: Context): Option<Symbol> = when (callee) {
-  Name(at, name) -> if (Scopes.lookup(scope, name).isSome()) None else Globals.findOrRefuse(name, at, context)
+@Inferring private declaredCallee(
+  callee: Expression,
+  scope: Scope,
+  context: Context,
+): Option<Symbol> = when (callee) {
+  Name(at, name) -> if (Scopes.lookup(scope, name).isSome()) None else Globals.findOrRefuse(
+    name,
+    at,
+    context,
+  )
   Member(at, target, name) -> moduleMember(at, target, name, scope, context)
   else -> None
 }
 
 // The operation called, if it's one: by name, unless a local hides it, or through its effect.
-@Inferring private operationCalled(callee: Expression, scope: Scope, context: Context): Option<Operation> = when (callee) {
-  Name(at, name) -> if (Scopes.lookup(scope, name).isSome()) None else operationNamed(name, at, context)
+@Inferring private operationCalled(
+  callee: Expression,
+  scope: Scope,
+  context: Context,
+): Option<Operation> = when (callee) {
+  Name(at, name) -> if (Scopes.lookup(scope, name).isSome()) None else operationNamed(
+    name,
+    at,
+    context,
+  )
   Member(at, target, name) -> qualifiedOperation(at, target, name, scope, context)
   else -> None
 }
@@ -98,7 +128,10 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
       Typed(
         result,
         None,
-        Cores.inWrittenOrder(cores, order) { args -> if (Signatures.isExternal(global)) ExternalApplied(global, args) else Applied(GlobalRead(global), args) },
+        Cores.inWrittenOrder(
+          cores,
+          order,
+        ) { args -> if (Signatures.isExternal(global)) ExternalApplied(global, args) else Applied(GlobalRead(global), args) },
       )
     }
     other -> abandon(
@@ -129,10 +162,25 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   }
   constructed = when (callee) {
     Name(calleeAt, name) if handlerSpec.isNone() && unbound(name) ->
-      constructorShape(name, expected, calleeAt, false, None, true, scope, context).map { shape -> construct(at, shape, name, arguments, expected, scope, context) }
-    Member(memberAt, target, name) if declared.isNone() -> when (qualifiedCase(target, scope, context)) {
+      constructorShape(
+        name,
+        expected,
+        calleeAt,
+        false,
+        None,
+        true,
+        scope,
+        context,
+      ).map { shape -> construct(at, shape, name, arguments, expected, scope, context) }
+    Member(
+      memberAt,
+      target,
+      name,
+    ) if declared.isNone() -> when (qualifiedCase(target, scope, context)) {
       Some(qualifier) -> when (constructorShape(name, expected, memberAt, false, Some(qualifier), true, scope, context)) {
-        Some(shape) -> Some(construct(at, shape, "$qualifier.$name", arguments, expected, scope, context))
+        Some(shape) -> Some(
+          construct(at, shape, "$qualifier.$name", arguments, expected, scope, context),
+        )
         None -> abandon(Globals.problem(context, memberAt, "$qualifier has no '$name'"))
       }
       None -> None
@@ -145,7 +193,16 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
       Some(typed) -> typed
       None -> {
         method = when (callee) {
-          Member(memberAt, target, name) -> inferMethodCall(at, memberAt, target, name, arguments, typeArguments, scope, context)
+          Member(memberAt, target, name) -> inferMethodCall(
+            at,
+            memberAt,
+            target,
+            name,
+            arguments,
+            typeArguments,
+            scope,
+            context,
+          )
           else -> CalledField(arguments)
         }
         when (method) {
@@ -158,8 +215,16 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
 }
 
 // A function value, called with its arguments in order.
-@Inferring callValue(at: Position, callee: Expression, arguments: List<CallArgument>, scope: Scope, context: Context): Typed = {
-  if (arguments.any { it.name.isSome() }) abandon(Globals.problem(context, at, "named arguments need a call to a declared function or type")) else Unit
+@Inferring callValue(
+  at: Position,
+  callee: Expression,
+  arguments: List<CallArgument>,
+  scope: Scope,
+  context: Context,
+): Typed = {
+  if (arguments.any { it.name.isSome() }) abandon(
+    Globals.problem(context, at, "named arguments need a call to a declared function or type"),
+  ) else Unit
   calleeTyped = infer(callee, None, scope, context)
   (parameters, result, effects) = when (resolved(calleeTyped.t)) {
     FunctionOf(ps, r, row) -> (ps, r, row)
@@ -186,7 +251,9 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
     )
   } else Unit
   isBuiltin = (name: String) -> when (callee) {
-    Name(_, called) if called == name -> Scopes.lookup(scope, name).isNone() && Lookups.found(Globals.find(name, context, Skipping)).isNone()
+    Name(_, called) if called == name -> Scopes.lookup(scope, name).isNone() && Lookups.found(
+      Globals.find(name, context, Skipping),
+    ).isNone()
     else -> false
   }
   isAssertEquals = isBuiltin("assertEquals")
@@ -203,18 +270,47 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   where = context.place.file.source.path.map { p -> p.split("/").lastOrNone().getOrElse(p) + " " }.getOrElse("") + "line ${at.line}"
   core = when (cores) {
     [condition] if isBuiltin("assert") -> Assertion(condition, where)
-    [wanted, actual] if isAssertEquals -> EqualityAssertion(wanted, actual, parameters.getOrNone(1).getOrElse(unit), where)
+    [wanted, actual] if isAssertEquals -> EqualityAssertion(
+      wanted,
+      actual,
+      parameters.getOrNone(1).getOrElse(unit),
+      where,
+    )
     else -> Applied(calleeTyped.core, cores)
   }
   Typed(result, None, core)
 }
 
 // A constructor, called with its fields, by name or in order, and their defaults.
-@Inferring construct(at: Position, shape: ConstructorShape, name: String, arguments: List<CallArgument>, expected: Option<Type>, scope: Scope, context: Context): Typed = {
-  if (shape.fieldTypes.isEmpty()) abandon(Globals.problem(context, at, "'$name' takes no arguments; write it without ()")) else Unit
+@Inferring construct(
+  at: Position,
+  shape: ConstructorShape,
+  name: String,
+  arguments: List<CallArgument>,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = {
+  if (shape.fieldTypes.isEmpty()) abandon(
+    Globals.problem(context, at, "'$name' takes no arguments; write it without ()"),
+  ) else Unit
   given = when (shape.constructor) {
-    RecordConstructor(record) -> withDefaults(at, arguments, recordFieldsOf(record).map { f -> (f.name, f.default.isSome()) }, record.name, true, emptyMap())
-    CaseConstructor(c) -> withDefaults(at, arguments, c.definition.fields.map { f -> (f.name, f.default.isSome()) }, "${c.owner.name}$${c.definition.name}", true, emptyMap())
+    RecordConstructor(record) -> withDefaults(
+      at,
+      arguments,
+      recordFieldsOf(record).map { f -> (f.name, f.default.isSome()) },
+      record.name,
+      true,
+      emptyMap(),
+    )
+    CaseConstructor(c) -> withDefaults(
+      at,
+      arguments,
+      c.definition.fields.map { f -> (f.name, f.default.isSome()) },
+      "${c.owner.name}$${c.definition.name}",
+      true,
+      emptyMap(),
+    )
     BuiltinCase(_) -> arguments
   }
   order = argumentOrder(given, shape.fieldNames, at, "'$name'", context)
@@ -227,7 +323,10 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   Typed(
     shape.result,
     spelledCase(shape),
-    Cores.inWrittenOrder(fields, order) { args -> Constructed(shape.constructor, args, shape.result) },
+    Cores.inWrittenOrder(
+      fields,
+      order,
+    ) { args -> Constructed(shape.constructor, args, shape.result) },
   )
 }
 
@@ -263,29 +362,53 @@ spelledCase(shape: ConstructorShape): Option<CaseSymbol> = when (shape.construct
 
 // Which argument each parameter gets: the first arguments in order, as in Kotlin, then the rest by
 // name, each parameter once.
-@Abandoning argumentOrder(arguments: List<CallArgument>, parameters: List<String>, at: Position, what: String, context: Context): List<Int> =
+@Abandoning argumentOrder(
+  arguments: List<CallArgument>,
+  parameters: List<String>,
+  at: Position,
+  what: String,
+  context: Context,
+): List<Int> =
   orderOf(arguments.map { a -> (a.name, argumentPosition(a.value)) }, parameters, at, what, context)
 
 // Which of the given, each its name, if it's given by one, and where it's written, each parameter
 // gets: the first in order, then the rest by name, each parameter once.
-@Abandoning orderOf(given: List<(Option<String>, Position)>, parameters: List<String>, at: Position, what: String, context: Context): List<Int> = {
+@Abandoning orderOf(
+  given: List<(Option<String>, Position)>,
+  parameters: List<String>,
+  at: Position,
+  what: String,
+  context: Context,
+): List<Int> = {
   counted = "$what takes ${parameters.size} argument${if (parameters.size == 1) "" else "s"}, not ${given.size}"
   if (given.none { name, _ -> name.isSome() }) {
-    if (given.size != parameters.size) abandon(Globals.problem(context, at, counted)) else parameters.mapIndexed { i, _ -> i }
+    if (given.size != parameters.size) abandon(
+      Globals.problem(context, at, counted),
+    ) else parameters.mapIndexed { i, _ -> i }
   } else {
     byName = given.withIndex().fold(emptyMap()) { found, entry ->
       (i, argument) = entry
       (name, argumentAt) = argument
       when (name) {
         None ->
-          if (given.take(i).any { n, _ -> n.isSome() }) abandon(Globals.problem(context, argumentAt, "an argument passed in order can't follow one passed by name"))
+          if (given.take(i).any { n, _ -> n.isSome() }) abandon(
+            Globals.problem(
+              context,
+              argumentAt,
+              "an argument passed in order can't follow one passed by name",
+            ),
+          )
           else when (parameters.getOrNone(i)) {
             Some(parameter) -> found.put(parameter, i)
             None -> abandon(Globals.problem(context, at, counted))
           }
         Some(n) ->
-          if (!parameters.contains(n)) abandon(Globals.problem(context, argumentAt, "$what has no parameter '$n'"))
-          else if (found.containsKey(n)) abandon(Globals.problem(context, argumentAt, "'$n' is passed twice"))
+          if (!parameters.contains(n)) abandon(
+            Globals.problem(context, argumentAt, "$what has no parameter '$n'"),
+          )
+          else if (found.containsKey(n)) abandon(
+            Globals.problem(context, argumentAt, "'$n' is passed twice"),
+          )
           else found.put(n, i)
       }
     }
@@ -307,7 +430,13 @@ argumentPosition(value: ArgumentValue): Position = when (value) {
 
 // Checks each argument against its parameter's type, in the parameters' order, so earlier arguments
 // can tell later lambdas what they're given; and gives each one's core, in that order.
-@Inferring checkArguments(arguments: List<CallArgument>, order: List<Int>, parameterTypes: List<Type>, scope: Scope, context: Context): List<Core> =
+@Inferring checkArguments(
+  arguments: List<CallArgument>,
+  order: List<Int>,
+  parameterTypes: List<Type>,
+  scope: Scope,
+  context: Context,
+): List<Core> =
   order.zip(parameterTypes).map { argumentIndex, t ->
     when (arguments.getOrNone(argumentIndex)) {
       Some(argument) -> checkArgument(argument.value, t, scope, context)
@@ -316,7 +445,12 @@ argumentPosition(value: ArgumentValue): Position = when (value) {
   }
 
 // That the argument can be given where the type is wanted; and its core.
-@Inferring checkArgument(value: ArgumentValue, t: Type, scope: Scope, context: Context): Core = when (value) {
+@Inferring checkArgument(
+  value: ArgumentValue,
+  t: Type,
+  scope: Scope,
+  context: Context,
+): Core = when (value) {
   WrittenValue(e) -> check(e, t, scope, context)
   TrailingBlock(at, parameters, block) -> {
     lambda = Lambda(at, parameters.getOrElse([]), block, false)
@@ -341,7 +475,15 @@ argumentPosition(value: ArgumentValue): Position = when (value) {
       FunctionOf(_, result, effects) -> {
         perform(effects, at)
         call = Applied(GlobalRead(s), [])
-        if (isNamed(resolved(result), "Nothing")) Typed(Variable(fresh()), None, Absurd(call)) else Typed(result, None, call)
+        if (isNamed(resolved(result), "Nothing")) Typed(
+          Variable(fresh()),
+          None,
+          Absurd(call),
+        ) else Typed(
+          result,
+          None,
+          call,
+        )
       }
       other -> Typed(other, None, GlobalRead(s))
     }
@@ -350,7 +492,10 @@ argumentPosition(value: ArgumentValue): Position = when (value) {
 // Each of a declared function's parameters, with whether it has a default, and whose default each
 // it takes from its module's spec is: where it gives none, its spec's function's, which it has as
 // Kotlin's overrides do.
-parameterDefaults(global: Symbol, context: Context): (List<(String, Boolean)>, Map<String, String>) = {
+parameterDefaults(
+  global: Symbol,
+  context: Context,
+): (List<(String, Boolean)>, Map<String, String>) = {
   parameters = Signatures.parametersOf(global).getOrElse([])
   own = Symbols.simpleName(global)
   spec = context.environment.moduleSpecs.get(global.path.joinToString("."))
@@ -370,7 +515,14 @@ parameterDefaults(global: Symbol, context: Context): (List<(String, Boolean)>, M
 // the ones given in order, and not given by name. Owner is the full name defaults are named for,
 // unless owners says another for a parameter. A method call gives everything in order, so only
 // those at the end can be left out.
-withDefaults(at: Position, arguments: List<CallArgument>, parameters: List<(String, Boolean)>, owner: String, named: Boolean, owners: Map<String, String>): List<CallArgument> = {
+withDefaults(
+  at: Position,
+  arguments: List<CallArgument>,
+  parameters: List<(String, Boolean)>,
+  owner: String,
+  named: Boolean,
+  owners: Map<String, String>,
+): List<CallArgument> = {
   given = withTrailingLast(at, arguments, parameters, owner, named, owners)
   inOrder = given.takeWhile { it.name.isNone() }.size
   byName = given.mapNotNull { it.name }
@@ -389,14 +541,25 @@ withDefaults(at: Position, arguments: List<CallArgument>, parameters: List<(Stri
 // A block written after a call, f(a) { ... }, is its last parameter's, as in Kotlin, however many
 // before it are left to their defaults, if each it skips has one: by name, or, for a method, whose
 // arguments are all in order, after a call to the default of each.
-private withTrailingLast(at: Position, arguments: List<CallArgument>, parameters: List<(String, Boolean)>, owner: String, named: Boolean, owners: Map<String, String>): List<CallArgument> =
+private withTrailingLast(
+  at: Position,
+  arguments: List<CallArgument>,
+  parameters: List<(String, Boolean)>,
+  owner: String,
+  named: Boolean,
+  owners: Map<String, String>,
+): List<CallArgument> =
   when (arguments.lastOrNone()) {
-    Some(CallArgument(None, TrailingBlock(blockAt, blockParameters, block))) if arguments.size < parameters.size -> {
+    Some(
+      CallArgument(None, TrailingBlock(blockAt, blockParameters, block)),
+    ) if arguments.size < parameters.size -> {
       skipped = parameters.drop(arguments.size - 1).dropLast(1)
       if (skipped.any { _, hasDefault -> !hasDefault }) arguments
       else {
         trailing = TrailingBlock(blockAt, blockParameters, block)
-        if (named) arguments.dropLast(1) + [CallArgument(parameters.lastOrNone().map { name, _ -> name }, trailing)]
+        if (named) arguments.dropLast(1) + [
+          CallArgument(parameters.lastOrNone().map { name, _ -> name }, trailing),
+        ]
         else arguments.dropLast(1) + skipped.map { name, _ ->
           CallArgument(
             None,
@@ -412,10 +575,21 @@ private withTrailingLast(at: Position, arguments: List<CallArgument>, parameters
 
 // value |> f: f called with value; and value |> f(a), where f takes one more than it's given, f
 // called with value last.
-@Inferring inferPipe(at: Position, value: Expression, function: Expression, scope: Scope, context: Context): Typed = {
+@Inferring inferPipe(
+  at: Position,
+  value: Expression,
+  function: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   valueTyped = infer(value, None, scope, context)
   partial = when (function) {
-    Call(_, callee, arguments, _) if arguments.none { it.name.isSome() } && !isMember(callee) && !isConstructorName(callee, scope, context) -> {
+    Call(
+      _,
+      callee,
+      arguments,
+      _,
+    ) if arguments.none { it.name.isSome() } && !isMember(callee) && !isConstructorName(callee, scope, context) -> {
       calleeTyped = infer(callee, None, scope, context)
       when (resolved(calleeTyped.t)) {
         FunctionOf(parameters, result, effects) if parameters.size == arguments.size + 1 -> {
@@ -455,7 +629,13 @@ private withTrailingLast(at: Position, arguments: List<CallArgument>, parameters
 
 // x |> f(a), as core: x first, as it's written first, then the call it's given to.
 private piped(value: Core, call: (Core) -> Core): Core =
-  if (Cores.runs(value)) Bound(NameMatcher("fk_piped"), value, call(LocalRead("fk_piped", false))) else call(value)
+  if (Cores.runs(value)) Bound(
+    NameMatcher("fk_piped"),
+    value,
+    call(LocalRead("fk_piped", false)),
+  ) else call(
+    value,
+  )
 
 private isMember(e: Expression): Boolean = when (e) {
   Member(_, _, _) -> true
@@ -463,8 +643,14 @@ private isMember(e: Expression): Boolean = when (e) {
 }
 
 // Whether the expression names a constructor, as Circle does, and not a local or function.
-@Inferring private isConstructorName(e: Expression, scope: Scope, context: Context): Boolean = when (e) {
-  Name(at, name) -> Scopes.lookup(scope, name).isNone() && Lookups.found(Globals.find(name, context, Skipping)).isNone() &&
+@Inferring private isConstructorName(
+  e: Expression,
+  scope: Scope,
+  context: Context,
+): Boolean = when (e) {
+  Name(at, name) -> Scopes.lookup(scope, name).isNone() && Lookups.found(
+    Globals.find(name, context, Skipping),
+  ).isNone() &&
     constructorShape(name, None, at, false, None, true, scope, context).isSome()
   else -> false
 }

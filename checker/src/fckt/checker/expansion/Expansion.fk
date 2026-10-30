@@ -44,7 +44,9 @@ module Expansion {
         ModuleDefinition(declarations, Some(NamedType(_, name, _)), _, _, _) -> when (find(name, m, outline).filter { Symbols.isSpec(it) }) {
           Some(followed) -> {
             defined = declarations.filter { inner -> isFunctionDeclaration(inner) }.map { it.name }
-            specValues(followed.declaration).filter { v -> v.default.isSome() && !defined.contains(v.name) }.map { v -> ("${m.name}.${v.name}", followed.file) }
+            specValues(
+              followed.declaration,
+            ).filter { v -> v.default.isSome() && !defined.contains(v.name) }.map { v -> ("${m.name}.${v.name}", followed.file) }
           }
           None -> []
         }
@@ -57,7 +59,9 @@ module Expansion {
 
   // Every declaration that isn't a function, by its full name: what expansion can name.
   private outline(workspace: Workspace): Map<String, Symbol> =
-    Symbols.declarations(workspace).filter { s -> !Symbols.isFunction(s) }.map { s -> (s.name, s) }.toMap()
+    Symbols.declarations(
+      workspace,
+    ).filter { s -> !Symbols.isFunction(s) }.map { s -> (s.name, s) }.toMap()
 
   // What the name means where the declaration is: in the modules around it, from the inside out,
   // then through what its file imports, by name, or everything in a package or module.
@@ -68,7 +72,9 @@ module Expansion {
     inScope.orElse {
       from.file.imports.mapNotNull { i ->
         if (i.wildcard) outline.get((i.path + parts).joinToString("."))
-        else if (i.alias.getOrElse(i.path.lastOrNone().getOrElse("")) == parts.firstOrNone().getOrElse("")) outline.get((i.path + parts.drop(1)).joinToString("."))
+        else if (i.alias.getOrElse(i.path.lastOrNone().getOrElse("")) == parts.firstOrNone().getOrElse("")) outline.get(
+          (i.path + parts.drop(1)).joinToString("."),
+        )
         else None
       }.firstOrNone()
     }
@@ -78,10 +84,16 @@ module Expansion {
 
   // effect OrdersDb = Database: Database's operations, as an effect of its own, with OrdersDb's
   // name and annotations. A copy doesn't take the original's annotations, such as its @HandledBy.
-  @Abandoning private copiedEffect(s: Symbol, outline: Map<String, Symbol>, seen: List<String>): Declaration = when (s.declaration.definition) {
+  @Abandoning private copiedEffect(
+    s: Symbol,
+    outline: Map<String, Symbol>,
+    seen: List<String>,
+  ): Declaration = when (s.declaration.definition) {
     SpecDefinition(_, _, _, Some(NamedType(at, name, _)), _) -> {
       d = s.declaration
-      if (seen.contains(s.name)) abandon(Diagnostic(s.file.source.path, d.at, "effect '${d.name}' is a copy of itself")) else Unit
+      if (seen.contains(s.name)) abandon(
+        Diagnostic(s.file.source.path, d.at, "effect '${d.name}' is a copy of itself"),
+      ) else Unit
       target = when (find(name, s, outline)) {
         Some(t) -> t
         None -> abandon(Diagnostic(s.file.source.path, at, "unknown effect '$name'"))
@@ -125,10 +137,16 @@ module Expansion {
 
   // spec Monad : Applicative: Applicative's types and values too, its own in place of any of the
   // same name. What it builds on stays named, so a Monad can be given where an Applicative is wanted.
-  @Abandoning private flattenedSpec(s: Symbol, outline: Map<String, Symbol>, seen: List<String>): Declaration = when (s.declaration.definition) {
+  @Abandoning private flattenedSpec(
+    s: Symbol,
+    outline: Map<String, Symbol>,
+    seen: List<String>,
+  ): Declaration = when (s.declaration.definition) {
     SpecDefinition(types, values, typeParameters, copyOf, parents) -> {
       d = s.declaration
-      if (seen.contains(s.name)) abandon(Diagnostic(s.file.source.path, d.at, "spec '${d.name}' builds on itself")) else Unit
+      if (seen.contains(s.name)) abandon(
+        Diagnostic(s.file.source.path, d.at, "spec '${d.name}' builds on itself"),
+      ) else Unit
       inherited = parents.map { ref ->
         (at, name, arguments) = when (ref) {
           NamedType(a, n, args) -> (a, n, args)
@@ -191,7 +209,10 @@ module Expansion {
   // A module, with each of its spec's defaults it doesn't define itself, written with the types the
   // module gives the spec's own in place of them; and, with type parameters, its functions taking
   // them too.
-  @Abandoning private filledModule(s: Symbol, outline: Map<String, Symbol>): Declaration = when (s.declaration.definition) {
+  @Abandoning private filledModule(
+    s: Symbol,
+    outline: Map<String, Symbol>,
+  ): Declaration = when (s.declaration.definition) {
     ModuleDefinition(declarations, spec, parameters, application, typeParameters) -> {
       d = s.declaration
       fromSpec = when (spec) {
@@ -199,7 +220,9 @@ module Expansion {
           Some(followed) -> {
             defined = declarations.filter { inner -> isFunctionDeclaration(inner) }.map { it.name }
             fixed = specTypes(followed.declaration).zip(arguments)
-            specValues(followed.declaration).filter { v -> v.default.isSome() && !defined.contains(v.name) }.map { v -> defaultOf(v, fixed) }
+            specValues(
+              followed.declaration,
+            ).filter { v -> v.default.isSome() && !defined.contains(v.name) }.map { v -> defaultOf(v, fixed) }
           }
           None -> []
         }
@@ -207,7 +230,15 @@ module Expansion {
       }
       all = (declarations + fromSpec).map { inner ->
         when (inner.definition) {
-          FunctionDefinition(ownParameters, receiver, ps, result, body, external, operator) if typeParameters.isNotEmpty() -> {
+          FunctionDefinition(
+            ownParameters,
+            receiver,
+            ps,
+            result,
+            body,
+            external,
+            operator,
+          ) if typeParameters.isNotEmpty() -> {
             ownParameters.find { typeParameters.contains(it) }.forEach { clash ->
               abandon(Diagnostic(s.file.source.path, inner.at,
                 "'${inner.name}' is in ${d.name}<${typeParameters.joinToString(", ")}>, so its own type parameters can't be named $clash too"))
@@ -256,14 +287,21 @@ module Expansion {
     NamedType(at, name, arguments) -> {
       given = arguments.map { fixedType(it, fixed) }
       when (fixed.find { specType, _ -> specType.name == name }) {
-        Some((specType, NamedType(argAt, argName, argArguments))) if specType.typeParameters.isNotEmpty() ->
+        Some(
+          (specType, NamedType(argAt, argName, argArguments)),
+        ) if specType.typeParameters.isNotEmpty() ->
           if (argArguments.none { isBlank(it) }) NamedType(argAt, argName, argArguments + given)
           else NamedType(argAt, argName, filledBlanks(argArguments, given))
         Some((_, written)) -> written
         None -> NamedType(at, name, given)
       }
     }
-    FunctionType(at, parameters, result, effects) -> FunctionType(at, parameters.map { fixedType(it, fixed) }, fixedType(result, fixed), effects)
+    FunctionType(at, parameters, result, effects) -> FunctionType(
+      at,
+      parameters.map { fixedType(it, fixed) },
+      fixedType(result, fixed),
+      effects,
+    )
     TupleType(at, elements) -> TupleType(at, elements.map { fixedType(it, fixed) })
     EffectsType(_, _) -> t
     GivenType(at, name, given) -> GivenType(at, name, fixedType(given, fixed))
@@ -275,7 +313,10 @@ module Expansion {
   }
 
   // Each _ in the arguments, in order, by the next of those given, while there are any.
-  private filledBlanks(arguments: List<TypeRef>, given: List<TypeRef>): List<TypeRef> = when (arguments) {
+  private filledBlanks(
+    arguments: List<TypeRef>,
+    given: List<TypeRef>,
+  ): List<TypeRef> = when (arguments) {
     [] -> []
     [first, *rest] -> when (given) {
       [g, *more] if isBlank(first) -> [g, *filledBlanks(rest, more)]
@@ -302,7 +343,12 @@ module Expansion {
       )
     }, workspace.apart, workspace.borrowed)
 
-  @Abandoning private mapIn(declarations: List<Declaration>, prefix: String, file: LoadedFile, f: @Abandoning (Symbol) -> Declaration): List<Declaration> =
+  @Abandoning private mapIn(
+    declarations: List<Declaration>,
+    prefix: String,
+    file: LoadedFile,
+    f: @Abandoning (Symbol) -> Declaration,
+  ): List<Declaration> =
     declarations.map { d ->
       name = prefix + Symbols.ownName(d)
       inner = when (d.definition) {

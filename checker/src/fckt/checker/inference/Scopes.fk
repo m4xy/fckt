@@ -17,7 +17,11 @@ module Scopes {
   bindsHere(scope: Scope, name: String): Boolean = scope.own.containsKey(name)
 
   // The scope with the name bound, here.
-  bind(scope: Scope, name: String, local: Local): Scope = Scope(scope.own.put(name, local), scope.outer)
+  bind(
+    scope: Scope,
+    name: String,
+    local: Local,
+  ): Scope = Scope(scope.own.put(name, local), scope.outer)
 
   // The scope with each of the bindings made here.
   bindAll(scope: Scope, bindings: List<(String, Local)>): Scope =

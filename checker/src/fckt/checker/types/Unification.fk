@@ -19,7 +19,10 @@ module Unification {
     (_, Variable(w)) -> bind(w, x)
     (TypeParameter(n), TypeParameter(m)) -> n == m
     // Regions are only checked where both types have one.
-    (Named(n, xs, xRegion), Named(m, ys, yRegion)) -> n == m && unifyAll(xs, ys) && when (xRegion, yRegion) {
+    (Named(n, xs, xRegion), Named(m, ys, yRegion)) -> n == m && unifyAll(
+      xs,
+      ys,
+    ) && when (xRegion, yRegion) {
       (Some(p), Some(q)) -> unify(p, q)
       else -> true
     }
@@ -64,13 +67,19 @@ module Unification {
 
   // Whether each generic effect in xs, but Mutating, has the type arguments the effect of that name
   // in ys has, if ys has it.
-  @Solving private sameArguments(xs: List<EffectLabel>, ys: List<EffectLabel>): Boolean = when (xs) {
+  @Solving private sameArguments(
+    xs: List<EffectLabel>,
+    ys: List<EffectLabel>,
+  ): Boolean = when (xs) {
     [] -> true
     [label, *more] -> {
       generic = label.name != mutating && label.arguments.isNotEmpty()
       counterpart = ys.filter { it.name == label.name && it.arguments.size == label.arguments.size }
       when (counterpart) {
-        [other, *_] if generic -> unifyAll(label.arguments, other.arguments) && sameArguments(more, ys)
+        [other, *_] if generic -> unifyAll(label.arguments, other.arguments) && sameArguments(
+          more,
+          ys,
+        )
         else -> sameArguments(more, ys)
       }
     }

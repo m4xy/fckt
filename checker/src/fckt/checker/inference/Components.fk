@@ -25,7 +25,13 @@ module Components {
     var components: List<List<N>>,
   )
 
-  @Mutating private visit<N>(search: Search<N>, v: N, places: Map<String, Int>, key: (N) -> String, edges: (N) -> List<N>): Unit = {
+  @Mutating private visit<N>(
+    search: Search<N>,
+    v: N,
+    places: Map<String, Int>,
+    key: (N) -> String,
+    edges: (N) -> List<N>,
+  ): Unit = {
     k = key(v)
     search.indices = search.indices.put(k, search.next)
     search.lowest = search.lowest.put(k, search.next)
@@ -54,7 +60,12 @@ module Components {
   }
 
   // How many nodes down the stack the one with the key is, counting it.
-  private depthOf<N>(stack: List<N>, k: String, key: (N) -> String, count: Int): Int = when (stack) {
+  private depthOf<N>(
+    stack: List<N>,
+    k: String,
+    key: (N) -> String,
+    count: Int,
+  ): Int = when (stack) {
     [] -> count
     [top, *rest] -> if (key(top) == k) count else depthOf(rest, k, key, count + 1)
   }

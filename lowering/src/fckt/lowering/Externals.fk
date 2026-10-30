@@ -12,7 +12,9 @@ module Externals {
     pieces = atoms(textOf(function)).flatMap { atom ->
       label = atom.removePrefix("~")
       if (parameters.contains(atom)) [argumentFor(parameters, atom, arguments)]
-      else if (atom.startsWith("~") && parameters.contains(label)) [Labelled(label, argumentFor(parameters, label, arguments))]
+      else if (atom.startsWith("~") && parameters.contains(label)) [
+        Labelled(label, argumentFor(parameters, label, arguments)),
+      ]
       else [Identifier(atom)]
     }
     when (pieces) {
@@ -28,7 +30,9 @@ module Externals {
     None -> applied(function, [])
     Some(parameters) -> {
       pieces = atoms(textOf(function))
-      if (pieces.drop(1) == parameters.map { it.name }) Identifier(pieces.firstOrNone().getOrElse("()"))
+      if (pieces.drop(1) == parameters.map { it.name }) Identifier(
+        pieces.firstOrNone().getOrElse("()"),
+      )
       else {
         names = parameters.mapIndexed { i, _ -> "x$i" }
         Fun(

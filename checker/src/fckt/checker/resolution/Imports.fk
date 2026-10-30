@@ -12,12 +12,19 @@ import fckt.parser.*
 module Imports {
   // What each file's imports bring in, or, giving up, why one names nothing: what can be imported
   // is worked out once, for them all.
-  @Abandoning allOf(files: List<LoadedFile>, table: SymbolTable): List<(LoadedFile, FileImports)> = {
+  @Abandoning allOf(
+    files: List<LoadedFile>,
+    table: SymbolTable,
+  ): List<(LoadedFile, FileImports)> = {
     importable = importableIn(table)
     files.map { file -> (file, of(file, importable, table)) }
   }
 
-  @Abandoning private of(file: LoadedFile, importable: Importable, table: SymbolTable): FileImports = {
+  @Abandoning private of(
+    file: LoadedFile,
+    importable: Importable,
+    table: SymbolTable,
+  ): FileImports = {
     (named, implied) = file.imports.fold((emptyMap(), emptyMap())) { acc, i ->
       (n, imp) = acc
       bring(i, file, n, imp, importable, table)
@@ -54,7 +61,9 @@ module Imports {
       parent = parentOf(name)
       m.put(
         parent,
-        m.getOrDefault(parent, []) + Symbols.casesOf(owner).map { c -> (c.name, "$name.${c.name}") },
+        m.getOrDefault(parent, []) + Symbols.casesOf(
+          owner,
+        ).map { c -> (c.name, "$name.${c.name}") },
       )
     }
     parents = (inside.toList().map { p, _ -> p } + cases.toList().map { p, _ -> p }).distinct()
@@ -66,7 +75,12 @@ module Imports {
   }
 
   private knownNames(table: SymbolTable): Map<String, Known> = {
-    declared = [table.records, table.caseTypes, table.aliases, table.annotationTypes].flatMap { it.toList() }
+    declared = [
+      table.records,
+      table.caseTypes,
+      table.aliases,
+      table.annotationTypes,
+    ].flatMap { it.toList() }
       .map { name, symbol -> (name, KnownType(symbol)) }
     specs = table.specs.toList().map { name, symbol -> (name, KnownSpec(symbol)) }
     functions = table.functions.toList().map { name, symbol -> (name, KnownFunction(symbol)) }
@@ -86,7 +100,9 @@ module Imports {
     known = importable.known
     full = i.path.joinToString(".")
     if (i.wildcard) {
-      if (!table.modules.containsKey(full)) abandon(Diagnostic(file.source.path, i.at, "import $full.* names no package or module"))
+      if (!table.modules.containsKey(full)) abandon(
+        Diagnostic(file.source.path, i.at, "import $full.* names no package or module"),
+      )
       else (named, implying(implied, importable.members.getOrDefault(full, [])))
     } else if (!known.containsKey(full) && !table.cases.containsKey(full) && isMethodOf(i.path, table)) {
       // A method, by its name: its module brings in its extensions, as importing the module would.
@@ -111,7 +127,11 @@ module Imports {
 
   // What importing the declaration by name brings in with it: a module's types and their cases, an
   // effect's operations, a type's cases.
-  private alongside(full: String, importable: Importable, table: SymbolTable): List<(String, String)> = {
+  private alongside(
+    full: String,
+    importable: Importable,
+    table: SymbolTable,
+  ): List<(String, String)> = {
     known = importable.known
     types = when (known.get(full)) {
       Some(KnownModule) -> typesIn(full, importable)
@@ -149,8 +169,15 @@ module Imports {
 
   // A handled effect's operations, which come with it, by the names they're called by: beside the
   // effect, as fckt.io.println is beside fckt.io.Console.
-  private operationsOf(full: String, known: Map<String, Known>): List<(String, String)> = when (known.get(full)) {
-    Some(KnownSpec(Symbol(_, _, Declaration(_, _, SpecDefinition(_, values, _, _, _), _, _, annotations), _))) if annotations.any { it.name == "Effect" } -> {
+  private operationsOf(
+    full: String,
+    known: Map<String, Known>,
+  ): List<(String, String)> = when (known.get(full)) {
+    Some(
+      KnownSpec(
+        Symbol(_, _, Declaration(_, _, SpecDefinition(_, values, _, _, _), _, _, annotations), _),
+      ),
+    ) if annotations.any { it.name == "Effect" } -> {
       prefix = if (parentOf(full).isEmpty()) "" else parentOf(full) + "."
       values.map { v -> (v.name, prefix + v.name) }
     }
@@ -158,7 +185,10 @@ module Imports {
   }
 
   // The names added to those brought in with something else, each target once.
-  private implying(implied: Map<String, List<String>>, more: List<(String, String)>): Map<String, List<String>> =
+  private implying(
+    implied: Map<String, List<String>>,
+    more: List<(String, String)>,
+  ): Map<String, List<String>> =
     more.fold(implied) { acc, entry ->
       (name, target) = entry
       existing = acc.getOrDefault(name, [])

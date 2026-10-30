@@ -10,7 +10,14 @@ import fckt.parser.*
 // when, with a subject, whose branches' patterns it's matched against, or without, whose branches'
 // conditions are tried in turn. It's what its branches are, joined, or what's expected of each.
 
-@Inferring inferWhen(at: Position, subject: Option<Expression>, branches: List<Branch>, expected: Option<Type>, scope: Scope, context: Context): Typed = {
+@Inferring inferWhen(
+  at: Position,
+  subject: Option<Expression>,
+  branches: List<Branch>,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = {
   wanted = known(expected)
   (bodies, core) = when (subject) {
     None -> {
@@ -27,7 +34,9 @@ import fckt.parser.*
     Some(s) -> {
       subjectTyped = infer(s, None, scope, context)
       checked = branches.map { branch -> checkBranch(branch, s, subjectTyped.t, wanted, scope, context) }
-      covered = branches.zip(checked).filter { branch, _ -> branch.guard.isNone() }.flatMap { _, c -> c.matches }
+      covered = branches.zip(
+        checked,
+      ).filter { branch, _ -> branch.guard.isNone() }.flatMap { _, c -> c.matches }
       cover(PendingWhen(context.place.file.source.path, at, covered, subjectTyped.t))
       (checked.map { c -> c.body }, Matched(subjectTyped.core, checked.map { c -> c.core }))
     }
@@ -48,7 +57,12 @@ private conditions(branches: List<(Option<Core>, Core)>): Core = when (branches)
 
 // A branch's body, checked against what's expected, or, with nothing expected, what it is, to join
 // with the others; and its core.
-@Inferring private branchBody(body: Expression, wanted: Option<Type>, scope: Scope, context: Context): (Option<(Expression, Typed)>, Core) = when (wanted) {
+@Inferring private branchBody(
+  body: Expression,
+  wanted: Option<Type>,
+  scope: Scope,
+  context: Context,
+): (Option<(Expression, Typed)>, Core) = when (wanted) {
   Some(t) -> (None, check(body, t, scope, context))
   None -> {
     typed = infer(body, None, scope, context)
@@ -59,7 +73,14 @@ private conditions(branches: List<(Option<Core>, Core)>): Core = when (branches)
 // A branch of a when with a subject: its patterns, which a branch of several can't bind names in;
 // its guard, which sees what they bound; and its body. With what it matches, for coverage; a branch
 // with no patterns is the else, which matches anything.
-@Inferring private checkBranch(branch: Branch, subject: Expression, subjectType: Type, wanted: Option<Type>, scope: Scope, context: Context): CheckedBranch = {
+@Inferring private checkBranch(
+  branch: Branch,
+  subject: Expression,
+  subjectType: Type,
+  wanted: Option<Type>,
+  scope: Scope,
+  context: Context,
+): CheckedBranch = {
   if (branch.patterns.size > 1 && branch.patterns.any { References.namesIn(it).isNotEmpty() }) {
     abandon(Globals.problem(context, branch.at, "a branch with several patterns can't bind names"))
   } else Unit

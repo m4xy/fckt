@@ -17,7 +17,10 @@ module Polls {
 
   // What block gives, once it and the tasks it launched have ended, each waiting as Polling says,
   // and run as executor runs them.
-  @Fail @Clock running<A, @E>(executor: Executor = InTurn, block: @Concurrent<@Polling @Clock @E> @Polling @Clock @E () -> A): A = {
+  @Fail @Clock running<A, @E>(
+    executor: Executor = InTurn,
+    block: @Concurrent<@Polling @Clock @E> @Polling @Clock @E () -> A,
+  ): A = {
     var waiting: List<(Wait, Waker)> = []
     Polling(
       whenReadable = (d, waker) -> { waiting = waiting + [(Readable(d), waker)] },
@@ -59,28 +62,45 @@ module Polls {
 
   // Which of reads and writes are ready, waiting at most timeout seconds for one to be, or for ever
   // if it's below 0; a signal ending the wait early is nothing ready.
-  private external select(reads: List<Descriptor>, writes: List<Descriptor>, timeout: Float): (List<Descriptor>, List<Descriptor>) =
+  private external select(
+    reads: List<Descriptor>,
+    writes: List<Descriptor>,
+    timeout: Float,
+  ): (List<Descriptor>, List<Descriptor>) =
     "(fun rs ws t -> try let (r, w, _) = Unix.select rs ws [] t in (r, w) with Unix.Unix_error (Unix.EINTR, _, _) -> ([], [])) reads writes timeout"
 
   // Waits until the descriptor has something to read, or has ended, while other tasks go on.
-  @Concurrent<@Polling @E> @Polling awaitReadable<@E>(descriptor: Descriptor): Unit = park { whenReadable(descriptor, it) }
+  @Concurrent<@Polling @E> @Polling awaitReadable<@E>(
+    descriptor: Descriptor,
+  ): Unit = park { whenReadable(descriptor, it) }
 
   // Waits until the descriptor can take something written, while other tasks go on.
-  @Concurrent<@Polling @E> @Polling awaitWritable<@E>(descriptor: Descriptor): Unit = park { whenWritable(descriptor, it) }
+  @Concurrent<@Polling @E> @Polling awaitWritable<@E>(
+    descriptor: Descriptor,
+  ): Unit = park { whenWritable(descriptor, it) }
 
   // Waits until the descriptor has something to read, or has ended, for at most duration, while
   // other tasks go on: whether it has, rather than the time running out.
-  @Concurrent<@Polling @Clock @E> @Polling @Clock awaitReadableFor<@E>(descriptor: Descriptor, duration: Duration): Boolean =
+  @Concurrent<@Polling @Clock @E> @Polling @Clock awaitReadableFor<@E>(
+    descriptor: Descriptor,
+    duration: Duration,
+  ): Boolean =
     awaitFor(duration) { whenReadable(descriptor, it) }
 
   // Waits until the descriptor can take something written, for at most duration, while other
   // tasks go on: whether it can, rather than the time running out.
-  @Concurrent<@Polling @Clock @E> @Polling @Clock awaitWritableFor<@E>(descriptor: Descriptor, duration: Duration): Boolean =
+  @Concurrent<@Polling @Clock @E> @Polling @Clock awaitWritableFor<@E>(
+    descriptor: Descriptor,
+    duration: Duration,
+  ): Boolean =
     awaitFor(duration) { whenWritable(descriptor, it) }
 
   // Waits for what register says, or for duration to pass, whichever comes first: whether it was
   // what register says.
-  @Concurrent<@Polling @Clock @E> @Polling @Clock private awaitFor<@E>(duration: Duration, register: @Polling (Waker) -> Unit): Boolean = {
+  @Concurrent<@Polling @Clock @E> @Polling @Clock private awaitFor<@E>(
+    duration: Duration,
+    register: @Polling (Waker) -> Unit,
+  ): Boolean = {
     until = now() + duration
     park {
       register(it)

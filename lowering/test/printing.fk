@@ -10,7 +10,10 @@ one: Expr = ConstantExpr(IntConstant(1))
 plus(a: Expr, b: Expr): Expr = Infix("+", a, b)
 times(a: Expr, b: Expr): Expr = Infix("*", a, b)
 apply(f: String, arguments: List<Expr>): Expr = Application(Identifier(f), arguments)
-letX(value: Expr, body: Expr): Expr = LetIn(false, [Binding(VariablePat("x"), [], None, value)], body)
+letX(
+  value: Expr,
+  body: Expr,
+): Expr = LetIn(false, [Binding(VariablePat("x"), [], None, value)], body)
 
 @Test operatorsParenthesizeOnlyWhatBindsLess() = {
   assertEquals("x + y * 1", expression(plus(x, times(y, one)), ""))

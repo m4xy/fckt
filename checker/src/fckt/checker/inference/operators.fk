@@ -12,7 +12,14 @@ import fckt.parser.*
 // becoming a Float beside one, or, for a type whose operators are its own, as a Set's are, its
 // operator method: a + b is a.plus(b).
 
-@Inferring inferBinary(at: Position, operator: String, left: Expression, right: Expression, scope: Scope, context: Context): Typed = when (operator) {
+@Inferring inferBinary(
+  at: Position,
+  operator: String,
+  left: Expression,
+  right: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = when (operator) {
   "&&" -> logical(And, left, right, scope, context)
   "||" -> logical(Or, left, right, scope, context)
   "==" -> equality(at, Equal, left, right, scope, context)
@@ -22,7 +29,14 @@ import fckt.parser.*
 }
 
 // a..b and a..<b: whatever the left side is, its operator rangeTo or rangeUntil, as Int's is.
-@Inferring private range(at: Position, operator: String, left: Expression, right: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private range(
+  at: Position,
+  operator: String,
+  left: Expression,
+  right: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   fromTyped = infer(left, None, scope, context)
   from = resolved(fromTyped.t)
   method = References.rangeMethods.lookup(operator).getOrElse("rangeTo")
@@ -37,14 +51,27 @@ import fckt.parser.*
   )
 }
 
-@Inferring private logical(primitive: Primitive, left: Expression, right: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private logical(
+  primitive: Primitive,
+  left: Expression,
+  right: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   l = check(left, boolean, scope, context)
   Typed(boolean, None, Operated(primitive, [l, check(right, boolean, scope, context)]))
 }
 
 // Two values of a type; different types with cases compare as the smallest one that has both,
 // as Alphabet.E == vowel does.
-@Inferring private equality(at: Position, primitive: Primitive, left: Expression, right: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private equality(
+  at: Position,
+  primitive: Primitive,
+  left: Expression,
+  right: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   l = infer(left, None, scope, context)
   r = infer(right, Some(l.t), scope, context)
   (x, y) = (caseTypeOf(l.t, context), caseTypeOf(r.t, context))
@@ -55,7 +82,14 @@ import fckt.parser.*
   Typed(boolean, None, Operated(primitive, [l.core, r.core]))
 }
 
-@Inferring private arithmetic(at: Position, operator: String, left: Expression, right: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private arithmetic(
+  at: Position,
+  operator: String,
+  left: Expression,
+  right: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   leftTyped = infer(left, None, scope, context)
   l = resolved(leftTyped.t)
   method = References.operatorMethods.lookup(operator)
@@ -66,7 +100,16 @@ import fckt.parser.*
   }
 }
 
-@Inferring private numbers(at: Position, operator: String, method: Option<String>, left: Expression, leftTyped: Typed, right: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private numbers(
+  at: Position,
+  operator: String,
+  method: Option<String>,
+  left: Expression,
+  leftTyped: Typed,
+  right: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   l = resolved(leftTyped.t)
   hint = when (l) {
     Variable(_) -> None
@@ -104,7 +147,10 @@ import fckt.parser.*
     if (isNumeric(x) && isNumeric(y)) {
       isFloat = isNamed(x, "Float") || isNamed(y, "Float")
       // An Int beside a Float is one.
-      operands = [(leftTyped.core, x), (rightTyped.core, y)].map { core, t -> if (isFloat && isNamed(t, "Int")) Operated(Promoted, [core]) else core }
+      operands = [
+        (leftTyped.core, x),
+        (rightTyped.core, y),
+      ].map { core, t -> if (isFloat && isNamed(t, "Int")) Operated(Promoted, [core]) else core }
       if (!isArithmetic) Typed(boolean, None, Operated(comparison(operator), operands))
       else Typed(
         if (isFloat) float else int,
@@ -157,9 +203,24 @@ ownsOperators(t: Type): Boolean = when (t) {
 
 // a + b, where a's type has its own +, as a.plus(b): a call to an operator extension of the
 // method, with the operand, already worked out, as its receiver.
-@Inferring operatorCall(operator: String, at: Position, operand: Expression, operandTyped: Typed, method: String, arguments: List<Expression>, scope: Scope, context: Context): Typed = {
+@Inferring operatorCall(
+  operator: String,
+  at: Position,
+  operand: Expression,
+  operandTyped: Typed,
+  method: String,
+  arguments: List<Expression>,
+  scope: Scope,
+  context: Context,
+): Typed = {
   t = resolved(operandTyped.t)
-  notOperator = () -> abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(t)}: its $method isn't an operator; mark it operator to use '$operator' for it"))
+  notOperator = () -> abandon(
+    Globals.problem(
+      context,
+      at,
+      "'$operator' can't be applied to ${TypeText.shown(t)}: its $method isn't an operator; mark it operator to use '$operator' for it",
+    ),
+  )
   when (extensionFor(at, method, t, context)) {
     Some(s) if Signatures.isOperator(s) ->
       callExtension(

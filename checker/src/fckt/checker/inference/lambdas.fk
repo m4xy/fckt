@@ -52,7 +52,16 @@ import fckt.parser.*
     else -> {
       checkDistinct(written.map { p -> (p.name, p.at) }, context)
       when (expectedFunction) {
-        Some(FunctionOf([tuple], result, _)) if written.size > 1 -> takingApart(at, written, tuple, result, row, body, scope, context)
+        Some(FunctionOf([tuple], result, _)) if written.size > 1 -> takingApart(
+          at,
+          written,
+          tuple,
+          result,
+          row,
+          body,
+          scope,
+          context,
+        )
         else -> withParameters(written, expectedFunction, row, body, scope, context)
       }
     }
@@ -60,7 +69,13 @@ import fckt.parser.*
 }
 
 // ~body, which ignores what it's given: as many parameters as are expected.
-@Inferring private ignoringArguments(body: Expression, expectedFunction: Option<Type>, row: Row, scope: Scope, context: Context): Typed = {
+@Inferring private ignoringArguments(
+  body: Expression,
+  expectedFunction: Option<Type>,
+  row: Row,
+  scope: Scope,
+  context: Context,
+): Typed = {
   (parameters, result) = when (expectedFunction) {
     Some(FunctionOf(ps, r, _)) -> (ps, r)
     else -> ([], Variable(fresh()))
@@ -74,7 +89,16 @@ import fckt.parser.*
 }
 
 // Several parameters where one is expected take apart a tuple, as pairs.map((k, v) -> ...) does.
-@Inferring private takingApart(at: Position, written: List<Parameter>, tuple: Type, result: Type, row: Row, body: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private takingApart(
+  at: Position,
+  written: List<Parameter>,
+  tuple: Type,
+  result: Type,
+  row: Row,
+  body: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   parts = when (resolved(tuple)) {
     TupleOf(elements) ->
       if (elements.size != written.size) abandon(Globals.problem(context, at,
@@ -100,7 +124,14 @@ import fckt.parser.*
 }
 
 // Each parameter of the type written for it, or else the one expected, or else unknown.
-@Inferring private withParameters(written: List<Parameter>, expectedFunction: Option<Type>, row: Row, body: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private withParameters(
+  written: List<Parameter>,
+  expectedFunction: Option<Type>,
+  row: Row,
+  body: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   (hintedParameters, hintedResult) = when (expectedFunction) {
     Some(FunctionOf(ps, r, _)) if ps.size == written.size -> (Some(ps), Some(r))
     else -> (None, None)
@@ -149,12 +180,21 @@ private matcherOf(p: Parameter): Matcher = if (p.name == "_") AnyMatcher else Na
   )
 
 // What block gives, checked as code that does the row.
-@Solving @Abandoning doingIn<A>(row: Row, context: Context, block: @Doing () -> A): A = Doings.doing(row, context.place.file.source.path, block)
+@Solving @Abandoning doingIn<A>(
+  row: Row,
+  context: Context,
+  block: @Doing () -> A,
+): A = Doings.doing(row, context.place.file.source.path, block)
 
 // A lambda's body, against the result it's wanted to give back, and its core, with whether what it
 // gives is dropped. Where that's Unit, as forEach's is, what the body gives is dropped, whatever it
 // is, so xs.forEach { log.add(it) } needn't end with Unit; anything else must be what the body gives.
-@Inferring private checkLambdaBody(body: Expression, result: Type, scope: Scope, context: Context): (Core, Boolean) =
+@Inferring private checkLambdaBody(
+  body: Expression,
+  result: Type,
+  scope: Scope,
+  context: Context,
+): (Core, Boolean) =
   if (resolved(result) != unit) (check(body, result, scope, context), false)
   else {
     typed = infer(body, None, scope, context)

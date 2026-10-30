@@ -16,7 +16,9 @@ type Sample {
 alternativesOf(t: Sample): Option<List<Alternative<Sample>>> = when (t) {
   Flag -> Some([Alternative(BooleanShape(true), []), Alternative(BooleanShape(false), [])])
   Number -> None
-  Maybe(e) -> Some([Alternative(CaseShape("Option", "Some"), [e]), Alternative(CaseShape("Option", "None"), [])])
+  Maybe(e) -> Some(
+    [Alternative(CaseShape("Option", "Some"), [e]), Alternative(CaseShape("Option", "None"), [])],
+  )
   Many(e) -> Some([Alternative(EmptyList, []), Alternative(NonEmptyList, [e, t])])
   Pair(a, b) -> Some([Alternative(TupleShape(2), [a, b])])
 }
@@ -28,7 +30,10 @@ flag(value: Boolean): Matches = shape(BooleanShape(value))
 cons(head: Matches, tail: Matches): Matches = shape(NonEmptyList, [head, tail])
 nil: Matches = shape(EmptyList)
 
-missed(patterns: List<Matches>, t: Sample): List<String> = missing(patterns, t, alternativesOf).map { shown(it) }
+missed(
+  patterns: List<Matches>,
+  t: Sample,
+): List<String> = missing(patterns, t, alternativesOf).map { shown(it) }
 
 @Test anythingCoversEverything() = assertEquals([], missed([anything], Maybe(Number)))
 

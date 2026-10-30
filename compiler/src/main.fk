@@ -28,7 +28,12 @@ main(args: List<String>) = when (args) {
   else -> failing(["usage: compiler [--whole] <file.fk> <out.ml> [<folder>...]"])
 }
 
-@FileSystem @Channel @Process compile(file: String, out: String, folders: List<String>, whole: Boolean): Unit = {
+@FileSystem @Channel @Process compile(
+  file: String,
+  out: String,
+  folders: List<String>,
+  whole: Boolean,
+): Unit = {
   own = folders.flatMap { folder -> packagesIn(path(folder), [], ProgramProject, "$folder/") }
   tree = SourceTree(merged(core() + standard() + own))
   entry = SourceText(None, ProgramProject, path(file).readText())
@@ -49,14 +54,24 @@ main(args: List<String>) = when (args) {
   exit(1)
 }
 
-@FileSystem core(): List<(List<String>, List<SourceText>)> = packagesIn(path("src/main/resources/std"), [], CoreProject, "core:")
+@FileSystem core(): List<(List<String>, List<SourceText>)> = packagesIn(
+  path("src/main/resources/std"),
+  [],
+  CoreProject,
+  "core:",
+)
 
 @FileSystem standard(): List<(List<String>, List<SourceText>)> =
   packagesIn(path("std/src"), [], OtherProject(path("std/src").canonical().value), "std/src/")
 
 // Each package under the folder, its own path given, with its files, named as positions name them:
 // the prefix, then the file's path under the folder.
-@FileSystem packagesIn(folder: Path, pkg: List<String>, project: Project, prefix: String): List<(List<String>, List<SourceText>)> = {
+@FileSystem packagesIn(
+  folder: Path,
+  pkg: List<String>,
+  project: Project,
+  prefix: String,
+): List<(List<String>, List<SourceText>)> = {
   entries = folder.listFiles().sortedBy { it.name }
   files = entries.filter { it.extension == "fk" && !it.isDirectory() }.map { f ->
     SourceText(Some(prefix + (pkg + [f.name]).joinToString("/")), project, f.readText())

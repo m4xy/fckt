@@ -9,7 +9,12 @@ import fckt.ocaml.*
 module Expressions {
   @Fail @Lowering expression(c: Core): Expr = when (c) {
     Value(literal) -> ConstantExpr(constant(literal))
-    LocalRead(name, isVar) -> if (isVar) Application(Identifier("!"), [Identifier(Naming.snake(name))]) else Identifier(Naming.snake(name))
+    LocalRead(name, isVar) -> if (isVar) Application(
+      Identifier("!"),
+      [Identifier(Naming.snake(name))],
+    ) else Identifier(
+      Naming.snake(name),
+    )
     GlobalRead(function) -> Identifier(Naming.valueReference(function))
     ExternalRead(function) -> Externals.asValue(function)
     Applied(function, arguments) -> inOrder(arguments) { given ->
@@ -18,7 +23,9 @@ module Expressions {
         if (given.isEmpty()) [ConstantExpr(UnitConstant)] else given,
       )
     }
-    ExternalApplied(function, arguments) -> inOrder(arguments) { given -> Externals.applied(function, given) }
+    ExternalApplied(function, arguments) -> inOrder(
+      arguments,
+    ) { given -> Externals.applied(function, given) }
     Performed(effect, operation, arguments) -> inOrder(arguments) { given ->
       carried = when (given) {
         [] -> ConstantExpr(UnitConstant)
@@ -29,13 +36,18 @@ module Expressions {
     }
     Operated(And, [left, right]) -> Infix("&&", expression(left), expression(right))
     Operated(Or, [left, right]) -> Infix("||", expression(left), expression(right))
-    Operated(primitive, operands) -> inOrder(operands) { given -> primitiveApplied(primitive, given) }
+    Operated(primitive, operands) -> inOrder(
+      operands,
+    ) { given -> primitiveApplied(primitive, given) }
     Shown(value, t) -> Application(Shows.show(t), [expression(value)])
     ListMade(items) -> listMade(items)
     TupleMade(parts) -> inOrder(parts) { given -> TupleExpr(given) }
     Joined(list, separator, element) -> inOrder([separator, list]) { given ->
       when (given) {
-        [s, l] -> Application(Identifier("String.concat"), [s, Application(Identifier("List.map"), [Shows.show(element), l])])
+        [s, l] -> Application(
+          Identifier("String.concat"),
+          [s, Application(Identifier("List.map"), [Shows.show(element), l])],
+        )
         else -> fail("joining")
       }
     }
@@ -54,8 +66,16 @@ module Expressions {
         [Shows.show(t), ConstantExpr(StringConstant(where)), *given],
       )
     }
-    Conditional(condition, then, otherwise) -> IfThenElse(expression(condition), expression(then), expression(otherwise))
-    Bound(pattern, value, body) -> LetIn(false, [Binding(pat(pattern), [], None, expression(value))], expression(body))
+    Conditional(condition, then, otherwise) -> IfThenElse(
+      expression(condition),
+      expression(then),
+      expression(otherwise),
+    )
+    Bound(pattern, value, body) -> LetIn(
+      false,
+      [Binding(pat(pattern), [], None, expression(value))],
+      expression(body),
+    )
     VarBound(name, value, body) ->
       LetIn(
         false,
@@ -87,16 +107,27 @@ module Expressions {
     FunctionValue(parameters, body, dropsResult) ->
       Fun(
         parametersOf(parameters),
-        if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(body),
+        if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(
+          body,
+        ),
       )
     // A declared record or case, with its type, so that OCaml can tell which it is where another type
     // has a case or a field of the same name; Some, None, Ok and Error are OCaml's, and a shared case's
     // tag is any type's that has it.
-    Constructed(BuiltinCase(name), fields, _) -> inOrder(fields) { given -> Constructors.built(BuiltinCase(name), given) }
-    Constructed(CaseConstructor(c), fields, _) if isShared(c.owner.name) -> inOrder(fields) { given -> Constructors.built(CaseConstructor(c), given) }
-    Constructed(constructor, fields, t) -> inOrder(fields) { given -> Annotated(Constructors.built(constructor, given), OcamlTypes.typexpr(t)) }
+    Constructed(BuiltinCase(name), fields, _) -> inOrder(
+      fields,
+    ) { given -> Constructors.built(BuiltinCase(name), given) }
+    Constructed(CaseConstructor(c), fields, _) if isShared(c.owner.name) -> inOrder(
+      fields,
+    ) { given -> Constructors.built(CaseConstructor(c), given) }
+    Constructed(constructor, fields, t) -> inOrder(
+      fields,
+    ) { given -> Annotated(Constructors.built(constructor, given), OcamlTypes.typexpr(t)) }
     // The record annotated with its type, so OCaml knows the label wherever another record has it.
-    FieldRead(record, owner, field) -> FieldAccess(Constructors.annotatedRecord(expression(record), owner), Constructors.label(owner, field))
+    FieldRead(record, owner, field) -> FieldAccess(
+      Constructors.annotatedRecord(expression(record), owner),
+      Constructors.label(owner, field),
+    )
     // { record with field = value }, the record annotated with its type, so OCaml knows the labels.
     Copied(record, owner, changes) -> inOrder([record] + changes.map { _, c -> c }) { given ->
       when (given) {
@@ -112,7 +143,9 @@ module Expressions {
     }
     // A shared case's fields are bound each to its own name; another's, its record.
     NarrowedRead(local, caseName, caseType, field) ->
-      if (isShared(caseType)) Identifier(Constructors.narrowedName(local, caseName) + "_" + Naming.snake(field))
+      if (isShared(caseType)) Identifier(
+        Constructors.narrowedName(local, caseName) + "_" + Naming.snake(field),
+      )
       else FieldAccess(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field))
     FieldWritten(record, owner, field, value) -> inOrder([record, value]) { given ->
       when (given) {
@@ -140,19 +173,40 @@ module Expressions {
       }
       Case(pattern, b.guard.map { expression(it) }, expression(b.body))
     })
-    HandlerMade(effect, answers) -> HandledEffects.madeHandler(effect, answers.map { a -> (a.operation, expression(a.answer), a.resumes) })
+    HandlerMade(effect, answers) -> HandledEffects.madeHandler(
+      effect,
+      answers.map { a -> (a.operation, expression(a.answer), a.resumes) },
+    )
     ModuleHandler(module, effect) -> HandledEffects.moduleHandler(module, effect)
-    Handled(effect, handler, block) -> HandledEffects.handled(effect, expression(handler), expression(block))
+    Handled(effect, handler, block) -> HandledEffects.handled(
+      effect,
+      expression(handler),
+      expression(block),
+    )
     Widened(value, t) -> when (t) {
       Named(name, _, _) if isShared(name) -> Coerced(expression(value), OcamlTypes.typexpr(t))
       _ -> expression(value)
     }
     // A module, as a value of its spec, whose own types, if it has any, are the module's.
-    ModulePacked(module, spec) -> Verbatim("module " + Naming.modulePath(module) + " : " + OcamlTypes.packageType(spec.name, OcamlTypes.ownTypes(spec.name).map { t -> Naming.modulePath(module) + "." + t }))
+    ModulePacked(module, spec) -> Verbatim(
+      "module " + Naming.modulePath(module) + " : " + OcamlTypes.packageType(
+        spec.name,
+        OcamlTypes.ownTypes(spec.name).map { t -> Naming.modulePath(module) + "." + t },
+      ),
+    )
     // A value of a module given as a value: taken out of it.
     ModuleMemberRead(value, spec, member) -> {
       ownTypes = OcamlTypes.ownTypes(spec.name)
-      if (ownTypes.isEmpty()) Match(expression(value), [Case(PackedPat("Value", OcamlTypes.typeModuleReference(spec.name)), None, Identifier("Value." + Naming.snake(member)))])
+      if (ownTypes.isEmpty()) Match(
+        expression(value),
+        [
+          Case(
+            PackedPat("Value", OcamlTypes.typeModuleReference(spec.name)),
+            None,
+            Identifier("Value." + Naming.snake(member)),
+          ),
+        ],
+      )
       // By a function of its own, in which they're locally abstract, as OCaml won't take a module
       // apart whose type has unknowns in it, as a Format whose T is open may.
       else {
@@ -167,21 +221,31 @@ module Expressions {
   }
 
   // A function's parameters, as patterns; one of none takes Unit.
-  @Lowering parametersOf(parameters: List<Matcher>): List<Pat> = if (parameters.isEmpty()) [ConstantPat(UnitConstant)] else parameters.map { pat(it) }
+  @Lowering parametersOf(
+    parameters: List<Matcher>,
+  ): List<Pat> = if (parameters.isEmpty()) [
+    ConstantPat(UnitConstant),
+  ] else parameters.map { pat(it) }
 
   @Lowering pat(m: Matcher): Pat = when (m) {
     AnyMatcher -> AnyPat
     NameMatcher(name) -> VariablePat(Naming.snake(name))
     TupleMatcher(parts) -> TuplePat(parts.map { pat(it) })
     ConstantMatcher(literal) -> ConstantPat(constant(literal))
-    CaseMatcher(constructor, fields, narrowed) -> Constructors.pattern(constructor, fields.map { fs -> fs.map { pat(it) } }, narrowed)
+    CaseMatcher(constructor, fields, narrowed) -> Constructors.pattern(
+      constructor,
+      fields.map { fs -> fs.map { pat(it) } },
+      narrowed,
+    )
     // is Vowel: any of its tags, as Vowel, or, where its cases are its own, anything the subject's type
     // has.
     CaseTypeMatcher(caseType, narrowed) ->
       if (!isShared(caseType.name)) AnyPat
       else narrowed.map { local -> AliasPat(TypePat(OcamlTypes.typeReference(caseType.name)), Naming.snake(local)) }.getOrElse(TypePat(OcamlTypes.typeReference(caseType.name)))
     ListMatcher(items, None) -> ListPat(items.map { pat(it) })
-    ListMatcher(items, Some(rest)) -> items.reversed().fold(pat(rest)) { tail, item -> ConsPat(pat(item), tail) }
+    ListMatcher(items, Some(rest)) -> items.reversed().fold(
+      pat(rest),
+    ) { tail, item -> ConsPat(pat(item), tail) }
   }
 
   constant(literal: Literal): Constant = when (literal) {
@@ -216,7 +280,10 @@ module Expressions {
     }
   }
 
-  @Fail private primitiveApplied(primitive: Primitive, operands: List<Expr>): Expr = when ((primitive, operands)) {
+  @Fail private primitiveApplied(
+    primitive: Primitive,
+    operands: List<Expr>,
+  ): Expr = when ((primitive, operands)) {
     (IntPlus, [a, b]) -> Infix("+", a, b)
     (IntMinus, [a, b]) -> Infix("-", a, b)
     (IntTimes, [a, b]) -> Infix("*", a, b)
@@ -255,7 +322,9 @@ module Expressions {
         (found, n) = acc
         if (Cores.runs(part)) (found + [Some("fk_arg${n + 1}")], n + 1) else (found + [None], n)
       }
-      given = parts.zip(names).map { part, name -> name.map { Identifier(it) }.getOrElse(expression(part)) }
+      given = parts.zip(
+        names,
+      ).map { part, name -> name.map { Identifier(it) }.getOrElse(expression(part)) }
       parts.zip(names).reversed().fold(build(given)) { body, entry ->
         (part, name) = entry
         when (name) {

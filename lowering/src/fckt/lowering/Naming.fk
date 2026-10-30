@@ -23,7 +23,11 @@ module Naming {
 
   // An _ before each capital that starts a word: after a lower-case letter or a digit, or the last of
   // a run of capitals before a lower-case letter.
-  private underscored(chars: List<Char>, previous: Option<Char>, done: String): String = when (chars) {
+  private underscored(
+    chars: List<Char>,
+    previous: Option<Char>,
+    done: String,
+  ): String = when (chars) {
     [] -> done
     [c, *rest] -> {
       startsWord = c.isUpperCase() && when (previous) {
@@ -43,13 +47,18 @@ module Naming {
   // The declaration as written from the module it's used in: the modules it's in, but those both are
   // in, then its own name, made OCaml's by own: Fckt.Lang.Lists.list_sorted for
   // fckt.lang.Lists.List$sorted, or make for Ratios.make inside Ratios.
-  @Lowering reference(s: Symbol, own: (String) -> String): String = (relative(s.path).map { moduleName(it) } + [own(ownName(s))]).joinToString(".")
+  @Lowering reference(
+    s: Symbol,
+    own: (String) -> String,
+  ): String = (relative(s.path).map { moduleName(it) } + [own(ownName(s))]).joinToString(".")
 
   // A function's or value's name, written from the module it's used in.
   @Lowering valueReference(s: Symbol): String = reference(s) { snake(it) }
 
   // A module, written from the module it's used in: Fckt.Io.Terminal.
-  @Lowering modulePath(m: Symbol): String = relative(m.path + [ownName(m)]).map { moduleName(it) }.joinToString(".")
+  @Lowering modulePath(
+    m: Symbol,
+  ): String = relative(m.path + [ownName(m)]).map { moduleName(it) }.joinToString(".")
 
   // A path, without the start it shares with the module what's written is in.
   @Lowering relative(path: List<String>): List<String> = {
@@ -59,5 +68,7 @@ module Naming {
   }
 
   // The declaration's own name, without the modules it's in: List$sorted.
-  ownName(s: Symbol): String = if (s.path.isEmpty()) s.name else s.name.drop(s.path.joinToString(".").length + 1)
+  ownName(
+    s: Symbol,
+  ): String = if (s.path.isEmpty()) s.name else s.name.drop(s.path.joinToString(".").length + 1)
 }

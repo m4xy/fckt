@@ -22,10 +22,16 @@ module TypeNames {
     when (Lookups.spec(name, scope.place, namespace, Skipping)) {
       Found(spec) -> Found(SpecModuleType(spec))
       else -> when (Lookups.annotationType(name, scope.place, namespace, Skipping)) {
-        Found(_) -> Refused("'$name' is an annotation, written @$name(...) before a declaration; no value has its type")
+        Found(_) -> Refused(
+          "'$name' is an annotation, written @$name(...) before a declaration; no value has its type",
+        )
         else ->
-          if (scope.typeParameters.contains("@$name")) Refused("'$name' is an effect parameter, written @$name, as in @$name () -> Unit")
-          else if (name == "_") Refused("'_' only marks a spec type's parameters, as in Monad<Result<_, String>>")
+          if (scope.typeParameters.contains("@$name")) Refused(
+            "'$name' is an effect parameter, written @$name, as in @$name () -> Unit",
+          )
+          else if (name == "_") Refused(
+            "'_' only marks a spec type's parameters, as in Monad<Result<_, String>>",
+          )
           else Refused("unknown type '$name'${ImportHints.forName(name, namespace)}")
       }
     }

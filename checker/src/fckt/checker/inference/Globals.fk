@@ -26,7 +26,11 @@ module Globals {
   }
 
   // The function or value, if the name means one.
-  @Abandoning findOrRefuse(name: String, at: Position, context: Context): Option<Symbol> = when (find(name, context, Refusing)) {
+  @Abandoning findOrRefuse(
+    name: String,
+    at: Position,
+    context: Context,
+  ): Option<Symbol> = when (find(name, context, Refusing)) {
     Found(s) -> Some(s)
     Refused(why) -> abandon(problem(context, at, why))
     NotFound -> None
@@ -34,14 +38,20 @@ module Globals {
 
   // The function's type where it's used: to the others in its group, as it says it is; while its
   // group is checked, as it's being worked out; after, a new instance of its generic type.
-  @Solving @Abandoning typeOf(s: Symbol, at: Position, context: Context): Type = when (outsideScheme(s, context)) {
+  @Solving @Abandoning typeOf(
+    s: Symbol,
+    at: Position,
+    context: Context,
+  ): Type = when (outsideScheme(s, context)) {
     Some(scheme) -> instantiate(scheme)
     None -> insideType(s, at, context)
   }
 
   // How the function is seen from outside its module, where that's how it's seen from here.
   private outsideScheme(s: Symbol, context: Context): Option<Scheme> =
-    if (Visibility.isInside(context.place, s.path)) None else context.environment.known.outside.get(s.name)
+    if (Visibility.isInside(context.place, s.path)) None else context.environment.known.outside.get(
+      s.name,
+    )
 
   @Solving @Abandoning private insideType(s: Symbol, at: Position, context: Context): Type = {
     known = context.environment.known
@@ -70,7 +80,9 @@ module Globals {
     if (typeArguments.isEmpty()) typeOf(s, at, context)
     else {
       receiverNames = Signatures.receiverOf(s).map { namesIn(it) }.getOrElse([])
-      declared = Signatures.typeParametersOf(s).filter { !it.startsWith("@") }.dropWhile { receiverNames.contains(it) }
+      declared = Signatures.typeParametersOf(
+        s,
+      ).filter { !it.startsWith("@") }.dropWhile { receiverNames.contains(it) }
       method = Signatures.methodName(s)
       if (declared.size != typeArguments.size) {
         abandon(
@@ -87,7 +99,9 @@ module Globals {
         (Some(variables), Some(scheme)) ->
           instantiate(
             scheme,
-            declared.zip(given).mapNotNull { name, t -> variables.get(name).map { v -> (v, t) } }.toMap(),
+            declared.zip(
+              given,
+            ).mapNotNull { name, t -> variables.get(name).map { v -> (v, t) } }.toMap(),
           )
         else -> abandon(problem(context, at, "'$method' can't be given type arguments here"))
       }
@@ -104,7 +118,13 @@ module Globals {
   }
 
   // How written types are read where the code is.
-  typeContext(context: Context): TypeContext = TypeContext(context.place, context.typeParameters, valueParameters = context.valueParameters)
+  typeContext(
+    context: Context,
+  ): TypeContext = TypeContext(
+    context.place,
+    context.typeParameters,
+    valueParameters = context.valueParameters,
+  )
 
   // ---- Extensions ----
 
@@ -142,10 +162,16 @@ module Globals {
 
   // The extensions of the method name that can be called from where the code is.
   extensionsNamed(name: String, context: Context): List<Symbol> =
-    context.environment.extensions.getOrDefault(name, []).filter { visible(it, context) && inScope(it, context) }
+    context.environment.extensions.getOrDefault(
+      name,
+      [],
+    ).filter { visible(it, context) && inScope(it, context) }
 
   // The extension's receiver's type, with its type parameters as unknowns.
-  @Solving @Abandoning receiverType(s: Symbol, context: Context): Type = when (Signatures.receiverOf(s)) {
+  @Solving @Abandoning receiverType(
+    s: Symbol,
+    context: Context,
+  ): Type = when (Signatures.receiverOf(s)) {
     Some(receiver) -> {
       parameters = Signatures.typeParametersOf(s).map { p -> (p, Variable(fresh())) }.toMap()
       Conversion.typeOf(
@@ -159,13 +185,28 @@ module Globals {
 
   // Whether a receiver of the actual type can be one of the wanted type, and if so how specifically:
   // how many named types they share.
-  @Solving fit(wanted: Type, actual: Type): Option<Int> = when ((resolved(wanted), resolved(actual))) {
+  @Solving fit(
+    wanted: Type,
+    actual: Type,
+  ): Option<Int> = when ((resolved(wanted), resolved(actual))) {
     (Variable(_), _) -> Some(0)
     (_, Variable(_)) -> Some(0)
-    (Named(n, xs, _), Named(m, ys, _)) -> if (n != m || xs.size != ys.size) None else fitAll(xs, ys, 1)
-    (FunctionOf(xs, x, _), FunctionOf(ys, y, _)) -> if (xs.size != ys.size) None else fitAll(xs + [x], ys + [y], 0)
+    (Named(n, xs, _), Named(m, ys, _)) -> if (n != m || xs.size != ys.size) None else fitAll(
+      xs,
+      ys,
+      1,
+    )
+    (FunctionOf(xs, x, _), FunctionOf(ys, y, _)) -> if (xs.size != ys.size) None else fitAll(
+      xs + [x],
+      ys + [y],
+      0,
+    )
     (TupleOf(xs), TupleOf(ys)) -> if (xs.size != ys.size) None else fitAll(xs, ys, 1)
-    (Abstract(n, xs), Abstract(m, ys)) -> if (n != m || xs.size != ys.size) None else fitAll(xs, ys, 1)
+    (Abstract(n, xs), Abstract(m, ys)) -> if (n != m || xs.size != ys.size) None else fitAll(
+      xs,
+      ys,
+      1,
+    )
     else -> None
   }
 
@@ -175,5 +216,9 @@ module Globals {
       acc.flatMap { n -> fit(x, y).map { n + it } }
     }
 
-  problem(context: Context, at: Position, message: String): Diagnostic = Diagnostic(context.place.file.source.path, at, message)
+  problem(
+    context: Context,
+    at: Position,
+    message: String,
+  ): Diagnostic = Diagnostic(context.place.file.source.path, at, message)
 }

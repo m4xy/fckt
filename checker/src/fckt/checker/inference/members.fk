@@ -22,13 +22,21 @@ import fckt.parser.*
   context: Context,
 ): Typed =
   when (moduleMember(at, target, name, scope, context)) {
-    Some(global) -> Typed(Globals.typeOf(global, at, context), None, if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global))
+    Some(global) -> Typed(
+      Globals.typeOf(global, at, context),
+      None,
+      if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global),
+    )
     None -> when (qualifiedCase(target, scope, context)) {
       Some(qualifier) -> when (caseValues(at, name, qualifier, context)) {
         Some(t) -> Typed(t, None, valuesCore(qualifier, t, context))
         None -> when (constructorShape(name, expected, at, true, Some(qualifier), true, scope, context)) {
           Some(shape) -> Typed(
-            if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(shape.fieldTypes, shape.result, Row([], Some(fresh()))),
+            if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(
+              shape.fieldTypes,
+              shape.result,
+              Row([], Some(fresh())),
+            ),
             spelledCase(shape),
             constructorValue(shape),
           )
@@ -42,9 +50,21 @@ import fckt.parser.*
 // What's left of target.name once target isn't a module or a type with cases: an operation named
 // through its effect, as a value; a module through its package, as a value; or what target's value
 // has of that name.
-@Inferring private memberOfValue(at: Position, target: Expression, name: String, scope: Scope, context: Context): Typed = {
+@Inferring private memberOfValue(
+  at: Position,
+  target: Expression,
+  name: String,
+  scope: Scope,
+  context: Context,
+): Typed = {
   operation = when (target) {
-    Name(_, targetName) if Scopes.lookup(scope, targetName).isNone() -> qualifiedOperation(at, target, name, scope, context)
+    Name(_, targetName) if Scopes.lookup(scope, targetName).isNone() -> qualifiedOperation(
+      at,
+      target,
+      name,
+      scope,
+      context,
+    )
     else -> None
   }
   when (operation) {
@@ -58,12 +78,20 @@ import fckt.parser.*
           targetTyped = infer(target, None, scope, context)
           receiver = resolved(targetTyped.t)
           when (fieldOf(at, target, name, receiver, scope, context)) {
-            Some(RecordField(record, t)) -> Typed(t, None, FieldRead(targetTyped.core, record, name))
+            Some(RecordField(record, t)) -> Typed(
+              t,
+              None,
+              FieldRead(targetTyped.core, record, name),
+            )
             Some(NarrowedField(narrowing, t)) -> Typed(t, None, when (target) {
               Name(_, local) -> NarrowedRead(local, narrowing.caseName, narrowing.caseType, name)
               else -> Pending("a narrowed field")
             })
-            Some(ModuleMember(spec, value, t)) -> Typed(t, None, ModuleMemberRead(targetTyped.core, spec, value.name))
+            Some(ModuleMember(spec, value, t)) -> Typed(
+              t,
+              None,
+              ModuleMemberRead(targetTyped.core, spec, value.name),
+            )
             None -> propertyOf(at, target, targetTyped.core, name, receiver, scope, context)
           }
         }
@@ -84,7 +112,9 @@ import fckt.parser.*
 ): Typed =
   when (extensionFor(at, name, receiver, context)) {
     Some(extension) ->
-      if (!Signatures.isProperty(extension)) abandon(Globals.problem(context, at, "'$name' is a method; call it with ()"))
+      if (!Signatures.isProperty(extension)) abandon(
+        Globals.problem(context, at, "'$name' is a method; call it with ()"),
+      )
       else when (resolved(Globals.typeOf(extension, at, context))) {
         FunctionOf([receiverType, *_], result, effects) -> {
           assign(target, Typed(receiver), receiverType, context)
@@ -95,21 +125,36 @@ import fckt.parser.*
       }
     None -> {
       // level.name: which case it is, as its name, when no case carries anything.
-      named = if (name == "name") caseTypeOf(receiver, context).flatMap { caseTypeNamed(it, context) } else None
+      named = if (name == "name") caseTypeOf(
+        receiver,
+        context,
+      ).flatMap { caseTypeNamed(it, context) } else None
       when (named) {
-        Some(caseType) if context.environment.definitions.cases.getOrDefault(caseType.name, []).all { it.definition.fields.isEmpty() } -> {
+        Some(caseType) if context.environment.definitions.cases.getOrDefault(
+          caseType.name,
+          [],
+        ).all { it.definition.fields.isEmpty() } -> {
           bareCases(caseType, at, context)
           Typed(
             string,
             None,
             CaseName(
               targetCore,
-              context.environment.definitions.cases.getOrDefault(caseType.name, []).map { c -> CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition) },
+              context.environment.definitions.cases.getOrDefault(
+                caseType.name,
+                [],
+              ).map { c -> CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition) },
             ),
           )
         }
         else -> when (receiver) {
-          Variable(_) -> abandon(Globals.problem(context, at, "can't tell what '$name' is: the receiver's type isn't known here; annotate it"))
+          Variable(_) -> abandon(
+            Globals.problem(
+              context,
+              at,
+              "can't tell what '$name' is: the receiver's type isn't known here; annotate it",
+            ),
+          )
           else -> abandon(noField(at, target, name, receiver, context))
         }
       }
@@ -125,7 +170,12 @@ fieldType(field: FieldReference): Type = when (field) {
 
 // Level.values: every case of the qualifier, a type whose cases carry nothing, in the order it
 // declares them; None when the qualifier isn't a type with cases, or names a case called values.
-@Inferring private caseValues(at: Position, name: String, qualifier: String, context: Context): Option<Type> =
+@Inferring private caseValues(
+  at: Position,
+  name: String,
+  qualifier: String,
+  context: Context,
+): Option<Type> =
   if (name != "values") None
   else when (Lookups.found(Lookups.caseType(qualifier, context.place, context.environment.definitions.namespace, Skipping))) {
     None -> None
@@ -172,7 +222,13 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
   }
 
 // That the receiver has no field of the name; if some of its cases do, which, and how to get at it.
-@Solving noField(at: Position, target: Expression, name: String, receiver: Type, context: Context): Diagnostic = {
+@Solving noField(
+  at: Position,
+  target: Expression,
+  name: String,
+  receiver: Type,
+  context: Context,
+): Diagnostic = {
   caseType = caseTypeOf(receiver, context).flatMap { caseTypeNamed(it, context) }
   having = caseType.map { s -> Symbols.casesOf(s).filter { c -> c.fields.any { it.name == name } } }.getOrElse([])
   when ((caseType, having, target)) {
@@ -185,9 +241,19 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
 
 // A record's field, a field of the case a local was found to be by is, or a value of a module
 // given as a value.
-@Inferring fieldOf(at: Position, target: Expression, name: String, receiver: Type, scope: Scope, context: Context): Option<FieldReference> = {
+@Inferring fieldOf(
+  at: Position,
+  target: Expression,
+  name: String,
+  receiver: Type,
+  scope: Scope,
+  context: Context,
+): Option<FieldReference> = {
   narrowed = when (target) {
-    Name(_, local) -> Scopes.lookup(scope, local).flatMap { it.narrowed }.flatMap { n -> n.types.get(name).map { t -> NarrowedField(n, t) } }
+    Name(_, local) -> Scopes.lookup(
+      scope,
+      local,
+    ).flatMap { it.narrowed }.flatMap { n -> n.types.get(name).map { t -> NarrowedField(n, t) } }
     else -> None
   }
   when (narrowed) {
@@ -222,7 +288,12 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
 // The extension a method or property call is to: of those with its name, the one whose receiver's
 // type fits, or the most specific, as List<Int>.sum is over List<A>.sum. Of several as specific,
 // one's own come before what's imported, and the core's, which every file has, last.
-@Solving @Abandoning extensionFor(at: Position, name: String, receiver: Type, context: Context): Option<Symbol> = {
+@Solving @Abandoning extensionFor(
+  at: Position,
+  name: String,
+  receiver: Type,
+  context: Context,
+): Option<Symbol> = {
   candidates = Globals.extensionsNamed(name, context)
   if (candidates.isEmpty()) None
   else when (resolved(receiver)) {
@@ -248,7 +319,11 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
 }
 
 // Whether the extension's receiver fits the type.
-@Solving @Abandoning fitsReceiver(s: Symbol, t: Type, context: Context): Boolean = Globals.fit(Globals.receiverType(s, context), t).isSome()
+@Solving @Abandoning fitsReceiver(
+  s: Symbol,
+  t: Type,
+  context: Context,
+): Boolean = Globals.fit(Globals.receiverType(s, context), t).isSome()
 
 // target.name(arguments), where it's a method: a field holding a function, called as any function
 // value is; copy, a record's with some fields changed; an extension; one of the language's own; or a
@@ -315,7 +390,13 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
   context: Context,
 ): Typed = {
   record = when (receiver) {
-    Named(typeName, _, _) if name == "copy" -> context.environment.definitions.namespace.table.records.get(typeName)
+    Named(
+      typeName,
+      _,
+      _,
+    ) if name == "copy" -> context.environment.definitions.namespace.table.records.get(
+      typeName,
+    )
     else -> None
   }
   when (record) {
@@ -324,12 +405,30 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
       Typed(receiver, None, Copied(targetCore, r, changes))
     }
     None -> {
-      if (arguments.any { it.name.isSome() }) abandon(Globals.problem(context, at, "named arguments aren't supported in method calls")) else Unit
+      if (arguments.any { it.name.isSome() }) abandon(
+        Globals.problem(context, at, "named arguments aren't supported in method calls"),
+      ) else Unit
       // toString() is every value's; a type's own toString takes how to show its type parameters,
       // and is called with them.
-      extension = extensionFor(memberAt, name, receiver, context).filter { name != "toString" || arguments.isNotEmpty() }
+      extension = extensionFor(
+        memberAt,
+        name,
+        receiver,
+        context,
+      ).filter { name != "toString" || arguments.isNotEmpty() }
       when (extension) {
-        Some(s) -> callExtension(at, memberAt, target, targetCore, s, receiver, arguments, typeArguments, scope, context)
+        Some(s) -> callExtension(
+          at,
+          memberAt,
+          target,
+          targetCore,
+          s,
+          receiver,
+          arguments,
+          typeArguments,
+          scope,
+          context,
+        )
         None -> when (builtinMethod(name, receiver, arguments, at, context)) {
           Some(t) -> {
             given = checkArguments(
@@ -375,7 +474,10 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
 
 // The function called with these arguments, as core: an external's OCaml, or a function applied.
 called(function: Symbol, arguments: List<Core>): Core =
-  if (Signatures.isExternal(function)) ExternalApplied(function, arguments) else Applied(GlobalRead(function), arguments)
+  if (Signatures.isExternal(function)) ExternalApplied(function, arguments) else Applied(
+    GlobalRead(function),
+    arguments,
+  )
 
 // An extension, called with its receiver first.
 @Inferring callExtension(
@@ -391,10 +493,14 @@ called(function: Symbol, arguments: List<Core>): Core =
   context: Context,
 ): Typed = {
   method = Signatures.methodName(s)
-  if (Signatures.isProperty(s)) abandon(Globals.problem(context, memberAt, "'$method' is a property; write it without ()")) else Unit
+  if (Signatures.isProperty(s)) abandon(
+    Globals.problem(context, memberAt, "'$method' is a property; write it without ()"),
+  ) else Unit
   when (resolved(Globals.typeForCall(s, typeArguments, at, context))) {
     FunctionOf([receiverType, *parameters], result, effects) -> {
-      written = Signatures.writtenParametersOf(s).getOrElse([]).map { p -> (p.name, p.default.isSome()) }
+      written = Signatures.writtenParametersOf(s).getOrElse(
+        [],
+      ).map { p -> (p.name, p.default.isSome()) }
       given = withDefaults(at, arguments, written, s.name, false, emptyMap())
       if (parameters.size != given.size) {
         abandon(
@@ -416,14 +522,22 @@ called(function: Symbol, arguments: List<Core>): Core =
 
 // One of the language's own methods: toString(), which every value has, and a list's
 // joinToString(separator). What it gives, if the name is one, after checking how many it's given.
-@Abandoning private builtinMethod(name: String, receiver: Type, arguments: List<CallArgument>, at: Position, context: Context): Option<Type> = {
+@Abandoning private builtinMethod(
+  name: String,
+  receiver: Type,
+  arguments: List<CallArgument>,
+  at: Position,
+  context: Context,
+): Option<Type> = {
   wanted = when ((name, receiver)) {
     ("toString", _) -> Some(0)
     ("joinToString", Named("List", _, _)) -> Some(1)
     else -> None
   }
   wanted.map { n ->
-    if (arguments.size != n) abandon(Globals.problem(context, at, "'$name' takes $n arguments, not ${arguments.size}"))
+    if (arguments.size != n) abandon(
+      Globals.problem(context, at, "'$name' takes $n arguments, not ${arguments.size}"),
+    )
     else string
   }
 }
@@ -441,7 +555,9 @@ called(function: Symbol, arguments: List<Core>): Core =
   scope: Scope,
   context: Context,
 ): Typed = {
-  global = if (Scopes.lookup(scope, name).isNone()) Lookups.found(Globals.find(name, context, Skipping)) else None
+  global = if (Scopes.lookup(scope, name).isNone()) Lookups.found(
+    Globals.find(name, context, Skipping),
+  ) else None
   takesTarget = global.filter { s -> Signatures.parametersOf(s).map { it.size == arguments.size + 1 }.getOrElse(false) }
   when (takesTarget) {
     Some(s) -> when (resolved(Globals.typeForCall(s, typeArguments, at, context))) {
@@ -460,7 +576,13 @@ called(function: Symbol, arguments: List<Core>): Core =
       other -> Typed(other, None, Pending("a function that isn't one"))
     }
     None -> when (receiver) {
-      Variable(_) -> abandon(Globals.problem(context, memberAt, "can't tell what '$name' is: the receiver's type isn't known here; annotate it"))
+      Variable(_) -> abandon(
+        Globals.problem(
+          context,
+          memberAt,
+          "can't tell what '$name' is: the receiver's type isn't known here; annotate it",
+        ),
+      )
       _ -> abandon(
         Globals.problem(
           context,
@@ -473,9 +595,19 @@ called(function: Symbol, arguments: List<Core>): Core =
 }
 
 // record.copy(field = value): the record, with the fields named changed; each change, as core.
-@Inferring private copied(at: Position, memberAt: Position, record: Symbol, receiver: Type, arguments: List<CallArgument>, scope: Scope, context: Context): List<(String, Core)> = {
+@Inferring private copied(
+  at: Position,
+  memberAt: Position,
+  record: Symbol,
+  receiver: Type,
+  arguments: List<CallArgument>,
+  scope: Scope,
+  context: Context,
+): List<(String, Core)> = {
   own = Symbols.simpleName(record)
-  if (Conversion.isAbstractHere(record, context.place, context.environment.definitions)) abandon(opaque(record, memberAt, context)) else Unit
+  if (Conversion.isAbstractHere(record, context.place, context.environment.definitions)) abandon(
+    opaque(record, memberAt, context),
+  ) else Unit
   privateConstructor = when (record.declaration.definition) {
     RecordDefinition(_, _, p, _, _) -> p
     else -> false
@@ -489,7 +621,9 @@ called(function: Symbol, arguments: List<Core>): Core =
       ),
     )
   } else Unit
-  if (arguments.any { it.name.isNone() }) abandon(Globals.problem(context, at, "copy takes named arguments: copy(field = value)")) else Unit
+  if (arguments.any { it.name.isNone() }) abandon(
+    Globals.problem(context, at, "copy takes named arguments: copy(field = value)"),
+  ) else Unit
   (recordArguments, region) = when (receiver) {
     Named(_, typeArguments, r) -> (typeArguments, r)
     else -> ([], None)
@@ -506,21 +640,33 @@ called(function: Symbol, arguments: List<Core>): Core =
     fieldName = argument.name.getOrElse("")
     argumentAt = argumentPosition(argument.value)
     index = fields.indexOfFirst { it.name == fieldName }
-    if (index < 0) abandon(Globals.problem(context, argumentAt, "${record.name} has no field '$fieldName'"))
-    else if (changes.any { name, _ -> name == fieldName }) abandon(Globals.problem(context, argumentAt, "'$fieldName' is passed twice"))
-    else changes + types.getOrNone(index).map { t -> (fieldName, checkArgument(argument.value, t, scope, context)) }.toList()
+    if (index < 0) abandon(
+      Globals.problem(context, argumentAt, "${record.name} has no field '$fieldName'"),
+    )
+    else if (changes.any { name, _ -> name == fieldName }) abandon(
+      Globals.problem(context, argumentAt, "'$fieldName' is passed twice"),
+    )
+    else changes + types.getOrNone(
+      index,
+    ).map { t -> (fieldName, checkArgument(argument.value, t, scope, context)) }.toList()
   }
 }
 
 // A type with its unknowns written A, B, ...: Option<A>, as a spec would write it.
 @Solving genericText(t: Type): String = {
-  letters = shownVariables(t, []).mapIndexed { i, v -> (v, TypeParameter("${(65 + i).toChar()}")) }.toMap()
+  letters = shownVariables(
+    t,
+    [],
+  ).mapIndexed { i, v -> (v, TypeParameter("${(65 + i).toChar()}")) }.toMap()
   TypeText.shown(Types.substitute(t, letters))
 }
 
 // The unknowns a type shows when it's written out, each once, in the order they're met: not those
 // in what a function does, nor in regions.
-@Solving private shownVariables(t: Type, found: List<TypeVariable>): List<TypeVariable> = when (resolved(t)) {
+@Solving private shownVariables(
+  t: Type,
+  found: List<TypeVariable>,
+): List<TypeVariable> = when (resolved(t)) {
   Variable(v) -> if (found.contains(v)) found else found + [v]
   Named(_, arguments, _) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
   Abstract(_, arguments) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
@@ -528,7 +674,10 @@ called(function: Symbol, arguments: List<Core>): Core =
   ModuleValue(_, arguments, _) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
   Handler(_, arguments) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
   TupleOf(elements) -> elements.fold(found) { acc, e -> shownVariables(e, acc) }
-  FunctionOf(parameters, result, _) -> shownVariables(result, parameters.fold(found) { acc, p -> shownVariables(p, acc) })
+  FunctionOf(parameters, result, _) -> shownVariables(
+    result,
+    parameters.fold(found) { acc, p -> shownVariables(p, acc) },
+  )
   else -> found
 }
 

@@ -27,7 +27,9 @@ module Symbols {
   // The declarations, by kind, with the packages they're in.
   @Abandoning private tableOf(declared: List<Symbol>, packages: List<ModuleSymbol>): SymbolTable = {
     modules = moduleTable(packages, declared)
-    specs = uniquely(declared.filter { isSpec(it) }) { s -> "spec '${simpleName(s)}' is declared twice" }
+    specs = uniquely(
+      declared.filter { isSpec(it) },
+    ) { s -> "spec '${simpleName(s)}' is declared twice" }
     types = typeTables(declared)
     functions = functionTable(declared)
     SymbolTable(
@@ -48,17 +50,23 @@ module Symbols {
   // name, in the order they're taken.
   declarations(workspace: Workspace): List<Symbol> =
     filePrivate(
-      ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file, workspace.borrowed) },
+      ordered(
+        workspace,
+      ).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file, workspace.borrowed) },
     )
 
   // The symbols, with each private function or type at the top of a lower-case file whose name
   // another declaration has too given a name of its own, filePrivateName's: as in Kotlin, a private
   // declaration of a file outside any module is that file's.
   private filePrivate(symbols: List<Symbol>): List<Symbol> = {
-    counts = symbols.fold(emptyMap<String, Int>()) { m, s -> m.put(s.name, m.getOrDefault(s.name, 0) + 1) }
+    counts = symbols.fold(
+      emptyMap<String, Int>(),
+    ) { m, s -> m.put(s.name, m.getOrDefault(s.name, 0) + 1) }
     symbols.map { s ->
       when (s.file.source.path) {
-        Some(path) if counts.getOrDefault(s.name, 0) > 1 && isFileOwn(s, path) -> s.copy(name = filePrivateName(s.name, path))
+        Some(path) if counts.getOrDefault(s.name, 0) > 1 && isFileOwn(s, path) -> s.copy(
+          name = filePrivateName(s.name, path),
+        )
         _ -> s
       }
     }
@@ -99,11 +107,18 @@ module Symbols {
 
   // What comes before the names a package's files declare: geometry., or nothing for the
   // program's own package.
-  private prefixOf(pkg: List<String>): String = if (pkg.isEmpty()) "" else pkg.joinToString(".") + "."
+  private prefixOf(
+    pkg: List<String>,
+  ): String = if (pkg.isEmpty()) "" else pkg.joinToString(".") + "."
 
   // Each declaration, and each inside the modules among them, by its full name, in the file it's
   // in, or, if it's borrowed from elsewhere, where it's written.
-  private symbolsIn(declarations: List<Declaration>, prefix: String, file: LoadedFile, borrowed: Map<String, LoadedFile>): List<Symbol> = declarations.flatMap { d ->
+  private symbolsIn(
+    declarations: List<Declaration>,
+    prefix: String,
+    file: LoadedFile,
+    borrowed: Map<String, LoadedFile>,
+  ): List<Symbol> = declarations.flatMap { d ->
     name = prefix + ownName(d)
     symbol = Symbol(name, pathOf(name), d, borrowed.getOrDefault(name, file))
     when (d.definition) {
@@ -122,7 +137,9 @@ module Symbols {
   // A receiver's type as it's named in an extension's name: its type parameters left out.
   private mangled(t: TypeRef, typeParameters: List<String>): String = when (t) {
     NamedType(_, name, arguments) ->
-      if (typeParameters.contains(name)) "" else lastPart(name) + arguments.map { mangled(it, typeParameters) }.joinToString("")
+      if (typeParameters.contains(name)) "" else lastPart(
+        name,
+      ) + arguments.map { mangled(it, typeParameters) }.joinToString("")
     TupleType(_, elements) -> "Tuple" + elements.map { mangled(it, typeParameters) }.joinToString("")
     FunctionType(_, _, _, _) -> "Function"
     EffectsType(_, _) -> ""
@@ -140,12 +157,17 @@ module Symbols {
   // ---- Modules ----
 
   // Every module: each package, as its folder, and each that a file declares.
-  @Abandoning private moduleTable(packages: List<ModuleSymbol>, declared: List<Symbol>): Map<String, ModuleSymbol> = {
+  @Abandoning private moduleTable(
+    packages: List<ModuleSymbol>,
+    declared: List<Symbol>,
+  ): Map<String, ModuleSymbol> = {
     modules = declared.filter { isModule(it) }.map { DeclaredModule(it) }
     (packages + modules).fold(emptyMap()) { table, m ->
       name = moduleName(m)
       when (m) {
-        DeclaredModule(symbol) if table.containsKey(name) -> abandon(at(symbol, "module '${simpleName(symbol)}' is declared twice"))
+        DeclaredModule(symbol) if table.containsKey(name) -> abandon(
+          at(symbol, "module '${simpleName(symbol)}' is declared twice"),
+        )
         else -> table.put(name, m)
       }
     }
@@ -158,7 +180,9 @@ module Symbols {
   }
 
   // geometry, then geometry.shapes, for geometry.shapes.
-  private prefixes(pkg: List<String>): List<List<String>> = pkg.mapIndexed { i, _ -> pkg.take(i + 1) }
+  private prefixes(
+    pkg: List<String>,
+  ): List<List<String>> = pkg.mapIndexed { i, _ -> pkg.take(i + 1) }
 
   // ---- Types ----
 
@@ -199,16 +223,22 @@ module Symbols {
 
   // That a type with cases has some, and none called what Option's are.
   @Abandoning private checkCases(symbol: Symbol): Unit = when (symbol.declaration.definition) {
-    CasesDefinition(_, [], [], []) -> abandon(at(symbol, "type '${simpleName(symbol)}' has no cases"))
+    CasesDefinition(_, [], [], []) -> abandon(
+      at(symbol, "type '${simpleName(symbol)}' has no cases"),
+    )
     CasesDefinition(_, cases, _, _) -> cases.forEach { c ->
-      if (c.name == "Some" || c.name == "None") abandon(Diagnostic(symbol.file.source.path, c.at, "'${c.name}' is reserved for Option"))
+      if (c.name == "Some" || c.name == "None") abandon(
+        Diagnostic(symbol.file.source.path, c.at, "'${c.name}' is reserved for Option"),
+      )
       else Unit
     }
     else -> Unit
   }
 
   // That no case is named as a record beside its type is, and no type has two cases of one name.
-  @Abandoning private checkCaseNames(tables: TypeTables): Unit = tables.caseTypes.toList().forEach { entry ->
+  @Abandoning private checkCaseNames(
+    tables: TypeTables,
+  ): Unit = tables.caseTypes.toList().forEach { entry ->
     (_, owner) = entry
     cases = casesOf(owner)
     cases.forEach { c ->
@@ -238,7 +268,9 @@ module Symbols {
   }
 
   // Each case, by its type's full name and its own.
-  private caseTable(types: TypeTables): Map<String, CaseSymbol> = types.caseTypes.toList().flatMap { entry ->
+  private caseTable(
+    types: TypeTables,
+  ): Map<String, CaseSymbol> = types.caseTypes.toList().flatMap { entry ->
     (name, owner) = entry
     casesOf(owner).map { c -> ("$name.${c.name}", CaseSymbol("$name.${c.name}", owner, c)) }
   }.toMap()
@@ -246,7 +278,9 @@ module Symbols {
   // ---- Functions ----
 
   // Functions and values, each name once: an extension's for its receiver's type.
-  @Abandoning private functionTable(declared: List<Symbol>): Map<String, Symbol> = declared.filter { isFunction(it) }.fold(emptyMap()) { table, symbol ->
+  @Abandoning private functionTable(
+    declared: List<Symbol>,
+  ): Map<String, Symbol> = declared.filter { isFunction(it) }.fold(emptyMap()) { table, symbol ->
     if (!table.containsKey(symbol.name)) table.put(symbol.name, symbol)
     else when (symbol.declaration.definition) {
       FunctionDefinition(_, Some(receiver), _, _, _, _, _) ->
@@ -306,11 +340,20 @@ module Symbols {
   private byName(symbols: List<Symbol>): Map<String, Symbol> = symbols.map { (it.name, it) }.toMap()
 
   // The symbols by name, giving up at the first whose name is taken, with what duplicate says.
-  @Abandoning private uniquely(symbols: List<Symbol>, duplicate: (Symbol) -> String): Map<String, Symbol> =
+  @Abandoning private uniquely(
+    symbols: List<Symbol>,
+    duplicate: (Symbol) -> String,
+  ): Map<String, Symbol> =
     symbols.fold(emptyMap()) { table, symbol ->
-      if (table.containsKey(symbol.name)) abandon(at(symbol, duplicate(symbol))) else table.put(symbol.name, symbol)
+      if (table.containsKey(symbol.name)) abandon(at(symbol, duplicate(symbol))) else table.put(
+        symbol.name,
+        symbol,
+      )
     }
 
   // An error at a declaration.
-  at(symbol: Symbol, message: String): Diagnostic = Diagnostic(symbol.file.source.path, symbol.declaration.at, message)
+  at(
+    symbol: Symbol,
+    message: String,
+  ): Diagnostic = Diagnostic(symbol.file.source.path, symbol.declaration.at, message)
 }

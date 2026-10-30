@@ -9,7 +9,11 @@ module Printer {
 
   // The item, its lines after the first indented by indent.
   item(i: Item, indent: String): String = when (i) {
-    LetItem(recursive, bindings) -> bindingGroup(if (recursive) "let rec" else "let", bindings, indent)
+    LetItem(recursive, bindings) -> bindingGroup(
+      if (recursive) "let rec" else "let",
+      bindings,
+      indent,
+    )
     TypeItem(definitions) -> definitions.mapIndexed { n, d -> (if (n == 0) "type " else "${indent}and ") + typeDefinition(d, indent) }.joinToString("\n")
     ModuleItem(name, definition) -> "module $name = ${moduleExpr(definition, indent)}"
     EffectItem(operations) -> "type _ Effect.t +=" + operations.map { "\n$indent  | ${effectOperation(it)}" }.joinToString("")
@@ -40,7 +44,10 @@ module Printer {
       [one] -> one
       _ -> Product(o.parameters)
     }
-    o.name + " : " + typexpr(carried, arrowParameter) + " -> " + typexpr(o.result, applied) + " Effect.t"
+    o.name + " : " + typexpr(carried, arrowParameter) + " -> " + typexpr(
+      o.result,
+      applied,
+    ) + " Effect.t"
   }
 
   private bindingGroup(keyword: String, bindings: List<Binding>, indent: String): String =
@@ -54,11 +61,17 @@ module Printer {
 
   // What's bound, with its parameters and the type of its result, if it says.
   private head(b: Binding): String =
-    pat(b.pattern, atomicPattern) + b.parameters.map { " " + pat(it, atomicPattern) }.joinToString("") + b.result.map { " : " + typexpr(it, 0) }.getOrElse("")
+    pat(
+      b.pattern,
+      atomicPattern,
+    ) + b.parameters.map { " " + pat(it, atomicPattern) }.joinToString("") + b.result.map { " : " + typexpr(it, 0) }.getOrElse("")
 
   // ---- Types ----
 
-  private typeDefinition(d: TypeDefinition, indent: String): String = typeParameters(d.parameters) + d.name + when (d.body) {
+  private typeDefinition(
+    d: TypeDefinition,
+    indent: String,
+  ): String = typeParameters(d.parameters) + d.name + when (d.body) {
     AbstractType -> ""
     AliasType(t) -> " = " + typexpr(t, 0)
     RecordType(fields) -> " = " + recordFields(fields)
@@ -103,7 +116,10 @@ module Printer {
       TypeApplication(name, []) -> name
       TypeApplication(name, [argument]) -> typexpr(argument, applied) + " " + name
       TypeApplication(name, arguments) -> "(" + arguments.map { typexpr(it, 0) }.joinToString(", ") + ") " + name
-      Arrow(parameter, result) -> typexpr(parameter, arrowParameter) + " -> " + typexpr(result, arrowLevel)
+      Arrow(parameter, result) -> typexpr(parameter, arrowParameter) + " -> " + typexpr(
+        result,
+        arrowLevel,
+      )
       Product(parts) -> parts.map { typexpr(it, productPart) }.joinToString(" * ")
       Polymorphic(variables, body) -> variables.joinToString(" ") + ". " + typexpr(body, 0)
     }
@@ -136,7 +152,9 @@ module Printer {
       ConsPat(head, tail) -> pat(head, constructorPattern) + " :: " + pat(tail, consPattern)
       ConstructorPat(name, None) -> name
       ConstructorPat(name, Some(argument)) -> name + " " + pat(argument, atomicPattern)
-      RecordPat(fields, open) -> "{ " + (fields.map { f -> "${f.name} = ${pat(f.pattern, orPattern)}" } + (if (open) ["_"] else [])).joinToString("; ") + " }"
+      RecordPat(fields, open) -> "{ " + (fields.map { f -> "${f.name} = ${pat(f.pattern, orPattern)}" } + (if (open) ["_"] else [])).joinToString(
+        "; ",
+      ) + " }"
       AliasPat(pattern, name) -> pat(pattern, orPattern) + " as " + name
       TypedPat(pattern, t) -> "(" + pat(pattern, aliasPattern) + " : " + typexpr(t, 0) + ")"
       OrPat(left, right) -> pat(left, orPattern) + " | " + pat(right, consPattern)
@@ -158,12 +176,20 @@ module Printer {
   private bare(e: Expr, indent: String): String = when (e) {
     Identifier(path) -> path
     ConstantExpr(c) -> constant(c)
-    Application(function, arguments) -> expr(function, Head, indent) + arguments.map { " " + expr(it, Argument, indent) }.joinToString("")
+    Application(function, arguments) -> expr(
+      function,
+      Head,
+      indent,
+    ) + arguments.map { " " + expr(it, Argument, indent) }.joinToString("")
     Infix(operator, left, right) -> {
       level = operatorLevel(operator)
       // A right-associative operator's right operand can be another of its level, as in a :: b :: c.
       fromRight = rightAssociative.contains(operator)
-      expr(left, Operand(if (fromRight) level + 1 else level), indent) + " $operator " + expr(right, Operand(if (fromRight) level else level + 1), indent)
+      expr(left, Operand(if (fromRight) level + 1 else level), indent) + " $operator " + expr(
+        right,
+        Operand(if (fromRight) level else level + 1),
+        indent,
+      )
     }
     Fun(parameters, body) -> "fun " + parameters.map { pat(it, atomicPattern) }.joinToString(" ") + " -> " + expr(body, Anywhere, indent + "  ")
     LetIn(recursive, bindings, body) -> {
@@ -171,7 +197,11 @@ module Printer {
       bindings.mapIndexed { n, b -> (if (n == 0) "$keyword " else "\n${indent}and ") + head(b) + " = " + expr(b.body, LetValue, indent + "  ") }.joinToString("") +
         " in\n$indent" + expr(body, Anywhere, indent)
     }
-    Sequence(first, then) -> expr(first, SequenceFirst, indent) + ";\n$indent" + expr(then, Anywhere, indent)
+    Sequence(first, then) -> expr(first, SequenceFirst, indent) + ";\n$indent" + expr(
+      then,
+      Anywhere,
+      indent,
+    )
     IfThenElse(condition, then, otherwise) ->
       "if ${expr(condition, LetValue, indent)} then ${expr(then, Branch, indent + "  ")} else ${expr(otherwise, Branch, indent + "  ")}"
     Match(subject, cases) -> {
@@ -186,7 +216,11 @@ module Printer {
     RecordExpr(fields, base) ->
       "{ " + base.map { expr(it, Argument, indent) + " with " }.getOrElse("") + fields.map { f -> "${f.name} = ${expr(f.value, Element, indent)}" }.joinToString("; ") + " }"
     FieldAccess(record, field) -> expr(record, Target, indent) + "." + field
-    FieldUpdate(record, field, value) -> expr(record, Target, indent) + "." + field + " <- " + expr(value, Operand(updateLevel + 1), indent)
+    FieldUpdate(record, field, value) -> expr(record, Target, indent) + "." + field + " <- " + expr(
+      value,
+      Operand(updateLevel + 1),
+      indent,
+    )
     Construction(name, None) -> name
     Construction(name, Some(argument)) -> name + " " + expr(argument, Argument, indent)
     Annotated(inner, t) -> "(" + expr(inner, Anywhere, indent) + " : " + typexpr(t, 0) + ")"
@@ -302,7 +336,9 @@ module Printer {
   }
 
   // The text as an OCaml string literal.
-  quoted(text: String): String = "\"" + text.toList().map { c -> escaped(c) }.joinToString("") + "\""
+  quoted(
+    text: String,
+  ): String = "\"" + text.toList().map { c -> escaped(c) }.joinToString("") + "\""
 
   private escaped(c: Char): String =
     if (c == '"') "\\\""

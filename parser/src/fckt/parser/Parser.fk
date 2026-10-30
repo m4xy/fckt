@@ -15,7 +15,9 @@ module Parser {
         skipNewlines(s)
         imports = importList(s)
         (declarations, errors) = declarationList(s, [], [])
-        if (errors.isEmpty()) Ok(SourceFile(imports, withReceiverTypeParameters(declarations, typeNames(declarations))))
+        if (errors.isEmpty()) Ok(
+          SourceFile(imports, withReceiverTypeParameters(declarations, typeNames(declarations))),
+        )
         else Error(errors)
       }
     }
@@ -36,10 +38,32 @@ module Parser {
   // e is T, or e !is T, as read: what's checked, the check, and whether it's !is.
   private type Check(subject: Expression, pattern: Pattern, negated: Boolean)
 
-  private builtinTypes: List<String> = ["Int", "Float", "Double", "String", "Boolean", "Unit", "Char", "Byte", "Nothing", "List", "Option", "Lazy", "Result"]
+  private builtinTypes: List<String> = [
+    "Int",
+    "Float",
+    "Double",
+    "String",
+    "Boolean",
+    "Unit",
+    "Char",
+    "Byte",
+    "Nothing",
+    "List",
+    "Option",
+    "Lazy",
+    "Result",
+  ]
 
   // What an operator can be, besides unaryMinus: each binary operator's, and a..b's and a..<b's.
-  private operators: List<String> = ["plus", "minus", "times", "div", "rem", "rangeTo", "rangeUntil"]
+  private operators: List<String> = [
+    "plus",
+    "minus",
+    "times",
+    "div",
+    "rem",
+    "rangeTo",
+    "rangeUntil",
+  ]
 
   // What ends something, which a declaration can't start with.
   private closers: List<Kind> = [RightBrace, RightParen, RightBracket, Newline, Semicolon]
@@ -49,7 +73,11 @@ module Parser {
 
   // ---- Declarations ----
 
-  @Mutating private declarationList(s: Parsing, done: List<Declaration>, errors: List<SyntaxError>): (List<Declaration>, List<SyntaxError>) =
+  @Mutating private declarationList(
+    s: Parsing,
+    done: List<Declaration>,
+    errors: List<SyntaxError>,
+  ): (List<Declaration>, List<SyntaxError>) =
     if (looking(s, End)) (done.reversed(), errors.reversed())
     else when (declarationOnItsLine(s, errors.isNotEmpty())) {
       Ok(d) -> declarationList(s, [d, *done], errors)
@@ -63,18 +91,26 @@ module Parser {
 
   // A declaration, which ends its line. After an error, a bracket left open hides the line's end
   // from the lexer, so a later line is an end too.
-  @Mutating private declarationOnItsLine(s: Parsing, recovering: Boolean): Result<Declaration, SyntaxError> =
+  @Mutating private declarationOnItsLine(
+    s: Parsing,
+    recovering: Boolean,
+  ): Result<Declaration, SyntaxError> =
     Rejecting(reject = (at, message, _) -> Error(SyntaxError(at, message))) {
       d = declaration(s)
       if (!looking(s, End)) {
         newLine = recovering && peek(s).at.line > previous(s).at.line
-        if (!looking(s, Newline) && !looking(s, Semicolon) && !newLine) reject(peek(s).at, "expected end of line after declaration but found ${describe(peek(s))}")
+        if (!looking(s, Newline) && !looking(s, Semicolon) && !newLine) reject(
+          peek(s).at,
+          "expected end of line after declaration but found ${describe(peek(s))}",
+        )
         skipNewlines(s)
       }
       Ok(d)
     }
 
-  @Mutating private skipToDeclaration(s: Parsing): Unit = if (!looking(s, End) && !(peek(s).at.column == 1 && !closers.contains(peek(s).kind))) {
+  @Mutating private skipToDeclaration(
+    s: Parsing,
+  ): Unit = if (!looking(s, End) && !(peek(s).at.column == 1 && !closers.contains(peek(s).kind))) {
     next(s)
     skipToDeclaration(s)
   }
@@ -88,17 +124,26 @@ module Parser {
         next(s)
         Some(ident(s, "the name to import it as"))
       } else None
-      if (path.size < 2 && !wildcard) reject(start, "import a declaration by its package, as in import geometry.Shapes")
+      if (path.size < 2 && !wildcard) reject(
+        start,
+        "import a declaration by its package, as in import geometry.Shapes",
+      )
       // After .*, the lexer takes the line to go on, as it would after a multiplication.
       nextLine = peek(s).at.line > previous(s).at.line
-      if (!looking(s, End) && !looking(s, Newline) && !looking(s, Semicolon) && !nextLine) reject(peek(s).at, "expected end of line after an import but found ${describe(peek(s))}")
+      if (!looking(s, End) && !looking(s, Newline) && !looking(s, Semicolon) && !nextLine) reject(
+        peek(s).at,
+        "expected end of line after an import but found ${describe(peek(s))}",
+      )
       skipNewlines(s)
       [Import(start, path, wildcard, alias), *importList(s)]
     } else []
 
   @Rejecting @Mutating private importPath(s: Parsing, path: List<String>): (List<String>, Boolean) =
     if (accepts(s, Dot)) {
-      if (accepts(s, Star)) (path, true) else importPath(s, path + [ident(s, "a name to import, or *")])
+      if (accepts(s, Star)) (path, true) else importPath(
+        s,
+        path + [ident(s, "a name to import, or *")],
+      )
     } else (path, false)
 
   @Rejecting @Mutating private declaration(s: Parsing): Declaration = {
@@ -106,7 +151,10 @@ module Parser {
     when {
       looking(s, At) -> {
         annotations = annotationList(s)
-        if (looking(s, End) || looking(s, RightBrace)) reject(annotations.lastOrNone().map { it.at }.getOrElse(start), "an annotation goes before a declaration")
+        if (looking(s, End) || looking(s, RightBrace)) reject(
+          annotations.lastOrNone().map { it.at }.getOrElse(start),
+          "an annotation goes before a declaration",
+        )
         annotated(declaration(s), annotations)
       }
       // annotation type Name(fields): written @Name(...) on declarations, and only checked.
@@ -114,8 +162,14 @@ module Parser {
         next(s)
         next(s)
         name = upperIdent(s, "an annotation's name")
-        if (looking(s, Less)) reject(peek(s).at, "an annotation has no type parameters: its fields say what it refers to, like Type or Case<T>")
-        if (looking(s, LeftBrace) || looking(s, Assign)) reject(peek(s).at, "an annotation is a record: annotation type $name(field: Type)")
+        if (looking(s, Less)) reject(
+          peek(s).at,
+          "an annotation has no type parameters: its fields say what it refers to, like Type or Case<T>",
+        )
+        if (looking(s, LeftBrace) || looking(s, Assign)) reject(
+          peek(s).at,
+          "an annotation is a record: annotation type $name(field: Type)",
+        )
         fields = if (accepts(s, LeftParen)) {
           read = if (looking(s, RightParen)) [] else fieldList(s, start, true)
           expect(s, RightParen, "')'")
@@ -131,22 +185,45 @@ module Parser {
       // internal: seen only in its project. A soft keyword, so a function may still be called internal.
       softKeyword(s, "internal") && !afterName.contains(peekAt(s, 1).kind) -> {
         next(s)
-        if (looking(s, PrivateKeyword)) reject(peek(s).at, "a private declaration is hidden already; it can't also be internal")
+        if (looking(s, PrivateKeyword)) reject(
+          peek(s).at,
+          "a private declaration is hidden already; it can't also be internal",
+        )
         declaration(s).copy(visibility = Internal)
       }
       // operator Set<A>.plus(...): what + on a Set calls. A soft keyword, as internal is.
-      softKeyword(s, "operator") && !afterName.contains(peekAt(s, 1).kind) -> operatorDeclaration(s, next(s).at, declaration(s))
+      softKeyword(s, "operator") && !afterName.contains(peekAt(s, 1).kind) -> operatorDeclaration(
+        s,
+        next(s).at,
+        declaration(s),
+      )
       accepts(s, PrivateKeyword) -> {
-        if (softKeyword(s, "internal")) reject(peek(s).at, "a private declaration is hidden already; it can't also be internal")
-        if (softKeyword(s, "opaque")) reject(peek(s).at, "a private type is hidden already; it can't also be opaque")
+        if (softKeyword(s, "internal")) reject(
+          peek(s).at,
+          "a private declaration is hidden already; it can't also be internal",
+        )
+        if (softKeyword(s, "opaque")) reject(
+          peek(s).at,
+          "a private type is hidden already; it can't also be opaque",
+        )
         declaration(s).copy(visibility = Private)
       }
       accepts(s, ModuleKeyword) -> moduleDeclaration(s, start)
       // effect Console { println(s: String): Unit }: an effect with operations, which a handler
       // answers; effect Mutating: one without, only tracked. A keyword only here, as spec is.
-      softKeyword(s, "effect") && peekAt(s, 1).kind == Identifier && upper(peekAt(s, 1).text) -> effectDeclaration(s, start)
+      softKeyword(s, "effect") && peekAt(
+        s,
+        1,
+      ).kind == Identifier && upper(peekAt(s, 1).text) -> effectDeclaration(
+        s,
+        start,
+      )
       // spec is a keyword only here, so it can still name a value.
-      softKeyword(s, "spec") && peekAt(s, 1).kind == Identifier && [LeftBrace, Less, Colon].contains(peekAt(s, 2).kind) -> {
+      softKeyword(s, "spec") && peekAt(s, 1).kind == Identifier && [
+        LeftBrace,
+        Less,
+        Colon,
+      ].contains(peekAt(s, 2).kind) -> {
         next(s)
         name = upperIdent(s, "a spec name")
         typeParameters = typeParameterList(s)
@@ -163,7 +240,11 @@ module Parser {
         // type Name { Cases }: a type with cases
         if (accepts(s, LeftBrace)) typeWithCases(s, start, name, typeParameters)
         // type Name = Other: another name for a type
-        else if (accepts(s, Assign)) Declaration(start, name, AliasDefinition(typeParameters, typeRef(s)))
+        else if (accepts(s, Assign)) Declaration(
+          start,
+          name,
+          AliasDefinition(typeParameters, typeRef(s)),
+        )
         else {
           // type Name(fields), or type Name private(...): like Kotlin's private constructor
           privateConstructor = accepts(s, PrivateKeyword)
@@ -194,7 +275,10 @@ module Parser {
         }
         Declaration(start, name, RecordDefinition(typeParameters, [], false, false, Some(text)))
       }
-      softKeyword(s, "external") && (peekAt(s, 1).kind == Identifier || peekAt(s, 1).kind == LeftParen) -> {
+      softKeyword(
+        s,
+        "external",
+      ) && (peekAt(s, 1).kind == Identifier || peekAt(s, 1).kind == LeftParen) -> {
         next(s)
         externalFunction(s, function(s, start))
       }
@@ -203,7 +287,11 @@ module Parser {
     }
   }
 
-  @Rejecting private operatorDeclaration(s: Parsing, at: Position, d: Declaration): Declaration = when (d.definition) {
+  @Rejecting private operatorDeclaration(
+    s: Parsing,
+    at: Position,
+    d: Declaration,
+  ): Declaration = when (d.definition) {
     FunctionDefinition(typeParameters, receiver, parameters, result, body, external, _) -> {
       arity = if (d.name == "unaryMinus") 0
         else if (operators.contains(d.name)) 1
@@ -211,8 +299,14 @@ module Parser {
           d.at,
           "there's no operator '${d.name}': an operator is one of ${(operators + ["unaryMinus"]).joinToString(", ")}",
         )
-      if (receiver.isNone()) reject(d.at, "an operator is a type's, so it's an extension: operator Type.${d.name}(...)")
-      if (parameters.map { it.size }.getOrElse(0) != arity) reject(d.at, "${d.name} takes ${if (arity == 0) "no parameters" else "one parameter, the right-hand side"}")
+      if (receiver.isNone()) reject(
+        d.at,
+        "an operator is a type's, so it's an extension: operator Type.${d.name}(...)",
+      )
+      if (parameters.map { it.size }.getOrElse(0) != arity) reject(
+        d.at,
+        "${d.name} takes ${if (arity == 0) "no parameters" else "one parameter, the right-hand side"}",
+      )
       d.copy(
         definition = FunctionDefinition(
           typeParameters,
@@ -229,7 +323,10 @@ module Parser {
   }
 
   // external name(parameters): R = "OCaml": a function whose body is OCaml, applied to its parameters.
-  @Rejecting private externalFunction(s: Parsing, d: Declaration): Declaration = when (d.definition) {
+  @Rejecting private externalFunction(
+    s: Parsing,
+    d: Declaration,
+  ): Declaration = when (d.definition) {
     FunctionDefinition(typeParameters, receiver, parameters, result, body, _, operator) -> {
       ocaml = when (body) {
         StringTemplate(_, parts) if parts.all { it is TemplateText } -> parts.map { part ->
@@ -240,7 +337,10 @@ module Parser {
         }.joinToString("")
         else -> reject(atOf(body), "an external's body is OCaml in a string: \"List.map f this\"")
       }
-      if (result.isNone() || parameters.getOrElse([]).any { it.parameterType.isNone() }) reject(d.at, "an external needs the types of its parameters and result")
+      if (result.isNone() || parameters.getOrElse([]).any { it.parameterType.isNone() }) reject(
+        d.at,
+        "an external needs the types of its parameters and result",
+      )
       d.copy(
         definition = FunctionDefinition(
           typeParameters,
@@ -284,8 +384,14 @@ module Parser {
     if (accepts(s, Assign)) {
       functorAt = peek(s).at
       functor = moduleName(s, "a functor applied to modules: Functor(Module)")
-      if (looking(s, Less)) reject(peek(s).at, "a functor takes its modules in parentheses: $functor(Module)")
-      if (!accepts(s, LeftParen)) reject(peek(s).at, "expected modules for $functor: $functor(Module)")
+      if (looking(s, Less)) reject(
+        peek(s).at,
+        "a functor takes its modules in parentheses: $functor(Module)",
+      )
+      if (!accepts(s, LeftParen)) reject(
+        peek(s).at,
+        "expected modules for $functor: $functor(Module)",
+      )
       // Functor(): every module its default.
       arguments = if (looking(s, RightParen)) [] else moduleArguments(s, [])
       expect(s, RightParen, "')'")
@@ -302,7 +408,10 @@ module Parser {
       )
     } else {
       // module Name<E>: generic in E, as each of its declarations is
-      if (looking(s, Less) && peekAt(s, 2).kind == Colon) reject(peek(s).at, "a functor takes its modules in parentheses: module $name(M: Spec)")
+      if (looking(s, Less) && peekAt(s, 2).kind == Colon) reject(
+        peek(s).at,
+        "a functor takes its modules in parentheses: module $name(M: Spec)",
+      )
       typeParameters = typeParameterList(s)
       // module Name(M: Spec, ...): a functor
       parameters = if (accepts(s, LeftParen)) {
@@ -314,7 +423,10 @@ module Parser {
       spec = if (accepts(s, Colon)) Some(specName(s)) else None
       expect(s, LeftBrace, "'{' after the module name")
       declarations = memberList(s) { declaration(s) }
-      if (typeParameters.isNotEmpty() && parameters.isNotEmpty()) reject(start, "a functor can't take type parameters too yet")
+      if (typeParameters.isNotEmpty() && parameters.isNotEmpty()) reject(
+        start,
+        "a functor can't take type parameters too yet",
+      )
       Declaration(
         start,
         name,
@@ -323,13 +435,19 @@ module Parser {
     }
   }
 
-  @Rejecting @Mutating private moduleArguments(s: Parsing, before: List<ModuleArgument>): List<ModuleArgument> = {
+  @Rejecting @Mutating private moduleArguments(
+    s: Parsing,
+    before: List<ModuleArgument>,
+  ): List<ModuleArgument> = {
     name = if (looking(s, Identifier) && peekAt(s, 1).kind == Assign) {
       read = upperIdent(s, "a module parameter's name")
       next(s)
       Some(read)
     } else None
-    if (name.isNone() && before.any { it.name.isSome() }) reject(peek(s).at, "a module given by position goes before those given by name")
+    if (name.isNone() && before.any { it.name.isSome() }) reject(
+      peek(s).at,
+      "a module given by position goes before those given by name",
+    )
     at = peek(s).at
     all = before + [ModuleArgument(name, NamedType(at, moduleName(s, "a module, by name"), []))]
     if (accepts(s, Comma)) moduleArguments(s, all) else all
@@ -354,7 +472,10 @@ module Parser {
     effect = [Annotation(start, "Effect", [], [])]
     // effect OrdersDb = Database: the same operations, as a separate effect.
     if (accepts(s, Assign)) {
-      if (typeParameters.isNotEmpty()) reject(peek(s).at, "a copy of an effect takes the type parameters of the one it copies: effect $name = ...")
+      if (typeParameters.isNotEmpty()) reject(
+        peek(s).at,
+        "a copy of an effect takes the type parameters of the one it copies: effect $name = ...",
+      )
       target = peek(s).at
       annotated(
         Declaration(
@@ -371,17 +492,26 @@ module Parser {
         effect,
       )
     } else {
-      if (looking(s, LeftParen)) reject(peek(s).at, "an effect has no fields: its operations go in braces, as in effect $name { op(x: Int): Unit }")
+      if (looking(s, LeftParen)) reject(
+        peek(s).at,
+        "an effect has no fields: its operations go in braces, as in effect $name { op(x: Int): Unit }",
+      )
       if (accepts(s, LeftBrace)) annotated(specBody(s, start, name, typeParameters, []), effect)
       else {
-        if (typeParameters.isNotEmpty()) reject(peek(s).at, "only an effect with operations takes type parameters, which its operations use")
+        if (typeParameters.isNotEmpty()) reject(
+          peek(s).at,
+          "only an effect with operations takes type parameters, which its operations use",
+        )
         Declaration(start, name, RecordDefinition([], [], false, true, None), annotations = effect)
       }
     }
   }
 
   // A module's name, which may be qualified: Sets.SortedSet.
-  @Rejecting @Mutating private moduleName(s: Parsing, what: String): String = qualified(s, upperIdent(s, what))
+  @Rejecting @Mutating private moduleName(
+    s: Parsing,
+    what: String,
+  ): String = qualified(s, upperIdent(s, what))
 
   @Mutating private qualified(s: Parsing, name: String): String =
     if (looking(s, Dot) && peekAt(s, 1).kind == Identifier && upper(peekAt(s, 1).text)) {
@@ -407,26 +537,42 @@ module Parser {
     else {
       read = item()
       if (!looking(s, RightBrace)) {
-        if (!looking(s, Newline) && !looking(s, Semicolon)) reject(peek(s).at, "expected end of line after declaration but found ${describe(peek(s))}")
+        if (!looking(s, Newline) && !looking(s, Semicolon)) reject(
+          peek(s).at,
+          "expected end of line after declaration but found ${describe(peek(s))}",
+        )
         skipNewlines(s)
       }
       memberItems(s, item, [read, *before])
     }
 
   // The { ... } of type Name { Cases }, after the {.
-  @Rejecting @Mutating private typeWithCases(s: Parsing, start: Position, name: String, typeParameters: List<String>): Declaration = {
+  @Rejecting @Mutating private typeWithCases(
+    s: Parsing,
+    start: Position,
+    name: String,
+    typeParameters: List<String>,
+  ): Declaration = {
     skipNewlines(s)
     (cases, caseRefs, includes) = caseItems(s, [], [], [])
     expect(s, RightBrace, "'}'")
     Declaration(start, name, CasesDefinition(typeParameters, cases, caseRefs, includes))
   }
 
-  @Rejecting @Mutating private caseItems(s: Parsing, cases: List<CaseDefinition>, caseRefs: List<CaseRef>, includes: List<TypeRef>): (List<CaseDefinition>, List<CaseRef>, List<TypeRef>) =
+  @Rejecting @Mutating private caseItems(
+    s: Parsing,
+    cases: List<CaseDefinition>,
+    caseRefs: List<CaseRef>,
+    includes: List<TypeRef>,
+  ): (List<CaseDefinition>, List<CaseRef>, List<TypeRef>) =
     if (looking(s, RightBrace)) (cases, caseRefs, includes)
     else {
       annotations = annotationList(s)
       at = peek(s).at
-      if (annotations.isNotEmpty() && (looking(s, Star) || peekAt(s, 1).kind == Dot)) reject(peek(s).at, "annotate a case where it's declared")
+      if (annotations.isNotEmpty() && (looking(s, Star) || peekAt(s, 1).kind == Dot)) reject(
+        peek(s).at,
+        "annotate a case where it's declared",
+      )
       (moreCases, moreRefs, moreIncludes) = if (accepts(s, Star)) {
         // *Other<T>: every case of Other
         included = when (typeRef(s)) {
@@ -458,7 +604,13 @@ module Parser {
     if (accepts(s, Dot)) casePath(s, path + [upperIdent(s, "a case name")]) else path
 
   // A spec's members, after its {: abstract types, and values with their types.
-  @Rejecting @Mutating private specBody(s: Parsing, start: Position, name: String, typeParameters: List<String>, parents: List<TypeRef>): Declaration = {
+  @Rejecting @Mutating private specBody(
+    s: Parsing,
+    start: Position,
+    name: String,
+    typeParameters: List<String>,
+    parents: List<TypeRef>,
+  ): Declaration = {
     members = memberList(s) { specMember(s) }
     types = members.flatMap { m ->
       when (m) {
@@ -483,7 +635,10 @@ module Parser {
   @Rejecting @Mutating private specMember(s: Parsing): SpecMember = {
     annotations = annotationList(s)
     at = peek(s).at
-    if (annotations.isNotEmpty() && looking(s, TypeKeyword)) reject(peek(s).at, "a spec's type takes no annotations")
+    if (annotations.isNotEmpty() && looking(s, TypeKeyword)) reject(
+      peek(s).at,
+      "a spec's type takes no annotations",
+    )
     if (accepts(s, TypeKeyword)) {
       typeName = upperIdent(s, "a type name")
       typeParameters = typeParameterList(s)
@@ -523,14 +678,20 @@ module Parser {
   // <A, B>; an effect parameter is @E, and named @E here.
   @Rejecting @Mutating private typeParameterList(s: Parsing): List<String> =
     if (accepts(s, Less)) {
-      names = commaSeparated(s) { (if (accepts(s, At)) "@" else "") + upperIdent(s, "a type parameter") }
+      names = commaSeparated(
+        s,
+      ) { (if (accepts(s, At)) "@" else "") + upperIdent(s, "a type parameter") }
       expect(s, Greater, "'>'")
       names
     } else []
 
   // a: A, b: B, or a single unnamed A, which is named value. With varargs, an annotation's, the
   // last can be vararg.
-  @Rejecting @Mutating private fieldList(s: Parsing, declarationAt: Position, varargs: Boolean): List<Field> = {
+  @Rejecting @Mutating private fieldList(
+    s: Parsing,
+    declarationAt: Position,
+    varargs: Boolean,
+  ): List<Field> = {
     fields = fieldItems(s, varargs, [])
     unnamed = fields.filter { it.name.isEmpty() }
     when {
@@ -549,16 +710,26 @@ module Parser {
     }
   }
 
-  @Rejecting @Mutating private fieldItems(s: Parsing, varargs: Boolean, before: List<Field>): List<Field> =
+  @Rejecting @Mutating private fieldItems(
+    s: Parsing,
+    varargs: Boolean,
+    before: List<Field>,
+  ): List<Field> =
     if (looking(s, RightParen)) before
     else {
       annotations = annotationList(s)
       // var balance: Int: a field that can be changed. var is a keyword only here.
-      variable = softKeyword(s, "var") && peekAt(s, 1).kind == Identifier && peekAt(s, 2).kind == Colon
+      variable = softKeyword(s, "var") && peekAt(s, 1).kind == Identifier && peekAt(
+        s,
+        2,
+      ).kind == Colon
       if (variable) skip(s)
       // vararg fixtures: Function: an annotation's last field, given its items in order.
       varargAt = peek(s).at
-      vararg = softKeyword(s, "vararg") && peekAt(s, 1).kind == Identifier && peekAt(s, 2).kind == Colon
+      vararg = softKeyword(s, "vararg") && peekAt(s, 1).kind == Identifier && peekAt(
+        s,
+        2,
+      ).kind == Colon
       if (vararg) {
         next(s)
         if (!varargs) reject(varargAt, "only an annotation's last field can be vararg")
@@ -574,7 +745,10 @@ module Parser {
         fieldType = typeRef(s)
         // version: String = "0.1.0": what it is when a constructor call leaves it out.
         default = if (accepts(s, Assign)) Some(expression(s)) else None
-        if (vararg && default.isSome()) reject(at, "a vararg field is a list of what it's given, so it has no default: none is an empty list")
+        if (vararg && default.isSome()) reject(
+          at,
+          "a vararg field is a list of what it's given, so it has no default: none is an empty list",
+        )
         Field(at, name, fieldType, annotations, variable, default, vararg)
       } else Field(at, "", typeRef(s), annotations)
       all = before + [field]
@@ -591,7 +765,10 @@ module Parser {
       name = if (accepts(s, Underscore)) "_" else ident(s, "a parameter name")
       parameterType = if (accepts(s, Colon)) Some(typeRef(s)) else None
       default = if (looking(s, Assign)) {
-        if (!defaults) reject(peek(s).at, "only a declared function's parameters can have a default")
+        if (!defaults) reject(
+          peek(s).at,
+          "only a declared function's parameters can have a default",
+        )
         next(s)
         Some(expression(s))
       } else None
@@ -604,7 +781,10 @@ module Parser {
   // Bare names in an extension's receiver that name type parameters, A in List<A>: a capital
   // letter, maybe with digits, that the file doesn't declare as a type. Any other name is a type,
   // which may be declared in another file.
-  private withReceiverTypeParameters(declarations: List<Declaration>, types: List<String>): List<Declaration> = declarations.map { d ->
+  private withReceiverTypeParameters(
+    declarations: List<Declaration>,
+    types: List<String>,
+  ): List<Declaration> = declarations.map { d ->
     when (d.definition) {
       ModuleDefinition(inside, spec, parameters, application, typeParameters) ->
         d.copy(
@@ -618,7 +798,11 @@ module Parser {
         )
       FunctionDefinition(typeParameters, Some(receiver), parameters, result, body, external, operator) -> {
         named = bareNames(receiver).distinct().filter { name ->
-          !types.contains(name) && !builtinTypes.contains(name) && !typeParameters.contains(name) && typeParameterName(name)
+          !types.contains(name) && !builtinTypes.contains(name) && !typeParameters.contains(
+            name,
+          ) && typeParameterName(
+            name,
+          )
         }
         d.copy(
           definition = FunctionDefinition(
@@ -637,7 +821,9 @@ module Parser {
   }
 
   private bareNames(t: TypeRef): List<String> = when (t) {
-    NamedType(_, name, arguments) -> if (arguments.isEmpty() && !name.contains(".")) [name] else arguments.flatMap { bareNames(it) }
+    NamedType(_, name, arguments) -> if (arguments.isEmpty() && !name.contains(".")) [
+      name,
+    ] else arguments.flatMap { bareNames(it) }
     TupleType(_, elements) -> elements.flatMap { bareNames(it) }
     FunctionType(_, parameters, result, _) -> (parameters + [result]).flatMap { bareNames(it) }
     EffectsType(_, _) -> []
@@ -654,7 +840,9 @@ module Parser {
   private typeNames(declarations: List<Declaration>): List<String> = declarations.flatMap { d ->
     when (d.definition) {
       ModuleDefinition(inside, _, _, _, _) -> typeNames(inside)
-      RecordDefinition(_, _, _, _, _), CasesDefinition(_, _, _, _), AliasDefinition(_, _) -> [d.name]
+      RecordDefinition(_, _, _, _, _), CasesDefinition(_, _, _, _), AliasDefinition(_, _) -> [
+        d.name,
+      ]
       SpecDefinition(types, _, _, _, _) -> types.map { it.name }
       FunctionDefinition(_, _, _, _, _, _, _) -> []
     }
@@ -663,7 +851,10 @@ module Parser {
   // ---- Annotations ----
 
   // annotations before d's own.
-  private annotated(d: Declaration, annotations: List<Annotation>): Declaration = d.copy(annotations = annotations + d.annotations)
+  private annotated(
+    d: Declaration,
+    annotations: List<Annotation>,
+  ): Declaration = d.copy(annotations = annotations + d.annotations)
 
   // @Name or @Name(arguments), as many as there are, each on its line or before what it's on.
   @Rejecting @Mutating private annotationList(s: Parsing): List<Annotation> =
@@ -713,7 +904,15 @@ module Parser {
       )
     }
     when {
-      [IntLiteral, FloatLiteral, CharLiteral, TrueKeyword, FalseKeyword].contains(peek(s).kind) -> Constant(primary(s))
+      [
+        IntLiteral,
+        FloatLiteral,
+        CharLiteral,
+        TrueKeyword,
+        FalseKeyword,
+      ].contains(peek(s).kind) -> Constant(
+        primary(s),
+      )
       looking(s, StringLiteral) -> {
         e = primary(s)
         when (e) {
@@ -721,7 +920,10 @@ module Parser {
           else -> reject(at, "an annotation's strings are constants, without templates")
         }
       }
-      looking(s, Minus) && (peekAt(s, 1).kind == IntLiteral || peekAt(s, 1).kind == FloatLiteral) -> {
+      looking(
+        s,
+        Minus,
+      ) && (peekAt(s, 1).kind == IntLiteral || peekAt(s, 1).kind == FloatLiteral) -> {
         next(s)
         Constant(Unary(at, "-", primary(s)))
       }
@@ -771,7 +973,12 @@ module Parser {
       // Effects alone are a type argument for an effect parameter: Queue<@Console>.
       if (!looking(s, LeftParen)) EffectsType(at, effects)
       else when (typeRef(s)) {
-        FunctionType(_, parameters, result, more) -> FunctionType(at, parameters, result, effects + more)
+        FunctionType(_, parameters, result, more) -> FunctionType(
+          at,
+          parameters,
+          result,
+          effects + more,
+        )
         else -> reject(at, "an effect goes before a function type, like @Console (String) -> Unit")
       }
     } else if (accepts(s, LeftParen)) {
@@ -785,7 +992,9 @@ module Parser {
       }
     } else {
       // A type may be qualified by modules: Ratios.Ratio
-      first = if (looking(s, Identifier) && !upper(peek(s).text) && peekAt(s, 1).kind == Dot && peekAt(s, 2).kind == Identifier && upper(peekAt(s, 2).text)) next(s).text
+      first = if (looking(s, Identifier) && !upper(peek(s).text) && peekAt(s, 1).kind == Dot && peekAt(s, 2).kind == Identifier && upper(peekAt(s, 2).text)) next(
+        s,
+      ).text
         else upperIdent(s, "a type")
       name = qualified(s, first)
       arguments = if (accepts(s, Less)) {
@@ -835,7 +1044,10 @@ module Parser {
     } else if (looking(s, LeftParen) && lambdaParameters(s)) {
       parameters = parameterList(s, true)
       when (parameters.flatMap { it.default.toList() }.firstOrNone()) {
-        Some(default) -> reject(atOf(default), "only a declared function's parameters can have a default")
+        Some(default) -> reject(
+          atOf(default),
+          "only a declared function's parameters can have a default",
+        )
         None -> Unit
       }
       expect(s, Arrow, "'->'")
@@ -883,7 +1095,11 @@ module Parser {
       piped(s, Pipe(at, left, right))
     } else left
 
-  @Rejecting @Mutating private binaryLevel(s: Parsing, kinds: List<Kind>, operand: () -> Expression): Expression = binaryRest(s, kinds, operand, operand())
+  @Rejecting @Mutating private binaryLevel(
+    s: Parsing,
+    kinds: List<Kind>,
+    operand: () -> Expression,
+  ): Expression = binaryRest(s, kinds, operand, operand())
 
   @Rejecting @Mutating private binaryRest(
     s: Parsing,
@@ -897,10 +1113,16 @@ module Parser {
       binaryRest(s, kinds, operand, Binary(op.at, op.text, left, operand()))
     } else left
 
-  @Rejecting @Mutating private disjunction(s: Parsing): Expression = logical(s, Or) { conjunction(s) }
+  @Rejecting @Mutating private disjunction(
+    s: Parsing,
+  ): Expression = logical(s, Or) { conjunction(s) }
   @Rejecting @Mutating private conjunction(s: Parsing): Expression = logical(s, And) { equality(s) }
-  @Rejecting @Mutating private equality(s: Parsing): Expression = binaryLevel(s, [Equal, NotEqual]) { comparison(s) }
-  @Rejecting @Mutating private comparison(s: Parsing): Expression = binaryLevel(s, [Less, Greater, LessOrEqual, GreaterOrEqual]) { typeCheck(s) }
+  @Rejecting @Mutating private equality(
+    s: Parsing,
+  ): Expression = binaryLevel(s, [Equal, NotEqual]) { comparison(s) }
+  @Rejecting @Mutating private comparison(
+    s: Parsing,
+  ): Expression = binaryLevel(s, [Less, Greater, LessOrEqual, GreaterOrEqual]) { typeCheck(s) }
 
   // e is T, or e !is T, as Kotlin's: whether e is a case T, or of the type with cases T. It's a
   // when on e, when (e) { is T -> true; else -> false }, so where it decides something, as an if's
@@ -929,7 +1151,10 @@ module Parser {
   }
 
   // The check e was read as, if it was one.
-  private checkOf(s: Parsing, e: Expression): Option<Check> = s.checks.find { read, _ -> read == e }.map { _, check -> check }
+  private checkOf(
+    s: Parsing,
+    e: Expression,
+  ): Option<Check> = s.checks.find { read, _ -> read == e }.map { _, check -> check }
 
   // The && chain e was read as, if it was one that starts with a check: its operands and where its &&s are.
   private conjunctionOf(s: Parsing, e: Expression): Option<(List<Expression>, List<Position>)> =
@@ -949,12 +1174,21 @@ module Parser {
 
   // a && b && c, or ||, left to right. Where a check is among them, the rest go in its when, where
   // what it checks is narrowed: x is T && x.ready reads x as a T after the &&.
-  @Rejecting @Mutating private logical(s: Parsing, op: Kind, operand: () -> Expression): Expression = {
+  @Rejecting @Mutating private logical(
+    s: Parsing,
+    op: Kind,
+    operand: () -> Expression,
+  ): Expression = {
     first = operand()
     if (!looking(s, op)) first
     else {
       (more, positions) = logicalOperands(s, op, operand, [], [])
-      if (!checkOf(s, first).isSome() && more.all { checkOf(s, it).isNone() }) leftFolded(textOf(op), first, more, positions)
+      if (!checkOf(s, first).isSome() && more.all { checkOf(s, it).isNone() }) leftFolded(
+        textOf(op),
+        first,
+        more,
+        positions,
+      )
       else {
         result = chain(s, op, first, more, positions)
         if (op == And && checkOf(s, first).isSome()) {
@@ -967,7 +1201,13 @@ module Parser {
 
   private textOf(op: Kind): String = if (op == And) "&&" else "||"
 
-  @Rejecting @Mutating private logicalOperands(s: Parsing, op: Kind, operand: () -> Expression, more: List<Expression>, positions: List<Position>): (List<Expression>, List<Position>) =
+  @Rejecting @Mutating private logicalOperands(
+    s: Parsing,
+    op: Kind,
+    operand: () -> Expression,
+    more: List<Expression>,
+    positions: List<Position>,
+  ): (List<Expression>, List<Position>) =
     if (looking(s, op)) {
       at = next(s).at
       skipNewlines(s)
@@ -975,7 +1215,12 @@ module Parser {
       logicalOperands(s, op, operand, more + [next], positions + [at])
     } else (more, positions)
 
-  private leftFolded(text: String, left: Expression, more: List<Expression>, positions: List<Position>): Expression = when (more) {
+  private leftFolded(
+    text: String,
+    left: Expression,
+    more: List<Expression>,
+    positions: List<Position>,
+  ): Expression = when (more) {
     [right, *after] -> when (positions) {
       [at, *later] -> leftFolded(text, Binary(at, text, left, right), after, later)
       [] -> left
@@ -984,7 +1229,13 @@ module Parser {
   }
 
   // operand and those after it, joined by op: after a check, in its when.
-  private chain(s: Parsing, op: Kind, operand: Expression, more: List<Expression>, positions: List<Position>): Expression = when (more) {
+  private chain(
+    s: Parsing,
+    op: Kind,
+    operand: Expression,
+    more: List<Expression>,
+    positions: List<Position>,
+  ): Expression = when (more) {
     [] -> operand
     [next, *after] -> {
       rest = chain(s, op, next, after, positions.drop(1))
@@ -1038,7 +1289,11 @@ module Parser {
         when (check) {
           Some(c) -> {
             decided = decide(c, branch.at, branch.body, otherwise)
-            if (index == 0) decided else When(at, None, branches.take(index) + [Branch(branch.at, [], None, decided, None)])
+            if (index == 0) decided else When(
+              at,
+              None,
+              branches.take(index) + [Branch(branch.at, [], None, decided, None)],
+            )
           }
           None -> When(at, None, branches)
         }
@@ -1047,9 +1302,15 @@ module Parser {
     }
   }
   // a..b and a..<b, as Kotlin's: tighter than a comparison, looser than + and -.
-  @Rejecting @Mutating private range(s: Parsing): Expression = binaryLevel(s, [Range, RangeUntil]) { additive(s) }
-  @Rejecting @Mutating private additive(s: Parsing): Expression = binaryLevel(s, [Plus, Minus]) { multiplicative(s) }
-  @Rejecting @Mutating private multiplicative(s: Parsing): Expression = binaryLevel(s, [Star, Slash, Percent]) { unary(s) }
+  @Rejecting @Mutating private range(
+    s: Parsing,
+  ): Expression = binaryLevel(s, [Range, RangeUntil]) { additive(s) }
+  @Rejecting @Mutating private additive(
+    s: Parsing,
+  ): Expression = binaryLevel(s, [Plus, Minus]) { multiplicative(s) }
+  @Rejecting @Mutating private multiplicative(
+    s: Parsing,
+  ): Expression = binaryLevel(s, [Star, Slash, Percent]) { unary(s) }
 
   @Rejecting @Mutating private unary(s: Parsing): Expression = {
     at = peek(s).at
@@ -1178,7 +1439,10 @@ module Parser {
   }
 
   // A string's parts, what each interpolates read as an expression from where it is.
-  @Rejecting @Mutating private stringLiteral(s: Parsing, token: Token): Expression = StringTemplate(token.at, token.parts.map { part ->
+  @Rejecting @Mutating private stringLiteral(
+    s: Parsing,
+    token: Token,
+  ): Expression = StringTemplate(token.at, token.parts.map { part ->
     when (part) {
       Text(text) -> TemplateText(text)
       Code(source, at) -> when (Lexer.tokens(source, at)) {
@@ -1186,7 +1450,10 @@ module Parser {
         Ok(tokens) -> {
           inner = Parsing(tokens.toArray(), 0, [], [], [])
           e = expression(inner)
-          if (!looking(inner, End)) reject(peek(inner).at, "unexpected ${describe(peek(inner))} in string template")
+          if (!looking(inner, End)) reject(
+            peek(inner).at,
+            "unexpected ${describe(peek(inner))} in string template",
+          )
           Interpolation(e)
         }
       }
@@ -1212,7 +1479,16 @@ module Parser {
     when (checkOf(s, condition)) {
       Some(check) -> decide(check, atOf(condition), then, otherwise)
       None -> when (conjunctionOf(s, condition)) {
-        Some(([first, *more], positions)) -> ifChain(s, at, first, more, positions, then, otherwise, hasElse)
+        Some(([first, *more], positions)) -> ifChain(
+          s,
+          at,
+          first,
+          more,
+          positions,
+          then,
+          otherwise,
+          hasElse,
+        )
         else -> If(at, condition, then, otherwise, hasElse)
       }
     }
@@ -1237,7 +1513,11 @@ module Parser {
     if (subject.isNone()) checkedBranches(s, at, branches) else When(at, subject, branches)
   }
 
-  @Rejecting @Mutating private branchList(s: Parsing, subject: Option<Expression>, before: List<Branch>): List<Branch> =
+  @Rejecting @Mutating private branchList(
+    s: Parsing,
+    subject: Option<Expression>,
+    before: List<Branch>,
+  ): List<Branch> =
     if (looking(s, RightBrace)) before.reversed()
     else {
       at = peek(s).at
@@ -1266,7 +1546,10 @@ module Parser {
         Branch(at, patterns, None, branchBody(s), guard)
       }
       if (!looking(s, RightBrace)) {
-        if (!looking(s, Newline) && !looking(s, Semicolon)) reject(peek(s).at, "expected end of line after a 'when' branch but found ${describe(peek(s))}")
+        if (!looking(s, Newline) && !looking(s, Semicolon)) reject(
+          peek(s).at,
+          "expected end of line after a 'when' branch but found ${describe(peek(s))}",
+        )
         skipNewlines(s)
       }
       branchList(s, subject, [branch, *before])
@@ -1274,7 +1557,9 @@ module Parser {
 
   // if n > 0 after a branch's patterns, as Kotlin 2.1 writes a guard. Not expression(): ready ->
   // isn't a lambda here.
-  @Rejecting @Mutating private guardOf(s: Parsing): Option<Expression> = if (accepts(s, IfKeyword)) Some(pipe(s)) else None
+  @Rejecting @Mutating private guardOf(
+    s: Parsing,
+  ): Option<Expression> = if (accepts(s, IfKeyword)) Some(pipe(s)) else None
 
   // ---- Patterns ----
 
@@ -1310,15 +1595,36 @@ module Parser {
         CasePattern(at, path.lastOrNone().getOrElse(""), arguments, false, qualifier(path))
       }
       looking(s, Identifier) -> NamePattern(at, next(s).text)
-      [IntLiteral, FloatLiteral, StringLiteral, CharLiteral, TrueKeyword, FalseKeyword].contains(peek(s).kind) -> ConstantPattern(at, primary(s))
-      looking(s, Minus) && (peekAt(s, 1).kind == IntLiteral || peekAt(s, 1).kind == FloatLiteral) -> ConstantPattern(at, unary(s))
+      [
+        IntLiteral,
+        FloatLiteral,
+        StringLiteral,
+        CharLiteral,
+        TrueKeyword,
+        FalseKeyword,
+      ].contains(peek(s).kind) -> ConstantPattern(
+        at,
+        primary(s),
+      )
+      looking(
+        s,
+        Minus,
+      ) && (peekAt(s, 1).kind == IntLiteral || peekAt(s, 1).kind == FloatLiteral) -> ConstantPattern(
+        at,
+        unary(s),
+      )
       else -> reject(peek(s).at, "expected a pattern but found ${describe(peek(s))}")
     }
   }
 
-  private qualifier(path: List<String>): Option<String> = if (path.size > 1) Some(path.dropLast(1).joinToString(".")) else None
+  private qualifier(
+    path: List<String>,
+  ): Option<String> = if (path.size > 1) Some(path.dropLast(1).joinToString(".")) else None
 
-  @Rejecting @Mutating private listPatternItems(s: Parsing, before: List<Pattern>): (List<Pattern>, Option<Pattern>) =
+  @Rejecting @Mutating private listPatternItems(
+    s: Parsing,
+    before: List<Pattern>,
+  ): (List<Pattern>, Option<Pattern>) =
     if (looking(s, RightBracket)) (before, None)
     else if (accepts(s, Star)) {
       rest = pattern(s)
@@ -1362,7 +1668,9 @@ module Parser {
       [Parameter(name.at, name.text, None), *blockParameters(s)]
     }
 
-  @Rejecting @Mutating private blockOf(s: Parsing): Expression = blockRest(s, expect(s, LeftBrace, "'{'").at)
+  @Rejecting @Mutating private blockOf(
+    s: Parsing,
+  ): Expression = blockRest(s, expect(s, LeftBrace, "'{'").at)
 
   // A block's statements and result, after its { at at.
   @Rejecting @Mutating private blockRest(s: Parsing, at: Position): Expression = {
@@ -1371,7 +1679,12 @@ module Parser {
     expect(s, RightBrace, "'}'")
     when (statements.lastOrNone()) {
       None -> Block(at, [], Name(at, "Unit"), false)
-      Some(Binding(lastAt, _, None, None, _, false)) -> Block(at, statements, Name(lastAt, "Unit"), true)
+      Some(Binding(lastAt, _, None, None, _, false)) -> Block(
+        at,
+        statements,
+        Name(lastAt, "Unit"),
+        true,
+      )
       Some(Evaluation(_, e)) -> Block(at, statements.dropLast(1), e, false)
       Some(last) -> reject(statementAt(last), "a block must end with an expression, not a binding")
     }
@@ -1382,7 +1695,10 @@ module Parser {
     else {
       read = statement(s)
       if (!looking(s, RightBrace)) {
-        if (!looking(s, Newline) && !looking(s, Semicolon)) reject(peek(s).at, "expected end of line but found ${describe(peek(s))}")
+        if (!looking(s, Newline) && !looking(s, Semicolon)) reject(
+          peek(s).at,
+          "expected end of line but found ${describe(peek(s))}",
+        )
         skipNewlines(s)
       }
       statementList(s, [read, *before])
@@ -1402,7 +1718,10 @@ module Parser {
         Destructuring(at, destructured.getOrElse(Wildcard(at)), expression(s))
       }
       // var x = 0: a local that can be changed. var is a keyword only here.
-      softKeyword(s, "var") && peekAt(s, 1).kind == Identifier && (peekAt(s, 2).kind == Assign || peekAt(s, 2).kind == Colon) -> {
+      softKeyword(s, "var") && peekAt(
+        s,
+        1,
+      ).kind == Identifier && (peekAt(s, 2).kind == Assign || peekAt(s, 2).kind == Colon) -> {
         next(s)
         nameAt = peek(s).at
         name = next(s).text
@@ -1425,7 +1744,10 @@ module Parser {
         skipNewlines(s)
         Binding(at, name, None, Some(valueType), expression(s), false)
       }
-      looking(s, Identifier) && peekAt(s, 1).kind == LeftParen && localFunction(s, s.index + 1, 0) -> {
+      looking(s, Identifier) && peekAt(
+        s,
+        1,
+      ).kind == LeftParen && localFunction(s, s.index + 1, 0) -> {
         name = next(s).text
         parameters = parameterList(s, false)
         result = if (accepts(s, Colon)) Some(typeRef(s)) else None
@@ -1438,20 +1760,29 @@ module Parser {
   }
 
   // e on its own, or what it changes.
-  @Rejecting @Mutating private evaluation(s: Parsing, at: Position, e: Expression): Statement = Evaluation(at, assignment(s, e).getOrElse(e))
+  @Rejecting @Mutating private evaluation(
+    s: Parsing,
+    at: Position,
+    e: Expression,
+  ): Statement = Evaluation(at, assignment(s, e).getOrElse(e))
 
   // What changes e, if an assignment follows it: account.balance = 10, x += 1, changing a var; or
   // xs[i] = v, which calls xs.set(i, v).
   @Rejecting @Mutating private assignment(s: Parsing, e: Expression): Option<Expression> =
     if (looking(s, Assign) || looking(s, OperatorAssign)) {
       index = indexed(s, e)
-      if (e !is Name && e !is Member && index.isNone()) reject(peek(s).at, "only a var, a var field or an index can be assigned to")
+      if (e !is Name && e !is Member && index.isNone()) reject(
+        peek(s).at,
+        "only a var, a var field or an index can be assigned to",
+      )
       op = next(s)
       skipNewlines(s)
       written = expression(s)
       value = if (op.kind == Assign) written else Binary(op.at, op.text.dropLast(1), e, written)
       when (index) {
-        Some((getAt, target, i)) -> Some(Call(getAt, Member(getAt, target, "set"), [i, Argument(None, value)], []))
+        Some((getAt, target, i)) -> Some(
+          Call(getAt, Member(getAt, target, "set"), [i, Argument(None, value)], []),
+        )
         None -> Some(Assign(op.at, e, value))
       }
     } else None
@@ -1464,7 +1795,9 @@ module Parser {
 
   // e, if it's an xs[i] read: where the get is, what's indexed, and the index.
   private indexed(s: Parsing, e: Expression): Option<(Position, Expression, Argument)> = when (e) {
-    Call(at, Member(_, target, "get"), [index], []) if s.indexes.contains(at) -> Some((at, target, index))
+    Call(at, Member(_, target, "get"), [index], []) if s.indexes.contains(at) -> Some(
+      (at, target, index),
+    )
     else -> None
   }
 
@@ -1571,11 +1904,17 @@ module Parser {
     }
 
   // What block gives, or None if it rejects what it reads.
-  @Mutating private trying<A>(s: Parsing, block: @Rejecting () -> A): Option<A> = Rejecting(reject = (_, _, _) -> None) { Some(block()) }
+  @Mutating private trying<A>(
+    s: Parsing,
+    block: @Rejecting () -> A,
+  ): Option<A> = Rejecting(reject = (_, _, _) -> None) { Some(block()) }
 
   private peek(s: Parsing): Token = s.tokens[s.index]
 
-  private peekAt(s: Parsing, offset: Int): Token = s.tokens[min(s.index + offset, s.tokens.size - 1)]
+  private peekAt(
+    s: Parsing,
+    offset: Int,
+  ): Token = s.tokens[min(s.index + offset, s.tokens.size - 1)]
 
   private previous(s: Parsing): Token = s.tokens[s.index - 1]
 
@@ -1602,10 +1941,16 @@ module Parser {
   } else false
 
   @Rejecting @Mutating private expect(s: Parsing, kind: Kind, what: String): Token =
-    if (looking(s, kind)) next(s) else reject(peek(s).at, "expected $what but found ${describe(peek(s))}")
+    if (looking(s, kind)) next(s) else reject(
+      peek(s).at,
+      "expected $what but found ${describe(peek(s))}",
+    )
 
   // A word that's a keyword only where it's written so: annotation, opaque, var, by, ...
-  private softKeyword(s: Parsing, word: String): Boolean = looking(s, Identifier) && peek(s).text == word
+  private softKeyword(
+    s: Parsing,
+    word: String,
+  ): Boolean = looking(s, Identifier) && peek(s).text == word
 
   private describe(token: Token): String = when (token.kind) {
     End -> "end of file"
@@ -1614,12 +1959,17 @@ module Parser {
     else -> "'${token.text}'"
   }
 
-  @Mutating private skipNewlines(s: Parsing): Unit = if (looking(s, Newline) || looking(s, Semicolon)) {
+  @Mutating private skipNewlines(
+    s: Parsing,
+  ): Unit = if (looking(s, Newline) || looking(s, Semicolon)) {
     next(s)
     skipNewlines(s)
   }
 
-  @Rejecting @Mutating private ident(s: Parsing, what: String): String = expect(s, Identifier, what).text
+  @Rejecting @Mutating private ident(
+    s: Parsing,
+    what: String,
+  ): String = expect(s, Identifier, what).text
 
   @Rejecting @Mutating private upperIdent(s: Parsing, what: String): String = {
     token = expect(s, Identifier, what)

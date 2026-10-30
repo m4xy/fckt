@@ -8,7 +8,12 @@ module Lookups {
   record(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
     ofType(name, namespace.table.records, place, namespace, strictness)
 
-  caseType(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+  caseType(
+    name: String,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<Symbol> =
     ofType(name, namespace.table.caseTypes, place, namespace, strictness)
 
   alias(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
@@ -17,13 +22,28 @@ module Lookups {
   spec(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
     ofKind(name, namespace.table.specs, place, namespace, strictness)
 
-  annotationType(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+  annotationType(
+    name: String,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<Symbol> =
     ofKind(name, namespace.table.annotationTypes, place, namespace, strictness)
 
-  function(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+  function(
+    name: String,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<Symbol> =
     ofKind(name, namespace.table.functions, place, namespace, strictness)
 
-  moduleNamed(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<ModuleSymbol> = {
+  moduleNamed(
+    name: String,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<ModuleSymbol> = {
     modules = namespace.table.modules
     Names.find(name, modules, m -> when (m) {
       DeclaredModule(s) -> Some(s)
@@ -33,7 +53,12 @@ module Lookups {
 
   // A record, then a type with cases, then an alias, of the name: the first kind that has it, or
   // refuses it.
-  anyType(name: String, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+  anyType(
+    name: String,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<Symbol> =
     when (record(name, place, namespace, strictness)) {
       NotFound -> when (caseType(name, place, namespace, strictness)) {
         NotFound -> alias(name, place, namespace, strictness)
@@ -42,20 +67,36 @@ module Lookups {
       other -> other
     }
 
-  private ofType(name: String, entries: Map<String, Symbol>, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> = {
+  private ofType(
+    name: String,
+    entries: Map<String, Symbol>,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<Symbol> = {
     table = namespace.table
     Names.find(
       name,
       entries,
       s -> Some(s),
-      full -> table.records.containsKey(full) || table.caseTypes.containsKey(full) || table.aliases.containsKey(full),
+      full -> table.records.containsKey(full) || table.caseTypes.containsKey(
+        full,
+      ) || table.aliases.containsKey(
+        full,
+      ),
       place,
       namespace,
       strictness,
     )
   }
 
-  private ofKind(name: String, entries: Map<String, Symbol>, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
+  private ofKind(
+    name: String,
+    entries: Map<String, Symbol>,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
+  ): Lookup<Symbol> =
     Names.find(
       name,
       entries,

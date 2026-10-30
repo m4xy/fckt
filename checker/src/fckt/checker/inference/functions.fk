@@ -20,7 +20,11 @@ import fckt.parser.*
 
 // What's known after the group is checked, with each when in it checked for covering every value,
 // if coverage is wanted.
-@Solving @Abandoning checkGroup(group: FunctionGroup, environment: Environment, coverage: Boolean): Known = {
+@Solving @Abandoning checkGroup(
+  group: FunctionGroup,
+  environment: Environment,
+  coverage: Boolean,
+): Known = {
   first = group.functions.firstOrNone()
   application = first.flatMap { f -> Names.enclosingApplication(f.path, environment.definitions.namespace) }
   when (application) {
@@ -37,9 +41,15 @@ import fckt.parser.*
   }
 }
 
-@Solving @Abandoning private checkGroupAlone(group: FunctionGroup, environment: Environment, coverage: Boolean): Known = {
+@Solving @Abandoning private checkGroupAlone(
+  group: FunctionGroup,
+  environment: Environment,
+  coverage: Boolean,
+): Known = {
   var pending: List<PendingWhen> = []
-  known = Covering(cover = found -> { pending = pending + [found] }) { checkFunctions(group, environment) }
+  known = Covering(
+    cover = found -> { pending = pending + [found] },
+  ) { checkFunctions(group, environment) }
   if (coverage) pending.forEach { checkCovers(it, environment) } else Unit
   known
 }
@@ -64,7 +74,11 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
 @Solving failed(group: FunctionGroup, known: Known): Known = known.copy(schemes =
   group.functions.filter { f -> !known.schemes.containsKey(f.name) }.fold(known.schemes) { schemes, f ->
     t = when (Signatures.parametersOf(f)) {
-      Some(ps) -> FunctionOf(ps.map { Variable(fresh()) }, Variable(fresh()), Row([], Some(fresh())))
+      Some(ps) -> FunctionOf(
+        ps.map { Variable(fresh()) },
+        Variable(fresh()),
+        Row([], Some(fresh())),
+      )
       None -> Variable(fresh())
     }
     schemes.put(f.name, Scheme(variablesIn(t), t))
@@ -73,7 +87,10 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
   viewed = emptyMap(),
 )
 
-@Solving @Abandoning @Covering private checkFunctions(group: FunctionGroup, environment: Environment): Known = {
+@Solving @Abandoning @Covering private checkFunctions(
+  group: FunctionGroup,
+  environment: Environment,
+): Known = {
   signatures = group.functions.map { f -> signatureOf(f, environment) }
   provisional = signatures.map { s -> (s.function.name, s.t) }.toMap()
   viewed = if (group.functions.size > 1) signatures.mapNotNull { s -> viewedAs(s, environment).map { t -> (s.function.name, t) } }.toMap() else emptyMap()
@@ -84,7 +101,9 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
   // What each does as its callers see it: changing values that never left it doesn't count.
   done = signatures.map { s -> masked(s.row, s.t) }
   signatures.zip(done).forEach { s, row -> checkDeclaredArguments(s, row, environment) }
-  signatures.zip(done).find { s, _ -> s.function.name == "main" }.forEach { s, row -> checkMainHandled(s.function, row, environment) }
+  signatures.zip(
+    done,
+  ).find { s, _ -> s.function.name == "main" }.forEach { s, row -> checkMainHandled(s.function, row, environment) }
   signatures.zip(done).forEach { s, row ->
     if (!Signatures.isExternal(s.function)) checkEffects(s.function, row, environment) else Unit
   }
@@ -100,7 +119,11 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
 
 // That a generic effect a function says it does, @Yielding<Int>, is the one it does: its type
 // arguments are what it does them with.
-@Solving @Abandoning private checkDeclaredArguments(s: Signature, done: Row, environment: Environment): Unit = {
+@Solving @Abandoning private checkDeclaredArguments(
+  s: Signature,
+  done: Row,
+  environment: Environment,
+): Unit = {
   f = s.function
   context = contextOf(f, s.typeVariables, environment)
   namespace = environment.definitions.namespace
@@ -176,7 +199,9 @@ private contextOf(
   context = contextOf(f, declared, environment)
   row = Row([], Some(fresh()))
   parameters = Signatures.parametersOf(f).getOrElse([])
-  Signatures.parametersOf(f).forEach { ps -> checkDistinct(ps.map { p -> (p.name, p.at) }, context) }
+  Signatures.parametersOf(
+    f,
+  ).forEach { ps -> checkDistinct(ps.map { p -> (p.name, p.at) }, context) }
   parameterTypes = typesOf(parameters, [], row, context, environment)
   valueParameters = named(parameters, parameterTypes)
   result = Signatures.resultOf(f).map { t ->
@@ -186,7 +211,9 @@ private contextOf(
       environment.definitions,
     )
   }.getOrElse(Variable(fresh()))
-  typeVariables = declared + parameters.zip(parameterTypes).flatMap { p, t -> openTypesOf(p, t, context, environment) }
+  typeVariables = declared + parameters.zip(
+    parameterTypes,
+  ).flatMap { p, t -> openTypesOf(p, t, context, environment) }
   t = when (Signatures.parametersOf(f)) {
     Some(_) -> FunctionOf(parameterTypes, result, row)
     None -> result
@@ -203,7 +230,9 @@ private contextOf(
       true,
       valueParameters = valueParameters,
     )
-    shownResult = Signatures.resultOf(f).map { r -> Conversion.typeOf(r, outsideContext, environment.definitions) }.getOrElse(result)
+    shownResult = Signatures.resultOf(
+      f,
+    ).map { r -> Conversion.typeOf(r, outsideContext, environment.definitions) }.getOrElse(result)
     Some(when ((t, Signatures.parametersOf(f))) {
       (FunctionOf(insides, _, _), Some(ps)) -> FunctionOf(ps.zip(insides).mapIndexed { i, entry ->
         (p, inside) = entry
@@ -219,7 +248,13 @@ private contextOf(
   Signature(f, typeVariables, row, t, outside)
 }
 
-@Solving @Abandoning private typesOf(parameters: List<Parameter>, done: List<Type>, row: Row, context: Context, environment: Environment): List<Type> =
+@Solving @Abandoning private typesOf(
+  parameters: List<Parameter>,
+  done: List<Type>,
+  row: Row,
+  context: Context,
+  environment: Environment,
+): List<Type> =
   when (parameters.drop(done.size)) {
     [] -> done
     [p, *rest] -> {
@@ -237,16 +272,32 @@ private contextOf(
     }
   }
 
-private named(parameters: List<Parameter>, types: List<Type>): Map<String, Type> = parameters.zip(types).map { p, t -> (p.name, t) }.toMap()
+private named(
+  parameters: List<Parameter>,
+  types: List<Type>,
+): Map<String, Type> = parameters.zip(types).map { p, t -> (p.name, t) }.toMap()
 
 private isSpecValue(t: TypeRef, context: Context, environment: Environment): Boolean = when (t) {
-  NamedType(_, name, _) -> !isParameterOwn(name) && Conversion.specNamed(name, Globals.typeContext(context), environment.definitions).isSome()
+  NamedType(_, name, _) -> !isParameterOwn(name) && Conversion.specNamed(
+    name,
+    Globals.typeContext(context),
+    environment.definitions,
+  ).isSome()
   else -> false
 }
 
-private isParameterOwn(name: String): Boolean = name.contains(".") && name.toList().firstOrNone().map { it.isLowerCase() }.getOrElse(false)
+private isParameterOwn(
+  name: String,
+): Boolean = name.contains(
+  ".",
+) && name.toList().firstOrNone().map { it.isLowerCase() }.getOrElse(false)
 
-@Solving private openTypesOf(p: Parameter, t: Type, context: Context, environment: Environment): List<(String, TypeVariable)> =
+@Solving private openTypesOf(
+  p: Parameter,
+  t: Type,
+  context: Context,
+  environment: Environment,
+): List<(String, TypeVariable)> =
   when ((p.parameterType, resolved(t))) {
     (Some(NamedType(_, name, written)), ModuleValue(_, arguments, own)) if isSpecValue(NamedType(p.at, name, written), context, environment) ->
       own.zip(arguments).mapNotNull { ownName, argument ->
@@ -268,7 +319,10 @@ private isParameterOwn(name: String): Boolean = name.contains(".") && name.toLis
 // @Mutating one is taken, as an external is, to change what any of its parameters holds. Not main,
 // a default's, an external, or one with an effect parameter or a generic effect, which do what
 // they're given.
-@Solving @Abandoning private viewedAs(s: Signature, environment: Environment): Option<Type> = when (s.t) {
+@Solving @Abandoning private viewedAs(
+  s: Signature,
+  environment: Environment,
+): Option<Type> = when (s.t) {
   FunctionOf(parameters, result, _) if isSeenAsDeclared(s.function, environment) -> {
     row = Row([], Some(fresh()))
     unifyRows(row, declaredRow(s.function, parameters, environment))
@@ -280,16 +334,27 @@ private isParameterOwn(name: String): Boolean = name.contains(".") && name.toLis
 @Abandoning private isSeenAsDeclared(f: Symbol, environment: Environment): Boolean = {
   namespace = environment.definitions.namespace
   generic = f.declaration.annotations.any { a ->
-    a.typeArguments.isNotEmpty() && Annotations.declarationOf(a, Place(f.file, f.path), namespace).map { Symbols.isSpec(it) }.getOrElse(false)
+    a.typeArguments.isNotEmpty() && Annotations.declarationOf(
+      a,
+      Place(f.file, f.path),
+      namespace,
+    ).map { Symbols.isSpec(it) }.getOrElse(false)
   }
   f.name != "main" && !Defaults.isDefault(f) && !Signatures.isExternal(f) &&
-    Names.enclosingApplication(f.path, namespace).isNone() && parameterEffects(f.path, environment).isEmpty() &&
+    Names.enclosingApplication(f.path, namespace).isNone() && parameterEffects(
+      f.path,
+      environment,
+    ).isEmpty() &&
     Signatures.typeParametersOf(f).none { it.startsWith("@") } && !generic
 }
 
 // The row a function that says what it does does: what it's allowed, with @Mutating on each region
 // its parameters hold, if it says it changes things.
-@Solving @Abandoning private declaredRow(f: Symbol, parameters: List<Type>, environment: Environment): Row = {
+@Solving @Abandoning private declaredRow(
+  f: Symbol,
+  parameters: List<Type>,
+  environment: Environment,
+): Row = {
   declared = allowed(f, environment)
   regions = parameters.flatMap { p -> regionsIn(p, None) }.filter { r ->
     when (r) {
@@ -325,12 +390,17 @@ private isParameterOwn(name: String): Boolean = name.contains(".") && name.toLis
 
 // The module around the path that says what may be done in it, with what: the innermost one with
 // effects, which pass to everything in it.
-@Abandoning private ceiling(path: List<String>, environment: Environment): Option<(Symbol, List<String>)> = {
+@Abandoning private ceiling(
+  path: List<String>,
+  environment: Environment,
+): Option<(Symbol, List<String>)> = {
   namespace = environment.definitions.namespace
   path.mapIndexed { i, _ -> path.take(path.size - i) }.mapNotNull { p ->
     name = p.joinToString(".")
     // A module a functor made has the functor's.
-    around = namespace.modules.applications.get(name).map { made -> DeclaredModule(made.functor) }.orElse { namespace.table.modules.get(name) }
+    around = namespace.modules.applications.get(
+      name,
+    ).map { made -> DeclaredModule(made.functor) }.orElse { namespace.table.modules.get(name) }
     when (around) {
       Some(DeclaredModule(m)) -> {
         effects = Annotations.effectsOf(
@@ -359,7 +429,9 @@ private isParameterOwn(name: String): Boolean = name.contains(".") && name.toLis
   functor.map { m ->
     context = Context(environment, Place(m.file, m.path), emptyMap())
     functorParameters(m).flatMap { p ->
-      namespace.modules.specs.get("${m.name}.${p.name}").map { spec -> specValues(spec).flatMap { v -> specEffects(spec, v, context) } }.getOrElse([])
+      namespace.modules.specs.get(
+        "${m.name}.${p.name}",
+      ).map { spec -> specValues(spec).flatMap { v -> specEffects(spec, v, context) } }.getOrElse([])
     }.distinct()
   }.getOrElse([])
 }
@@ -372,7 +444,10 @@ private allows(effects: List<String>): String = {
 
 // Checks a function's body, as code that does its row, and gives its code; an external's is OCaml,
 // trusted to do what it says, and, if it's @Mutating, to change what it's given.
-@Solving @Abandoning @Covering private checkBody(s: Signature, environment: Environment): Option<CoreFunction> = {
+@Solving @Abandoning @Covering private checkBody(
+  s: Signature,
+  environment: Environment,
+): Option<CoreFunction> = {
   f = s.function
   context = contextOf(f, s.typeVariables, environment, when (s.t) {
     FunctionOf(types, _, _) -> named(Signatures.parametersOf(f).getOrElse([]), types)
@@ -408,7 +483,12 @@ private allows(effects: List<String>): String = {
 // must have stayed unknown, each its own. A top-level value isn't generic, as OCaml's value
 // restriction wouldn't make most generic either, and lives as long as the program, as do the values
 // it holds.
-@Solving @Abandoning private withScheme(s: Signature, done: Row, known: Known, table: SymbolTable): Known = {
+@Solving @Abandoning private withScheme(
+  s: Signature,
+  done: Row,
+  known: Known,
+  table: SymbolTable,
+): Known = {
   f = s.function
   checkTypeParametersStayed(s)
   t = resolvedFully(when (s.t) {
@@ -460,7 +540,9 @@ private allows(effects: List<String>): String = {
     if (name.startsWith("@")) {
       row = asRow(Variable(v))
       when (row.rest) {
-        Some(rest) if row.labels.isEmpty() && !seen.contains(Variable(rest)) -> seen + [Variable(rest)]
+        Some(rest) if row.labels.isEmpty() && !seen.contains(Variable(rest)) -> seen + [
+          Variable(rest),
+        ]
         _ -> abandon(Diagnostic(f.file.source.path, f.declaration.at,
           "effect parameter $name of '${Symbols.simpleName(f)}' always does ${Doings.shown(row.labels.map { it.name })} here"))
       }
@@ -500,8 +582,14 @@ private allows(effects: List<String>): String = {
 // the row given, whose changes aren't seen through it.
 @Solving regionsIn(t: Type, skip: Option<Row>): List<Type> = regionsInto(t, skip, []).distinct()
 
-@Solving private regionsInto(t: Type, skip: Option<Row>, found: List<Type>): List<Type> = when (resolved(t)) {
-  Named(_, arguments, region) -> arguments.fold(found + region.map { r -> [resolved(r)] }.getOrElse([])) { acc, a -> regionsInto(a, skip, acc) }
+@Solving private regionsInto(
+  t: Type,
+  skip: Option<Row>,
+  found: List<Type>,
+): List<Type> = when (resolved(t)) {
+  Named(_, arguments, region) -> arguments.fold(
+    found + region.map { r -> [resolved(r)] }.getOrElse([]),
+  ) { acc, a -> regionsInto(a, skip, acc) }
   Effects(row) -> found + rowRegions(row, skip)
   FunctionOf(parameters, result, effects) -> {
     inside = regionsInto(
@@ -509,7 +597,10 @@ private allows(effects: List<String>): String = {
       skip,
       parameters.fold(found) { acc, p -> regionsInto(p, skip, acc) },
     )
-    if (skip.map { own -> flattened(own) == flattened(effects) }.getOrElse(false)) inside else inside + rowRegions(effects, skip)
+    if (skip.map { own -> flattened(own) == flattened(effects) }.getOrElse(false)) inside else inside + rowRegions(
+      effects,
+      skip,
+    )
   }
   Abstract(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
   SpecOwnType(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
@@ -544,7 +635,11 @@ private allows(effects: List<String>): String = {
     }
     else -> {
       shown = missing.map { Coverage.shown(it) }
-      listed = if (shown.size > 10) shown.take(8).joinToString(", ") + " and ${shown.size - 8} more" else shown.joinToString(", ")
+      listed = if (shown.size > 10) shown.take(8).joinToString(
+        ", ",
+      ) + " and ${shown.size - 8} more" else shown.joinToString(
+        ", ",
+      )
       abandon(
         Diagnostic(
           pending.file,
@@ -557,7 +652,10 @@ private allows(effects: List<String>): String = {
 }
 
 // The shapes a value of a type can have, with their fields' types; None if they can't all be listed.
-@Solving @Abandoning private alternativesOf(t: Type, environment: Environment): Option<List<Alternative<Type>>> = {
+@Solving @Abandoning private alternativesOf(
+  t: Type,
+  environment: Environment,
+): Option<List<Alternative<Type>>> = {
   definitions = environment.definitions
   table = definitions.namespace.table
   when (resolved(t)) {
@@ -566,12 +664,30 @@ private allows(effects: List<String>): String = {
         Alternative(CaseShape(c.origin.name, c.definition.name), fields)
       })
       None -> when (table.records.get(name)) {
-        Some(record) -> Some([Alternative(RecordShape(record.name), Conversion.recordFields(record, arguments, region, definitions))])
+        Some(record) -> Some(
+          [
+            Alternative(
+              RecordShape(record.name),
+              Conversion.recordFields(record, arguments, region, definitions),
+            ),
+          ],
+        )
         None -> when ((name, arguments)) {
-          ("List", [element]) -> Some([Alternative(EmptyList, []), Alternative(NonEmptyList, [element, resolved(t)])])
-          ("Option", [element]) -> Some([Alternative(CaseShape("", "Some"), [element]), Alternative(CaseShape("", "None"), [])])
-          ("Result", [value, error]) -> Some([Alternative(CaseShape("", "Ok"), [value]), Alternative(CaseShape("", "Error"), [error])])
-          ("Boolean", []) -> Some([Alternative(BooleanShape(true), []), Alternative(BooleanShape(false), [])])
+          ("List", [element]) -> Some(
+            [Alternative(EmptyList, []), Alternative(NonEmptyList, [element, resolved(t)])],
+          )
+          ("Option", [element]) -> Some(
+            [Alternative(CaseShape("", "Some"), [element]), Alternative(CaseShape("", "None"), [])],
+          )
+          ("Result", [value, error]) -> Some(
+            [
+              Alternative(CaseShape("", "Ok"), [value]),
+              Alternative(CaseShape("", "Error"), [error]),
+            ],
+          )
+          ("Boolean", []) -> Some(
+            [Alternative(BooleanShape(true), []), Alternative(BooleanShape(false), [])],
+          )
           else -> None
         }
       }

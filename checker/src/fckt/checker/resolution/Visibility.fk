@@ -11,7 +11,9 @@ module Visibility {
   // Why the declaration can't be seen from the place, if it can't.
   whyHidden(symbol: Symbol, place: Place, table: SymbolTable): Option<String> = {
     own = Symbols.simpleName(symbol)
-    if (isForeign(symbol, place)) Some("'$own' is the program's own, which other projects' code can't see")
+    if (isForeign(symbol, place)) Some(
+      "'$own' is the program's own, which other projects' code can't see",
+    )
     else if (symbol.declaration.visibility == Internal && symbol.file.source.project != place.file.source.project)
       Some("'$own' is internal to its project, ${projectName(symbol.file.source.project)}")
     else if (symbol.declaration.visibility == Private && !isInside(place, symbol.path))
@@ -21,7 +23,9 @@ module Visibility {
     else if (symbol.declaration.visibility == Private && !Symbols.isModule(symbol) && isInPackage(symbol, table) && symbol.file.source.path != place.file.source.path)
       Some("'$own' is private to ${symbol.file.source.path.getOrElse("the program's file")}")
     else when (enclosingFunctor(symbol.path, table)) {
-      Some(functor) if !isInside(place, Symbols.pathOf(functor.name) + [Symbols.simpleName(functor)]) -> {
+      Some(
+        functor,
+      ) if !isInside(place, Symbols.pathOf(functor.name) + [Symbols.simpleName(functor)]) -> {
         name = Symbols.simpleName(functor)
         Some(
           "'$own' is in the functor $name, which makes modules: use it through one, made with module Name = $name(...)",
@@ -32,10 +36,19 @@ module Visibility {
   }
 
   // Why a module around a declaration at the path can't be seen, the outermost first, if one can't.
-  private hiddenModuleAround(path: List<String>, length: Int, place: Place, table: SymbolTable): Option<String> =
+  private hiddenModuleAround(
+    path: List<String>,
+    length: Int,
+    place: Place,
+    table: SymbolTable,
+  ): Option<String> =
     if (length > path.size) None
     else when (table.modules.get(path.take(length).joinToString("."))) {
-      Some(DeclaredModule(m)) -> whyHidden(m, place, table).orElse { hiddenModuleAround(path, length + 1, place, table) }
+      Some(DeclaredModule(m)) -> whyHidden(
+        m,
+        place,
+        table,
+      ).orElse { hiddenModuleAround(path, length + 1, place, table) }
       else -> hiddenModuleAround(path, length + 1, place, table)
     }
 
@@ -43,7 +56,9 @@ module Visibility {
   // core's, or another project's, which a program's declarations are no part of. Not its modules,
   // which it gives a library's functors, or follows a library's specs with.
   isForeign(symbol: Symbol, place: Place): Boolean =
-    symbol.path.isEmpty() && !Symbols.isModule(symbol) && symbol.file.source.project == ProgramProject &&
+    symbol.path.isEmpty() && !Symbols.isModule(
+      symbol,
+    ) && symbol.file.source.project == ProgramProject &&
       place.file.source.project != ProgramProject
 
   // Whether the place is in the module at the path, or in one inside it.
@@ -58,7 +73,10 @@ module Visibility {
 
   // The functor a declaration at the path is in, if any: the outermost module around it that takes
   // modules.
-  enclosingFunctor(path: List<String>, table: SymbolTable): Option<Symbol> = path.mapIndexed { i, _ ->
+  enclosingFunctor(
+    path: List<String>,
+    table: SymbolTable,
+  ): Option<Symbol> = path.mapIndexed { i, _ ->
     table.modules.get(path.take(i + 1).joinToString("."))
   }.mapNotNull { found ->
     when (found) {

@@ -14,7 +14,10 @@ module Inference {
   // Each function's and value's type, in the order they're written, and every error found. Where a
   // group can't be checked, its functions may be anything, so what uses them is checked without
   // more errors about them. With coverage, each when must cover every value of its subject.
-  @Solving @Reporting @Abandoning functionTypes(definitions: Definitions, coverage: Boolean): Inferred = {
+  @Solving @Reporting @Abandoning functionTypes(
+    definitions: Definitions,
+    coverage: Boolean,
+  ): Inferred = {
     checkTypeDeclarations(definitions)
     metaTypes = MetaTypes.all(definitions)
     environment = Environments.of(definitions)
@@ -92,20 +95,29 @@ module Inference {
     }
   }
 
-  @Abandoning private checkFieldNames(d: Symbol, fields: List<Field>): Unit = fields.forEachIndexed { i, f ->
-    if (fields.take(i).any { it.name == f.name }) abandon(Diagnostic(d.file.source.path, f.at, "field '${f.name}' is declared twice")) else Unit
+  @Abandoning private checkFieldNames(
+    d: Symbol,
+    fields: List<Field>,
+  ): Unit = fields.forEachIndexed { i, f ->
+    if (fields.take(i).any { it.name == f.name }) abandon(
+      Diagnostic(d.file.source.path, f.at, "field '${f.name}' is declared twice"),
+    ) else Unit
   }
 
   // That main, if there is one, takes nothing or the program's arguments, and gives Unit.
   @Solving @Reporting checkMain(environment: Environment, known: Known): Unit =
     when ((environment.functions.get("main"), known.schemes.get("main"))) {
       (Some(main), Some(scheme)) -> {
-        problem = (message: String) -> report(Diagnostic(main.file.source.path, main.declaration.at, message))
+        problem = (message: String) -> report(
+          Diagnostic(main.file.source.path, main.declaration.at, message),
+        )
         when (resolved(scheme.template)) {
           FunctionOf(parameters, result, _) ->
             if (parameters.size > 1 || (parameters.size == 1 && !unify(parameters.firstOrNone().getOrElse(unit), listOf(string))))
               problem("main must be declared as main() = ... or main(args: List<String>) = ...")
-            else if (!unify(result, unit)) problem("main must return Unit, not ${TypeText.shown(result)}")
+            else if (!unify(result, unit)) problem(
+              "main must return Unit, not ${TypeText.shown(result)}",
+            )
             else Unit
           _ -> problem("main must be declared as main() = ... or main(args: List<String>) = ...")
         }

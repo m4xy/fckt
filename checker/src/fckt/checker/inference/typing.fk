@@ -32,7 +32,13 @@ private covariant: List<String> = ["List", "Option", "Lazy", "Result"]
   typed = infer(e, Some(expected), scope, context)
   assign(e, typed, expected, context)
   when ((resolved(typed.t), resolved(expected))) {
-    (Named(narrower, _, _), Named(wider, _, _)) if narrower != wider && caseTypeNamed(narrower, context).isSome() && caseTypeNamed(wider, context).isSome() ->
+    (Named(narrower, _, _), Named(wider, _, _)) if narrower != wider && caseTypeNamed(
+      narrower,
+      context,
+    ).isSome() && caseTypeNamed(
+      wider,
+      context,
+    ).isSome() ->
       Widened(typed.core, expected)
     else -> typed.core
   }
@@ -58,7 +64,11 @@ private differs(pair: (Type, Type)): Boolean = {
   a != b
 }
 
-@Solving private ownTypeMismatch(typed: Typed, wanted: Type, found: Type): Option<String> = when ((wanted, found)) {
+@Solving private ownTypeMismatch(
+  typed: Typed,
+  wanted: Type,
+  found: Type,
+): Option<String> = when ((wanted, found)) {
   (ModuleValue(w, ws, own), ModuleValue(f, fs, _)) if w == f && own.isNotEmpty() ->
     own.zip(ws.zip(fs)).find { _, pair -> differs(pair) }.map { name, pair ->
       module = when (typed.core) {
@@ -73,10 +83,20 @@ private differs(pair: (Type, Type)): Boolean = {
 
 // Whether the case the expression spells out is one the wanted type with cases has: Alphabet.E is a
 // Vowel where a Vowel is wanted.
-@Solving @Abandoning private takesOnCase(typed: Typed, expected: Type, context: Context): Boolean = when ((typed.spelled, resolved(expected))) {
+@Solving @Abandoning private takesOnCase(
+  typed: Typed,
+  expected: Type,
+  context: Context,
+): Boolean = when ((typed.spelled, resolved(expected))) {
   (Some(c), Named(name, arguments, region)) -> when (caseTypeNamed(name, context)) {
     Some(target) if caseTypeOf(typed.t, context) != Some(name) ->
-      Conversion.casesWithFields(target, arguments, region, context.environment.definitions, Some(context.place)).any { info, _ -> isCase(info, c) }
+      Conversion.casesWithFields(
+        target,
+        arguments,
+        region,
+        context.environment.definitions,
+        Some(context.place),
+      ).any { info, _ -> isCase(info, c) }
     else -> false
   }
   else -> false
@@ -89,7 +109,10 @@ isCase(
 ): Boolean = info.origin.name == c.owner.name && info.definition.name == c.definition.name
 
 // The type with cases of that full name, if it is one.
-caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environment.definitions.namespace.table.caseTypes.get(name)
+caseTypeNamed(
+  name: String,
+  context: Context,
+): Option<Symbol> = context.environment.definitions.namespace.table.caseTypes.get(name)
 
 // The full name of the type with cases a type is, if it is one.
 @Solving caseTypeOf(t: Type, context: Context): Option<String> = when (resolved(t)) {
@@ -98,22 +121,43 @@ caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environm
 }
 
 // Whether a value of sub can be used as a sup, solving unknowns as needed.
-@Solving @Abandoning isSubtype(sub: Type, sup: Type, context: Context): Boolean = when ((resolved(sub), resolved(sup))) {
+@Solving @Abandoning isSubtype(
+  sub: Type,
+  sup: Type,
+  context: Context,
+): Boolean = when ((resolved(sub), resolved(sup))) {
   (Variable(_), y) -> unify(sub, y)
   (x, Variable(_)) -> unify(x, sup)
-  (Named(n, xs, _), Named(m, ys, _)) if n == m && covariant.contains(n) -> xs.size == ys.size && allSubtypes(xs, ys, context)
+  (Named(n, xs, _), Named(m, ys, _)) if n == m && covariant.contains(n) -> xs.size == ys.size && allSubtypes(
+    xs,
+    ys,
+    context,
+  )
   (TupleOf(xs), TupleOf(ys)) -> xs.size == ys.size && allSubtypes(xs, ys, context)
   (Named(n, _, _), Named(m, _, _)) if n == m -> unify(sub, sup)
-  (Named(n, xs, xRegion), Named(m, ys, yRegion)) if caseTypeNamed(n, context).isSome() && caseTypeNamed(m, context).isSome() ->
+  (Named(n, xs, xRegion), Named(m, ys, yRegion)) if caseTypeNamed(
+    n,
+    context,
+  ).isSome() && caseTypeNamed(
+    m,
+    context,
+  ).isSome() ->
     isCaseSubset(Named(n, xs, xRegion), Named(m, ys, yRegion), context)
   (FunctionOf(xs, x, xEffects), FunctionOf(ys, y, yEffects)) ->
-    xs.size == ys.size && allSubtypes(ys, xs, context) && isSubtype(x, y, context) && isSubEffects(xEffects, yEffects)
+    xs.size == ys.size && allSubtypes(ys, xs, context) && isSubtype(x, y, context) && isSubEffects(
+      xEffects,
+      yEffects,
+    )
   (Named(_, _, _), _) -> false
   (_, Named(_, _, _)) -> false
   (x, y) -> unify(x, y)
 }
 
-@Solving @Abandoning private allSubtypes(xs: List<Type>, ys: List<Type>, context: Context): Boolean = when ((xs, ys)) {
+@Solving @Abandoning private allSubtypes(
+  xs: List<Type>,
+  ys: List<Type>,
+  context: Context,
+): Boolean = when ((xs, ys)) {
   ([x, *moreX], [y, *moreY]) -> isSubtype(x, y, context) && allSubtypes(moreX, moreY, context)
   else -> true
 }
@@ -136,7 +180,13 @@ caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environm
     when ((caseTypeNamed(n, context), caseTypeNamed(m, context))) {
       (Some(xType), Some(yType)) if sameRegion -> {
         theirs = Conversion.casesWithFields(yType, ys, yRegion, definitions, Some(context.place))
-        Conversion.casesWithFields(xType, xs, xRegion, definitions, Some(context.place)).all { entry ->
+        Conversion.casesWithFields(
+          xType,
+          xs,
+          xRegion,
+          definitions,
+          Some(context.place),
+        ).all { entry ->
           (c, types) = entry
           when (theirs.find { other, _ -> Cases.same(other, c) }) {
             Some((_, theirTypes)) -> types.zip(theirTypes).all { a, b -> unify(a, b) }
@@ -156,7 +206,9 @@ caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environm
 @Inferring join(branches: List<(Expression, Typed)>, at: Position, context: Context): Type = {
   types = branches.map { _, typed -> typed.t }
   withCases = types.mapNotNull { t -> caseTypeOf(t, context).map { name -> (name, resolved(t)) } }
-  result = if (withCases.map { name, _ -> name }.distinct().size <= 1) types.firstOrNone().getOrElse(Variable(fresh()))
+  result = if (withCases.map { name, _ -> name }.distinct().size <= 1) types.firstOrNone().getOrElse(
+    Variable(fresh()),
+  )
     else smallestWithAll(branches, withCases, at, context)
   branches.forEach { e, typed -> assign(e, typed, result, context) }
   result
@@ -164,7 +216,12 @@ caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environm
 
 // The smallest type with cases, of the branches' or any declared without type parameters, that has
 // every case the branches need: just the one a branch spells out, or all of a branch's type's.
-@Inferring private smallestWithAll(branches: List<(Expression, Typed)>, withCases: List<(String, Type)>, at: Position, context: Context): Type = {
+@Inferring private smallestWithAll(
+  branches: List<(Expression, Typed)>,
+  withCases: List<(String, Type)>,
+  at: Position,
+  context: Context,
+): Type = {
   allCases = context.environment.definitions.cases
   needed = branches.flatMap { _, typed ->
     when (typed.spelled) {

@@ -45,7 +45,9 @@ module AnnotationChecks {
           check(place, c.annotations)
           c.fields.forEach { f -> check(place, f.annotations) }
         }
-        FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters.getOrElse([]).forEach { p -> check(place, p.annotations) }
+        FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters.getOrElse(
+          [],
+        ).forEach { p -> check(place, p.annotations) }
         SpecDefinition(_, values, _, _, _) -> values.forEach { v -> check(place, v.annotations) }
         _ -> Unit
       }
@@ -75,11 +77,16 @@ module AnnotationChecks {
 
   // The module around the path that says what may be done in it, with what: the innermost one with
   // effects; a module a functor made has the functor's.
-  @Abandoning private ceilingOf(path: List<String>, environment: Environment): Option<(Symbol, List<String>)> = {
+  @Abandoning private ceilingOf(
+    path: List<String>,
+    environment: Environment,
+  ): Option<(Symbol, List<String>)> = {
     namespace = environment.definitions.namespace
     path.mapIndexed { i, _ -> path.take(path.size - i) }.mapNotNull { p ->
       name = p.joinToString(".")
-      around = namespace.modules.applications.get(name).map { made -> DeclaredModule(made.functor) }.orElse { namespace.table.modules.get(name) }
+      around = namespace.modules.applications.get(
+        name,
+      ).map { made -> DeclaredModule(made.functor) }.orElse { namespace.table.modules.get(name) }
       when (around) {
         Some(DeclaredModule(m)) -> {
           effects = Annotations.effectsOf(
@@ -97,14 +104,20 @@ module AnnotationChecks {
 
   // ---- An annotation ----
 
-  @Solving @Abandoning private checkAnnotation(a: Annotation, place: Place, inferred: Inferred): Unit = {
+  @Solving @Abandoning private checkAnnotation(
+    a: Annotation,
+    place: Place,
+    inferred: Inferred,
+  ): Unit = {
     environment = inferred.environment
     namespace = environment.definitions.namespace
     context = Context(environment, place, emptyMap())
     problem = (at: Position, message: String) -> Diagnostic(place.file.source.path, at, message)
     asEffect = when (Lookups.annotationType(a.name, place, namespace, Skipping)) {
       Found(_) -> None
-      _ -> Lookups.found(Lookups.spec(a.name, place, namespace, Skipping)).filter { s -> Annotations.isEffect(s, namespace) }
+      _ -> Lookups.found(
+        Lookups.spec(a.name, place, namespace, Skipping),
+      ).filter { s -> Annotations.isEffect(s, namespace) }
     }
     when (asEffect) {
       // A handled effect, as @Console or @Yielding<Int>: no arguments, and its type arguments, if any.
@@ -113,7 +126,9 @@ module AnnotationChecks {
           SpecDefinition(_, _, ps, _, _) -> ps
           _ -> []
         }
-        if (a.arguments.isNotEmpty()) abandon(problem(a.at, "an effect takes no arguments")) else Unit
+        if (a.arguments.isNotEmpty()) abandon(
+          problem(a.at, "an effect takes no arguments"),
+        ) else Unit
         if (a.typeArguments.isNotEmpty() && a.typeArguments.size != typeParameters.size) {
           abandon(
             problem(
@@ -124,7 +139,9 @@ module AnnotationChecks {
         } else Unit
       }
       None -> {
-        if (a.typeArguments.isNotEmpty()) abandon(problem(a.at, "only a generic effect takes type arguments, as @Yielding<Int> does")) else Unit
+        if (a.typeArguments.isNotEmpty()) abandon(
+          problem(a.at, "only a generic effect takes type arguments, as @Yielding<Int> does"),
+        ) else Unit
         declaration = when (Lookups.annotationType(a.name, place, namespace, Refusing)) {
           Found(d) -> d
           Refused(why) -> abandon(problem(a.at, why))
@@ -143,7 +160,12 @@ module AnnotationChecks {
 
   // Each argument against the field it's for: in order, then by name; for an annotation whose last
   // field is vararg, its items are what's given in order after the others, or, by its name, the list.
-  @Solving @Abandoning private checkArguments(a: Annotation, declaration: Symbol, context: Context, inferred: Inferred): Unit = {
+  @Solving @Abandoning private checkArguments(
+    a: Annotation,
+    declaration: Symbol,
+    context: Context,
+    inferred: Inferred,
+  ): Unit = {
     fields = when (declaration.declaration.definition) {
       RecordDefinition(_, fs, _, _, _) -> fs
       _ -> []
@@ -154,16 +176,22 @@ module AnnotationChecks {
     when (fields.lastOrNone().filter { it.vararg }) {
       None -> {
         order = orderOf(given(a.arguments), fields.map { it.name }, a.at, what, context)
-        types.zip(order).forEach { t, i -> a.arguments.getOrNone(i).forEach { argument -> checkMeta(argument.value, t, context, inferred) } }
+        types.zip(
+          order,
+        ).forEach { t, i -> a.arguments.getOrNone(i).forEach { argument -> checkMeta(argument.value, t, context, inferred) } }
       }
       Some(vararg) -> {
         fixed = fields.size - 1
         inOrder = a.arguments.takeWhile { it.name.isNone() }
         listed = a.arguments.find { it.name == Some(vararg.name) }
         listed.forEach { l -> if (inOrder.size > fixed) abandon(Globals.problem(context, valueAt(l.value), "'${vararg.name}' is passed twice")) else Unit }
-        others = inOrder.take(fixed) + a.arguments.drop(inOrder.size).filter { argument -> Some(argument) != listed }
+        others = inOrder.take(fixed) + a.arguments.drop(
+          inOrder.size,
+        ).filter { argument -> Some(argument) != listed }
         order = orderOf(given(others), fields.dropLast(1).map { it.name }, a.at, what, context)
-        types.dropLast(1).zip(order).forEach { t, i -> others.getOrNone(i).forEach { argument -> checkMeta(argument.value, t, context, inferred) } }
+        types.dropLast(1).zip(
+          order,
+        ).forEach { t, i -> others.getOrNone(i).forEach { argument -> checkMeta(argument.value, t, context, inferred) } }
         last = types.lastOrNone().getOrElse(MetaList(MetaFunction))
         when (listed) {
           Some(l) -> checkMeta(l.value, last, context, inferred)
@@ -173,7 +201,9 @@ module AnnotationChecks {
               MetaValue(Named("List", [itemType], _)) -> MetaValue(itemType)
               other -> other
             }
-            inOrder.drop(fixed).forEach { argument -> checkMeta(argument.value, item, context, inferred) }
+            inOrder.drop(
+              fixed,
+            ).forEach { argument -> checkMeta(argument.value, item, context, inferred) }
           }
         }
       }
@@ -189,7 +219,12 @@ module AnnotationChecks {
   }
 
   // That the argument is what a field of the meta type can hold.
-  @Solving @Abandoning private checkMeta(v: AnnotationValue, meta: MetaType, context: Context, inferred: Inferred): Unit = {
+  @Solving @Abandoning private checkMeta(
+    v: AnnotationValue,
+    meta: MetaType,
+    context: Context,
+    inferred: Inferred,
+  ): Unit = {
     at = valueAt(v)
     namespace = context.environment.definitions.namespace
     definitions = context.environment.definitions
@@ -206,7 +241,9 @@ module AnnotationChecks {
         _ -> wrong()
       }
       MetaTuple(itemTypes) -> when (v) {
-        ValueTuple(_, items) if items.size == itemTypes.size -> items.zip(itemTypes).forEach { item, t -> checkMeta(item, t, context, inferred) }
+        ValueTuple(_, items) if items.size == itemTypes.size -> items.zip(
+          itemTypes,
+        ).forEach { item, t -> checkMeta(item, t, context, inferred) }
         _ -> wrong()
       }
       MetaTypeReference -> when (typeRefOf(v)) {
@@ -223,13 +260,21 @@ module AnnotationChecks {
       }
       // A function as declared, whatever its type: what reads the annotation says what it must be.
       MetaFunction -> when (Globals.findOrRefuse(name(), at, context)) {
-        Some(f) -> if (!Signatures.isFunction(f)) abandon(Globals.problem(context, at, "${Symbols.simpleName(f)} is a value, not a function")) else Unit
+        Some(f) -> if (!Signatures.isFunction(f)) abandon(
+          Globals.problem(context, at, "${Symbols.simpleName(f)} is a value, not a function"),
+        ) else Unit
         None -> abandon(Globals.problem(context, at, "unknown function '${name()}'"))
       }
       MetaModule(spec) -> when (Lookups.moduleNamed(name(), context.place, namespace, Refusing)) {
         Found(DeclaredModule(m)) -> {
           own = Symbols.simpleName(m)
-          if (functorParameters(m).isNotEmpty()) abandon(Globals.problem(context, at, "$own is a functor; pass a module it makes, module Name = $own(...)")) else Unit
+          if (functorParameters(m).isNotEmpty()) abandon(
+            Globals.problem(
+              context,
+              at,
+              "$own is a functor; pass a module it makes, module Name = $own(...)",
+            ),
+          ) else Unit
           spec.forEach { s ->
             if (context.environment.moduleSpecs.get(m.name).map { it.name } != Some(s.name)) {
               simple = Symbols.simpleName(s)
@@ -272,7 +317,12 @@ module AnnotationChecks {
     abandon(Globals.problem(context, at, "this should be ${MetaTypes.described(meta)}"))
 
   // A case of the type with cases, by name, maybe through its type: Shape.Circle.
-  @Solving @Abandoning private checkCase(name: String, caseType: Type, at: Position, context: Context): Unit = {
+  @Solving @Abandoning private checkCase(
+    name: String,
+    caseType: Type,
+    at: Position,
+    context: Context,
+  ): Unit = {
     definitions = context.environment.definitions
     namespace = definitions.namespace
     parts = name.split(".")
@@ -287,20 +337,40 @@ module AnnotationChecks {
     caseName = parts.lastOrNone().getOrElse(name)
     found = when (resolved(caseType)) {
       Named(n, arguments, region) -> namespace.table.caseTypes.get(n).map { s ->
-        Conversion.casesWithFields(s, arguments, region, definitions, Some(context.place)).map { c, _ -> c }
+        Conversion.casesWithFields(
+          s,
+          arguments,
+          region,
+          definitions,
+          Some(context.place),
+        ).map { c, _ -> c }
           .any { c -> c.definition.name == caseName && qualifying.map { q -> definitions.cases.getOrDefault(q.name, []).any { Cases.same(it, c) } }.getOrElse(true) }
       }.getOrElse(false)
       _ -> false
     }
-    if (!found) abandon(Globals.problem(context, at, "'$name' isn't a case of ${TypeText.shown(caseType)}")) else Unit
+    if (!found) abandon(
+      Globals.problem(context, at, "'$name' isn't a case of ${TypeText.shown(caseType)}"),
+    ) else Unit
   }
 
   // A field of the record type, by its type and its name, User.name, of the type, unless any will do.
-  @Solving @Abandoning private checkField(name: String, record: Type, fieldType: Option<Type>, at: Position, context: Context): Unit = {
+  @Solving @Abandoning private checkField(
+    name: String,
+    record: Type,
+    fieldType: Option<Type>,
+    at: Position,
+    context: Context,
+  ): Unit = {
     definitions = context.environment.definitions
     parts = name.split(".")
     fieldName = parts.lastOrNone().getOrElse(name)
-    if (parts.size < 2) abandon(Globals.problem(context, at, "write a field with its type, like ${TypeText.shown(record)}.$name")) else Unit
+    if (parts.size < 2) abandon(
+      Globals.problem(
+        context,
+        at,
+        "write a field with its type, like ${TypeText.shown(record)}.$name",
+      ),
+    ) else Unit
     owner = parts.dropLast(1).joinToString(".")
     (wantedName, arguments) = when (resolved(record)) {
       Named(n, args, _) -> (n, args)
@@ -319,17 +389,27 @@ module AnnotationChecks {
     }
     fields = recordFieldsOf(declared)
     index = fields.indexOfFirst { it.name == fieldName }
-    if (index < 0) abandon(Globals.problem(context, at, "${Symbols.simpleName(declared)} has no field '$fieldName'")) else Unit
-    actual = Conversion.recordFields(declared, arguments, None, definitions).getOrNone(index).getOrElse(unit)
+    if (index < 0) abandon(
+      Globals.problem(context, at, "${Symbols.simpleName(declared)} has no field '$fieldName'"),
+    ) else Unit
+    actual = Conversion.recordFields(declared, arguments, None, definitions).getOrNone(
+      index,
+    ).getOrElse(
+      unit,
+    )
     fieldType.forEach { t ->
       shownActual = TypeText.shown(actual)
-      if (!unify(actual, t)) abandon(Globals.problem(context, at, "$name is a $shownActual, not a ${TypeText.shown(t)}")) else Unit
+      if (!unify(actual, t)) abandon(
+        Globals.problem(context, at, "$name is a $shownActual, not a ${TypeText.shown(t)}"),
+      ) else Unit
     }
   }
 
   // The argument as a type: User, List<User>, (Int, String).
   private typeRefOf(v: AnnotationValue): Option<TypeRef> = when (v) {
-    Reference(at, name, typeArguments, None) -> Some(NamedType(at, name, typeArguments.getOrElse([])))
+    Reference(at, name, typeArguments, None) -> Some(
+      NamedType(at, name, typeArguments.getOrElse([])),
+    )
     ValueTuple(at, items) -> {
       refs = items.mapNotNull { typeRefOf(it) }
       if (refs.size == items.size) Some(TupleType(at, refs)) else None
@@ -341,7 +421,11 @@ module AnnotationChecks {
 
   // That the argument, an ordinary value, is an expression of the type: a constant, a function or
   // value by name, or a case or record made of them. Never a call, which would need running.
-  @Solving @Abandoning private checkConstant(v: AnnotationValue, t: Type, context: Context): Unit = {
+  @Solving @Abandoning private checkConstant(
+    v: AnnotationValue,
+    t: Type,
+    context: Context,
+  ): Unit = {
     e = expressionOf(v, context)
     Doings.doing(Row([], Some(fresh())), context.place.file.source.path) {
       Covering(cover = _ -> Unit) {
@@ -354,7 +438,13 @@ module AnnotationChecks {
   // That the expression is made only of constants and references.
   @Inferring private constant(e: Expression, context: Context): Unit = when (e) {
     Call(at, callee, arguments, _) -> {
-      if (!constructs(callee, context)) abandon(Globals.problem(context, at, "an annotation's arguments are constants and references, so not a call: pass the function itself")) else Unit
+      if (!constructs(callee, context)) abandon(
+        Globals.problem(
+          context,
+          at,
+          "an annotation's arguments are constants and references, so not a call: pass the function itself",
+        ),
+      ) else Unit
       arguments.forEach { constant(it.value, context) }
     }
     Member(at, target, name) ->
@@ -375,7 +465,17 @@ module AnnotationChecks {
   @Inferring private constructs(callee: Expression, context: Context): Boolean = when (callee) {
     Name(at, name) -> Lookups.found(Globals.find(name, context, Skipping)).isNone() &&
       constructorShape(name, None, at, false, None, true, Scopes.empty, context).isSome()
-    Member(at, target, name) -> moduleMember(at, target, name, Scopes.empty, context).isNone() && qualifiedCase(target, Scopes.empty, context).isSome()
+    Member(at, target, name) -> moduleMember(
+      at,
+      target,
+      name,
+      Scopes.empty,
+      context,
+    ).isNone() && qualifiedCase(
+      target,
+      Scopes.empty,
+      context,
+    ).isSome()
     _ -> false
   }
 
@@ -385,11 +485,24 @@ module AnnotationChecks {
     ValueList(at, items) -> ListOf(at, items.map { expressionOf(it, context) })
     ValueTuple(at, items) -> Tuple(at, items.map { expressionOf(it, context) })
     Reference(at, name, typeArguments, arguments) -> {
-      if (typeArguments.isSome()) abandon(Globals.problem(context, at, "a type goes only where an annotation's field is a Type, like List<User>")) else Unit
+      if (typeArguments.isSome()) abandon(
+        Globals.problem(
+          context,
+          at,
+          "a type goes only where an annotation's field is a Type, like List<User>",
+        ),
+      ) else Unit
       parts = name.split(".")
-      callee = parts.drop(1).fold(Name(at, parts.firstOrNone().getOrElse(name))) { target, n -> Member(at, target, n) }
+      callee = parts.drop(1).fold(
+        Name(at, parts.firstOrNone().getOrElse(name)),
+      ) { target, n -> Member(at, target, n) }
       when (arguments) {
-        Some(args) -> Call(at, callee, args.map { a -> Argument(a.name, expressionOf(a.value, context)) }, [])
+        Some(args) -> Call(
+          at,
+          callee,
+          args.map { a -> Argument(a.name, expressionOf(a.value, context)) },
+          [],
+        )
         None -> callee
       }
     }

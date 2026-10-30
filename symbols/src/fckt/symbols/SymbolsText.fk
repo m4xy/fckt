@@ -12,14 +12,18 @@ module SymbolsText : Format {
   // The version this reads and writes.
   version: String = "fckt-symbols 1"
 
-  of(value: Symbols): String = ([version] + value.types.flatMap { declarationLines(it) }).joinToString("\n") + "\n"
+  of(
+    value: Symbols,
+  ): String = ([version] + value.types.flatMap { declarationLines(it) }).joinToString("\n") + "\n"
 
   read(text: String): Result<Symbols, String> = attempt {
     lines = text.lines().filter { it.isNotBlank() }
     when (lines) {
       [] -> fail("there are no symbols: the first line should be $version")
       [first, *rest] -> {
-        if (first != version) fail("these are ${first.trim()}, not $version, which is what this reads")
+        if (first != version) fail(
+          "these are ${first.trim()}, not $version, which is what this reads",
+        )
         Symbols(forest(rest.map { Line(depthOf(it), it.trim()) }, 0).map { typeDeclaration(it) })
       }
     }
@@ -35,7 +39,9 @@ module SymbolsText : Format {
       d.annotations.flatMap { annotationLines(it) }
     when (d.body) {
       Fields(fields, privateConstructor) ->
-        ["record ${d.name}"] + indented(header + (if (privateConstructor) ["private-constructor"] else []) + fields.flatMap { fieldLines(it) })
+        ["record ${d.name}"] + indented(
+          header + (if (privateConstructor) ["private-constructor"] else []) + fields.flatMap { fieldLines(it) },
+        )
       Cases(cases) -> ["cases ${d.name}"] + indented(header + cases.flatMap { caseLines(it) })
     }
   }
@@ -47,12 +53,16 @@ module SymbolsText : Format {
       c.fields.flatMap { fieldLines(it) }
   )
 
-  private fieldLines(f: Field): List<String> = ["field ${f.name} ${typeText(f.fieldType)}"] + indented(
+  private fieldLines(
+    f: Field,
+  ): List<String> = ["field ${f.name} ${typeText(f.fieldType)}"] + indented(
     (if (f.mutable) ["var"] else []) + (if (f.hasDefault) ["default"] else []) + f.annotations.flatMap { annotationLines(it) }
   )
 
   private annotationLines(a: Annotation): List<String> =
-    ["annotation ${a.name}"] + indented(a.arguments.map { "argument ${it.field} ${valueText(it.value)}" })
+    ["annotation ${a.name}"] + indented(
+      a.arguments.map { "argument ${it.field} ${valueText(it.value)}" },
+    )
 
   private at(l: Location): String = "at ${l.line} ${l.column} ${l.file}"
 
@@ -88,7 +98,13 @@ module SymbolsText : Format {
   }
 
   private escaped(text: String, quote: String): String =
-    text.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r").replace(quote, "\\$quote")
+    text.replace("\\", "\\\\").replace("\n", "\\n").replace("\t", "\\t").replace(
+      "\r",
+      "\\r",
+    ).replace(
+      quote,
+      "\\$quote",
+    )
 
   // ---- Reading ----
 
@@ -218,12 +234,18 @@ module SymbolsText : Format {
   }
 
   // Whether s has a character at at that test holds of.
-  private holds(s: String, at: Int, test: (Char) -> Boolean): Boolean = s.getOrNone(at).map(test).getOrElse(false)
+  private holds(
+    s: String,
+    at: Int,
+    test: (Char) -> Boolean,
+  ): Boolean = s.getOrNone(at).map(test).getOrElse(false)
 
   private startsAt(s: String, at: Int, prefix: String): Boolean = s.drop(at).startsWith(prefix)
 
   @Fail private expect(s: String, at: Int, prefix: String): Int =
-    if (startsAt(s, at, prefix)) at + prefix.length else fail("'$s' should have '$prefix' at ${at + 1}")
+    if (startsAt(s, at, prefix)) at + prefix.length else fail(
+      "'$s' should have '$prefix' at ${at + 1}",
+    )
 
   // Where the name starting at at ends.
   private nameEnd(s: String, at: Int): Int =
@@ -236,10 +258,21 @@ module SymbolsText : Format {
   }
 
   // What's between open and close, each read, separated by commas.
-  @Fail private listAt<A>(s: String, at: Int, close: Char, item: @Fail (String, Int) -> (A, Int)): (List<A>, Int) =
+  @Fail private listAt<A>(
+    s: String,
+    at: Int,
+    close: Char,
+    item: @Fail (String, Int) -> (A, Int),
+  ): (List<A>, Int) =
     if (charAt(s, at) == close) ([], at + 1) else moreAt(s, at, close, item, [])
 
-  @Fail private moreAt<A>(s: String, at: Int, close: Char, item: @Fail (String, Int) -> (A, Int), kept: List<A>): (List<A>, Int) = {
+  @Fail private moreAt<A>(
+    s: String,
+    at: Int,
+    close: Char,
+    item: @Fail (String, Int) -> (A, Int),
+    kept: List<A>,
+  ): (List<A>, Int) = {
     (read, next) = item(s, at)
     if (charAt(s, next) == close) (kept + [read], next + 1)
     else moreAt(s, expect(s, next, ", "), close, item, kept + [read])

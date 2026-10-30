@@ -30,7 +30,9 @@ import fckt.parser.*
     else -> false
   }
   start = BlockSoFar(Scopes.inside(scope), whole, [], [], None, false)
-  done = statements.fold(start) { soFar, statement -> line(statement, soFar, independent, monad, context) }
+  done = statements.fold(
+    start,
+  ) { soFar, statement -> line(statement, soFar, independent, monad, context) }
   if (endsInBinding && !done.assigned) {
     abandon(
       Globals.problem(
@@ -82,7 +84,10 @@ import fckt.parser.*
 }
 
 // A block's core: its lines, in order, around what it gives.
-private around(lines: List<BlockStep>, result: Core): Core = lines.reversed().fold(result) { rest, step ->
+private around(
+  lines: List<BlockStep>,
+  result: Core,
+): Core = lines.reversed().fold(result) { rest, step ->
   when (step) {
     RunStep(core) -> Sequenced(core, rest)
     BindStep(pattern, value) -> Bound(pattern, value, rest)
@@ -96,10 +101,17 @@ private around(lines: List<BlockStep>, result: Core): Core = lines.reversed().fo
 // bind(value, pattern -> rest); without one, its by lines, which come together, are paired up with
 // its product, as product(product(a, b), c), and the rest of the block is a function of the pairs,
 // given to its map.
-private aroundMonadic(lines: List<BlockStep>, result: Core, monad: MonadFunctions): Core = when (monad) {
+private aroundMonadic(
+  lines: List<BlockStep>,
+  result: Core,
+  monad: MonadFunctions,
+): Core = when (monad) {
   Binding(_, _, bind, _) -> lines.reversed().fold(result) { rest, step ->
     when (step) {
-      ByStep(pattern, value) -> Applied(GlobalRead(bind), [value, FunctionValue([pattern], rest, false)])
+      ByStep(pattern, value) -> Applied(
+        GlobalRead(bind),
+        [value, FunctionValue([pattern], rest, false)],
+      )
       other -> around([other], rest)
     }
   }
@@ -129,7 +141,13 @@ private aroundMonadic(lines: List<BlockStep>, result: Core, monad: MonadFunction
 }
 
 // A line of a block, checked, and how far the block has got after it.
-@Inferring private line(statement: Statement, before: BlockSoFar, independent: Boolean, monad: Option<MonadFunctions>, context: Context): BlockSoFar = {
+@Inferring private line(
+  statement: Statement,
+  before: BlockSoFar,
+  independent: Boolean,
+  monad: Option<MonadFunctions>,
+  context: Context,
+): BlockSoFar = {
   // Without a bind, a line that isn't a by line ends the by lines before it, whose names it can use.
   soFar = if (independent && !isBind(statement) && before.steps.isNotEmpty())
     BlockSoFar(
@@ -150,10 +168,21 @@ private aroundMonadic(lines: List<BlockStep>, result: Core, monad: MonadFunction
     }
     Destructuring(at, pattern, value) -> {
       typed = infer(value, None, inner, context)
-      withScope(soFar, bindPattern(at, pattern, typed.t, inner, false, context), false).copy(lines = soFar.lines + [BindStep(irrefutableMatcher(pattern), typed.core)])
+      withScope(soFar, bindPattern(at, pattern, typed.t, inner, false, context), false).copy(
+        lines = soFar.lines + [BindStep(irrefutableMatcher(pattern), typed.core)],
+      )
     }
     Bind(at, pattern, value) -> byLine(at, pattern, value, soFar, independent, monad, context)
-    Binding(at, name, parameters, valueType, value, variable) -> binding(at, name, parameters, valueType, value, variable, soFar, context)
+    Binding(at, name, parameters, valueType, value, variable) -> binding(
+      at,
+      name,
+      parameters,
+      valueType,
+      value,
+      variable,
+      soFar,
+      context,
+    )
   }
 }
 
@@ -209,8 +238,13 @@ private isBind(s: Statement): Boolean = when (s) {
           typed = infer(value, declared, inner, context)
           declared.forEach { d -> assign(value, typed, d, context) }
           region = if (variable) Some(Variable(fresh())) else None
-          step = if (variable) VarStep(name, typed.core) else BindStep(NameMatcher(name), typed.core)
-          withScope(soFar, Scopes.bind(inner, name, Local(typed.t, region)), false).copy(lines = soFar.lines + [step])
+          step = if (variable) VarStep(name, typed.core) else BindStep(
+            NameMatcher(name),
+            typed.core,
+          )
+          withScope(soFar, Scopes.bind(inner, name, Local(typed.t, region)), false).copy(
+            lines = soFar.lines + [step],
+          )
         }
         Some(ps) -> {
           checkDistinct(ps.map { p -> (p.name, p.at) }, context)
@@ -224,7 +258,9 @@ private isBind(s: Statement): Boolean = when (s) {
             Scopes.bind(s, p.name, Local(t))
           }
           core = doingIn(row, context) { check(value, result, body, context) }
-          withScope(soFar, withFunction, false).copy(lines = soFar.lines + [FunctionStep(name, ps.map { p -> NameMatcher(p.name) }, core)])
+          withScope(soFar, withFunction, false).copy(
+            lines = soFar.lines + [FunctionStep(name, ps.map { p -> NameMatcher(p.name) }, core)],
+          )
         }
       }
     }
@@ -308,7 +344,14 @@ private isBind(s: Statement): Boolean = when (s) {
   }
 
 // Binds what an irrefutable pattern, of the type, binds, as (a, b) = ... and (a, b) by ... do.
-@Inferring private bindPattern(at: Position, pattern: Pattern, t: Type, scope: Scope, isBy: Boolean, context: Context): Scope = {
+@Inferring private bindPattern(
+  at: Position,
+  pattern: Pattern,
+  t: Type,
+  scope: Scope,
+  isBy: Boolean,
+  context: Context,
+): Scope = {
   names = References.namesIn(pattern)
   checkDistinct(names.map { (it, at) }, context)
   names.find { Scopes.bindsHere(scope, it) }.forEach { name ->
@@ -357,7 +400,13 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 
 // Options { ... }: the block, with by going through the module's bind, and what it gives through its
 // pure; or, for a module that follows a handled effect's spec, the block with the effect handled.
-@Inferring inferMonadic(at: Position, monad: Expression, block: Expression, scope: Scope, context: Context): Typed = {
+@Inferring inferMonadic(
+  at: Position,
+  monad: Expression,
+  block: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   monadAt = Positions.of(monad)
   name = dottedUnbound(monad, scope)
   shown = name.getOrElse("this")
@@ -367,7 +416,9 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
       "$shown isn't a module, so ${name.getOrElse("null")} { ... } has nothing to bind with${name.map { n -> ImportHints.forName(n, context.environment.definitions.namespace) }.getOrElse("")}"))
     Some(m) -> {
       effect = when (m) {
-        DeclaredModule(s) -> context.environment.moduleSpecs.get(s.name).filter { _ -> isEffectModule(m, context) }.map { spec -> (s, spec) }
+        DeclaredModule(s) -> context.environment.moduleSpecs.get(
+          s.name,
+        ).filter { _ -> isEffectModule(m, context) }.map { spec -> (s, spec) }
         PackageModule(_) -> None
       }
       when (effect) {
@@ -381,7 +432,16 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
         None -> {
           functions = monadFunctions(m, shown, monadAt, context)
           when (block) {
-            Block(blockAt, statements, result, endsInBinding) -> inferBlock(blockAt, statements, result, endsInBinding, None, scope, Some(functions), context)
+            Block(blockAt, statements, result, endsInBinding) -> inferBlock(
+              blockAt,
+              statements,
+              result,
+              endsInBinding,
+              None,
+              scope,
+              Some(functions),
+              context,
+            )
             other -> infer(other, None, scope, context)
           }
         }
@@ -391,9 +451,16 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 }
 
 // What the module's block runs with: its bind and pure, or else its map and product.
-@Abandoning private monadFunctions(m: ModuleSymbol, shown: String, at: Position, context: Context): MonadFunctions = {
+@Abandoning private monadFunctions(
+  m: ModuleSymbol,
+  shown: String,
+  at: Position,
+  context: Context,
+): MonadFunctions = {
   moduleName = fckt.checker.symbols.Symbols.moduleName(m)
-  member = (what: String) -> context.environment.functions.get("$moduleName.$what").filter { Globals.visible(it, context) }
+  member = (what: String) -> context.environment.functions.get(
+    "$moduleName.$what",
+  ).filter { Globals.visible(it, context) }
   when ((member("bind"), member("pure"), member("map"), member("product"))) {
     (Some(bind), Some(pure), _, _) -> Binding(shown, at, bind, pure)
     (_, pure, Some(map), Some(product)) -> Mapping(shown, at, map, product, pure)
@@ -403,7 +470,13 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 }
 
 // A new instance of the module's function, if it takes that many values.
-@Inferring private instance(monad: MonadFunctions, function: Symbol, arity: Int, what: String, context: Context): Type = {
+@Inferring private instance(
+  monad: MonadFunctions,
+  function: Symbol,
+  arity: Int,
+  what: String,
+  context: Context,
+): Type = {
   at = positionOfMonad(monad)
   when (resolved(Globals.typeOf(function, at, context))) {
     FunctionOf(parameters, result, effects) if parameters.size == arity -> {
@@ -416,9 +489,15 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 
 // A new instance of the module's map: the value it maps, and the function it applies to what it
 // holds, and what each gives.
-@Inferring private mapType(monad: MonadFunctions, map: Symbol, context: Context): (Type, Type, Type, Type) = {
+@Inferring private mapType(
+  monad: MonadFunctions,
+  map: Symbol,
+  context: Context,
+): (Type, Type, Type, Type) = {
   what = "a value and a function to apply to what it holds"
-  wrong = () -> abandon(Globals.problem(context, positionOfMonad(monad), "${map.name} should take $what"))
+  wrong = () -> abandon(
+    Globals.problem(context, positionOfMonad(monad), "${map.name} should take $what"),
+  )
   when (instance(monad, map, 2, what, context)) {
     FunctionOf([mapped, f], mapResult, _) -> when (resolved(f)) {
       FunctionOf([held], fResult, _) -> (mapped, mapResult, held, fResult)
@@ -429,7 +508,12 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 }
 
 // That a step's value is one of the module's, giving its type and the type of what it holds.
-@Inferring private step(monad: MonadFunctions, value: Expression, scope: Scope, context: Context): (Type, Type, Core) = when (monad) {
+@Inferring private step(
+  monad: MonadFunctions,
+  value: Expression,
+  scope: Scope,
+  context: Context,
+): (Type, Type, Core) = when (monad) {
   Mapping(name, _, map, _, _) -> {
     (mapped, _, held, _) = mapType(monad, map, context)
     wanted = genericText(mapped)
@@ -449,7 +533,12 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 
 // Without a bind, the steps are paired up with product, as ((a, b), c), and the rest of the block is
 // a function of the pairs, applied with map: what the rest of the block gives, and what the block is.
-@Inferring private combine(monad: MonadFunctions, steps: List<(Type, Type)>, at: Position, context: Context): (Type, Type) = when ((monad, steps)) {
+@Inferring private combine(
+  monad: MonadFunctions,
+  steps: List<(Type, Type)>,
+  at: Position,
+  context: Context,
+): (Type, Type) = when ((monad, steps)) {
   (Mapping(_, monadAt, map, product, _), [(firstValue, firstHeld), *others]) -> {
     (values, held) = others.fold((firstValue, firstHeld)) { acc, s ->
       (vs, h) = acc
@@ -465,7 +554,13 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
     }
     (mapped, mapResult, given, fResult) = mapType(monad, map, context)
     expect(values, mapped, at, context)
-    if (!unify(given, held)) abandon(Globals.problem(context, monadAt, "${product.name} should pair what its two values hold, as (A, B)"))
+    if (!unify(given, held)) abandon(
+      Globals.problem(
+        context,
+        monadAt,
+        "${product.name} should pair what its two values hold, as (A, B)",
+      ),
+    )
     else (fResult, mapResult)
   }
   else -> (Variable(fresh()), Variable(fresh()))
@@ -473,7 +568,10 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 
 // A new instance of the module's bind: the value it binds, the function it goes on with, and what it
 // gives.
-@Inferring private bindType(monad: MonadFunctions, context: Context): (Type, Type, Type) = when (monad) {
+@Inferring private bindType(
+  monad: MonadFunctions,
+  context: Context,
+): (Type, Type, Type) = when (monad) {
   Binding(_, at, bind, _) -> {
     shape = when (resolved(Globals.typeOf(bind, at, context))) {
       FunctionOf([value, next], result, effects) -> when (resolved(next)) {

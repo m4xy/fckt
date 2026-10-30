@@ -36,5 +36,7 @@ module Sets {
   Set<A>.map<B>(f: (A) -> B): List<B> = this.toList().map(f)
 
   // Shown as [a, b].
-  Set<A>.toString(showA: (A) -> String): String = "[" + this.toList().map(showA).joinToString(", ") + "]"
+  Set<A>.toString(
+    showA: (A) -> String,
+  ): String = "[" + this.toList().map(showA).joinToString(", ") + "]"
 }

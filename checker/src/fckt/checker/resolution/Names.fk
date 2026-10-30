@@ -58,7 +58,9 @@ module Names {
   canonical(name: String, namespace: Namespace): String = {
     parts = name.split(".")
     found = parts.mapIndexed { i, _ -> parts.size - i }.mapNotNull { n ->
-      namespace.modules.aliases.get(parts.take(n).joinToString(".")).map { given -> ([given] + parts.drop(n)).joinToString(".") }
+      namespace.modules.aliases.get(
+        parts.take(n).joinToString("."),
+      ).map { given -> ([given] + parts.drop(n)).joinToString(".") }
     }.firstOrNone()
     when (found) {
       Some(replaced) -> canonical(replaced, namespace)
@@ -90,7 +92,9 @@ module Names {
       )
       isParameters = (full: String) -> namespace.modules.parameterModules.any { p -> full == p || full.startsWith("$p.") }
       when (find(name, entries, symbolOf, alike, inFunctor, namespace, strictness)) {
-        Found(entry) if symbolOf(entry).map { s -> !isParameters(s.name) }.getOrElse(true) -> Found(entry)
+        Found(entry) if symbolOf(
+          entry,
+        ).map { s -> !isParameters(s.name) }.getOrElse(true) -> Found(entry)
         Refused(why) -> Refused(why)
         _ -> NotFound
       }
@@ -115,8 +119,14 @@ module Names {
 
   // Where the spec is whose default is written at the place, if one is: in a module that follows
   // it, written in another file, the spec's, as the default is written there.
-  private specPlace(place: Place, namespace: Namespace): Option<Place> = when (namespace.table.modules.get(place.path.joinToString("."))) {
-    Some(DeclaredModule(m)) if m.file.source.path != place.file.source.path && enclosingApplication(place.path, namespace).isNone() ->
+  private specPlace(
+    place: Place,
+    namespace: Namespace,
+  ): Option<Place> = when (namespace.table.modules.get(place.path.joinToString("."))) {
+    Some(DeclaredModule(m)) if m.file.source.path != place.file.source.path && enclosingApplication(
+      place.path,
+      namespace,
+    ).isNone() ->
       namespace.modules.specs.get(m.name).flatMap { followed ->
         spec = if (followed.file.source.path == place.file.source.path) Some(followed)
           else namespace.table.specs.toList().map { _, s -> s }.find { s -> s.file.source.path == place.file.source.path }
@@ -170,11 +180,18 @@ module Names {
   }
 
   // From the first number down to the last, both included.
-  private descending(from: Int, to: Int): List<Int> = if (from < to) [] else [from, *descending(from - 1, to)]
+  private descending(
+    from: Int,
+    to: Int,
+  ): List<Int> = if (from < to) [] else [from, *descending(from - 1, to)]
 
   // How many of the path's names, from the first, are packages: fckt.io in fckt.io.Files.
   private packageDepth(path: List<String>, depth: Int, table: SymbolTable): Int =
-    if (depth < path.size && isPackage(path.take(depth + 1).joinToString("."), table)) packageDepth(path, depth + 1, table)
+    if (depth < path.size && isPackage(path.take(depth + 1).joinToString("."), table)) packageDepth(
+      path,
+      depth + 1,
+      table,
+    )
     else depth
 
   private isPackage(name: String, table: SymbolTable): Boolean = when (table.modules.get(name)) {

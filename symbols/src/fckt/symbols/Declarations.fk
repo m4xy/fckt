@@ -2,13 +2,19 @@
 // annotation was given.
 module Declarations {
   // The types with the annotation named, by its full name, on them.
-  Symbols.annotatedWith(annotation: String): List<TypeDeclaration> = this.types.filter { it.annotations.named(annotation).isSome() }
+  Symbols.annotatedWith(
+    annotation: String,
+  ): List<TypeDeclaration> = this.types.filter { it.annotations.named(annotation).isSome() }
 
   // The annotation of the full name given, if it's one of these.
-  List<Annotation>.named(annotation: String): Option<Annotation> = this.find { it.name == annotation }
+  List<Annotation>.named(
+    annotation: String,
+  ): Option<Annotation> = this.find { it.name == annotation }
 
   // What the annotation was given for its field, if it was given anything.
-  Annotation.argument(field: String): Option<Value> = this.arguments.find { it.field == field }.map { it.value }
+  Annotation.argument(
+    field: String,
+  ): Option<Value> = this.arguments.find { it.field == field }.map { it.value }
 
   // Its name without what it's in: User for shop.User.
   TypeDeclaration.simpleName: String = this.name.substringAfterLast(".")

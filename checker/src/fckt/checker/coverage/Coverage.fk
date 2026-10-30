@@ -11,26 +11,44 @@ module Coverage {
 
   // Examples of values of type t that none of the patterns match, one for each shape that has
   // some: nothing, if they cover every value.
-  missing<T>(patterns: List<Matches>, t: T, alternatives: (T) -> Option<List<Alternative<T>>>): List<Matches> = {
+  missing<T>(
+    patterns: List<Matches>,
+    t: T,
+    alternatives: (T) -> Option<List<Alternative<T>>>,
+  ): List<Matches> = {
     rows = patterns.map { [it] }
     when (alternatives(t)) {
-      None -> unmatched(rows, [t], alternatives).map { found -> found.firstOrNone().toList() }.getOrElse([])
+      None -> unmatched(
+        rows,
+        [t],
+        alternatives,
+      ).map { found -> found.firstOrNone().toList() }.getOrElse([])
       Some(shapes) -> shapes.mapNotNull { a ->
-        unmatched(specialized(rows, a.shape, a.fields.size), a.fields, alternatives).map { found -> Matches(Some(a.shape), found) }
+        unmatched(
+          specialized(rows, a.shape, a.fields.size),
+          a.fields,
+          alternatives,
+        ).map { found -> Matches(Some(a.shape), found) }
       }
     }
   }
 
   // A row of values, of the types given, that no row of patterns matches, or None if every row of
   // values is matched by one of them. A value in it that any value would do for is anything.
-  private unmatched<T>(rows: List<List<Matches>>, types: List<T>, alternatives: (T) -> Option<List<Alternative<T>>>): Option<List<Matches>> =
+  private unmatched<T>(
+    rows: List<List<Matches>>,
+    types: List<T>,
+    alternatives: (T) -> Option<List<Alternative<T>>>,
+  ): Option<List<Matches>> =
     when (types) {
       [] -> if (rows.isEmpty()) Some([]) else None
       [t, *rest] -> {
         heads = rows.mapNotNull { row -> firstOf(row).shape }.distinct()
         when (alternatives(t)) {
           // Every shape is matched by some row: what's missing, if anything, is inside one.
-          Some(shapes) if heads.isNotEmpty() && shapes.all { heads.contains(it.shape) } -> insideOne(rows, shapes, rest, alternatives)
+          Some(
+            shapes,
+          ) if heads.isNotEmpty() && shapes.all { heads.contains(it.shape) } -> insideOne(rows, shapes, rest, alternatives)
           shapes -> unmatchedByAny(rows, heads, shapes, rest, alternatives)
         }
       }
@@ -45,7 +63,9 @@ module Coverage {
   ): Option<List<Matches>> = when (shapes) {
     [] -> None
     [a, *others] -> when (unmatched(specialized(rows, a.shape, a.fields.size), a.fields + rest, alternatives)) {
-      Some(found) -> Some([Matches(Some(a.shape), found.take(a.fields.size)), *found.drop(a.fields.size)])
+      Some(found) -> Some(
+        [Matches(Some(a.shape), found.take(a.fields.size)), *found.drop(a.fields.size)],
+      )
       None -> insideOne(rows, others, rest, alternatives)
     }
   }
@@ -72,7 +92,11 @@ module Coverage {
 
   // The rows that can match a value of the shape, with patterns for its fields in place of their
   // first: those of a row that names the shape, or anything, for one that matches anything.
-  private specialized(rows: List<List<Matches>>, shape: Shape, arity: Int): List<List<Matches>> = rows.mapNotNull { row ->
+  private specialized(
+    rows: List<List<Matches>>,
+    shape: Shape,
+    arity: Int,
+  ): List<List<Matches>> = rows.mapNotNull { row ->
     head = firstOf(row)
     when (head.shape) {
       None -> Some(anythings(arity) + row.drop(1))
@@ -82,7 +106,9 @@ module Coverage {
   }
 
   // As many patterns as are asked for, each matching anything.
-  private anythings(count: Int): List<Matches> = if (count <= 0) [] else [anything, *anythings(count - 1)]
+  private anythings(
+    count: Int,
+  ): List<Matches> = if (count <= 0) [] else [anything, *anythings(count - 1)]
 
   // A row's first pattern; rows are never empty where this is asked.
   private firstOf(row: List<Matches>): Matches = row.firstOrNone().getOrElse(anything)
@@ -110,7 +136,10 @@ module Coverage {
 
   // The items shown of a list pattern, and what's after them: the empty list, or what matches the
   // rest of it.
-  private listItems(m: Matches, items: List<String>): (List<String>, Matches) = when (m.shape, m.fields) {
+  private listItems(
+    m: Matches,
+    items: List<String>,
+  ): (List<String>, Matches) = when (m.shape, m.fields) {
     (Some(NonEmptyList), [item, rest]) -> listItems(rest, items + [shown(item)])
     else -> (items, m)
   }

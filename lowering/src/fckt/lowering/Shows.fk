@@ -13,12 +13,21 @@ module Shows {
     Named("Float", [], _) -> Identifier("fk_show_float")
     Named("String", [], _) -> Identifier("Fun.id")
     Named("Unit", [], _) -> Fun([ConstantPat(UnitConstant)], ConstantExpr(StringConstant("()")))
-    Named("Byte", [], _) -> Fun([VariablePat("b")], Application(Identifier("string_of_int"), [Application(Identifier("Char.code"), [Identifier("b")])]))
+    Named("Byte", [], _) -> Fun(
+      [VariablePat("b")],
+      Application(
+        Identifier("string_of_int"),
+        [Application(Identifier("Char.code"), [Identifier("b")])],
+      ),
+    )
     Named("Nothing", [], _) -> Fun([AnyPat], Verbatim("assert false"))
     Named("Lazy", _, _) -> Fun([AnyPat], ConstantExpr(StringConstant("Lazy(...)")))
     Named("List", [element], _) -> Application(Identifier("fk_show_list"), [show(element)])
     Named("Option", [element], _) -> Application(Identifier("fk_show_option"), [show(element)])
-    Named("Result", [value, error], _) -> Application(Identifier("fk_show_result"), [show(value), show(error)])
+    Named("Result", [value, error], _) -> Application(
+      Identifier("fk_show_result"),
+      [show(value), show(error)],
+    )
     TupleOf(elements) -> {
       names = elements.mapIndexed { i, _ -> "x$i" }
       shown = elements.mapIndexed { i, e -> Application(show(e), [Identifier("x$i")]) }
@@ -45,8 +54,14 @@ module Shows {
     Named(name, arguments, _) -> {
       shown = OcamlTypes.ocamlArguments(name, arguments).map { show(it) }
       when (toStringOf(name)) {
-        Some(f) -> Fun([VariablePat("v")], Application(Identifier(Naming.valueReference(f)), [Identifier("v"), *shown]))
-        None -> if (shown.isEmpty()) Identifier(showReference(name)) else Application(Identifier(showReference(name)), shown)
+        Some(f) -> Fun(
+          [VariablePat("v")],
+          Application(Identifier(Naming.valueReference(f)), [Identifier("v"), *shown]),
+        )
+        None -> if (shown.isEmpty()) Identifier(showReference(name)) else Application(
+          Identifier(showReference(name)),
+          shown,
+        )
       }
     }
     other -> fail("showing a value of type $other")
@@ -58,7 +73,9 @@ module Shows {
   // A declared type's show function, written from the module it's used in: Geometry.show_shape.
   @Lowering private showReference(full: String): String = {
     parts = full.split(".")
-    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [showName(full)]).joinToString(".")
+    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [showName(full)]).joinToString(
+      ".",
+    )
   }
 
   // The texts, joined, in order.

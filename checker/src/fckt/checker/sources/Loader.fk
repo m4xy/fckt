@@ -45,7 +45,10 @@ module Loader {
   )
 
   // Loads what each of the files' imports names, and what the files that brings in import in turn.
-  @Reporting @Mutating private follow(loading: Loading, files: List<LoadedFile>): Unit = files.forEach { file ->
+  @Reporting @Mutating private follow(
+    loading: Loading,
+    files: List<LoadedFile>,
+  ): Unit = files.forEach { file ->
     file.imports.forEach { i ->
       before = loading.files.size
       followImport(loading, file, i)
@@ -53,7 +56,11 @@ module Loader {
     }
   }
 
-  @Reporting @Mutating private followImport(loading: Loading, file: LoadedFile, i: Import): Unit = when (packageOf(loading.tree, i.path)) {
+  @Reporting @Mutating private followImport(
+    loading: Loading,
+    file: LoadedFile,
+    i: Import,
+  ): Unit = when (packageOf(loading.tree, i.path)) {
     None -> report(
       Diagnostic(
         file.source.path,
@@ -88,7 +95,13 @@ module Loader {
   // That what the import names after its package is there: a module, by its file, or what one of
   // the package's lower-case files declares. Only the core's modules' members are looked for
   // here; what the others have, the checker looks for.
-  @Reporting private checkImported(loading: Loading, importer: LoadedFile, i: Import, pkg: List<String>, rest: List<String>): Unit = when (rest) {
+  @Reporting private checkImported(
+    loading: Loading,
+    importer: LoadedFile,
+    i: Import,
+    pkg: List<String>,
+    rest: List<String>,
+  ): Unit = when (rest) {
     [] -> Unit
     [first, *members] -> {
       inPackage = loading.files.filter { it.package == pkg }
@@ -116,7 +129,11 @@ module Loader {
 
   // Whether the module file's module declares the member, or, if it declares something else, as
   // a file for a type does, whether that is the member.
-  private hasMember(file: LoadedFile, name: String, member: String): Boolean = when (file.declarations.find { it.name == name }) {
+  private hasMember(
+    file: LoadedFile,
+    name: String,
+    member: String,
+  ): Boolean = when (file.declarations.find { it.name == name }) {
     Some(Declaration(_, _, ModuleDefinition(declarations, _, _, _, _), _, _, _)) -> declarations.any { it.name == member }
     else -> false
   }
@@ -131,7 +148,11 @@ module Loader {
         .forEach { source -> loadFile(loading, pkg, source) }
     }
 
-  @Reporting @Mutating private loadFile(loading: Loading, pkg: List<String>, source: SourceText): Unit = when (parsed(source)) {
+  @Reporting @Mutating private loadFile(
+    loading: Loading,
+    pkg: List<String>,
+    source: SourceText,
+  ): Unit = when (parsed(source)) {
     None -> Unit
     Some(file) -> {
       name = fileName(source)
@@ -151,7 +172,10 @@ module Loader {
         // A program of its own: what it declares is its own, not its package's.
         if (pkg.isEmpty()) {
           loading.apart = file.declarations.fold(loading.apart) { found, d ->
-            if (found.containsKey(d.name)) found else found.put(d.name, source.path.getOrElse("a file"))
+            if (found.containsKey(d.name)) found else found.put(
+              d.name,
+              source.path.getOrElse("a file"),
+            )
           }
         }
       } else add(
@@ -172,7 +196,11 @@ module Loader {
 
   // That a capitalised file declares what it's named for, a module, type, spec or effect, and
   // nothing else but what's private to it.
-  @Reporting private checkDeclaresOnly(source: SourceText, name: String, declarations: List<Declaration>): Unit = {
+  @Reporting private checkDeclaresOnly(
+    source: SourceText,
+    name: String,
+    declarations: List<Declaration>,
+  ): Unit = {
     main = declarations.find { d -> d.name == name && d.visibility != Private && !isExtension(d) }
     when (main) {
       None -> report(
@@ -198,7 +226,9 @@ module Loader {
   }
 
   // The file's declarations and imports, or None, with why it can't be read reported.
-  @Reporting private parsed(source: SourceText): Option<SourceFile> = when (Parser.parse(source.text)) {
+  @Reporting private parsed(
+    source: SourceText,
+  ): Option<SourceFile> = when (Parser.parse(source.text)) {
     Ok(file) -> Some(file)
     Error(errors) -> {
       errors.forEach { report(Diagnostic(source.path, it.at, it.message)) }
@@ -210,7 +240,9 @@ module Loader {
   fileName(source: SourceText): String =
     source.path.getOrElse("").substringAfterLast("/").removeSuffix(".fk").removeSuffix(".fki")
 
-  private startsCapitalised(name: String): Boolean = name.getOrNone(0).map { it.isUpperCase() }.getOrElse(false)
+  private startsCapitalised(
+    name: String,
+  ): Boolean = name.getOrNone(0).map { it.isUpperCase() }.getOrElse(false)
 
   private shown(i: Import): String = i.path.joinToString(".") + (if (i.wildcard) ".*" else "")
 }

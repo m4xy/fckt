@@ -4,7 +4,9 @@ import fckt.collections.Stream
 module Generators {
   // What block yields, as a Stream: block runs up to each yield as the stream is read that far.
   // sequence { yield(1); yield(2) } is 1, then 2.
-  sequence<A>(block: @Yielding<A> () -> Unit): Stream<A> = Yielding(yield = (a, resume) -> Next(a, lazy(~resume(Unit)))) {
+  sequence<A>(
+    block: @Yielding<A> () -> Unit,
+  ): Stream<A> = Yielding(yield = (a, resume) -> Next(a, lazy(~resume(Unit)))) {
     block()
     End
   }

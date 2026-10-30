@@ -17,18 +17,25 @@ module Groups {
   // not as calls.
   @Abandoning ordered(all: List<Symbol>, environment: Environment): List<FunctionGroup> = {
     // A functor's parameter's members stand for whatever module it's given: they have no body.
-    isParameterMember = (f: Symbol) -> environment.definitions.namespace.modules.parameterMembers.contains(f.name)
+    isParameterMember = (f: Symbol) -> environment.definitions.namespace.modules.parameterMembers.contains(
+      f.name,
+    )
     functions = all.filter { f -> !isParameterMember(f) }
     uses = functions.map { f ->
       found = usesOf(f, environment)
       (f.name, Uses(found.functions.filter { u -> !isParameterMember(u) }, found.guessed))
     }.toMap()
     usedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions }.getOrElse([])
-    certainlyUsedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions.filter { used -> !u.guessed.contains(used.name) || used.path == f.path } }.getOrElse([])
+    certainlyUsedBy = (f: Symbol) -> uses.get(
+      f.name,
+    ).map { u -> u.functions.filter { used -> !u.guessed.contains(used.name) || used.path == f.path } }.getOrElse([])
     nameOf = (f: Symbol) -> f.name
     components = Components.stronglyConnected(functions, nameOf, usedBy).flatMap { component ->
       if (component.map { it.path }.distinct().size > 1)
-        Components.stronglyConnected(component, nameOf) { f -> certainlyUsedBy(f).filter { used -> component.any { it.name == used.name } } }
+        Components.stronglyConnected(
+          component,
+          nameOf,
+        ) { f -> certainlyUsedBy(f).filter { used -> component.any { it.name == used.name } } }
       else [component]
     }
     components.map { component ->
@@ -78,7 +85,10 @@ module Groups {
         [],
       )
     } else if (name.startsWith("operator ")) {
-      found = Globals.extensionsNamed(name.removePrefix("operator "), context).filter { Signatures.isOperator(it) }
+      found = Globals.extensionsNamed(
+        name.removePrefix("operator "),
+        context,
+      ).filter { Signatures.isOperator(it) }
       NameUses(found, found.filter { isOnlyPackageMates(it, context) }, [])
     } else {
       // A plain name is never an extension, which is only reached through what it extends, as .name.
@@ -88,14 +98,19 @@ module Groups {
       NameUses(found, [], found)
     }
 
-  private isOnlyPackageMates(f: Symbol, context: Context): Boolean = Globals.onlyAsPackageMate(f, context) == Some(true)
+  private isOnlyPackageMates(
+    f: Symbol,
+    context: Context,
+  ): Boolean = Globals.onlyAsPackageMate(f, context) == Some(true)
 
   // A module used as a handler or a value: its functions.
   private moduleFunctions(name: String, context: Context): List<Symbol> = {
     namespace = context.environment.definitions.namespace
     when (Lookups.found(Lookups.moduleNamed(name, context.place, namespace, Skipping))) {
       Some(DeclaredModule(m)) -> {
-        asValue = context.environment.moduleSpecs.get(m.name).map { spec -> Annotations.isEffect(spec, namespace) || isValueSpec(spec, namespace) }.getOrElse(false)
+        asValue = context.environment.moduleSpecs.get(
+          m.name,
+        ).map { spec -> Annotations.isEffect(spec, namespace) || isValueSpec(spec, namespace) }.getOrElse(false)
         if (asValue) context.environment.functions.toList().map { _, f -> f }.filter { f -> f.path == m.name.split(".") } else []
       }
       else -> []
@@ -106,12 +121,18 @@ module Groups {
   // type parameters.
   isValueSpec(spec: Symbol, namespace: Namespace): Boolean = when (spec.declaration.definition) {
     SpecDefinition(types, _, typeParameters, _, _) ->
-      !Annotations.isEffect(spec, namespace) && types.all { it.typeParameters.isEmpty() } && typeParameters.isEmpty()
+      !Annotations.isEffect(
+        spec,
+        namespace,
+      ) && types.all { it.typeParameters.isEmpty() } && typeParameters.isEmpty()
     else -> false
   }
 
   // The function or value the name means, or, for Module.name, the module's.
-  private declaredOrMember(name: String, context: Context): Option<Symbol> = Lookups.found(Globals.find(name, context, Skipping)).orElse {
+  private declaredOrMember(
+    name: String,
+    context: Context,
+  ): Option<Symbol> = Lookups.found(Globals.find(name, context, Skipping)).orElse {
     parts = name.split(".")
     if (parts.size < 2) None
     else Lookups.found(
@@ -132,9 +153,14 @@ module Groups {
     namespace = context.environment.definitions.namespace
     lastPart = name.split(".").lastOrNone().getOrElse(name)
     owners = Lookups.found(Globals.find(name, context, Skipping)).map { it.name }.toList() +
-      Lookups.found(Lookups.record(name, context.place, namespace, Skipping)).map { it.name }.toList() +
+      Lookups.found(
+        Lookups.record(name, context.place, namespace, Skipping),
+      ).map { it.name }.toList() +
       context.environment.extensions.getOrDefault(name, []).map { it.name } +
-      context.environment.casesByName.getOrDefault(lastPart, []).map { c -> "${c.owner.name}$${c.definition.name}" }
+      context.environment.casesByName.getOrDefault(
+        lastPart,
+        [],
+      ).map { c -> "${c.owner.name}$${c.definition.name}" }
     owners.flatMap { owner -> context.environment.orderedFunctions.filter { f -> f.name.startsWith(Defaults.nameOf(owner, "")) } }
   }
 }

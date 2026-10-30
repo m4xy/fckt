@@ -47,11 +47,21 @@ module Cases {
 
   // The type's cases, working out those of the types it takes cases from first; visiting are the
   // types whose cases are being worked out around this, which it mustn't take from.
-  @Abandoning @Mutating private casesOf(computing: Computing, symbol: Symbol, visiting: List<String>): List<CaseInfo> =
+  @Abandoning @Mutating private casesOf(
+    computing: Computing,
+    symbol: Symbol,
+    visiting: List<String>,
+  ): List<CaseInfo> =
     when (computing.done.get(symbol.name)) {
       Some(cases) -> cases
       None -> {
-        if (visiting.contains(symbol.name)) abandon(problem(symbol, symbol.declaration.at, "type '${Symbols.simpleName(symbol)}' includes itself"))
+        if (visiting.contains(symbol.name)) abandon(
+          problem(
+            symbol,
+            symbol.declaration.at,
+            "type '${Symbols.simpleName(symbol)}' includes itself",
+          ),
+        )
         else Unit
         place = Place(symbol.file, symbol.path)
         inner = visiting + [symbol.name]
@@ -103,7 +113,13 @@ module Cases {
     }
 
   // *Other<A>: each of Other's cases, as included.
-  @Abandoning @Mutating private includedCases(computing: Computing, symbol: Symbol, include: TypeRef, place: Place, visiting: List<String>): List<(CaseInfo, Position)> =
+  @Abandoning @Mutating private includedCases(
+    computing: Computing,
+    symbol: Symbol,
+    include: TypeRef,
+    place: Place,
+    visiting: List<String>,
+  ): List<(CaseInfo, Position)> =
     when (include) {
       NamedType(at, name, arguments) -> when (Lookups.caseType(name, place, computing.namespace, Refusing)) {
         Refused(why) -> abandon(problem(symbol, at, why))
@@ -118,7 +134,12 @@ module Cases {
     }
 
   // The cases with the case added, unless it's there already with the same fields' types.
-  @Abandoning private added(symbol: Symbol, cases: List<CaseInfo>, c: CaseInfo, at: Position): List<CaseInfo> =
+  @Abandoning private added(
+    symbol: Symbol,
+    cases: List<CaseInfo>,
+    c: CaseInfo,
+    at: Position,
+  ): List<CaseInfo> =
     when (cases.find { same(it, c) }) {
       None -> cases + [c]
       Some(existing) ->
@@ -135,12 +156,25 @@ module Cases {
   // A type as written, with each name the substitution has, and no type arguments, in its place.
   private substituted(t: TypeRef, substitution: Map<String, TypeRef>): TypeRef = when (t) {
     NamedType(at, name, []) if substitution.containsKey(name) -> substitution.getOrDefault(name, t)
-    NamedType(at, name, arguments) -> NamedType(at, name, arguments.map { substituted(it, substitution) })
-    FunctionType(at, parameters, result, effects) -> FunctionType(at, parameters.map { substituted(it, substitution) }, substituted(result, substitution), effects)
+    NamedType(at, name, arguments) -> NamedType(
+      at,
+      name,
+      arguments.map { substituted(it, substitution) },
+    )
+    FunctionType(at, parameters, result, effects) -> FunctionType(
+      at,
+      parameters.map { substituted(it, substitution) },
+      substituted(result, substitution),
+      effects,
+    )
     TupleType(at, elements) -> TupleType(at, elements.map { substituted(it, substitution) })
     EffectsType(_, _) -> t
     GivenType(at, name, given) -> GivenType(at, name, substituted(given, substitution))
   }
 
-  private problem(symbol: Symbol, position: Position, message: String): Diagnostic = Diagnostic(symbol.file.source.path, position, message)
+  private problem(
+    symbol: Symbol,
+    position: Position,
+    message: String,
+  ): Diagnostic = Diagnostic(symbol.file.source.path, position, message)
 }

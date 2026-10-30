@@ -16,7 +16,11 @@ import fckt.parser.*
 // What a module named as a value is.
 @Inferring moduleAsValue(m: ModuleSymbol, at: Position, context: Context): Typed = when (m) {
   DeclaredModule(s) -> when (context.environment.moduleSpecs.get(s.name)) {
-    Some(spec) if Annotations.isEffect(spec, context.environment.definitions.namespace) -> Typed(moduleHandler(s, spec, at, context), None, ModuleHandler(s, spec))
+    Some(spec) if Annotations.isEffect(spec, context.environment.definitions.namespace) -> Typed(
+      moduleHandler(s, spec, at, context),
+      None,
+      ModuleHandler(s, spec),
+    )
     spec -> {
       t = moduleValue(s, at, context)
       Typed(
@@ -32,7 +36,9 @@ import fckt.parser.*
 
 // Whether the module follows a handled effect's spec.
 isEffectModule(m: ModuleSymbol, context: Context): Boolean = when (m) {
-  DeclaredModule(s) -> context.environment.moduleSpecs.get(s.name).map { spec -> Annotations.isEffect(spec, context.environment.definitions.namespace) }.getOrElse(false)
+  DeclaredModule(s) -> context.environment.moduleSpecs.get(
+    s.name,
+  ).map { spec -> Annotations.isEffect(spec, context.environment.definitions.namespace) }.getOrElse(false)
   PackageModule(_) -> false
 }
 
@@ -43,7 +49,9 @@ isEffectModule(m: ModuleSymbol, context: Context): Boolean = when (m) {
     ModuleDefinition(_, _, [_, *_], _, _) -> true
     else -> false
   }
-  if (isFunctor) abandon(Globals.problem(context, at, "$own is a functor; give it modules first: $own(...)")) else Unit
+  if (isFunctor) abandon(
+    Globals.problem(context, at, "$own is a functor; give it modules first: $own(...)"),
+  ) else Unit
   if (context.environment.definitions.namespace.modules.parameterModules.contains(m.name)) {
     abandon(Globals.problem(context, at, "$own is a functor's module, which can't be a value yet"))
   } else Unit
@@ -58,9 +66,16 @@ isEffectModule(m: ModuleSymbol, context: Context): Boolean = when (m) {
     Some(spec) -> {
       table = context.environment.definitions.namespace.table
       ownTypes = specTypeNames(spec).map { t ->
-        typeDeclaration = table.records.get("${m.name}.$t").orElse { table.caseTypes.get("${m.name}.$t") }.orElse { table.aliases.get("${m.name}.$t") }
+        typeDeclaration = table.records.get(
+          "${m.name}.$t",
+        ).orElse { table.caseTypes.get("${m.name}.$t") }.orElse { table.aliases.get("${m.name}.$t") }
         when (typeDeclaration) {
-          Some(d) -> Conversion.declared(d, [], Globals.typeContext(context), context.environment.definitions)
+          Some(d) -> Conversion.declared(
+            d,
+            [],
+            Globals.typeContext(context),
+            context.environment.definitions,
+          )
           None -> abandon(Globals.problem(context, at, "$own doesn't say what its $t is"))
         }
       }
@@ -99,10 +114,17 @@ specTypeNames(spec: Symbol): List<String> = when (spec.declaration.definition) {
 
 // What a module given as a value has of the name, as its spec says, with the spec's own types as the
 // value's type says they are.
-@Solving moduleValueMember(specName: String, arguments: List<Type>, name: String, context: Context): Option<FieldReference> =
+@Solving moduleValueMember(
+  specName: String,
+  arguments: List<Type>,
+  name: String,
+  context: Context,
+): Option<FieldReference> =
   context.environment.definitions.namespace.table.specs.get(specName).flatMap { spec ->
     specValues(spec).find { it.name == name }.flatMap { value ->
-      context.environment.specTypes.get(spec.name).flatMap { types -> types.values.get(value.name) }.map { scheme ->
+      context.environment.specTypes.get(
+        spec.name,
+      ).flatMap { types -> types.values.get(value.name) }.map { scheme ->
         names = specTypeNames(spec)
         ModuleMember(spec, value, withOwnTypes(instantiate(scheme), names, arguments))
       }
@@ -114,10 +136,18 @@ specTypeNames(spec: Symbol): List<String> = when (spec.declaration.definition) {
   SpecOwnType(name, _) -> given.getOrNone(names.indexOf(name)).getOrElse(t)
   Named(n, arguments, region) -> Named(n, arguments.map { withOwnTypes(it, names, given) }, region)
   Abstract(n, arguments) -> Abstract(n, arguments.map { withOwnTypes(it, names, given) })
-  ModuleValue(n, arguments, own) -> ModuleValue(n, arguments.map { withOwnTypes(it, names, given) }, own)
+  ModuleValue(n, arguments, own) -> ModuleValue(
+    n,
+    arguments.map { withOwnTypes(it, names, given) },
+    own,
+  )
   Handler(n, arguments) -> Handler(n, arguments.map { withOwnTypes(it, names, given) })
   TupleOf(elements) -> TupleOf(elements.map { withOwnTypes(it, names, given) })
-  FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { withOwnTypes(it, names, given) }, withOwnTypes(result, names, given), effects)
+  FunctionOf(parameters, result, effects) -> FunctionOf(
+    parameters.map { withOwnTypes(it, names, given) },
+    withOwnTypes(result, names, given),
+    effects,
+  )
   other -> other
 }
 
@@ -126,7 +156,12 @@ specTypeNames(spec: Symbol): List<String> = when (spec.declaration.definition) {
   namespace = context.environment.definitions.namespace
   place = Annotations.placeOf(spec)
   own = Annotations.effectsOf(value.annotations, place, value.at, namespace)
-  if (own.isEmpty()) Annotations.effectsOf(spec.declaration.annotations, place, spec.declaration.at, namespace) else own
+  if (own.isEmpty()) Annotations.effectsOf(
+    spec.declaration.annotations,
+    place,
+    spec.declaration.at,
+    namespace,
+  ) else own
 }
 
 // Whether what a module following the spec does beyond what the value says stays inside it: so for
@@ -137,7 +172,12 @@ specTypeNames(spec: Symbol): List<String> = when (spec.declaration.definition) {
   place = Annotations.placeOf(spec)
   encapsulates = "fckt.lang.Encapsulates"
   Annotations.effectsOf(value.annotations, place, value.at, namespace).isEmpty() &&
-    Annotations.reached(spec.declaration.annotations, place, spec.declaration.at, namespace).any { r ->
+    Annotations.reached(
+      spec.declaration.annotations,
+      place,
+      spec.declaration.at,
+      namespace,
+    ).any { r ->
       r.declaration.name == encapsulates || Annotations.isMarked(
         r.declaration,
         encapsulates,

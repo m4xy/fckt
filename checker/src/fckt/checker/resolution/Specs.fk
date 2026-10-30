@@ -6,9 +6,18 @@ import fckt.parser.*
 module Specs {
   // The names of the spec's own types, then those of each it builds on, as they're found from
   // where it's written.
-  ownTypes(spec: Declaration, place: Place, namespace: Namespace): List<String> = ownTypesSeen(spec, place, namespace, [])
+  ownTypes(
+    spec: Declaration,
+    place: Place,
+    namespace: Namespace,
+  ): List<String> = ownTypesSeen(spec, place, namespace, [])
 
-  private ownTypesSeen(spec: Declaration, place: Place, namespace: Namespace, seen: List<String>): List<String> = when (spec.definition) {
+  private ownTypesSeen(
+    spec: Declaration,
+    place: Place,
+    namespace: Namespace,
+    seen: List<String>,
+  ): List<String> = when (spec.definition) {
     SpecDefinition(types, _, _, _, parents) -> types.map { it.name } + parents.flatMap { parent ->
       when (parent) {
         NamedType(_, name, _) -> when (Names.find(name, namespace.table.specs, s -> Some(s), full -> namespace.table.specs.containsKey(full), place, namespace, Skipping)) {

@@ -25,7 +25,9 @@ module HandledEffects {
   @Lowering declarations(d: DeclaredEffect): List<Item> = {
     own = simpleSnake(d.effect)
     generic = d.typeParameters.isNotEmpty()
-    variables = OcamlTypes.ocamlParameters(d.typeParameters).map { TypeVar(OcamlTypes.parameter(it)) }
+    variables = OcamlTypes.ocamlParameters(
+      d.typeParameters,
+    ).map { TypeVar(OcamlTypes.parameter(it)) }
     answering = TypeVar(answer)
     constructors = d.operations.map { op ->
       EffectOperation(
@@ -37,7 +39,9 @@ module HandledEffects {
     record = TypeDefinition(own + "_handler", OcamlTypes.ocamlParameters(d.typeParameters).map { OcamlTypes.parameter(it) } + [answer], RecordType(d.operations.map { op ->
       answers = when (op.parameters) {
         None -> OcamlTypes.typexpr(op.result)
-        Some(ps) -> (ps.map { OcamlTypes.typexpr(it) } + [Arrow(performedType(op), answering)]).reversed().fold(answering) { r, p -> Arrow(p, r) }
+        Some(ps) -> (ps.map { OcamlTypes.typexpr(it) } + [Arrow(performedType(op), answering)]).reversed().fold(
+          answering,
+        ) { r, p -> Arrow(p, r) }
       }
       // An operation's own type parameters, atomically<A>'s, are its field's: a handler answers it
       // whatever they are where it's performed.
@@ -60,7 +64,10 @@ module HandledEffects {
       field = FieldAccess(Identifier("h"), Naming.snake(op.name))
       answered = when (op.parameters) {
         None -> Application(Identifier("Effect.Deep.continue"), [Identifier("k"), known(field)])
-        Some(_) -> Application(field, names.map { known(Identifier(it)) } + [Fun([VariablePat("v")], Application(Identifier("Effect.Deep.continue"), [Identifier("k"), known(Identifier("v"))]))])
+        Some(_) -> Application(
+          field,
+          names.map { known(Identifier(it)) } + [Fun([VariablePat("v")], Application(Identifier("Effect.Deep.continue"), [Identifier("k"), known(Identifier("v"))]))],
+        )
       }
       Case(
         EffectPat(ConstructorPat(Naming.ownName(d.effect) + "_" + op.name, Some(carried)), "k"),
@@ -81,15 +88,31 @@ module HandledEffects {
 
   // main, given the command line's arguments if it takes them, run in each default handler, the
   // first innermost.
-  @Lowering runningMain(main: Symbol, takesArguments: Boolean, defaults: List<DefaultHandler>): Expr = {
-    arguments = if (takesArguments) Application(Identifier("List.tl"), [Application(Identifier("Array.to_list"), [Identifier("Sys.argv")])]) else ConstantExpr(UnitConstant)
-    defaults.fold(Application(Identifier(Naming.valueReference(main)), [arguments])) { inner, d -> handled(d.effect, moduleHandler(d.handler, d.effect), inner) }
+  @Lowering runningMain(
+    main: Symbol,
+    takesArguments: Boolean,
+    defaults: List<DefaultHandler>,
+  ): Expr = {
+    arguments = if (takesArguments) Application(
+      Identifier("List.tl"),
+      [Application(Identifier("Array.to_list"), [Identifier("Sys.argv")])],
+    ) else ConstantExpr(
+      UnitConstant,
+    )
+    defaults.fold(
+      Application(Identifier(Naming.valueReference(main)), [arguments]),
+    ) { inner, d -> handled(d.effect, moduleHandler(d.handler, d.effect), inner) }
   }
 
   // What performing the operation gives back: its result, or, if it may fail, its result or why it
   // failed.
   @Lowering private performedType(op: DeclaredOperation): Typexpr =
-    if (op.failsAtCall) TypeApplication("result", [OcamlTypes.typexpr(op.result), TypeApplication("string", [])]) else OcamlTypes.typexpr(op.result)
+    if (op.failsAtCall) TypeApplication(
+      "result",
+      [OcamlTypes.typexpr(op.result), TypeApplication("string", [])],
+    ) else OcamlTypes.typexpr(
+      op.result,
+    )
 
   // Performing the operation with what's carried: an operation that may fail is answered with why it
   // did, to fail with here.
@@ -110,11 +133,19 @@ module HandledEffects {
   }
 
   @Lowering private failsAtCall(effect: Symbol, operation: String): Boolean =
-    effectOf(effect.name).flatMap { d -> d.operations.find { it.name == operation } }.map { it.failsAtCall }.getOrElse(false)
+    effectOf(
+      effect.name,
+    ).flatMap { d -> d.operations.find { it.name == operation } }.map { it.failsAtCall }.getOrElse(false)
 
   // Failing with the reason, as fail(reason) does, from wherever this is.
   @Lowering private failing(reason: Expr): Expr = when (effectOf(failEffect)) {
-    Some(fail) -> Match(Application(Identifier("Effect.perform"), [Construction(operationConstructor(fail.effect, "fail"), Some(reason))]), [Case(AnyPat, None, Verbatim("assert false"))])
+    Some(fail) -> Match(
+      Application(
+        Identifier("Effect.perform"),
+        [Construction(operationConstructor(fail.effect, "fail"), Some(reason))],
+      ),
+      [Case(AnyPat, None, Verbatim("assert false"))],
+    )
     None -> Application(Identifier("failwith"), [reason])
   }
 
@@ -132,11 +163,16 @@ module HandledEffects {
   @Lowering moduleHandler(module: Symbol, effect: Symbol): Expr =
     answers(
       effect,
-      operationsOf(effect).map { op -> (op.name, Identifier(modulePath(module) + "." + Naming.snake(op.name)), false) },
+      operationsOf(
+        effect,
+      ).map { op -> (op.name, Identifier(modulePath(module) + "." + Naming.snake(op.name)), false) },
     )
 
   // A handler made from an answer to each operation.
-  @Lowering madeHandler(effect: Symbol, given: List<(String, Expr, Boolean)>): Expr = answers(effect, given)
+  @Lowering madeHandler(
+    effect: Symbol,
+    given: List<(String, Expr, Boolean)>,
+  ): Expr = answers(effect, given)
 
   // The record of answers, of the effect's handler type, each answer as given if it takes resume, or
   // is a value's, and otherwise a function of the operation's arguments that resumes with what it
@@ -149,11 +185,24 @@ module HandledEffects {
       FieldValue(Naming.snake(name), when (op.flatMap { it.parameters }) {
         Some(parameters) -> {
           names = parameters.mapIndexed { i, _ -> "x$i" }
-          arguments = if (names.isEmpty()) [ConstantExpr(UnitConstant)] else names.map { Identifier(it) }
+          arguments = if (names.isEmpty()) [
+            ConstantExpr(UnitConstant),
+          ] else names.map { Identifier(it) }
           taking = names.map { VariablePat(it) } + [VariablePat("k")]
           if (resumes && !fails) a
           // Resumed with what it gives, which didn't fail.
-          else if (resumes) Fun(taking, Application(a, arguments + [Fun([VariablePat("v")], Application(Identifier("k"), [Construction("Ok", Some(Identifier("v")))]))]))
+          else if (resumes) Fun(
+            taking,
+            Application(
+              a,
+              arguments + [
+                Fun(
+                  [VariablePat("v")],
+                  Application(Identifier("k"), [Construction("Ok", Some(Identifier("v")))]),
+                ),
+              ],
+            ),
+          )
           else if (!fails) Fun(taking, Application(Identifier("k"), [Application(a, arguments)]))
           // Its failing is caught as it gives its answer, and failed with again where it was performed.
           else Fun(taking, Application(Identifier("k"), [caught(Application(a, arguments))]))
@@ -187,12 +236,23 @@ module HandledEffects {
   }
 
   // [local], declared next to the effect, written from the module it's used in.
-  @Lowering private nextTo(effect: Symbol, local: String): String = (Naming.relative(effect.path).map { Naming.moduleName(it) } + [local]).joinToString(".")
+  @Lowering private nextTo(
+    effect: Symbol,
+    local: String,
+  ): String = (Naming.relative(effect.path).map { Naming.moduleName(it) } + [local]).joinToString(
+    ".",
+  )
 
   // A module, written from the module it's used in: Fckt.Io.Terminal.
-  @Lowering private modulePath(m: Symbol): String = Naming.relative(m.path + [Naming.ownName(m)]).map { Naming.moduleName(it) }.joinToString(".")
+  @Lowering private modulePath(
+    m: Symbol,
+  ): String = Naming.relative(
+    m.path + [Naming.ownName(m)],
+  ).map { Naming.moduleName(it) }.joinToString(".")
 
-  private simpleSnake(effect: Symbol): String = Naming.snake(Naming.ownName(effect)).removeSuffix("_")
+  private simpleSnake(
+    effect: Symbol,
+  ): String = Naming.snake(Naming.ownName(effect)).removeSuffix("_")
 
   private operationsOf(effect: Symbol): List<SpecValue> = when (effect.declaration.definition) {
     SpecDefinition(_, values, _, _, _) -> values

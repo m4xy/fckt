@@ -68,7 +68,10 @@ module Lexer {
       [] -> true
       [last, *_] -> continuesLine.contains(last.kind)
     }
-    if (inBraces && !continues && !nextLineContinues(s, s.index)) add(s, Token(Newline, "\n", start))
+    if (inBraces && !continues && !nextLineContinues(s, s.index)) add(
+      s,
+      Token(Newline, "\n", start),
+    )
   }
 
   // Whether the next line, past blank ones and comments, goes on with the one before: starts with
@@ -76,12 +79,22 @@ module Lexer {
   private nextLineContinues(s: Scan, from: Int): Boolean = {
     at = pastSpace(s.chars, from)
     if (startsWith(s, at, "//")) nextLineContinues(s, lineEnd(s.chars, at))
-    else (startsWith(s, at, ".") && !startsWith(s, at, "..")) || ["|>", "&&", "||"].any { startsWith(s, at, it) }
+    else (startsWith(s, at, ".") && !startsWith(s, at, "..")) || [
+      "|>",
+      "&&",
+      "||",
+    ].any { startsWith(s, at, it) }
   }
 
-  private pastSpace(chars: Array<Char>, at: Int): Int = if (at < chars.size && chars[at].isWhitespace()) pastSpace(chars, at + 1) else at
+  private pastSpace(
+    chars: Array<Char>,
+    at: Int,
+  ): Int = if (at < chars.size && chars[at].isWhitespace()) pastSpace(chars, at + 1) else at
 
-  private lineEnd(chars: Array<Char>, at: Int): Int = if (at < chars.size && chars[at] != '\n') lineEnd(chars, at + 1) else at
+  private lineEnd(
+    chars: Array<Char>,
+    at: Int,
+  ): Int = if (at < chars.size && chars[at] != '\n') lineEnd(chars, at + 1) else at
 
   @Rejecting @Mutating private skipSpaceAndComments(s: Scan): Unit = if (!ended(s)) {
     c = current(s)
@@ -200,7 +213,9 @@ module Lexer {
       advance(s)
     }
     when ("0x$hex".toIntOrNone()) {
-      Some(code) if (braced || hex.length == 4) && code >= 0 && code <= 1114111 && (code < 55296 || code > 57343) -> code.toChar().toString()
+      Some(
+        code,
+      ) if (braced || hex.length == 4) && code >= 0 && code <= 1114111 && (code < 55296 || code > 57343) -> code.toChar().toString()
       else -> reject(
         start,
         "\\u takes four hex digits, as \\u00e9, or a code point in braces, as \\u{1F600}",
@@ -334,12 +349,16 @@ module Lexer {
       advance(s)
     }
 
-  @Mutating private skipRaw(s: Scan): Unit = if (!ended(s) && !(looking(s, "\"\"\"") && !looking(s, "\"\"\"\""))) {
+  @Mutating private skipRaw(
+    s: Scan,
+  ): Unit = if (!ended(s) && !(looking(s, "\"\"\"") && !looking(s, "\"\"\"\""))) {
     advance(s)
     skipRaw(s)
   }
 
-  @Mutating private skipQuoted(s: Scan): Unit = if (!ended(s) && current(s) != '"' && current(s) != '\n') {
+  @Mutating private skipQuoted(
+    s: Scan,
+  ): Unit = if (!ended(s) && current(s) != '"' && current(s) != '\n') {
     advanceBy(s, if (current(s) == '\\') 2 else 1)
     skipQuoted(s)
   }
@@ -444,7 +463,10 @@ module Lexer {
   private current(s: Scan): Char = s.chars[s.index]
 
   // The character n past the cursor, if the source goes that far.
-  private ahead(s: Scan, n: Int): Option<Char> = if (s.index + n < s.chars.size) Some(s.chars[s.index + n]) else None
+  private ahead(
+    s: Scan,
+    n: Int,
+  ): Option<Char> = if (s.index + n < s.chars.size) Some(s.chars[s.index + n]) else None
 
   private position(s: Scan): Position = Position(s.line, s.column)
 
@@ -458,7 +480,11 @@ module Lexer {
   }
 
   // The characters from index from up to, not including, to.
-  private text(s: Scan, from: Int, to: Int): String = charsBetween(s.chars, from, to, []).map { it.toString() }.joinToString("")
+  private text(
+    s: Scan,
+    from: Int,
+    to: Int,
+  ): String = charsBetween(s.chars, from, to, []).map { it.toString() }.joinToString("")
 
   private charsBetween(chars: Array<Char>, from: Int, to: Int, after: List<Char>): List<Char> =
     if (to <= from) after else charsBetween(chars, from, to - 1, [chars[to - 1], *after])
@@ -478,7 +504,10 @@ module Lexer {
     advanceBy(s, n - 1)
   }
 
-  @Mutating private skipWhile(s: Scan, keep: (Char) -> Boolean): Unit = if (!ended(s) && keep(current(s))) {
+  @Mutating private skipWhile(
+    s: Scan,
+    keep: (Char) -> Boolean,
+  ): Unit = if (!ended(s) && keep(current(s))) {
     advance(s)
     skipWhile(s, keep)
   }

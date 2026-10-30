@@ -43,7 +43,10 @@ record shop.User
   field home Option<shop.Address>
 """
 
-@Fail typeNamed(symbols: Symbols, name: String): TypeDeclaration = when (symbols.types.find { it.name == name }) {
+@Fail typeNamed(
+  symbols: Symbols,
+  name: String,
+): TypeDeclaration = when (symbols.types.find { it.name == name }) {
   Some(found) -> found
   None -> fail("there's no $name")
 }

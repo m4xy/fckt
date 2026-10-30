@@ -50,13 +50,19 @@ module Files {
 
   // Runs body with the file to read, a line or some bytes at a time, and closes it after, even if
   // body fails. Only body can read it, so nothing reads it once it's closed.
-  @FileSystem Path.reading<A>(body: @Reader () -> A): A = readingAll(orFail(tryOpenForReading(this)), body)
+  @FileSystem Path.reading<A>(
+    body: @Reader () -> A,
+  ): A = readingAll(orFail(tryOpenForReading(this)), body)
 
   // Runs body with the file to write to, from the start, and closes it after, even if body fails.
-  @FileSystem Path.writing<A>(body: @Writer () -> A): A = writingAll(orFail(tryOpenForWriting(this, false)), body)
+  @FileSystem Path.writing<A>(
+    body: @Writer () -> A,
+  ): A = writingAll(orFail(tryOpenForWriting(this, false)), body)
 
   // Runs body with the file to write to, after what's in it.
-  @FileSystem Path.appending<A>(body: @Writer () -> A): A = writingAll(orFail(tryOpenForWriting(this, true)), body)
+  @FileSystem Path.appending<A>(
+    body: @Writer () -> A,
+  ): A = writingAll(orFail(tryOpenForWriting(this, true)), body)
 
   private @Fail orFail<A>(result: Result<A, String>): A = when (result) {
     Ok(value) -> value
@@ -66,15 +72,24 @@ module Files {
   // The files and folders of the machine the program runs on, which main uses.
   module Local : FileSystem {
     tryReadBytes(path: Path): Result<Bytes, String> = read(path.value)
-    tryWriteBytes(path: Path, bytes: Bytes, append: Boolean): Result<Unit, String> = write(path.value, bytes, append)
+    tryWriteBytes(
+      path: Path,
+      bytes: Bytes,
+      append: Boolean,
+    ): Result<Unit, String> = write(path.value, bytes, append)
     tryCopy(source: Path, target: Path): Result<Unit, String> = copy(source.value, target.value)
     exists(path: Path): Boolean = fileExists(path.value)
     isDirectory(path: Path): Boolean = directory(path.value)
-    tryListFiles(path: Path): Result<List<Path>, String> = list(path.value).map { names -> names.map { path.resolve(it) } }
+    tryListFiles(
+      path: Path,
+    ): Result<List<Path>, String> = list(path.value).map { names -> names.map { path.resolve(it) } }
     tryMakeDirs(path: Path): Result<Unit, String> = mkdirs(path.value)
     tryDelete(path: Path): Result<Unit, String> = remove(path.value)
     tryOpenForReading(path: Path): Result<InputHandle, String> = openIn(path.value)
-    tryOpenForWriting(path: Path, append: Boolean): Result<OutputHandle, String> = openOut(path.value, append)
+    tryOpenForWriting(
+      path: Path,
+      append: Boolean,
+    ): Result<OutputHandle, String> = openOut(path.value, append)
     tryLastModified(path: Path): Result<Instant, String> = modified(path.value).map { Instant(it) }
     tryCanonical(path: Path): Result<Path, String> = realPath(path.value).map { it.toPath() }
     workingDirectory(): Path = currentDirectory(Unit).toPath()
@@ -106,6 +121,8 @@ module Files {
     private external realPath(path: String): Result<String, String> =
       "(fun p -> try Ok (Unix.realpath p) with Unix.Unix_error (e, _, _) -> Error (p ^ \": \" ^ Unix.error_message e)) path"
     private external currentDirectory(u: Unit): String = "(fun _ -> Sys.getcwd ()) u"
-    private external changeTo(path: String): Result<Unit, String> = "(fun p -> try Ok (Sys.chdir p) with Sys_error e -> Error e) path"
+    private external changeTo(
+      path: String,
+    ): Result<Unit, String> = "(fun p -> try Ok (Sys.chdir p) with Sys_error e -> Error e) path"
   }
 }

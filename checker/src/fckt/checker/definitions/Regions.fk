@@ -36,7 +36,12 @@ module Regions {
 
   // Whether a value of the written type holds one of the types found. A function isn't a value that
   // changes, whatever it takes or gives.
-  private holds(t: TypeRef, place: Place, found: List<String>, namespace: Namespace): Boolean = when (t) {
+  private holds(
+    t: TypeRef,
+    place: Place,
+    found: List<String>,
+    namespace: Namespace,
+  ): Boolean = when (t) {
     FunctionType(_, _, _, _) -> false
     EffectsType(_, _) -> false
     TupleType(_, elements) -> elements.any { holds(it, place, found, namespace) }
@@ -45,7 +50,12 @@ module Regions {
   }
 
   // Whether the type of that name is one found, or an alias for a type that holds one.
-  private isHolding(name: String, place: Place, found: List<String>, namespace: Namespace): Boolean = {
+  private isHolding(
+    name: String,
+    place: Place,
+    found: List<String>,
+    namespace: Namespace,
+  ): Boolean = {
     declared = Lookups.found(Lookups.record(name, place, namespace, Skipping))
       .orElse { Lookups.found(Lookups.caseType(name, place, namespace, Skipping)) }
     when (declared) {

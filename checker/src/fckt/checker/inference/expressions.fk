@@ -15,10 +15,16 @@ import fckt.parser.*
 @Inferring infer(e: Expression, expected: Option<Type>, scope: Scope, context: Context): Typed = {
   inner = inferInner(e, expected, scope, context)
   // What has no core yet says what kind of expression it is.
-  typed = if (inner.core == Pending("an expression")) inner.copy(core = Pending(kindOf(e))) else inner
+  typed = if (inner.core == Pending("an expression")) inner.copy(
+    core = Pending(kindOf(e)),
+  ) else inner
   when (e) {
     // A call that gives Nothing never returns, so it fits wherever it is.
-    Call(_, _, _, _) if isNamed(resolved(typed.t), "Nothing") -> Typed(Variable(fresh()), None, Absurd(typed.core))
+    Call(_, _, _, _) if isNamed(resolved(typed.t), "Nothing") -> Typed(
+      Variable(fresh()),
+      None,
+      Absurd(typed.core),
+    )
     else -> typed
   }
 }
@@ -59,18 +65,37 @@ private kindOf(e: Expression): String = when (e) {
   }
 }
 
-@Inferring private inferInner(e: Expression, expected: Option<Type>, scope: Scope, context: Context): Typed = when (e) {
+@Inferring private inferInner(
+  e: Expression,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = when (e) {
   Assign(at, target, value) -> inferAssign(at, target, value, scope, context)
-  Handle(at, handler, block, parameters) -> inferHandle(at, handler, block, parameters, expected, scope, context)
+  Handle(at, handler, block, parameters) -> inferHandle(
+    at,
+    handler,
+    block,
+    parameters,
+    expected,
+    scope,
+    context,
+  )
   // An integer literal can stand for a float where one is expected.
   IntConstant(_, value) ->
-    if (expected.map { isNamed(resolved(it), "Float") }.getOrElse(false)) Typed(float, None, Value(FloatLiteral(value.toFloat())))
+    if (expected.map { isNamed(resolved(it), "Float") }.getOrElse(false)) Typed(
+      float,
+      None,
+      Value(FloatLiteral(value.toFloat())),
+    )
     else Typed(int, None, Value(IntLiteral(value)))
   FloatConstant(_, value) -> Typed(float, None, Value(FloatLiteral(value)))
   BooleanConstant(_, value) -> Typed(boolean, None, Value(BooleanLiteral(value)))
   CharConstant(_, c) -> Typed(char, None, Value(CharLiteral(c.code)))
   Tuple(_, elements) -> inferTuple(elements, expected, scope, context)
-  Spread(at, _) -> abandon(Globals.problem(context, at, "'*' can only spread a list inside a list literal"))
+  Spread(at, _) -> abandon(
+    Globals.problem(context, at, "'*' can only spread a list inside a list literal"),
+  )
   StringTemplate(_, parts) -> Typed(string, None, joined(parts.map { part ->
     when (part) {
       Interpolation(inner) -> {
@@ -82,20 +107,64 @@ private kindOf(e: Expression): String = when (e) {
   }))
   Name(at, name) -> inferName(at, name, expected, scope, context)
   ListOf(at, items) -> inferList(at, items, expected, scope, context)
-  Call(at, callee, arguments, typeArguments) -> inferCall(at, callee, arguments.map { written(it) }, typeArguments, expected, scope, context)
+  Call(at, callee, arguments, typeArguments) -> inferCall(
+    at,
+    callee,
+    arguments.map { written(it) },
+    typeArguments,
+    expected,
+    scope,
+    context,
+  )
   Member(at, target, name) -> inferMember(at, target, name, expected, scope, context)
   Binary(at, operator, left, right) -> inferBinary(at, operator, left, right, scope, context)
-  Unary(at, "!", operand) -> Typed(boolean, None, Operated(Not, [check(operand, boolean, scope, context)]))
+  Unary(at, "!", operand) -> Typed(
+    boolean,
+    None,
+    Operated(Not, [check(operand, boolean, scope, context)]),
+  )
   Unary(at, operator, operand) -> inferNegation(at, operator, operand, expected, scope, context)
-  Lambda(at, parameters, body, ignoresArguments) -> inferLambda(at, Some(parameters), body, ignoresArguments, false, expected, scope, context)
+  Lambda(at, parameters, body, ignoresArguments) -> inferLambda(
+    at,
+    Some(parameters),
+    body,
+    ignoresArguments,
+    false,
+    expected,
+    scope,
+    context,
+  )
   Pipe(at, value, function) -> inferPipe(at, value, function, scope, context)
-  If(at, condition, then, otherwise, hasElse) -> inferIf(at, condition, then, otherwise, hasElse, expected, scope, context)
+  If(at, condition, then, otherwise, hasElse) -> inferIf(
+    at,
+    condition,
+    then,
+    otherwise,
+    hasElse,
+    expected,
+    scope,
+    context,
+  )
   When(at, subject, branches) -> inferWhen(at, subject, branches, expected, scope, context)
-  Block(at, statements, result, endsInBinding) -> inferBlock(at, statements, result, endsInBinding, expected, scope, None, context)
+  Block(at, statements, result, endsInBinding) -> inferBlock(
+    at,
+    statements,
+    result,
+    endsInBinding,
+    expected,
+    scope,
+    None,
+    context,
+  )
   Monadic(at, monad, block) -> inferMonadic(at, monad, block, scope, context)
 }
 
-@Inferring private inferTuple(elements: List<Expression>, expected: Option<Type>, scope: Scope, context: Context): Typed = {
+@Inferring private inferTuple(
+  elements: List<Expression>,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = {
   hint = expected.flatMap { t ->
     when (resolved(t)) {
       TupleOf(parts) if parts.size == elements.size -> Some(parts)
@@ -113,7 +182,13 @@ private kindOf(e: Expression): String = when (e) {
 
 // [a, b, *rest]: a list of what its items are, joined, or of what's expected of them; each spread
 // list a list of that.
-@Inferring private inferList(at: Position, items: List<Expression>, expected: Option<Type>, scope: Scope, context: Context): Typed = {
+@Inferring private inferList(
+  at: Position,
+  items: List<Expression>,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = {
   given = known(expected.flatMap { t ->
     when (resolved(t)) {
       Named("List", [element], _) -> Some(element)
@@ -138,7 +213,11 @@ private kindOf(e: Expression): String = when (e) {
 }
 
 // The list's items, in order, from the cores of its items and of its spread lists, each in order.
-private inOrder(items: List<Expression>, elements: List<Core>, spreads: List<Core>): List<ListItem> = when (items) {
+private inOrder(
+  items: List<Expression>,
+  elements: List<Core>,
+  spreads: List<Core>,
+): List<ListItem> = when (items) {
   [] -> []
   [Spread(_, _), *rest] -> spreads.firstOrNone().map { [SpreadItems(it)] }.getOrElse([]) + inOrder(rest, elements, spreads.drop(1))
   [_, *rest] -> elements.firstOrNone().map { [OneItem(it)] }.getOrElse([]) + inOrder(rest, elements.drop(1), spreads)
@@ -170,7 +249,14 @@ private joined(parts: List<Core>): Core = when (parts) {
 }
 
 // -x: a number's minus, or, for a type whose operators are its own, its unaryMinus.
-@Inferring private inferNegation(at: Position, operator: String, operand: Expression, expected: Option<Type>, scope: Scope, context: Context): Typed = {
+@Inferring private inferNegation(
+  at: Position,
+  operator: String,
+  operand: Expression,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed = {
   typed = infer(operand, expected, scope, context)
   t = resolved(typed.t)
   if (ownsOperators(t) && Globals.extensionsNamed(References.unaryMinus, context).any { s -> Signatures.isOperator(s) && fitsReceiver(s, t, context) })
@@ -253,24 +339,52 @@ private joined(parts: List<Core>): Core = when (parts) {
 ): Typed =
   when (Scopes.lookup(scope, name)) {
     Some(local) ->
-      if (local.hides) abandon(Globals.problem(context, at, "this block's 'it' hides the 'it' outside it: name this block's parameter, { x -> ... }"))
+      if (local.hides) abandon(
+        Globals.problem(
+          context,
+          at,
+          "this block's 'it' hides the 'it' outside it: name this block's parameter, { x -> ... }",
+        ),
+      )
       else Typed(local.t, None, LocalRead(name, local.region.isSome()))
     None -> when (Globals.findOrRefuse(name, at, context)) {
-      Some(global) -> Typed(Globals.typeOf(global, at, context), None, if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global))
+      Some(global) -> Typed(
+        Globals.typeOf(global, at, context),
+        None,
+        if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global),
+      )
       None -> when (operationNamed(name, at, context)) {
-        Some(operation) -> Typed(operationValue(operation, at, context), None, operationCore(operation))
+        Some(operation) -> Typed(
+          operationValue(operation, at, context),
+          None,
+          operationCore(operation),
+        )
         None -> when (constructorShape(name, expected, at, true, None, true, scope, context)) {
           Some(shape) -> Typed(
-            if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(shape.fieldTypes, shape.result, Row([], Some(fresh()))),
+            if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(
+              shape.fieldTypes,
+              shape.result,
+              Row([], Some(fresh())),
+            ),
             spelledCase(shape),
             constructorValue(shape),
           )
           None -> when (builtinFunction(name)) {
-            Some(t) -> Typed(t, None, if (name == "Unit") Value(UnitLiteral) else Pending("$name, used as a value"))
+            Some(t) -> Typed(
+              t,
+              None,
+              if (name == "Unit") Value(UnitLiteral) else Pending("$name, used as a value"),
+            )
             None -> when (Lookups.found(Lookups.moduleNamed(name, context.place, context.environment.definitions.namespace, Skipping))) {
               Some(m) -> moduleAsValue(m, at, context)
               None ->
-                if (name == "it") abandon(Globals.problem(context, at, "there's no 'it' here: only a block given as a function of one parameter has one, as in xs.filter { it > 1 }"))
+                if (name == "it") abandon(
+                  Globals.problem(
+                    context,
+                    at,
+                    "there's no 'it' here: only a block given as a function of one parameter has one, as in xs.filter { it > 1 }",
+                  ),
+                )
                 else abandon(
                   Globals.problem(
                     context,
@@ -311,7 +425,13 @@ constructorValue(shape: ConstructorShape): Core =
 }
 
 // x = value, or r.field = value: changes a var, so it's @Mutating on where the var lives.
-@Inferring private inferAssign(at: Position, target: Expression, value: Expression, scope: Scope, context: Context): Typed = {
+@Inferring private inferAssign(
+  at: Position,
+  target: Expression,
+  value: Expression,
+  scope: Scope,
+  context: Context,
+): Typed = {
   // Where what's changed lives, what it holds, and the change, as core, given the new value's.
   (region, targetType, change) = when (target) {
     Name(nameAt, name) -> when (Scopes.lookup(scope, name)) {
@@ -338,7 +458,9 @@ constructorValue(shape: ConstructorShape): Core =
             "$name can't be changed here: its case is shared with another type, and OCaml can't change such a case's fields in place"))
           else (narrowing.caseName, narrowing.fields)
         Some(RecordField(record, _)) -> (Symbols.simpleName(record), recordFieldsOf(record))
-        Some(ModuleMember(_, _, _)) -> abandon(Globals.problem(context, at, "only a var or a var field can be assigned to"))
+        Some(ModuleMember(_, _, _)) -> abandon(
+          Globals.problem(context, at, "only a var or a var field can be assigned to"),
+        )
         None -> abandon(noField(memberAt, receiverExpression, name, receiver, context))
       }
       if (!fields.any { f -> f.name == name && f.variable }) {
@@ -353,7 +475,13 @@ constructorValue(shape: ConstructorShape): Core =
       fieldType = infer(target, None, scope, context).t
       writing = (v: Core) -> when ((field, receiverExpression)) {
         (Some(RecordField(record, _)), _) -> FieldWritten(receiverTyped.core, record, name, v)
-        (Some(NarrowedField(narrowing, _)), Name(_, local)) -> NarrowedWritten(local, narrowing.caseName, narrowing.caseType, name, v)
+        (Some(NarrowedField(narrowing, _)), Name(_, local)) -> NarrowedWritten(
+          local,
+          narrowing.caseName,
+          narrowing.caseType,
+          name,
+          v,
+        )
         else -> Pending("changing a field")
       }
       when (receiver) {

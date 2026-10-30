@@ -27,7 +27,11 @@ module InTurn : Executor {
   }
 
   // Runs work as the task id, handling what it asks of Concurrent, until it gives way.
-  @Mutating private task<@E>(state: Run, id: Int, work: @Concurrent<@E> @E () -> Unit): Unit = Concurrent(
+  @Mutating private task<@E>(
+    state: Run,
+    id: Int,
+    work: @Concurrent<@E> @E () -> Unit,
+  ): Unit = Concurrent(
     launch = (launched, resume) -> {
       next = state.next
       state.next = next + 1
@@ -70,7 +74,10 @@ module InTurn : Executor {
     None -> Unit
   }
 
-  @Mutating @Fail private loop<@E>(state: Run, idle: @E () -> List<Waker>): Unit = when (state.ready) {
+  @Mutating @Fail private loop<@E>(
+    state: Run,
+    idle: @E () -> List<Waker>,
+  ): Unit = when (state.ready) {
     [next, *rest] -> {
       state.ready = rest
       next()

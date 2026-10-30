@@ -41,12 +41,16 @@ module Paths {
   // The folder it's in: src for src/main.fk, / for /a; None for a lone name, / or ".".
   Path.parent: Option<Path> = when (this.names) {
     [] -> None
-    [only] -> if (only == "..") Some(this.resolve("..")) else if (this.isAbsolute) Some(path("/")) else None
+    [only] -> if (only == "..") Some(this.resolve("..")) else if (this.isAbsolute) Some(
+      path("/"),
+    ) else None
     else -> Some(this.resolve(".."))
   }
 
   // other, from this one: src.resolve("main.fk") is src/main.fk. An absolute other is itself.
-  Path.resolve(other: String): Path = if (other.startsWith("/")) path(other) else path("${this.value}/$other")
+  Path.resolve(
+    other: String,
+  ): Path = if (other.startsWith("/")) path(other) else path("${this.value}/$other")
 
   // The same, with another extension: main.fk.withExtension("ml") is main.ml.
   Path.withExtension(extension: String): Path = {

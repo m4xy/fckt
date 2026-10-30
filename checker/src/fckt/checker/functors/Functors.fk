@@ -84,10 +84,19 @@ module Functors {
   private enclosingApplication(building: Building, path: List<String>): Option<String> =
     path.mapIndexed { i, _ -> path.take(i + 1).joinToString(".") }.find { building.applications.containsKey(it) }
 
-  private problem(s: Symbol, at: Position, message: String): Diagnostic = Diagnostic(s.file.source.path, at, message)
+  private problem(
+    s: Symbol,
+    at: Position,
+    message: String,
+  ): Diagnostic = Diagnostic(s.file.source.path, at, message)
 
   // The spec each module that says it follows one follows, by the module's full name.
-  @Abandoning private specsFollowed(declarations: List<Symbol>, namespace: Namespace, parameterModules: List<String>, applications: Map<String, Made>): Map<String, Symbol> = {
+  @Abandoning private specsFollowed(
+    declarations: List<Symbol>,
+    namespace: Namespace,
+    parameterModules: List<String>,
+    applications: Map<String, Made>,
+  ): Map<String, Symbol> = {
     followed =
     declarations.filter { Symbols.isModule(it) }.fold(emptyMap()) { followed, declared ->
       when (declared.declaration.definition) {
@@ -134,7 +143,10 @@ module Functors {
 
   // Each parameter M: Spec of the functor: a module, F.M, with a record for each of the spec's types
   // and a function for each of its values, which stand for whatever module F is given.
-  @Abandoning @Mutating private addParameters(building: Building, f: Symbol): Unit = when (f.declaration.definition) {
+  @Abandoning @Mutating private addParameters(
+    building: Building,
+    f: Symbol,
+  ): Unit = when (f.declaration.definition) {
     ModuleDefinition(_, _, parameters, _, _) -> {
       enclosingFunctor(building, f.path).forEach { outer ->
         abandon(
@@ -147,7 +159,9 @@ module Functors {
       }
       place = Place(f.file, f.path)
       parameters.forEachIndexed { i, p ->
-        if (parameters.take(i).any { it.name == p.name }) abandon(problem(f, p.at, "'${p.name}' is declared twice")) else Unit
+        if (parameters.take(i).any { it.name == p.name }) abandon(
+          problem(f, p.at, "'${p.name}' is declared twice"),
+        ) else Unit
       }
       found = parameters.map { p ->
         specName = when (p.spec) {
@@ -199,7 +213,13 @@ module Functors {
   // it is, written where the functor is. A type that takes parameters takes a type that takes as many
   // more: Monad<Option> makes M<A> an Option<A>. They go at the end, or where _ marks them:
   // Monad<Result<_, String>> makes M<A> a Result<A, String>.
-  @Abandoning @Mutating private fixTypes(building: Building, parameterModule: String, f: Symbol, spec: Symbol, ref: TypeRef): Unit = when (ref) {
+  @Abandoning @Mutating private fixTypes(
+    building: Building,
+    parameterModule: String,
+    f: Symbol,
+    spec: Symbol,
+    ref: TypeRef,
+  ): Unit = when (ref) {
     NamedType(at, _, arguments) -> {
       types = when (spec.declaration.definition) {
         SpecDefinition(ts, _, _, _, _) -> ts
@@ -233,7 +253,9 @@ module Functors {
             ),
           )
         }
-        aliasName = (f.path + ["${parameterModule.split(".").lastOrNone().getOrElse(parameterModule)}#${t.name}"]).joinToString(".")
+        aliasName = (f.path + ["${parameterModule.split(".").lastOrNone().getOrElse(parameterModule)}#${t.name}"]).joinToString(
+          ".",
+        )
         alias = Symbol(aliasName, f.path, Declaration(Positions.ofType(argument), aliasName.split(".").lastOrNone().getOrElse(aliasName),
           AliasDefinition(t.typeParameters, target)), f.file)
         building.declarations = building.declarations + [alias]
@@ -263,7 +285,10 @@ module Functors {
 
   // module X = F(A, G = B): a copy of F's declarations as X's, each parameter of F naming the module
   // it's given, by position, then by name, or its default.
-  @Abandoning @Mutating private apply(building: Building, app: Symbol): Unit = when (app.declaration.definition) {
+  @Abandoning @Mutating private apply(
+    building: Building,
+    app: Symbol,
+  ): Unit = when (app.declaration.definition) {
     ModuleDefinition(_, spec, _, Some(Application(functorRef, arguments)), typeParameters) -> {
       enclosingFunctor(building, app.path).forEach { outer ->
         abandon(
@@ -285,7 +310,9 @@ module Functors {
         ModuleDefinition(_, _, ps, _, _) -> ps
         _ -> []
       }
-      if (parameters.isEmpty()) abandon(problem(app, functorAt, "$own isn't a functor: it takes no modules")) else Unit
+      if (parameters.isEmpty()) abandon(
+        problem(app, functorAt, "$own isn't a functor: it takes no modules"),
+      ) else Unit
       positional = arguments.takeWhile { it.name.isNone() }
       if (positional.size > parameters.size) {
         abandon(
@@ -301,20 +328,38 @@ module Functors {
         argumentName = a.name.getOrElse("")
         at = Positions.ofType(a.value)
         index = parameters.indexOfFirst { it.name == argumentName }
-        if (a.name.isNone()) abandon(problem(app, at, "a module given by position goes before those given by name"))
-        else if (index < 0) abandon(problem(app, at, "$own has no module $argumentName: it takes ${parameters.map { it.name }.joinToString(", ")}"))
-        else if (index < positional.size || named.count { it.name == a.name } > 1) abandon(problem(app, at, "$own's $argumentName is given twice"))
+        if (a.name.isNone()) abandon(
+          problem(app, at, "a module given by position goes before those given by name"),
+        )
+        else if (index < 0) abandon(
+          problem(
+            app,
+            at,
+            "$own has no module $argumentName: it takes ${parameters.map { it.name }.joinToString(", ")}",
+          ),
+        )
+        else if (index < positional.size || named.count { it.name == a.name } > 1) abandon(
+          problem(app, at, "$own's $argumentName is given twice"),
+        )
         else Unit
       }
       given = parameters.mapIndexed { i, p ->
-        written = positional.getOrNone(i).map { it.value }.orElse { named.find { it.name == Some(p.name) }.map { it.value } }
+        written = positional.getOrNone(
+          i,
+        ).map { it.value }.orElse { named.find { it.name == Some(p.name) }.map { it.value } }
         when (written) {
           Some(ref) -> argumentModule(building, ref, place, app)
           None -> when (p.default) {
             // A default is named where the functor is declared, so it's the functor's own.
             Some(ref) -> {
               m = argumentModule(building, ref, Place(functor.file, functor.path), functor)
-              if (building.parameterModules.contains(m.name)) abandon(problem(functor, Positions.ofType(ref), "$own's ${p.name} can't default to another of its modules"))
+              if (building.parameterModules.contains(m.name)) abandon(
+                problem(
+                  functor,
+                  Positions.ofType(ref),
+                  "$own's ${p.name} can't default to another of its modules",
+                ),
+              )
               else m
             }
             None -> {
@@ -369,12 +414,19 @@ module Functors {
     }
 
   // A module given to a functor: not a functor, nor generic in types of its own.
-  @Abandoning private argumentModule(building: Building, ref: TypeRef, place: Place, from: Symbol): Symbol = when (ref) {
+  @Abandoning private argumentModule(
+    building: Building,
+    ref: TypeRef,
+    place: Place,
+    from: Symbol,
+  ): Symbol = when (ref) {
     NamedType(at, name, _) -> {
       m = moduleAt(building, name, at, place, from)
       own = Symbols.simpleName(m)
       when (m.declaration.definition) {
-        ModuleDefinition(_, _, [_, *_], _, _) -> abandon(problem(from, at, "$own is a functor; give it modules first"))
+        ModuleDefinition(_, _, [_, *_], _, _) -> abandon(
+          problem(from, at, "$own is a functor; give it modules first"),
+        )
         ModuleDefinition(_, _, _, _, [_, *_]) -> {
           typeParameters = when (m.declaration.definition) {
             ModuleDefinition(_, _, _, _, ts) -> ts
@@ -408,7 +460,9 @@ module Functors {
       name = made + d.name.drop(functor.name.length)
       Symbol(name, Symbols.pathOf(name), d.declaration, d.file)
     }
-    building.copyOrigins = inFunctor.zip(copies).filter { original, _ -> Symbols.isType(original) || Symbols.isAnnotation(original) }
+    building.copyOrigins = inFunctor.zip(
+      copies,
+    ).filter { original, _ -> Symbols.isType(original) || Symbols.isAnnotation(original) }
       .fold(building.copyOrigins) { m, entry ->
         (original, copy) = entry
         m.put(copy.name, original.name)
@@ -423,7 +477,9 @@ module Functors {
   // call is that module, as a value of the functor's spec.
   @Abandoning @Mutating private liftApplications(building: Building, d: Symbol): Unit = {
     place = Place(d.file, d.path)
-    bodies = Signatures.bodyOf(d).toList() + Signatures.writtenParametersOf(d).getOrElse([]).mapNotNull { it.default }
+    bodies = Signatures.bodyOf(d).toList() + Signatures.writtenParametersOf(d).getOrElse(
+      [],
+    ).mapNotNull { it.default }
     bodies.flatMap { Calls.of(it) }.forEach { call ->
       functor = References.dotted(call.callee).flatMap { name ->
         when (Lookups.moduleNamed(name, place, building.namespace, Skipping)) {
@@ -433,10 +489,14 @@ module Functors {
       }
       functor.forEach { entry ->
         (name, m) = entry
-        if (enclosingFunctor(building, d.path).isSome()) abandon(problem(d, call.at, "a functor can't be applied inside another functor yet")) else Unit
+        if (enclosingFunctor(building, d.path).isSome()) abandon(
+          problem(d, call.at, "a functor can't be applied inside another functor yet"),
+        ) else Unit
         if (enclosingApplication(building, d.path).isNone()) {
           arguments = call.arguments.map { a ->
-            moduleName = References.dotted(a.value).filter { n -> Lookups.found(Lookups.moduleNamed(n, place, building.namespace, Skipping)).isSome() }
+            moduleName = References.dotted(
+              a.value,
+            ).filter { n -> Lookups.found(Lookups.moduleNamed(n, place, building.namespace, Skipping)).isSome() }
             when (moduleName) {
               Some(n) -> ModuleArgument(a.name, NamedType(Positions.of(a.value), n, []))
               None -> abandon(

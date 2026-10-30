@@ -28,7 +28,11 @@ import fckt.parser.*
   qualifierType = qualifier.flatMap { q -> refusing(Lookups.caseType(q, context.place, namespace, Refusing), at, context) }
   qualifierType.forEach { t -> if (Conversion.isAbstractHere(t, context.place, context.environment.definitions)) abandon(opaque(t, at, context)) else Unit }
   qualifierModule = when ((qualifier, qualifierType)) {
-    (Some(q), None) -> refusing(Lookups.moduleNamed(q, context.place, namespace, Refusing), at, context)
+    (Some(q), None) -> refusing(
+      Lookups.moduleNamed(q, context.place, namespace, Refusing),
+      at,
+      context,
+    )
     else -> None
   }
   if (qualifier.isSome() && qualifierType.isNone() && qualifierModule.isNone()) None
@@ -51,7 +55,11 @@ import fckt.parser.*
 }
 
 // What a lookup found, giving up if it refused.
-@Abandoning private refusing<A>(lookup: Lookup<A>, at: Position, context: Context): Option<A> = when (lookup) {
+@Abandoning private refusing<A>(
+  lookup: Lookup<A>,
+  at: Position,
+  context: Context,
+): Option<A> = when (lookup) {
   Found(a) -> Some(a)
   Refused(why) -> abandon(Globals.problem(context, at, why))
   NotFound -> None
@@ -67,12 +75,25 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
   )
 }
 
-@Inferring private recordShape(r: Symbol, at: Position, building: Boolean, context: Context): ConstructorShape = {
+@Inferring private recordShape(
+  r: Symbol,
+  at: Position,
+  building: Boolean,
+  context: Context,
+): ConstructorShape = {
   own = Symbols.simpleName(r)
-  if (Conversion.isAbstractHere(r, context.place, context.environment.definitions)) abandon(opaque(r, at, context)) else Unit
+  if (Conversion.isAbstractHere(r, context.place, context.environment.definitions)) abandon(
+    opaque(r, at, context),
+  ) else Unit
   when (r.declaration.definition) {
     RecordDefinition(typeParameters, fields, privateConstructor, _, external) -> {
-      if (external.isSome()) abandon(Globals.problem(context, at, "$own is an OCaml type, made by its functions, not by $own(...)")) else Unit
+      if (external.isSome()) abandon(
+        Globals.problem(
+          context,
+          at,
+          "$own is an OCaml type, made by its functions, not by $own(...)",
+        ),
+      ) else Unit
       if (building && privateConstructor && !Visibility.isInside(context.place, r.path)) {
         abandon(
           Globals.problem(
@@ -119,7 +140,9 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
   else if (qualifier.isNone() && name == "Some") {
     a = Variable(fresh())
     Some(ConstructorShape(BuiltinCase("Some"), ["value"], [a], optionOf(a)))
-  } else if (qualifier.isNone() && name == "None") Some(ConstructorShape(BuiltinCase("None"), [], [], optionOf(Variable(fresh()))))
+  } else if (qualifier.isNone() && name == "None") Some(
+    ConstructorShape(BuiltinCase("None"), [], [], optionOf(Variable(fresh()))),
+  )
   else {
     hintedType = when (hinted) {
       Some(Named(n, _, _)) -> Some(n)
@@ -153,7 +176,13 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
         arguments = Cases.typeParametersOf(home).map { Variable(fresh()) }
         definitions = context.environment.definitions
         region = Conversion.newRegion(home, definitions)
-        fieldTypes = Conversion.casesWithFields(home, arguments, region, definitions, Some(context.place)).find { info, _ -> Cases.same(info, c) }.map { _, types -> types }.getOrElse([])
+        fieldTypes = Conversion.casesWithFields(
+          home,
+          arguments,
+          region,
+          definitions,
+          Some(context.place),
+        ).find { info, _ -> Cases.same(info, c) }.map { _, types -> types }.getOrElse([])
         Some(ConstructorShape(
           CaseConstructor(
             CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition),
@@ -169,12 +198,22 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
 
 // The one case of the name that can be seen from here: imported by name, or, unqualified, inside
 // its type's module, or, through a module, that module's.
-@Inferring private visibleCase(name: String, at: Position, qualifier: Option<String>, qualifierModule: Option<ModuleSymbol>, context: Context): Option<CaseInfo> = {
+@Inferring private visibleCase(
+  name: String,
+  at: Position,
+  qualifier: Option<String>,
+  qualifierModule: Option<ModuleSymbol>,
+  context: Context,
+): Option<CaseInfo> = {
   viaImport = if (qualifier.isNone()) importedCase(name, context) else None
   candidates = when (viaImport) {
     Some(c) -> [c]
     None -> context.environment.casesByName.getOrDefault(name, []).filter { c ->
-      Globals.visible(c.owner, context) && !Conversion.isAbstractHere(c.owner, context.place, context.environment.definitions) && when (qualifierModule) {
+      Globals.visible(c.owner, context) && !Conversion.isAbstractHere(
+        c.owner,
+        context.place,
+        context.environment.definitions,
+      ) && when (qualifierModule) {
         Some(m) -> c.owner.path == Symbols.moduleName(m).split(".")
         None -> Visibility.isInside(context.place, c.owner.path)
       }
@@ -195,7 +234,11 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
 private importedCase(name: String, context: Context): Option<CaseSymbol> =
   when (Names.importedNames(name, context.place, context.environment.definitions.namespace)) {
     [full] -> context.environment.definitions.namespace.table.cases.get(full).filter { c ->
-      Globals.visible(c.owner, context) && !Conversion.isAbstractHere(c.owner, context.place, context.environment.definitions)
+      Globals.visible(c.owner, context) && !Conversion.isAbstractHere(
+        c.owner,
+        context.place,
+        context.environment.definitions,
+      )
     }
     else -> None
   }
@@ -240,7 +283,11 @@ dottedUnbound(e: Expression, scope: Scope): Option<String> = References.dotted(e
 }
 
 // The module an expression names, if it names one: Ratios, or Shapes.Inner.
-@Abandoning moduleNamedBy(e: Expression, scope: Scope, context: Context): Option<ModuleSymbol> = when (dottedUnbound(e, scope)) {
+@Abandoning moduleNamedBy(
+  e: Expression,
+  scope: Scope,
+  context: Context,
+): Option<ModuleSymbol> = when (dottedUnbound(e, scope)) {
   None -> None
   Some(name) -> {
     isValue = when (e) {
@@ -257,7 +304,13 @@ dottedUnbound(e: Expression, scope: Scope): Option<String> = References.dotted(e
 }
 
 // Ratios.make: a function or value in a module, named through it.
-@Abandoning moduleMember(at: Position, target: Expression, name: String, scope: Scope, context: Context): Option<Symbol> =
+@Abandoning moduleMember(
+  at: Position,
+  target: Expression,
+  name: String,
+  scope: Scope,
+  context: Context,
+): Option<Symbol> =
   moduleNamedBy(target, scope, context).flatMap { m ->
     context.environment.functions.get("${Symbols.moduleName(m)}.$name").map { s ->
       when (Visibility.whyHidden(s, context.place, context.environment.definitions.namespace.table)) {

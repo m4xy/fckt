@@ -99,7 +99,8 @@ import fckt.checker.types.Unification.*
   assert(unifyRows(Row([EffectLabel(mutating, [])], None), Row([EffectLabel(mutating, [s])], None)))
 }
 
-@Test effectsAsATypeArgumentAreARow() = assertEquals(Effects(rowOf(["A"], None)), Solutions.solving {
+@Test
+effectsAsATypeArgumentAreARow() = assertEquals(Effects(rowOf(["A"], None)), Solutions.solving {
   e = Variable(fresh())
   assert(unify(Named("Queue", [e], None), Named("Queue", [Effects(rowOf(["A"], None))], None)))
   resolvedFully(e)

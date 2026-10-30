@@ -33,16 +33,23 @@ module TypeDeclarations {
           _,
         ) if s.declaration.name == "toString" ->
           when (Diagnostics.attempting { Conversion.typeOf(receiver, TypeContext(Place(s.file, s.path), typeParameters.map { (it, TypeParameter(it)) }.toMap()), definitions) }) {
-            Ok(Named(name, arguments, _)) if arguments.filter { it !is Effects }.size == parameters.size -> Some((name, s))
+            Ok(
+              Named(name, arguments, _),
+            ) if arguments.filter { it !is Effects }.size == parameters.size -> Some((name, s))
             else -> None
           }
         else -> None
       }
     }.toMap()
 
-  @Solving @Abandoning private declared(d: Symbol, definitions: Definitions): Option<TypeDeclaration> = when (d.declaration.definition) {
+  @Solving @Abandoning private declared(
+    d: Symbol,
+    definitions: Definitions,
+  ): Option<TypeDeclaration> = when (d.declaration.definition) {
     RecordDefinition(typeParameters, _, _, true, _) -> None
-    RecordDefinition(typeParameters, _, _, _, Some(ocaml)) -> Some(DeclaredExternal(d, typeParameters, ocaml))
+    RecordDefinition(typeParameters, _, _, _, Some(ocaml)) -> Some(
+      DeclaredExternal(d, typeParameters, ocaml),
+    )
     RecordDefinition(typeParameters, fields, _, _, None) -> {
       types = Conversion.recordFields(
         d,
@@ -59,7 +66,12 @@ module TypeDeclarations {
       )
     }
     CasesDefinition(typeParameters, _, _, _) -> {
-      cases = Conversion.casesWithFields(d, typeParameters.map { TypeParameter(it) }, None, definitions).map { c, types ->
+      cases = Conversion.casesWithFields(
+        d,
+        typeParameters.map { TypeParameter(it) },
+        None,
+        definitions,
+      ).map { c, types ->
         DeclaredCase(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition),
           c.definition.fields.zip(types).map { f, t -> DeclaredField(f.name, t, f.variable) })
       }

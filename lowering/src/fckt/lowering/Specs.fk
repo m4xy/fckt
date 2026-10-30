@@ -10,7 +10,12 @@ module Specs {
       d.values.map { name, t -> ValueSignature(Naming.snake(name), OcamlTypes.typexprNaming(t, named(t))) })
 
   // Each unknown in the type, named 'a, 'b, in the order it's met, as a signature names them.
-  private named(t: Type): List<(TypeVariable, String)> = unknowns(t, []).mapIndexed { i, v -> (v, "'" + "abcdefghijklmnopqrstuvwxyz".toList().getOrNone(i % 26).map { it.toString() }.getOrElse("a") + (if (i >= 26) "${i / 26}" else "")) }
+  private named(
+    t: Type,
+  ): List<(TypeVariable, String)> = unknowns(
+    t,
+    [],
+  ).mapIndexed { i, v -> (v, "'" + "abcdefghijklmnopqrstuvwxyz".toList().getOrNone(i % 26).map { it.toString() }.getOrElse("a") + (if (i >= 26) "${i / 26}" else "")) }
 
   private unknowns(t: Type, found: List<TypeVariable>): List<TypeVariable> = when (t) {
     Variable(v) -> if (found.contains(v)) found else found + [v]
@@ -18,7 +23,10 @@ module Specs {
     Abstract(_, arguments) -> arguments.fold(found) { f, a -> unknowns(a, f) }
     SpecOwnType(_, arguments) -> arguments.fold(found) { f, a -> unknowns(a, f) }
     TupleOf(parts) -> parts.fold(found) { f, a -> unknowns(a, f) }
-    FunctionOf(parameters, result, _) -> unknowns(result, parameters.fold(found) { f, a -> unknowns(a, f) })
+    FunctionOf(parameters, result, _) -> unknowns(
+      result,
+      parameters.fold(found) { f, a -> unknowns(a, f) },
+    )
     _ -> found
   }
 }

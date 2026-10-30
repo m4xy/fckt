@@ -48,7 +48,9 @@ module Structures {
     when (t) {
       FunctionOf(parameterTypes, result, _) if Signatures.isFunction(function) -> {
         parameters = if (body.parameters.isEmpty()) [ConstantPat(UnitConstant)]
-          else body.parameters.zip(parameterTypes).map { p, pt -> TypedPat(VariablePat(Naming.snake(p)), OcamlTypes.typexpr(pt)) }
+          else body.parameters.zip(
+            parameterTypes,
+          ).map { p, pt -> TypedPat(VariablePat(Naming.snake(p)), OcamlTypes.typexpr(pt)) }
         Binding(name, parameters, Some(OcamlTypes.typexpr(result)), value)
       }
       _ -> Binding(name, [], None, value)
@@ -68,13 +70,17 @@ module Structures {
     fromGroups = own.groups.mapNotNull { g, _ ->
       groupPath = g.functions.firstOrNone().map { it.path }.getOrElse([])
       if (groupPath == path) Some(GroupPart(g))
-      else if (groupPath.size > path.size && groupPath.take(path.size) == path) Some(ModulePart(groupPath.take(path.size + 1)))
+      else if (groupPath.size > path.size && groupPath.take(path.size) == path) Some(
+        ModulePart(groupPath.take(path.size + 1)),
+      )
       else None
     }.distinct()
     others = own.modules.filter { m -> m.size == path.size + 1 && m.take(path.size) == path }.map { ModulePart(it) }
     // A module with no functions uses none of them, so it can go before them all, as the standard
     // library's aliases must, which code made in lowering may use.
-    typeGroups(types).map { TypesPart(it) } + specs + effects + others.filter { !fromGroups.contains(it) } + fromGroups
+    typeGroups(
+      types,
+    ).map { TypesPart(it) } + specs + effects + others.filter { !fromGroups.contains(it) } + fromGroups
   }
 
   // The types, each with those it names that name it back, in the order they're declared.
@@ -83,7 +89,9 @@ module Structures {
     // The types each names directly, by their places.
     named = types.map { t -> declaredTypeNames(t).map { n -> names.indexOf(n) }.filter { it >= 0 } }
     reaching = (0..<types.size).map { i -> reachable([i], [], named) }
-    reaches = (from: Int, to: Int) -> reaching.getOrNone(from).map { it.contains(to) }.getOrElse(false)
+    reaches = (from: Int, to: Int) -> reaching.getOrNone(
+      from,
+    ).map { it.contains(to) }.getOrElse(false)
     (groups, _) = (0..<types.size).fold(([], [])) { acc, i ->
       (found, placed) = acc
       if (placed.contains(i)) acc
@@ -96,9 +104,17 @@ module Structures {
   }
 
   // Every index reachable from those to visit, through what each names.
-  private reachable(toVisit: List<Int>, seen: List<Int>, named: List<List<Int>>): List<Int> = when (toVisit) {
+  private reachable(
+    toVisit: List<Int>,
+    seen: List<Int>,
+    named: List<List<Int>>,
+  ): List<Int> = when (toVisit) {
     [] -> seen
-    [i, *rest] -> if (seen.contains(i)) reachable(rest, seen, named) else reachable(rest + named.getOrNone(i).getOrElse([]), seen + [i], named)
+    [i, *rest] -> if (seen.contains(i)) reachable(rest, seen, named) else reachable(
+      rest + named.getOrNone(i).getOrElse([]),
+      seen + [i],
+      named,
+    )
   }
 
   // ---- Ordering ----
@@ -139,7 +155,10 @@ module Structures {
   }
 
   // The declarations the part's code uses.
-  private referencesOf(part: Part, own: OwnCode): List<Symbol> = functionsOf(part, own).flatMap { _, _, body -> Cores.references(body.body) }
+  private referencesOf(
+    part: Part,
+    own: OwnCode,
+  ): List<Symbol> = functionsOf(part, own).flatMap { _, _, body -> Cores.references(body.body) }
 
   // The types the part names: its functions' types, its types' fields', and its effects' operations'.
   private typeNamesOf(part: Part, own: OwnCode): List<String> =
@@ -153,7 +172,10 @@ module Structures {
     }
 
   // The functions in the part, with their types and code.
-  private functionsOf(part: Part, own: OwnCode): List<(Symbol, Type, CoreFunction)> = own.groups.filter { g, _ ->
+  private functionsOf(
+    part: Part,
+    own: OwnCode,
+  ): List<(Symbol, Type, CoreFunction)> = own.groups.filter { g, _ ->
     when (part) {
       GroupPart(group) -> g == group
       ModulePart(path) -> g.functions.any { f -> within(f.path, path) }
@@ -161,7 +183,10 @@ module Structures {
     }
   }.flatMap { _, functions -> functions }
 
-  private within(inner: List<String>, outer: List<String>): Boolean = inner.size >= outer.size && inner.take(outer.size) == outer
+  private within(
+    inner: List<String>,
+    outer: List<String>,
+  ): Boolean = inner.size >= outer.size && inner.take(outer.size) == outer
 
   // The full names of the declared types a type names.
   private typeNames(t: Type): List<String> = when (t) {
