@@ -330,6 +330,25 @@ the compiler rejects give the same errors.
 Building projects, their tests and their dependencies, and publishing libraries, is
 [kiln](https://github.com/m4xy/kiln)'s job: a build tool written in fckt.
 
+## Layout
+
+Code fits in 100 columns where it can: a call's arguments, a declaration's parameters or a list's
+items that don't fit on the line they start on go one to a line, each with a comma after it, and
+the bracket that closes them on a line of its own:
+
+```kotlin
+project = Project(
+  name = "compiler",
+  group = "fckt",
+  version = "0.1.0",
+  dependencies = [projectAt("../lowering")],
+)
+```
+
+`fckt --format <file or folder>...` lays code out so, and `fckt --check-format` says where it
+isn't, and fails; kiln's `format` task and its `checkFormat` task, part of `check`, run them on a
+project. A line that's long for another reason, as a long string, is left as it is.
+
 ## Editor support
 
 `editors/intellij` is an IntelliJ IDEA plugin: it colours each name by what it is, as IntelliJ does for Kotlin, shows every one of the compiler's errors as you type, goes to declarations and finds usages, shows on hover each name's inferred type and what a function does (`twice(f: (Int) -> Int, x: Int): Int`, does what f does) and the effects an annotation passes on, and formats code as ktlint formats Kotlin, with two-space indents. `editors/vscode` has a TextMate grammar for VS Code. See each one's README for how to install it.

@@ -10,6 +10,8 @@ private const val USAGE = """usage: fckt <file.fk> [-I <dir>]... [--other-projec
        fckt --test <dir> --marker <annotation> --runner <module> [--fixtures <annotation>] [--runner-tests] [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [--separate] [-o <file.ml>]
        fckt --symbols <file> [-I <dir>]... [--other-project <dir>]... [-L <interface>]... [<package>...]
        fckt --core -o <file.ml>
+       fckt --format <file or folder>...
+       fckt --check-format <file or folder>...
        fckt --std-path
        fckt --version
 
@@ -39,10 +41,15 @@ uk.m4xy.fktests.runner.Runner for fk-tests-runner's; in modules, they're in sect
 uk.m4xy.fktests.api.Fixtures for fk-tests's. Tests can't use the runner, unless they're its own:
 --runner-tests. fckt --symbols writes what the packages named declare, or without any, every
 package in the -I folders: each type, with its fields, cases and annotations, as fckt's README sets
-out, for a program that writes code from them; - writes to standard output. Building projects is
-kiln's job."""
+out, for a program that writes code from them; - writes to standard output. fckt --format lays
+out the files named, and those in the folders named: a list too wide for its line goes an item to a
+line; fckt --check-format says where one isn't, and fails. Building projects is kiln's job."""
 
 fun main(args: Array<String>) {
+    when (args.firstOrNull()) {
+        "--format" -> exitProcess(Layout.run(args.drop(1), checking = false))
+        "--check-format" -> exitProcess(Layout.run(args.drop(1), checking = true))
+    }
     var input: String? = null
     var output: String? = null
     var library: String? = null
