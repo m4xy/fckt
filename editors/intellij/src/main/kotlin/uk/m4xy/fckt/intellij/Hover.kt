@@ -124,6 +124,7 @@ private class Hovers(val text: String, val program: Program) {
             is TypeRef.Named -> ref.args.forEach(::typeRef)
             is TypeRef.Tuple -> ref.elements.forEach(::typeRef)
             is TypeRef.Effects -> annotations(ref.effects)
+            is TypeRef.Given -> typeRef(ref.type)
             null -> {}
         }
     }

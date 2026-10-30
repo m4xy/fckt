@@ -384,6 +384,7 @@ private class Resolutions(
     private fun type(ref: TypeRef?) {
         when (ref) {
             null -> {}
+            is TypeRef.Given -> type(ref.type)
             is TypeRef.Named -> {
                 program.typeNames[ref]?.let { full ->
                     // Ratios.Ratio: each segment's own token, the modules it's named through, then the type.
