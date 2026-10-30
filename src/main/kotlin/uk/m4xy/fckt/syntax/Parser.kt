@@ -976,7 +976,15 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         } else {
             val first = lines[from.line - 1].let { it.substring(offset(it, from.col) ?: return null) }
             val last = lines[to.line - 1].let { it.substring(0, offset(it, to.col) ?: return null) }
-            (listOf(first) + lines.subList(from.line, to.line - 1) + last).joinToString(" ") { it.trim() }
+            // Joined as it'd be written on one line: no space inside brackets, nor a comma before one that closes.
+            (listOf(first) + lines.subList(from.line, to.line - 1) + last).map { it.trim() }.filter { it.isNotEmpty() }
+                .reduceOrNull { joined, next ->
+                    when {
+                        next.first() in ")]}" -> joined.removeSuffix(",") + next
+                        joined.last() in "([{" -> joined + next
+                        else -> "$joined $next"
+                    }
+                } ?: ""
         }
         return written.trim().removeSuffix(",").trim()
     }

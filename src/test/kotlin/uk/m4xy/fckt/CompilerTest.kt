@@ -134,11 +134,20 @@ class CompilerTest {
               xs = [1, 2]
               println(caught { assert(size(xs) == 3) })
               println(caught { assertEquals("a\nb", "a\\c") })
+              println(caught {
+                assertEquals(
+                  [
+                    1,
+                  ],
+                  xs,
+                )
+              })
             }
         """.trimIndent()
         // Each side of a comparison is computed once, before it's compared; a constant says what it is.
         assertContains(compile(source), "match size xs with")
-        // A value's backslashes and line breaks are written as \\ and \n, so each fact is a line.
+        // A value's backslashes and line breaks are written as \\ and \n, so each fact is a line; and
+        // what's written on more than one line is said on one, as it would be written there.
         assertEquals(
             """
             line 5: assertion failed: size(xs) == 3
@@ -156,6 +165,13 @@ class CompilerTest {
             source assertEquals("a\\nb", "a\\\\c")
             expected a\nb
             actual a\\c
+            line 8: expected:<[1]> but was:<[1, 2]>
+            fckt-assertion 1
+            assertion assertEquals
+            where line 8
+            source assertEquals([1], xs)
+            expected [1]
+            actual [1, 2]
 
             """.trimIndent(),
             run(source),
