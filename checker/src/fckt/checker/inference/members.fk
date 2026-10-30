@@ -15,42 +15,49 @@ import fckt.parser.*
 
 @Inferring inferMember(at: Position, target: Expression, name: String, expected: Option<Type>, scope: Scope, context: Context): Typed =
   when (moduleMember(at, target, name, scope, context)) {
-    Some(global) -> Typed(Globals.typeOf(global, at, context))
+    Some(global) -> Typed(Globals.typeOf(global, at, context), None, if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global))
     None -> when (qualifiedCase(target, scope, context)) {
       Some(qualifier) -> when (caseValues(at, name, qualifier, context)) {
-        Some(t) -> Typed(t)
+        Some(t) -> Typed(t, None, Pending("a type's values"))
         None -> when (constructorShape(name, expected, at, true, Some(qualifier), true, scope, context)) {
           Some(shape) -> Typed(
             if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(shape.fieldTypes, shape.result, Row([], Some(fresh()))),
             spelledCase(shape),
+            constructorValue(shape),
           )
           None -> abandon(Globals.problem(context, at, "$qualifier has no '$name'"))
         }
       }
-      None -> Typed(memberOfValue(at, target, name, scope, context))
+      None -> memberOfValue(at, target, name, scope, context)
     }
   }
 
 // What's left of target.name once target isn't a module or a type with cases: an operation named
 // through its effect, as a value; a module through its package, as a value; or what target's value
 // has of that name.
-@Inferring private memberOfValue(at: Position, target: Expression, name: String, scope: Scope, context: Context): Type = {
+@Inferring private memberOfValue(at: Position, target: Expression, name: String, scope: Scope, context: Context): Typed = {
   operation = when (target) {
     Name(_, targetName) if Scopes.lookup(scope, targetName).isNone() -> qualifiedOperation(at, target, name, scope, context)
     else -> None
   }
   when (operation) {
-    Some(op) -> operationValue(op, at, context)
+    Some(op) -> Typed(operationValue(op, at, context), None, Pending("an operation, as a value"))
     None -> {
       member = Member(at, target, name)
       asModule = moduleNamedBy(member, scope, context).filter { m -> !isEffectModule(m, context) }
       when (asModule) {
-        Some(m) -> moduleAsValue(m, at, context)
+        Some(m) -> Typed(moduleAsValue(m, at, context), None, Pending("a module, as a value"))
         None -> {
-          receiver = resolved(infer(target, None, scope, context).t)
+          targetTyped = infer(target, None, scope, context)
+          receiver = resolved(targetTyped.t)
           when (fieldOf(at, target, name, receiver, scope, context)) {
-            Some(field) -> fieldType(field)
-            None -> propertyOf(at, target, name, receiver, scope, context)
+            Some(RecordField(record, t)) -> Typed(t, None, FieldRead(targetTyped.core, record, name))
+            Some(NarrowedField(narrowing, t)) -> Typed(t, None, when (target) {
+              Name(_, local) -> NarrowedRead(local, narrowing.caseName, name)
+              else -> Pending("a narrowed field")
+            })
+            Some(field) -> Typed(fieldType(field), None, Pending("a module value's member"))
+            None -> propertyOf(at, target, targetTyped.core, name, receiver, scope, context)
           }
         }
       }
@@ -59,7 +66,7 @@ import fckt.parser.*
 }
 
 // What target.name is where it's not a field: an extension property, or a case's name.
-@Inferring private propertyOf(at: Position, target: Expression, name: String, receiver: Type, scope: Scope, context: Context): Type =
+@Inferring private propertyOf(at: Position, target: Expression, targetCore: Core, name: String, receiver: Type, scope: Scope, context: Context): Typed =
   when (extensionFor(at, name, receiver, context)) {
     Some(extension) ->
       if (!Signatures.isProperty(extension)) abandon(Globals.problem(context, at, "'$name' is a method; call it with ()"))
@@ -67,9 +74,9 @@ import fckt.parser.*
         FunctionOf([receiverType, *_], result, effects) -> {
           assign(target, Typed(receiver), receiverType, context)
           perform(effects, at)
-          result
+          Typed(result, None, called(extension, [targetCore]))
         }
-        other -> other
+        other -> Typed(other, None, Pending("a property that isn't a function"))
       }
     None -> {
       // level.name: which case it is, as its name, when no case carries anything.
@@ -77,7 +84,7 @@ import fckt.parser.*
       when (named) {
         Some(caseType) if context.environment.definitions.cases.getOrDefault(caseType.name, []).all { it.definition.fields.isEmpty() } -> {
           bareCases(caseType, at, context)
-          string
+          Typed(string, None, CaseName(targetCore, context.environment.definitions.cases.getOrDefault(caseType.name, []).map { c -> CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition) }))
         }
         else -> when (receiver) {
           Variable(_) -> abandon(Globals.problem(context, at, "can't tell what '$name' is: the receiver's type isn't known here; annotate it"))

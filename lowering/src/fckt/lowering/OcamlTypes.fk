@@ -1,0 +1,47 @@
+import fckt.checker.types.*
+import fckt.ocaml.*
+
+// fckt's types as OCaml's: Int is int, List<A> 'a list, a type declared in geometry Geometry.shape.
+module OcamlTypes {
+  typexpr(t: Type): Typexpr = when (t) {
+    TypeParameter(name) -> TypeVar("'" + name.lowercase())
+    Named(name, arguments, _) -> named(name, arguments)
+    Abstract(name, arguments) -> named(name, arguments)
+    TupleOf(parts) -> Product(parts.map { typexpr(it) })
+    FunctionOf(parameters, result, _) ->
+      (if (parameters.isEmpty()) [TypeApplication("unit", [])] else parameters.map { typexpr(it) }).reversed().fold(typexpr(result)) { r, p -> Arrow(p, r) }
+    // What OCaml can work out for itself.
+    _ -> TypeVar("_")
+  }
+
+  private named(name: String, arguments: List<Type>): Typexpr = {
+    given = arguments.filter { it !is Effects }.map { typexpr(it) }
+    when (name) {
+      "Int" -> TypeApplication("int", [])
+      "Float" -> TypeApplication("float", [])
+      "Double" -> TypeApplication("float", [])
+      "String" -> TypeApplication("string", [])
+      "Boolean" -> TypeApplication("bool", [])
+      "Unit" -> TypeApplication("unit", [])
+      "Char" -> TypeApplication("int", [])
+      "Byte" -> TypeApplication("char", [])
+      "List" -> TypeApplication("list", given)
+      "Option" -> TypeApplication("option", given)
+      "Result" -> TypeApplication("result", given)
+      "Lazy" -> TypeApplication("Lazy.t", given)
+      else -> TypeApplication(typeReference(name), given)
+    }
+  }
+
+  // A declared type, by its full name, written from the top of the program: Geometry.shape.
+  typeReference(full: String): String = {
+    parts = full.split(".")
+    (parts.dropLast(1).map { Naming.moduleName(it) } + [Naming.snake(parts.lastOrNone().getOrElse(full))]).joinToString(".")
+  }
+
+  // The OCaml name a declared type has where it's declared: shape.
+  ownName(full: String): String = Naming.snake(full.split(".").lastOrNone().getOrElse(full))
+
+  // A type parameter, as OCaml writes it: 'a for A.
+  parameter(name: String): String = "'" + name.lowercase()
+}

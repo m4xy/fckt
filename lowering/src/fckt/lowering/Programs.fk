@@ -1,3 +1,4 @@
+import fckt.collections.Maps.*
 import fckt.effects.Fail
 import fckt.checker.CheckedProgram
 import fckt.checker.core.*
@@ -9,7 +10,9 @@ import fckt.ocaml.*
 // fckt's compiler compiles them on their own, as fckt_core.ml and fckt_std.ml. What it can't lower
 // yet, it fails saying.
 module Programs {
-  @Fail ocaml(program: CheckedProgram): List<Item> = {
+  @Fail ocaml(program: CheckedProgram): List<Item> = Showing(toStringOf = name -> program.toStrings.get(name)) { items(program) }
+
+  @Fail @Showing private items(program: CheckedProgram): List<Item> = {
     bodies = program.functions.filter { f -> isOwn(f.function) }.mapNotNull { f -> f.body.map { b -> (f.function.name, b) } }
     functions = program.groups.mapNotNull { g ->
       bindings = g.functions.mapNotNull { f -> bodies.find { name, _ -> name == f.name }.map { _, body -> binding(f, body) } }
@@ -19,14 +22,23 @@ module Programs {
       takesArguments = Signatures.parametersOf(f.function).map { it.isNotEmpty() }.getOrElse(false)
       LetItem(false, [Binding(ConstantPat(UnitConstant), [], None, HandledEffects.runningMain(f.function, takesArguments, program.defaultHandlers))])
     }
-    [VerbatimItem(Helpers.items), aliases(program)] + functions + main.toList()
+    // Those at the top of its file: a module's are its module's.
+    own = program.types.filter { t -> isOwn(declarationOf(t)) && declarationOf(t).path.isEmpty() }
+    [VerbatimItem(Helpers.items), aliases(program)] + TypeItems.definitions(own) + TypeItems.shows(own) + functions + main.toList()
   }
 
-  // Whether the function is the program's own: in the file it was given, not one it uses.
+  private declarationOf(t: TypeDeclaration): Symbol = when (t) {
+    DeclaredRecord(s, _, _) -> s
+    DeclaredCases(s, _, _) -> s
+    DeclaredAlias(s, _, _) -> s
+    DeclaredExternal(s, _, _) -> s
+  }
+
+  // Whether the declaration is the program's own: in the file it was given, not one it uses.
   private isOwn(function: Symbol): Boolean = function.file.source.path.isNone()
 
   // A function, with its parameters, or a value, as let binds it.
-  @Fail private binding(function: Symbol, body: CoreFunction): Binding = {
+  @Fail @Showing private binding(function: Symbol, body: CoreFunction): Binding = {
     parameters = if (Signatures.isFunction(function)) Expressions.parametersOf(body.parameters.map { NameMatcher(it) }) else []
     Binding(VariablePat(Naming.snake(Naming.ownName(function))), parameters, None, Expressions.expression(body.body))
   }

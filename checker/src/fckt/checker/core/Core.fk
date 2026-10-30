@@ -1,4 +1,4 @@
-import fckt.checker.symbols.Symbol
+import fckt.checker.symbols.*
 import fckt.checker.types.Type
 
 // What checked code is: each name resolved to what it means, each operator to the operation it
@@ -25,6 +25,12 @@ type Core {
   Operated(primitive: Primitive, operands: List<Core>),
   // The value as text, as toString and a string template show it: of type t.
   Shown(value: Core, t: Type),
+  // A record or a case built, its fields in the order it declares them: a value of type t.
+  Constructed(constructor: Constructor, fields: List<Core>, t: Type),
+  // A record's field, by its record's declaration and its name.
+  FieldRead(record: Core, owner: Symbol, field: String),
+  // Which case the value is, as its name, for a type whose cases carry nothing.
+  CaseName(value: Core, cases: List<CaseSymbol>),
   // [a, *rest, b]: a list of the items, in order.
   ListMade(items: List<ListItem>),
   // (a, b): a tuple of the parts.
@@ -36,6 +42,10 @@ type Core {
   Assertion(condition: Core, where: String),
   // assertEquals(expected, actual): failing, saying where and showing both, if they differ; of type t.
   EqualityAssertion(expected: Core, actual: Core, t: Type, where: String),
+  // when (subject) { ... }: the first branch whose patterns it matches, and whose guard holds.
+  Matched(subject: Core, branches: List<MatchBranch>),
+  // A field of the case is found a local to be, read where it's found so.
+  NarrowedRead(local: String, caseName: String, field: String),
   // if (condition) then else otherwise
   Conditional(condition: Core, then: Core, otherwise: Core),
   // The value, taken apart by the pattern, whose names body can use.
@@ -51,6 +61,8 @@ type Core {
   // A function of the parameters, each a pattern what it's given matches: what its body gives, or, if
   // it drops what its body gives, as one wanted to give back Unit does, Unit.
   FunctionValue(parameters: List<Matcher>, body: Core, dropsResult: Boolean),
+  // A call that never returns, as one giving Nothing doesn't: it fits wherever it is.
+  Absurd(call: Core),
   // An expression whose core fckt.checker doesn't make yet: what it is.
   Pending(what: String),
 }

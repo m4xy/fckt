@@ -1,3 +1,5 @@
+import fckt.checker.symbols.Symbol
+
 // A pattern, in core: what a value must be to match, and the names it binds to parts of it.
 type Matcher {
   // _, or a parameter that's never named: anything, binding nothing.
@@ -6,4 +8,14 @@ type Matcher {
   NameMatcher(name: String),
   // A tuple, each part matching its own.
   TupleMatcher(parts: List<Matcher>),
+  // A constant: that value.
+  ConstantMatcher(literal: Literal),
+  // A case, or a record by its fields in order: with what each of its fields must match, or, for
+  // is Case, nothing of them; and, for is Case on a local, the local, whose fields what's matched
+  // reads.
+  CaseMatcher(constructor: Constructor, fields: Option<List<Matcher>>, narrowed: Option<String>),
+  // is Vowel: any of a type with cases' cases; and the local it narrows, if it's on one.
+  CaseTypeMatcher(caseType: Symbol, narrowed: Option<String>),
+  // [a, b], or [a, *rest]: a list of the items, then, if there's a rest, what's left.
+  ListMatcher(items: List<Matcher>, rest: Option<Matcher>),
 }

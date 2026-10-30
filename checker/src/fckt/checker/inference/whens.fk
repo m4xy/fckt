@@ -1,4 +1,5 @@
 import fckt.checker.symbols.*
+import fckt.checker.core.*
 import fckt.collections.Maps.*
 import fckt.checker.coverage.*
 import fckt.checker.diagnostics.*
@@ -9,40 +10,50 @@ import fckt.parser.*
 // when, with a subject, whose branches' patterns it's matched against, or without, whose branches'
 // conditions are tried in turn. It's what its branches are, joined, or what's expected of each.
 
-@Inferring inferWhen(at: Position, subject: Option<Expression>, branches: List<Branch>, expected: Option<Type>, scope: Scope, context: Context): Type = {
+@Inferring inferWhen(at: Position, subject: Option<Expression>, branches: List<Branch>, expected: Option<Type>, scope: Scope, context: Context): Typed = {
   wanted = known(expected)
-  bodies = when (subject) {
+  (bodies, core) = when (subject) {
     None -> {
       if (branches.isEmpty() || branches.lastOrNone().map { it.condition.isSome() }.getOrElse(true)) {
         abandon(Globals.problem(context, at, "a 'when' without a subject needs an 'else' branch"))
       } else Unit
-      branches.map { branch ->
-        branch.condition.forEach { check(it, boolean, scope, context) }
-        branchBody(branch.body, wanted, scope, context)
+      checked = branches.map { branch ->
+        condition = branch.condition.map { check(it, boolean, scope, context) }
+        (body, bodyCore) = branchBody(branch.body, wanted, scope, context)
+        (body, condition, bodyCore)
       }
+      (checked.map { body, _, _ -> body }, conditions(checked.map { _, condition, bodyCore -> (condition, bodyCore) }))
     }
     Some(s) -> {
-      subjectType = infer(s, None, scope, context).t
-      checked = branches.map { branch -> checkBranch(branch, s, subjectType, wanted, scope, context) }
+      subjectTyped = infer(s, None, scope, context)
+      checked = branches.map { branch -> checkBranch(branch, s, subjectTyped.t, wanted, scope, context) }
       covered = branches.zip(checked).filter { branch, _ -> branch.guard.isNone() }.flatMap { _, c -> c.matches }
-      cover(PendingWhen(context.place.file.source.path, at, covered, subjectType))
-      checked.map { c -> c.body }
+      cover(PendingWhen(context.place.file.source.path, at, covered, subjectTyped.t))
+      (checked.map { c -> c.body }, Matched(subjectTyped.core, checked.map { c -> c.core }))
     }
   }
   when (wanted) {
-    Some(t) -> t
-    None -> join(bodies.mapNotNull { it }, at, context)
+    Some(t) -> Typed(t, None, core)
+    None -> Typed(join(bodies.mapNotNull { it }, at, context), None, core)
   }
 }
 
+// A when without a subject's branches, as core: the first whose condition holds, the last the else.
+private conditions(branches: List<(Option<Core>, Core)>): Core = when (branches) {
+  [] -> Value(UnitLiteral)
+  [(_, body)] -> body
+  [(None, body), *_] -> body
+  [(Some(condition), body), *rest] -> Conditional(condition, body, conditions(rest))
+}
+
 // A branch's body, checked against what's expected, or, with nothing expected, what it is, to join
-// with the others.
-@Inferring private branchBody(body: Expression, wanted: Option<Type>, scope: Scope, context: Context): Option<(Expression, Typed)> = when (wanted) {
-  Some(t) -> {
-    check(body, t, scope, context)
-    None
+// with the others; and its core.
+@Inferring private branchBody(body: Expression, wanted: Option<Type>, scope: Scope, context: Context): (Option<(Expression, Typed)>, Core) = when (wanted) {
+  Some(t) -> (None, check(body, t, scope, context))
+  None -> {
+    typed = infer(body, None, scope, context)
+    (Some((body, typed)), typed.core)
   }
-  None -> Some((body, infer(body, None, scope, context)))
 }
 
 // A branch of a when with a subject: its patterns, which a branch of several can't bind names in;
@@ -52,11 +63,12 @@ import fckt.parser.*
   if (branch.patterns.size > 1 && branch.patterns.any { References.namesIn(it).isNotEmpty() }) {
     abandon(Globals.problem(context, branch.at, "a branch with several patterns can't bind names"))
   } else Unit
-  (inner, matches) = branch.patterns.fold((Scopes.inside(scope), [])) { acc, p ->
-    (s, found) = acc
+  (inner, matches, matchers) = branch.patterns.fold((Scopes.inside(scope), [], [])) { acc, p ->
+    (s, found, ms) = acc
     checked = checkPattern(p, subjectType, s, Some(subject), context)
-    (checked.scope, found + checked.matches)
+    (checked.scope, found + checked.matches, ms + [checked.matcher])
   }
-  branch.guard.forEach { check(it, boolean, inner, context) }
-  CheckedBranch(branchBody(branch.body, wanted, inner, context), if (branch.patterns.isEmpty()) [Coverage.anything] else matches)
+  guard = branch.guard.map { check(it, boolean, inner, context) }
+  (body, bodyCore) = branchBody(branch.body, wanted, inner, context)
+  CheckedBranch(body, if (branch.patterns.isEmpty()) [Coverage.anything] else matches, MatchBranch(matchers, guard, bodyCore))
 }

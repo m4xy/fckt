@@ -1,0 +1,45 @@
+// What can be told of core from what it is.
+module Cores {
+  // Whether working out the core may run code, which could do something: anything but values,
+  // names, functions, and what's made of them.
+  runs(c: Core): Boolean = when (c) {
+    Value(_) -> false
+    LocalRead(_, isVar) -> isVar
+    GlobalRead(_) -> false
+    ExternalRead(_) -> false
+    FunctionValue(_, _, _) -> false
+    Operated(_, operands) -> operands.any { runs(it) }
+    Shown(value, _) -> runs(value)
+    TupleMade(parts) -> parts.any { runs(it) }
+    ListMade(items) -> items.any { item ->
+      when (item) {
+        OneItem(value) -> runs(value)
+        SpreadItems(list) -> runs(list)
+      }
+    }
+    Conditional(condition, then, otherwise) -> runs(condition) || runs(then) || runs(otherwise)
+    Constructed(_, fields, _) -> fields.any { runs(it) }
+    FieldRead(record, _, _) -> runs(record)
+    NarrowedRead(_, _, _) -> false
+    else -> true
+  }
+
+  // A call whose arguments, given in its parameters' order, are written in another: each that runs
+  // code bound first, in the order they're written, as Kotlin runs them, so what they do happens in
+  // that order. The order is the argument each parameter gets, by its place where it's written.
+  inWrittenOrder(arguments: List<Core>, order: List<Int>, call: (List<Core>) -> Core): Core =
+    if (order == order.sorted() || arguments.count { runs(it) } < 2) call(arguments)
+    else {
+      // Each parameter's argument, with the name it's bound to, if it's bound.
+      named = arguments.mapIndexed { i, a -> (a, if (runs(a)) Some("fk_named${i + 1}") else None) }
+      written = named.zip(order).sortedBy { _, at -> at }.map { entry, _ -> entry }
+      given = named.map { a, name -> name.map { LocalRead(it, false) }.getOrElse(a) }
+      written.reversed().fold(call(given)) { body, entry ->
+        (a, name) = entry
+        when (name) {
+          Some(n) -> Bound(NameMatcher(n), a, body)
+          None -> body
+        }
+      }
+    }
+}

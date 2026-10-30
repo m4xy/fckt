@@ -1,3 +1,6 @@
+import fckt.collections.Maps.*
+import fckt.checker.core.TypeDeclaration
+import fckt.checker.symbols.Symbol
 import fckt.checker.sources.Workspace
 import fckt.checker.inference.CheckedFunction
 import fckt.checker.inference.DefaultHandler
@@ -5,5 +8,13 @@ import fckt.checker.inference.FunctionGroup
 
 // A program, checked: the files it's checked with; the type of each of its functions and values,
 // and its code, in the order they're written; each handled effect's default handler, which main is
-// run in; and the functions' groups, each after those it uses, as their code must be.
-type CheckedProgram(workspace: Workspace, functions: List<CheckedFunction>, defaultHandlers: List<DefaultHandler> = [], groups: List<FunctionGroup> = [])
+// run in; the functions' groups, each after those it uses, as their code must be; the types it
+// declares; and the extension that's each type's own toString, where it has one, by its full name.
+type CheckedProgram(
+  workspace: Workspace,
+  functions: List<CheckedFunction>,
+  defaultHandlers: List<DefaultHandler> = [],
+  groups: List<FunctionGroup> = [],
+  types: List<TypeDeclaration> = [],
+  toStrings: Map<String, Symbol> = emptyMap(),
+)

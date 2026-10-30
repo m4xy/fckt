@@ -1,0 +1,60 @@
+import fckt.checker.core.*
+import fckt.checker.symbols.*
+import fckt.ocaml.*
+import fckt.parser.Definition
+
+// Records and cases, as OCaml's: a record is { a = x; b = y }, a case that carries fields an inline
+// record, Circle { r = 1.0 }, and the language's own Some, None, Ok and Error OCaml's. Each is named
+// as written from the top of the program: a record's first label, and a case, through the modules
+// it's in.
+module Constructors {
+  // What the constructor builds, given its fields, in the order it declares them.
+  built(constructor: Constructor, fields: List<Expr>): Expr = when (constructor) {
+    RecordConstructor(record) -> RecordExpr(labelled(record, fieldNames(record), fields), None)
+    CaseConstructor(c) ->
+      if (c.definition.fields.isEmpty()) Construction(caseName(c), None)
+      else Construction(caseName(c), Some(RecordExpr(c.definition.fields.map { it.name }.zip(fields).map { name, value -> FieldValue(Naming.snake(name), value) }, None)))
+    BuiltinCase(name) -> Construction(name, fields.firstOrNone())
+  }
+
+  // What the constructor matches, given what its fields must, or, for is Case, nothing of them; on a
+  // local, the case's record is bound, for what's matched to read its fields.
+  pattern(constructor: Constructor, fields: Option<List<Pat>>, narrowed: Option<String>): Pat = when (constructor) {
+    RecordConstructor(record) -> when (fields) {
+      Some(ps) -> RecordPat(fieldNames(record).zip(ps).mapIndexed { i, entry ->
+        (name, p) = entry
+        FieldPat(if (i == 0) label(record, name) else Naming.snake(name), p)
+      }, false)
+      None -> AnyPat
+    }
+    CaseConstructor(c) ->
+      if (c.definition.fields.isEmpty()) ConstructorPat(caseName(c), None)
+      else ConstructorPat(caseName(c), Some(when (fields) {
+        Some(ps) -> RecordPat(c.definition.fields.map { it.name }.zip(ps).map { name, p -> FieldPat(Naming.snake(name), p) }, false)
+        None -> narrowed.map { local -> VariablePat(narrowedName(local, c.definition.name)) }.getOrElse(AnyPat)
+      }))
+    BuiltinCase("None") -> ConstructorPat("None", None)
+    BuiltinCase(name) -> ConstructorPat(name, Some(fields.flatMap { it.firstOrNone() }.getOrElse(AnyPat)))
+  }
+
+  // A case, written from the top of the program: Circle, or Geometry.Circle.
+  caseName(c: CaseSymbol): String = (c.owner.path.map { Naming.moduleName(it) } + [c.definition.name]).joinToString(".")
+
+  // A record's field's label, written from the top of the program: x, or Geometry.x.
+  label(record: Symbol, field: String): String = (record.path.map { Naming.moduleName(it) } + [Naming.snake(field)]).joinToString(".")
+
+  // What a local found by is to be a case is called while it's so: its case's record.
+  narrowedName(local: String, caseName: String): String = Naming.snake(local) + "_as_" + Naming.snake(caseName).removeSuffix("_")
+
+  private fieldNames(record: Symbol): List<String> = when (record.declaration.definition) {
+    RecordDefinition(_, fields, _, _, _) -> fields.map { it.name }
+    else -> []
+  }
+
+  // The fields, by their labels, the first through the modules its record is in.
+  private labelled(record: Symbol, names: List<String>, values: List<Expr>): List<FieldValue> =
+    names.zip(values).mapIndexed { i, entry ->
+      (name, value) = entry
+      FieldValue(if (i == 0) label(record, name) else Naming.snake(name), value)
+    }
+}

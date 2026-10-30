@@ -77,7 +77,7 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
       order = argumentOrder(given, parameters.map { name, _ -> name }, at, "'${Symbols.simpleName(global)}'", context)
       cores = checkArguments(given, order, parameterTypes, scope, context)
       perform(effects, at)
-      Typed(result, None, if (Signatures.isExternal(global)) ExternalApplied(global, cores) else Applied(GlobalRead(global), cores))
+      Typed(result, None, Cores.inWrittenOrder(cores, order) { args -> if (Signatures.isExternal(global)) ExternalApplied(global, args) else Applied(GlobalRead(global), args) })
     }
     other -> abandon(Globals.problem(context, at, "'${Symbols.simpleName(global)}' is a ${TypeText.shown(other)}, not a function"))
   }
@@ -183,8 +183,8 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
     unify(shape.result, e)
     Unit
   }
-  checkArguments(given, order, shape.fieldTypes, scope, context)
-  Typed(shape.result, spelledCase(shape))
+  fields = checkArguments(given, order, shape.fieldTypes, scope, context)
+  Typed(shape.result, spelledCase(shape), Cores.inWrittenOrder(fields, order) { args -> Constructed(shape.constructor, args, shape.result) })
 }
 
 // A record's fields, as it declares them.

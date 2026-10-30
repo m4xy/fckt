@@ -1,0 +1,3 @@
+// A when's branch: the patterns any of which the subject must match, none for else; what must then
+// hold; and what it gives.
+type MatchBranch(patterns: List<Matcher>, guard: Option<Core>, body: Core)

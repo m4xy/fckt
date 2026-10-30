@@ -1,0 +1,53 @@
+import fckt.collections.Maps.*
+import fckt.checker.core.*
+import fckt.checker.diagnostics.*
+import fckt.checker.resolution.Place
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.parser.*
+
+// The types a program declares, as lowering writes them: each record's, type with cases' and
+// alias's fields, or what it stands for, with their types worked out.
+module TypeDeclarations {
+  // Each one that can be worked out: what can't, checking has said why already, or no code uses.
+  @Solving all(definitions: Definitions): List<TypeDeclaration> =
+    definitions.namespace.table.declarations.mapNotNull { d ->
+      when (Diagnostics.attempting { declared(d, definitions) }) {
+        Ok(declaration) -> declaration
+        Error(_) -> None
+      }
+    }
+
+  // Each type with a toString of its own, given how to show each of its type parameters, as
+  // Map<K, V>.toString(showKey, showValue): the extension, by the full name of the type it's of.
+  @Solving toStrings(definitions: Definitions): Map<String, Symbol> =
+    definitions.namespace.table.functions.toList().mapNotNull { _, s ->
+      when (s.declaration.definition) {
+        FunctionDefinition(typeParameters, Some(receiver), Some(parameters), _, _, _, _) if s.declaration.name == "toString" ->
+          when (Diagnostics.attempting { Conversion.typeOf(receiver, TypeContext(Place(s.file, s.path), typeParameters.map { (it, TypeParameter(it)) }.toMap()), definitions) }) {
+            Ok(Named(name, arguments, _)) if arguments.filter { it !is Effects }.size == parameters.size -> Some((name, s))
+            else -> None
+          }
+        else -> None
+      }
+    }.toMap()
+
+  @Solving @Abandoning private declared(d: Symbol, definitions: Definitions): Option<TypeDeclaration> = when (d.declaration.definition) {
+    RecordDefinition(typeParameters, _, _, true, _) -> None
+    RecordDefinition(typeParameters, _, _, _, Some(ocaml)) -> Some(DeclaredExternal(d, typeParameters, ocaml))
+    RecordDefinition(typeParameters, fields, _, _, None) -> {
+      types = Conversion.recordFields(d, typeParameters.map { TypeParameter(it) }, None, definitions)
+      Some(DeclaredRecord(d, typeParameters, fields.zip(types).map { f, t -> DeclaredField(f.name, t, f.variable) }))
+    }
+    CasesDefinition(typeParameters, _, _, _) -> {
+      cases = Conversion.casesWithFields(d, typeParameters.map { TypeParameter(it) }, None, definitions).map { c, types ->
+        DeclaredCase(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition),
+          c.definition.fields.zip(types).map { f, t -> DeclaredField(f.name, t, f.variable) })
+      }
+      Some(DeclaredCases(d, typeParameters, cases))
+    }
+    AliasDefinition(typeParameters, target) ->
+      Some(DeclaredAlias(d, typeParameters, Conversion.typeOf(target, TypeContext(Place(d.file, d.path), typeParameters.map { (it, TypeParameter(it)) }.toMap()), definitions)))
+    else -> None
+  }
+}

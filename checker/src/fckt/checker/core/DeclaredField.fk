@@ -1,0 +1,4 @@
+import fckt.checker.types.Type
+
+// A record's or a case's field: its name, its type, and whether it can change.
+type DeclaredField(name: String, t: Type, variable: Boolean)

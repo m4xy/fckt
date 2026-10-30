@@ -36,7 +36,7 @@ module HandledEffects {
       })
     }, None)
     typeParameters = typeParametersOf(d.effect)
-    handlerType = TypeApplication(nextTo(d.effect, simpleSnake(d.effect) + "_handler"), (typeParameters + ["answer"]).map { TypeVariable("_") })
+    handlerType = TypeApplication(nextTo(d.effect, simpleSnake(d.effect) + "_handler"), (typeParameters + ["answer"]).map { TypeVar("_") })
     Annotated(record, handlerType)
   }
 

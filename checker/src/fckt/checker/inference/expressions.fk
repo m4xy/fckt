@@ -18,7 +18,7 @@ import fckt.parser.*
   typed = if (inner.core == Pending("an expression")) inner.copy(core = Pending(kindOf(e))) else inner
   when (e) {
     // A call that gives Nothing never returns, so it fits wherever it is.
-    Call(_, _, _, _) if isNamed(resolved(typed.t), "Nothing") -> Typed(Variable(fresh()), None, typed.core)
+    Call(_, _, _, _) if isNamed(resolved(typed.t), "Nothing") -> Typed(Variable(fresh()), None, Absurd(typed.core))
     else -> typed
   }
 }
@@ -69,7 +69,7 @@ private kindOf(e: Expression): String = when (e) {
   FloatConstant(_, value) -> Typed(float, None, Value(FloatLiteral(value)))
   BooleanConstant(_, value) -> Typed(boolean, None, Value(BooleanLiteral(value)))
   CharConstant(_, c) -> Typed(char, None, Value(CharLiteral(c.code)))
-  Tuple(_, elements) -> Typed(inferTuple(elements, expected, scope, context))
+  Tuple(_, elements) -> inferTuple(elements, expected, scope, context)
   Spread(at, _) -> abandon(Globals.problem(context, at, "'*' can only spread a list inside a list literal"))
   StringTemplate(_, parts) -> Typed(string, None, joined(parts.map { part ->
     when (part) {
@@ -90,24 +90,25 @@ private kindOf(e: Expression): String = when (e) {
   Lambda(at, parameters, body, ignoresArguments) -> inferLambda(at, Some(parameters), body, ignoresArguments, false, expected, scope, context)
   Pipe(at, value, function) -> Typed(inferPipe(at, value, function, scope, context))
   If(at, condition, then, otherwise, hasElse) -> inferIf(at, condition, then, otherwise, hasElse, expected, scope, context)
-  When(at, subject, branches) -> Typed(inferWhen(at, subject, branches, expected, scope, context))
+  When(at, subject, branches) -> inferWhen(at, subject, branches, expected, scope, context)
   Block(at, statements, result, endsInBinding) -> inferBlock(at, statements, result, endsInBinding, expected, scope, None, context)
   Monadic(at, monad, block) -> Typed(inferMonadic(at, monad, block, scope, context))
 }
 
-@Inferring private inferTuple(elements: List<Expression>, expected: Option<Type>, scope: Scope, context: Context): Type = {
+@Inferring private inferTuple(elements: List<Expression>, expected: Option<Type>, scope: Scope, context: Context): Typed = {
   hint = expected.flatMap { t ->
     when (resolved(t)) {
       TupleOf(parts) if parts.size == elements.size -> Some(parts)
       else -> None
     }
   }
-  TupleOf(elements.mapIndexed { i, x ->
+  parts = elements.mapIndexed { i, x ->
     wanted = hint.flatMap { it.getOrNone(i) }
     typed = infer(x, wanted, scope, context)
     wanted.forEach { assign(x, typed, it, context) }
-    typed.t
-  })
+    typed
+  }
+  Typed(TupleOf(parts.map { it.t }), None, TupleMade(parts.map { it.core }))
 }
 
 // [a, b, *rest]: a list of what its items are, joined, or of what's expected of them; each spread
@@ -229,6 +230,7 @@ private joined(parts: List<Core>): Core = when (parts) {
           Some(shape) -> Typed(
             if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(shape.fieldTypes, shape.result, Row([], Some(fresh()))),
             spelledCase(shape),
+            constructorValue(shape),
           )
           None -> when (builtinFunction(name)) {
             Some(t) -> Typed(t, None, if (name == "Unit") Value(UnitLiteral) else Pending("$name, used as a value"))
@@ -242,6 +244,15 @@ private joined(parts: List<Core>): Core = when (parts) {
         }
       }
     }
+  }
+
+// A constructor used as a value: what it builds, if it takes no fields; otherwise a function of
+// its fields that builds it.
+constructorValue(shape: ConstructorShape): Core =
+  if (shape.fieldTypes.isEmpty()) Constructed(shape.constructor, [], shape.result)
+  else {
+    names = shape.fieldTypes.mapIndexed { i, _ -> "field$i" }
+    FunctionValue(names.map { NameMatcher(it) }, Constructed(shape.constructor, names.map { LocalRead(it, false) }, shape.result), false)
   }
 
 // The language's own functions: Unit, which is both the type and its one value; and assert and

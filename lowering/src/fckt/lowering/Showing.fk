@@ -1,0 +1,7 @@
+import fckt.checker.symbols.Symbol
+
+// What's known, while showing values as text, of the types that show themselves: the extension
+// that's a type's own toString, given how to show each of its type parameters, if it has one.
+effect Showing {
+  toStringOf(typeName: String): Option<Symbol>
+}

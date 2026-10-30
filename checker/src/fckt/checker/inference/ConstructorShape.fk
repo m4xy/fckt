@@ -1,3 +1,4 @@
+import fckt.checker.core.*
 import fckt.checker.types.Type
 
 // A constructor, as it's used here: its fields' names and types, and the type it builds.

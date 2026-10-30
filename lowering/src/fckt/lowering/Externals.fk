@@ -12,7 +12,7 @@ module Externals {
     pieces = atoms(textOf(function)).flatMap { atom ->
       label = atom.removePrefix("~")
       if (parameters.contains(atom)) [argumentFor(parameters, atom, arguments)]
-      else if (atom.startsWith("~") && parameters.contains(label)) [Verbatim("~$label:"), argumentFor(parameters, label, arguments)]
+      else if (atom.startsWith("~") && parameters.contains(label)) [Labelled(label, argumentFor(parameters, label, arguments))]
       else [Identifier(atom)]
     }
     when (pieces) {

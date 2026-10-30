@@ -1,3 +1,4 @@
+import fckt.checker.core.*
 import fckt.collections.Maps.*
 import fckt.checker.coverage.*
 import fckt.checker.definitions.*
@@ -13,42 +14,51 @@ import fckt.parser.*
 // a case, finds the subject to be one of its cases.
 
 @Inferring checkPattern(p: Pattern, t: Type, scope: Scope, subject: Option<Expression>, context: Context): CheckedPattern = when (p) {
-  Wildcard(_) -> CheckedPattern(scope, [Coverage.anything])
+  Wildcard(_) -> CheckedPattern(scope, [Coverage.anything], AnyMatcher)
   NamePattern(at, name) ->
     if (Scopes.bindsHere(scope, name)) abandon(Globals.problem(context, at, "'$name' is bound twice in this pattern"))
-    else CheckedPattern(Scopes.bind(scope, name, Local(t)), [Coverage.anything])
+    else CheckedPattern(Scopes.bind(scope, name, Local(t)), [Coverage.anything], NameMatcher(name))
   ConstantPattern(_, e) -> {
-    check(e, t, scope, context)
-    CheckedPattern(scope, [constantMatches(e)])
+    core = check(e, t, scope, context)
+    CheckedPattern(scope, [constantMatches(e)], ConstantMatcher(literalOf(core)))
   }
   TuplePattern(at, elements) -> checkTuplePattern(at, elements, t, scope, context)
   ListPattern(at, elements, rest) -> {
     element = Variable(fresh())
     expect(listOf(element), t, at, context)
-    (afterElements, elementMatches) = checkEach(elements, elements.map { element }, scope, context)
-    (afterRest, restMatches) = when (rest) {
+    (afterElements, elementMatches, elementMatchers) = checkEach(elements, elements.map { element }, scope, context)
+    (afterRest, restMatches, restMatcher) = when (rest) {
       Some(r) -> {
         checked = checkPattern(r, listOf(element), afterElements, None, context)
-        (checked.scope, checked.matches)
+        (checked.scope, checked.matches, Some(checked.matcher))
       }
       // Without a rest, the list ends there.
-      None -> (afterElements, [Matches(Some(EmptyList), [])])
+      None -> (afterElements, [Matches(Some(EmptyList), [])], None)
     }
     // [a, b, *rest] is a, then b, then rest.
     CheckedPattern(afterRest, elementMatches.reversed().fold(restMatches) { tails, options ->
       options.flatMap { head -> tails.map { tail -> Matches(Some(NonEmptyList), [head, tail]) } }
-    })
+    }, ListMatcher(elementMatchers, restMatcher))
   }
   CasePattern(at, name, arguments, isCheck, qualifier) -> checkCasePattern(at, name, arguments, isCheck, qualifier, t, scope, subject, context)
 }
 
-// Each pattern checked against its type in turn, binding into one scope, with what each matches.
-@Inferring private checkEach(patterns: List<Pattern>, types: List<Type>, scope: Scope, context: Context): (Scope, List<List<Matches>>) =
-  patterns.zip(types).fold((scope, [])) { acc, entry ->
-    (s, found) = acc
+// A constant pattern's value: a constant, or a negative number, -1.
+private literalOf(core: Core): Literal = when (core) {
+  Value(literal) -> literal
+  Operated(IntNegate, [Value(IntLiteral(n))]) -> IntLiteral(-n)
+  Operated(FloatNegate, [Value(FloatLiteral(x))]) -> FloatLiteral(-x)
+  else -> UnitLiteral
+}
+
+// Each pattern checked against its type in turn, binding into one scope, with what each matches, and
+// each, as core.
+@Inferring private checkEach(patterns: List<Pattern>, types: List<Type>, scope: Scope, context: Context): (Scope, List<List<Matches>>, List<Matcher>) =
+  patterns.zip(types).fold((scope, [], [])) { acc, entry ->
+    (s, found, matchers) = acc
     (p, t) = entry
     checked = checkPattern(p, t, s, None, context)
-    (checked.scope, found + [checked.matches])
+    (checked.scope, found + [checked.matches], matchers + [checked.matcher])
   }
 
 // (p, q): a tuple's elements, or a record's fields in the order it declares them, like a Kotlin
@@ -64,14 +74,14 @@ import fckt.parser.*
       if (Conversion.isAbstractHere(r, context.place, context.environment.definitions)) abandon(opaque(r, at, context)) else Unit
       fields = recordFieldsOf(r)
       if (elements.size != fields.size) abandon(Globals.problem(context, at, "${r.name} has ${fields.size} fields, not ${elements.size}")) else Unit
-      (after, matches) = checkEach(elements, Conversion.recordFields(r, arguments, region, context.environment.definitions, Some(context.place)), scope, context)
-      CheckedPattern(after, product(matches).map { Matches(Some(RecordShape(r.name)), it) })
+      (after, matches, matchers) = checkEach(elements, Conversion.recordFields(r, arguments, region, context.environment.definitions, Some(context.place)), scope, context)
+      CheckedPattern(after, product(matches).map { Matches(Some(RecordShape(r.name)), it) }, CaseMatcher(RecordConstructor(r), Some(matchers), None))
     }
     None -> {
       parts = elements.map { Variable(fresh()) }
       expect(TupleOf(parts), t, at, context)
-      (after, matches) = checkEach(elements, parts, scope, context)
-      CheckedPattern(after, product(matches).map { Matches(Some(TupleShape(elements.size)), it) })
+      (after, matches, matchers) = checkEach(elements, parts, scope, context)
+      CheckedPattern(after, product(matches).map { Matches(Some(TupleShape(elements.size)), it) }, TupleMatcher(matchers))
     }
   }
 }
@@ -100,8 +110,13 @@ import fckt.parser.*
     isCase = qualifier.isNone() && subjectType.map { st, _, _ -> context.environment.definitions.cases.getOrDefault(st.name, []).any { it.definition.name == name } }.getOrElse(false)
     if (isCase) None else Lookups.found(Lookups.caseType(full, context.place, namespace, Skipping))
   }
+  // The local an is check narrows, if it's on one.
+  narrowedLocal = when ((isCheck, subject)) {
+    (true, Some(Name(_, local))) -> Some(local)
+    else -> None
+  }
   when (target) {
-    Some(caseType) -> narrow(at, name, caseType, resolved(t), scope, subject, context)
+    Some(caseType) -> narrow(at, name, caseType, resolved(t), scope, subject, context).copy(matcher = CaseTypeMatcher(caseType, narrowedLocal))
     None -> {
       shape = when (subjectType) {
         Some((st, typeArguments, region)) -> subjectCase(at, name, qualifier, st, typeArguments, region, context)
@@ -113,16 +128,18 @@ import fckt.parser.*
           None -> abandon(Globals.problem(context, at, "unknown type or variant '$name'"))
         }
       }
-      (after, fieldMatches) = when (arguments) {
+      (after, fieldMatches, fieldMatchers) = when (arguments) {
         Some(args) -> {
           if (args.size != shape.fieldTypes.size) abandon(Globals.problem(context, at, "'$name' has ${shape.fieldTypes.size} fields, not ${args.size}")) else Unit
-          checkEach(args, shape.fieldTypes, scope, context)
+          (s, m, matchers) = checkEach(args, shape.fieldTypes, scope, context)
+          (s, m, Some(matchers))
         }
         None ->
           if (!isCheck && shape.fieldTypes.isNotEmpty()) abandon(Globals.problem(context, at, "'$name' has fields: match them with $name(...) or use 'is $name'"))
-          else (scope, shape.fieldTypes.map { [Coverage.anything] })
+          else (scope, shape.fieldTypes.map { [Coverage.anything] }, None)
       }
-      CheckedPattern(narrowedTo(shape, isCheck, after, subject, context), product(fieldMatches).map { Matches(Some(shapeOf(shape)), it) })
+      CheckedPattern(narrowedTo(shape, isCheck, after, subject, context), product(fieldMatches).map { Matches(Some(shapeOf(shape)), it) },
+        CaseMatcher(shape.constructor, fieldMatchers, narrowedLocal))
     }
   }
 }

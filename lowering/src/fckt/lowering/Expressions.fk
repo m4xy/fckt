@@ -7,7 +7,7 @@ import fckt.ocaml.*
 // right to left: where more than one runs code, each is bound first, in order, so what they do
 // happens in the order it's written.
 module Expressions {
-  @Fail expression(c: Core): Expr = when (c) {
+  @Fail @Showing expression(c: Core): Expr = when (c) {
     Value(literal) -> ConstantExpr(constant(literal))
     LocalRead(name, isVar) -> if (isVar) Application(Identifier("!"), [Identifier(Naming.snake(name))]) else Identifier(Naming.snake(name))
     GlobalRead(function) -> Identifier(Naming.valueReference(function))
@@ -51,6 +51,21 @@ module Expressions {
     Sequenced(first, then) -> Sequence(expression(first), expression(then))
     FunctionValue(parameters, body, dropsResult) ->
       Fun(parametersOf(parameters), if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(body))
+    Constructed(constructor, fields, _) -> inOrder(fields) { given -> Constructors.built(constructor, given) }
+    FieldRead(record, owner, field) -> FieldAccess(expression(record), Constructors.label(owner, field))
+    NarrowedRead(local, caseName, field) -> FieldAccess(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field))
+    CaseName(value, cases) -> Match(expression(value), cases.map { c ->
+      Case(ConstructorPat(Constructors.caseName(c), None), None, ConstantExpr(StringConstant(c.definition.name)))
+    })
+    Matched(subject, branches) -> Match(expression(subject), branches.map { b ->
+      pattern = when (b.patterns) {
+        [] -> AnyPat
+        [first, *rest] -> rest.fold(pat(first)) { either, p -> OrPat(either, pat(p)) }
+      }
+      Case(pattern, b.guard.map { expression(it) }, expression(b.body))
+    })
+    // OCaml's told it gives whatever's wanted.
+    Absurd(call) -> Match(expression(call), [Case(AnyPat, None, Verbatim("assert false"))])
     Pending(what) -> fail(what)
   }
 
@@ -61,9 +76,15 @@ module Expressions {
     AnyMatcher -> AnyPat
     NameMatcher(name) -> VariablePat(Naming.snake(name))
     TupleMatcher(parts) -> TuplePat(parts.map { pat(it) })
+    ConstantMatcher(literal) -> ConstantPat(constant(literal))
+    CaseMatcher(constructor, fields, narrowed) -> Constructors.pattern(constructor, fields.map { fs -> fs.map { pat(it) } }, narrowed)
+    // is Vowel, where Vowel's cases are its own: anything the subject's type has.
+    CaseTypeMatcher(_, _) -> AnyPat
+    ListMatcher(items, None) -> ListPat(items.map { pat(it) })
+    ListMatcher(items, Some(rest)) -> items.reversed().fold(pat(rest)) { tail, item -> ConsPat(pat(item), tail) }
   }
 
-  private constant(literal: Literal): Constant = when (literal) {
+  constant(literal: Literal): Constant = when (literal) {
     IntLiteral(n) -> IntConstant(n)
     FloatLiteral(x) -> FloatConstant(x)
     BooleanLiteral(b) -> BooleanConstant(b)
@@ -73,7 +94,7 @@ module Expressions {
   }
 
   // [a, *rest, b]: items consed on, and a spread list appended.
-  @Fail private listMade(items: List<ListItem>): Expr = {
+  @Fail @Showing private listMade(items: List<ListItem>): Expr = {
     parts = items.map { item ->
       when (item) {
         OneItem(value) -> value
@@ -125,14 +146,14 @@ module Expressions {
 
   // What's built from parts, given them as OCaml: where two or more of them run code, each that does
   // is bound first, in order, and given by its name.
-  @Fail private inOrder(parts: List<Core>, build: (List<Expr>) -> Expr): Expr = {
-    running = parts.filter { runs(it) }
+  @Fail @Showing private inOrder(parts: List<Core>, build: (List<Expr>) -> Expr): Expr = {
+    running = parts.filter { Cores.runs(it) }
     if (running.size < 2) build(parts.map { expression(it) })
     else {
       // Each running part's name, fk_arg1 on, in order.
       (names, _) = parts.fold(([], 0)) { acc, part ->
         (found, n) = acc
-        if (runs(part)) (found + [Some("fk_arg${n + 1}")], n + 1) else (found + [None], n)
+        if (Cores.runs(part)) (found + [Some("fk_arg${n + 1}")], n + 1) else (found + [None], n)
       }
       given = parts.zip(names).map { part, name -> name.map { Identifier(it) }.getOrElse(expression(part)) }
       parts.zip(names).reversed().fold(build(given)) { body, entry ->
@@ -143,26 +164,5 @@ module Expressions {
         }
       }
     }
-  }
-
-  // Whether working out the core may run code, which could do something: anything but values,
-  // names, functions, and what's made of them.
-  runs(c: Core): Boolean = when (c) {
-    Value(_) -> false
-    LocalRead(_, isVar) -> isVar
-    GlobalRead(_) -> false
-    ExternalRead(_) -> false
-    FunctionValue(_, _, _) -> false
-    Operated(_, operands) -> operands.any { runs(it) }
-    Shown(value, _) -> runs(value)
-    TupleMade(parts) -> parts.any { runs(it) }
-    ListMade(items) -> items.any { item ->
-      when (item) {
-        OneItem(value) -> runs(value)
-        SpreadItems(list) -> runs(list)
-      }
-    }
-    Conditional(condition, then, otherwise) -> runs(condition) || runs(then) || runs(otherwise)
-    else -> true
   }
 }

@@ -1,0 +1,5 @@
+import fckt.checker.symbols.CaseSymbol
+
+// A case of a type with cases, by the type that declares it, which a type sharing it has as its
+// owner, with its fields.
+type DeclaredCase(case: CaseSymbol, fields: List<DeclaredField>)

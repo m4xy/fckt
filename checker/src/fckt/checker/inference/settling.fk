@@ -24,6 +24,11 @@ import fckt.checker.types.Types.*
     }
   })
   TupleMade(parts) -> TupleMade(parts.map { settledCore(it) })
+  Constructed(constructor, fields, t) -> Constructed(constructor, fields.map { settledCore(it) }, resolvedFully(t))
+  FieldRead(record, owner, field) -> FieldRead(settledCore(record), owner, field)
+  CaseName(value, cases) -> CaseName(settledCore(value), cases)
+  Matched(subject, branches) -> Matched(settledCore(subject), branches.map { b -> MatchBranch(b.patterns, b.guard.map { settledCore(it) }, settledCore(b.body)) })
+  NarrowedRead(_, _, _) -> c
   Joined(list, separator, element) -> Joined(settledCore(list), settledCore(separator), resolvedFully(element))
   Assertion(condition, where) -> Assertion(settledCore(condition), where)
   EqualityAssertion(expected, actual, t, where) -> EqualityAssertion(settledCore(expected), settledCore(actual), resolvedFully(t), where)
@@ -34,5 +39,6 @@ import fckt.checker.types.Types.*
   FunctionBound(name, parameters, body, rest) -> FunctionBound(name, parameters, settledCore(body), settledCore(rest))
   Sequenced(first, then) -> Sequenced(settledCore(first), settledCore(then))
   FunctionValue(parameters, body, drops) -> FunctionValue(parameters, settledCore(body), drops)
+  Absurd(call) -> Absurd(settledCore(call))
   Pending(_) -> c
 }

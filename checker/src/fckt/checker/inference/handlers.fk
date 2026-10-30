@@ -180,7 +180,7 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
       order = argumentOrder(arguments, operation.value.parameters.getOrElse([]).map { it.name }, at, "'$name'", context)
       cores = checkArguments(arguments, order, parameterTypes, scope, context)
       perform(Row([label], None), at)
-      Typed(result, None, Performed(operation.effect, name, cores))
+      Typed(result, None, Cores.inWrittenOrder(cores, order) { args -> Performed(operation.effect, name, args) })
     }
     else -> abandon(Globals.problem(context, at, "'$name' is a value of ${Symbols.simpleName(operation.effect)}, not a function; write it without ()"))
   }

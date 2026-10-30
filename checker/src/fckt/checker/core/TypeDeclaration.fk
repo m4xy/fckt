@@ -1,0 +1,16 @@
+import fckt.checker.symbols.*
+import fckt.checker.types.Type
+
+// A type a program declares, as lowering writes it: by its declaration, with its type parameters,
+// which its fields' types have as TypeParameter, and what it is.
+type TypeDeclaration {
+  // A record, with its fields.
+  DeclaredRecord(record: Symbol, typeParameters: List<String>, fields: List<DeclaredField>),
+  // A type with cases, each with its fields: its own, and those it takes from another type, which
+  // it shares.
+  DeclaredCases(caseType: Symbol, typeParameters: List<String>, cases: List<DeclaredCase>),
+  // Another name for a type.
+  DeclaredAlias(alias: Symbol, typeParameters: List<String>, target: Type),
+  // OCaml's own type, as its OCaml is written, its type parameters 'a for A.
+  DeclaredExternal(external: Symbol, typeParameters: List<String>, ocaml: String),
+}

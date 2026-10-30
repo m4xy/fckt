@@ -80,7 +80,7 @@ module Printer {
       _ -> applied
     }
     text = when (t) {
-      TypeVariable(name) -> name
+      TypeVar(name) -> name
       TypeApplication(name, []) -> name
       TypeApplication(name, [argument]) -> typexpr(argument, applied) + " " + name
       TypeApplication(name, arguments) -> "(" + arguments.map { typexpr(it, 0) }.joinToString(", ") + ") " + name
@@ -167,6 +167,7 @@ module Printer {
     Construction(name, None) -> name
     Construction(name, Some(argument)) -> name + " " + expr(argument, Argument, indent)
     Annotated(inner, t) -> "(" + expr(inner, Anywhere, indent) + " : " + typexpr(t, 0) + ")"
+    Labelled(label, value) -> "~$label:" + expr(value, Argument, indent)
     Verbatim(code) -> "($code)"
   }
 
