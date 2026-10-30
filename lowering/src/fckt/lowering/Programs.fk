@@ -42,7 +42,8 @@ module Programs {
   }
 
   @Fail @Lowering private items(program: CheckedProgram, whole: Boolean): List<Item> = {
-    isOwn = (s: Symbol) -> whole || ownedByProgram(s)
+    made = madeByProgram(program)
+    isOwn = (s: Symbol) -> whole || ownedByProgram(s) || made.any { m -> s.path.take(m.size) == m }
     bodies = program.functions.filter { f -> isOwn(f.function) }.mapNotNull { f -> f.body.map { b -> (f.function, f.scheme.template, b) } }
     groups = program.groups.mapNotNull { g ->
       functions = g.functions.mapNotNull { f -> bodies.find { s, _, _ -> s.name == f.name } }
@@ -90,6 +91,19 @@ module Programs {
       else -> []
     }
   }.distinct()
+
+  // The path of each module the program makes by applying a functor, whose copies of the
+  // functor's declarations are its own, wherever the functor is.
+  private madeByProgram(program: CheckedProgram): List<List<String>> =
+    program.environment.map { e -> e.definitions.namespace.table.modules.values }.getOrElse([]).flatMap { m ->
+      when (m) {
+        DeclaredModule(s) if ownedByProgram(s) -> when (s.declaration.definition) {
+          ModuleDefinition(_, _, _, Some(_), _) -> [s.name.split(".")]
+          else -> []
+        }
+        else -> []
+      }
+    }
 
   // Whether the declaration is the program's own: in its own project, not one it uses.
   private ownedByProgram(s: Symbol): Boolean = !compiledApart(s.file)

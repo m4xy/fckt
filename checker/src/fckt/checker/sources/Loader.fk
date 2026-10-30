@@ -304,8 +304,10 @@ module Loader {
     }
   }
 
-  // The declaration, with each function that says its type taken to have it, its code compiled.
+  // The declaration, with each function that says its type taken to have it, its code compiled;
+  // but a functor's, which each module it makes is a copy of.
   private trusting(d: Declaration): Declaration = when (d.definition) {
+    ModuleDefinition(_, _, [_, *_], _, _) -> d
     FunctionDefinition(typeParameters, receiver, parameters, Some(result), _, None, operator) ->
       d.copy(
         definition = FunctionDefinition(

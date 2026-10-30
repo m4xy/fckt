@@ -6,7 +6,8 @@ import fckt.parser.*
 // there. What's private or internal isn't in it: no other project sees it.
 module Interfaces {
   // The file's interface, with its imports, as its declarations' types name what they import. A
-  // spec is as the text has it, with its defaults' code, as a module that follows it has that code.
+  // spec is as the text has it, with its defaults' code, as a module that follows it has that code;
+  // and a functor, as each module a program makes with it is a copy of it.
   write(file: SourceFile, path: String, text: String): String = {
     header = "// The interface of $path, which fckt --library wrote: " +
       "its declarations, without their code.\n"
@@ -53,6 +54,7 @@ module Interfaces {
 
   private declaration(d: Declaration, indent: String, text: String): String = when (d.definition) {
     SpecDefinition(_, _, _, None, _) -> indent + verbatim(d, text) + "\n"
+    ModuleDefinition(_, _, [_, *_], _, _) -> indent + verbatim(d, text) + "\n"
     definition -> {
       effect = isEffect(d)
       kept = d.annotations.filter { a -> !(effect && a.name == "Effect") }
