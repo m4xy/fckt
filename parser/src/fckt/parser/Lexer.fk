@@ -65,11 +65,11 @@ module Lexer {
   }
 
   // Whether the next line, past blank ones and comments, goes on with the one before: starts with
-  // . (but not ..) or |>.
+  // . (but not ..), |>, && or ||.
   private nextLineContinues(s: Scan, from: Int): Boolean = {
     at = pastSpace(s.chars, from)
     if (startsWith(s, at, "//")) nextLineContinues(s, lineEnd(s.chars, at))
-    else (startsWith(s, at, ".") && !startsWith(s, at, "..")) || startsWith(s, at, "|>")
+    else (startsWith(s, at, ".") && !startsWith(s, at, "..")) || ["|>", "&&", "||"].any { startsWith(s, at, it) }
   }
 
   private pastSpace(chars: Array<Char>, at: Int): Int = if (at < chars.size && chars[at].isWhitespace()) pastSpace(chars, at + 1) else at

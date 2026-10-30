@@ -1,0 +1,18 @@
+import fckt.io.Console
+
+ready(name: String, size: Int): Boolean =
+  name.isNotEmpty()
+    && size > 0
+    // a comment between is fine
+    && size < 10
+
+main() = {
+  println(ready("a", 3).toString())
+  either = ready("", 3)
+    || ready("b", 20)
+    || ready("c", 1)
+  println(either.toString())
+}
+
+// prints: true
+// prints: true

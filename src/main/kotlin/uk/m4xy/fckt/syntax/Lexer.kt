@@ -33,7 +33,7 @@ private val CONTINUES_LINE = setOf(
 
 /**
  * Splits source into tokens. Line breaks are significant only directly inside braces (or at the
- * top level), and not after an operator or before a line that starts with `.` or `|>`.
+ * top level), and not after an operator or before a line that starts with `.`, `|>`, `&&` or `||`.
  */
 class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
     private var i = 0
@@ -82,7 +82,7 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
             }
             break
         }
-        return (src.startsWith(".", j) && !src.startsWith("..", j)) || src.startsWith("|>", j)
+        return (src.startsWith(".", j) && !src.startsWith("..", j)) || src.startsWith("|>", j) || src.startsWith("&&", j) || src.startsWith("||", j)
     }
 
     private fun skipSpaceAndComments() {

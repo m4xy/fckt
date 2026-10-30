@@ -164,7 +164,8 @@ See `examples/stdlib.fk`.
 ## How it works
 
 1. `syntax/`: the lexer and recursive-descent parser produce the fckt AST. Newlines end
-   statements only inside braces.
+   statements only inside braces, and not after an operator or before a line that starts with `.`,
+   `|>`, `&&` or `||`, which goes on with the one before, as in Kotlin.
 2. `types/Checker.kt`: Hindley–Milner inference with annotations as hints. Top-level declarations
    are checked in dependency order, and each strongly connected group is generalized together.
    The checker records types plus the decisions the translation depends on: which `+` to use, what
