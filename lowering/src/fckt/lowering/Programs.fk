@@ -20,6 +20,7 @@ module Programs {
       declarationOf = name -> program.types.find { Declarations.declaredAt(it).name == name },
       isShared = name -> sharing(program).contains(name),
       specOf = name -> program.specs.find { it.spec.name == name },
+      effectOf = name -> program.effects.find { it.effect.name == name },
       inside = ~[],
     ) { items(program, whole) }
 

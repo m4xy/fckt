@@ -17,6 +17,7 @@ import uk.m4xy.fckt.syntax.VariantDef
 import uk.m4xy.fckt.types.ASSERT
 import uk.m4xy.fckt.types.ASSERT_EQUALS
 import uk.m4xy.fckt.types.Builtin
+import uk.m4xy.fckt.types.FAIL_EFFECT
 import uk.m4xy.fckt.types.Program
 import uk.m4xy.fckt.types.Type
 import uk.m4xy.fckt.types.stronglyConnected
@@ -170,6 +171,16 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
 
     private fun operationResult(spec: Decl.Spec, op: SpecValue) = typeText(op.type, spec.typeParams.ocaml() + op.typeParams)
 
+    /** What performing [op] gives back: its result, or, if it may fail, its result or why it failed. */
+    private fun performedResult(spec: Decl.Spec, op: SpecValue): String =
+        if (op in program.failingOperations) "(${operationResult(spec, op)}, string) result" else operationResult(spec, op)
+
+    /** Failing with [reason], as fail(reason) does, from wherever this is. */
+    private fun failing(reason: Gen): Gen {
+        val fail = program.effects.first { it.name == FAIL_EFFECT }
+        return Gen.Match(perform(fail, fail.values.first { it.name == "fail" }, listOf(reason)), listOf("_" to Gen.Lit("assert false")))
+    }
+
     /**
      * A handled effect in OCaml 5: an effect constructor for each operation, a record type for its
      * handlers, and a function that runs a block with one. The record has a function for each
@@ -211,7 +222,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         effects {
             constructors = spec.values.map { op ->
                 val params = operationParams(spec, op)
-                val result = operationResult(spec, op).let { if (compound(op.type)) "($it)" else it }
+                val result = performedResult(spec, op).let { if (compound(op.type) && op !in program.failingOperations) "($it)" else it }
                 "${effectName(spec, op)} : ${if (params.isEmpty()) "unit" else tupleText(params)} -> $result Effect.t"
             }
         }
@@ -219,7 +230,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             typeDef(handlerType(spec)) {
                 params = spec.typeParams.ocaml().map(::typeVar) + ANSWER
                 for (op in spec.values) {
-                    val result = operationResult(spec, op)
+                    val result = if (op.params == null) operationResult(spec, op) else performedResult(spec, op)
                     val type = if (op.params == null) result else (operationParams(spec, op) + ("$result -> $ANSWER" to true)).joinToString(" -> ") { (text, paren) -> if (paren) "($text)" else text } + " -> $ANSWER"
                     // An operation's own type parameters, atomically<A>'s, are its field's: any handler's
                     // answers each, whatever it is where it's performed.
@@ -243,7 +254,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             1 -> args[0]
             else -> Gen.Tuple(args)
         }
-        return Gen.App(Gen.Id("Effect.perform"), listOf(Gen.Ctor(nextTo(spec, effectName(spec, op)), arg)))
+        val performed = Gen.App(Gen.Id("Effect.perform"), listOf(Gen.Ctor(nextTo(spec, effectName(spec, op)), arg)))
+        // An operation that may fail is answered with why it did, to fail with here.
+        if (op !in program.failingOperations) return performed
+        return Gen.Match(performed, listOf("Ok v" to Gen.Id("v"), "Error reason" to failing(Gen.Id("reason"))))
     }
 
     /** An operation as a value: a function that performs it, or, for one that isn't a function, performing it. */
@@ -262,10 +276,24 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
      * value; otherwise a function that resumes with what it gives.
      */
     private fun answering(op: SpecValue, answer: Gen, resumes: Boolean): Gen {
-        if (resumes || op.params == null) return answer
+        if (op.params == null) return answer
         val names = op.params.indices.map { "x$it" }
-        val given = Gen.App(answer, names.ifEmpty { listOf("()") }.map { Gen.Id(it) })
-        return Gen.Fun(names + "k", Gen.App(Gen.Id("k"), listOf(given)))
+        val arguments = names.ifEmpty { listOf("()") }.map { Gen.Id(it) }
+        val failing = op in program.failingOperations
+        if (resumes) {
+            if (!failing) return answer
+            // Resumed with what it gives, which didn't fail.
+            return Gen.Fun(names + "k", Gen.App(answer, arguments + Gen.Fun(listOf("v"), Gen.App(Gen.Id("k"), listOf(Gen.Ctor("Ok", Gen.Id("v")))))))
+        }
+        val given = Gen.App(answer, arguments)
+        if (!failing) return Gen.Fun(names + "k", Gen.App(Gen.Id("k"), listOf(given)))
+        // Its failing is caught as it gives its answer, and failed with again where it was performed.
+        val fail = program.effects.first { it.name == FAIL_EFFECT }
+        val caught = Gen.Match(given, listOf(
+            "v" to Gen.Ctor("Ok", Gen.Id("v")),
+            "effect (${nextTo(fail, effectName(fail, fail.values.first { it.name == "fail" }))} reason), _" to Gen.Ctor("Error", Gen.Id("reason")),
+        ))
+        return Gen.Fun(names + "k", Gen.App(Gen.Id("k"), listOf(caught)))
     }
 
     /** Running [block] with [handler] handling [spec]. */

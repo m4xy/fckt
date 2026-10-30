@@ -186,18 +186,36 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
     FunctionOf(parameterTypes, result, _) -> {
       order = argumentOrder(arguments, operation.value.parameters.getOrElse([]).map { it.name }, at, "'$name'", context)
       cores = checkArguments(arguments, order, parameterTypes, scope, context)
-      perform(Row([label], None), at)
+      perform(Row(performed(operation, label, context), None), at)
       Typed(result, None, Cores.inWrittenOrder(cores, order) { args -> Performed(operation.effect, name, args) })
     }
     else -> abandon(Globals.problem(context, at, "'$name' is a value of ${Symbols.simpleName(operation.effect)}, not a function; write it without ()"))
   }
 }
 
+// Whether the operation says it may fail, @Fail get(key: String): Int: then an answer to it that
+// fails, in a handler that resumes with what it gives, fails where the operation was performed, so
+// what's around that catches it, not what's around the handler.
+@Abandoning failsAtCall(spec: Symbol, value: SpecValue, context: Context): Boolean =
+  value.parameters.isSome() &&
+    Annotations.effectsOf(value.annotations, Annotations.placeOf(spec), value.at, context.environment.definitions.namespace).contains(failEffect)
+
+failEffect: String = "fckt.effects.Fail"
+
+// What performing the operation does: its effect, and, if it may fail, Fail.
+@Abandoning private performed(operation: Operation, label: EffectLabel, context: Context): List<EffectLabel> =
+  [label] + (if (failsAtCall(operation.effect, operation.value, context)) [EffectLabel(failEffect, [])] else [])
+
+// An answer's effects: the handler's, but failing, where the operation says it may, is the
+// operation's caller's.
+@Abandoning private answeringIn(spec: Symbol, value: SpecValue, answers: Row, context: Context): Row =
+  if (failsAtCall(spec, value, context)) Row([EffectLabel(failEffect, [])], answers.rest) else answers
+
 // An operation used as a value, as in xs.forEach(println): a function that does it when called.
 @Inferring operationValue(operation: Operation, at: Position, context: Context): Type = {
   (t, label) = operationType(operation, at, context)
   when (t) {
-    FunctionOf(parameters, result, _) -> FunctionOf(parameters, result, Row([label], Some(fresh())))
+    FunctionOf(parameters, result, _) -> FunctionOf(parameters, result, Row(performed(operation, label, context), Some(fresh())))
     else -> {
       perform(Row([label], None), at)
       t
@@ -224,7 +242,7 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
     when ((types.values.get(value.name), arguments.getOrNone(index))) {
       (Some(scheme), Some(argument)) -> {
         mapping = (scheme.variables.map { v -> (v, Variable(fresh())) } + types.parameters.zip(given)).toMap()
-        (core, resumes) = answering(value, substitute(scheme.template, mapping), argument.value, answer, answers, scope, context)
+        (core, resumes) = answering(spec, value, substitute(scheme.template, mapping), argument.value, answer, answers, scope, context)
         Some(Answer(value.name, core, resumes))
       }
       else -> None
@@ -235,7 +253,7 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
 
 // That the argument answers the operation: a value, for a value; for a function, a function of its
 // parameters, or of them and resume.
-@Inferring private answering(value: SpecValue, t: Type, argument: ArgumentValue, answer: Type, answers: Row, scope: Scope, context: Context): (Core, Boolean) = when (t) {
+@Inferring private answering(spec: Symbol, value: SpecValue, t: Type, argument: ArgumentValue, answer: Type, answers: Row, scope: Scope, context: Context): (Core, Boolean) = when (t) {
   FunctionOf(parameters, result, _) -> {
     // A function with one more parameter than the operation takes resume. A lambda says by how many
     // it's written with; anything else, by its type.
@@ -253,7 +271,7 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
       (_, Some(FunctionOf(ps, _, _))) -> ps.size == parameters.size + 1
       else -> false
     }
-    field = if (resuming) FunctionOf(parameters + [FunctionOf([result], answer, answers)], answer, answers) else FunctionOf(parameters, result, answers)
+    field = if (resuming) FunctionOf(parameters + [FunctionOf([result], answer, answers)], answer, answers) else FunctionOf(parameters, result, answeringIn(spec, value, answers, context))
     attempt = Diagnostics.attempting {
       when ((given, givenTyped)) {
         (Some(g), Some(typed)) -> {
@@ -296,7 +314,7 @@ private argumentExpression(argument: ArgumentValue): Expression = when (argument
     context.environment.functions.get("${m.name}.${value.name}").forEach { f ->
       when (resolved(Globals.typeOf(f, at, context))) {
         FunctionOf(_, _, effects) -> {
-          isSubEffects(effects, Row([], Some(answers)))
+          isSubEffects(effects, answeringIn(spec, value, Row([], Some(answers)), context))
           Unit
         }
         else -> Unit

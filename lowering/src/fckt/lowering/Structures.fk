@@ -31,6 +31,7 @@ module Structures {
         declarationOf = typeName -> declarationOf(typeName),
         isShared = typeName -> isShared(typeName),
         specOf = specName -> specOf(specName),
+        effectOf = effectName -> effectOf(effectName),
         inside = ~path,
       ) {
         items(path, own)
@@ -57,8 +58,8 @@ module Structures {
   // ---- What's at a path ----
 
   // The types at the path, those that name each other together, in the order they're declared; its
-  // effects; then its groups, and the modules in it, each where its first function's group is, then
-  // any with no functions.
+  // effects; the modules in it with no functions; then its groups, and the other modules in it, each
+  // where its first function's group is.
   private partsAt(path: List<String>, own: OwnCode): List<Part> = {
     // An external type is its OCaml wherever it's written, so it isn't declared.
     types = own.types.filter { t -> Declarations.declaredAt(t).path == path && t !is DeclaredExternal }
@@ -71,7 +72,9 @@ module Structures {
       else None
     }.distinct()
     others = own.modules.filter { m -> m.size == path.size + 1 && m.take(path.size) == path }.map { ModulePart(it) }
-    typeGroups(types).map { TypesPart(it) } + specs + effects + fromGroups + others.filter { !fromGroups.contains(it) }
+    // A module with no functions uses none of them, so it can go before them all, as the standard
+    // library's aliases must, which code made in lowering may use.
+    typeGroups(types).map { TypesPart(it) } + specs + effects + others.filter { !fromGroups.contains(it) } + fromGroups
   }
 
   // The types, each with those it names that name it back, in the order they're declared.

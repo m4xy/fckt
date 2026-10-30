@@ -28,13 +28,12 @@ module HandledEffects {
     variables = OcamlTypes.ocamlParameters(d.typeParameters).map { TypeVar(OcamlTypes.parameter(it)) }
     answering = TypeVar(answer)
     constructors = d.operations.map { op ->
-      EffectOperation(Naming.ownName(d.effect) + "_" + op.name, op.parameters.getOrElse([]).map { OcamlTypes.typexpr(it) }, OcamlTypes.typexpr(op.result))
+      EffectOperation(Naming.ownName(d.effect) + "_" + op.name, op.parameters.getOrElse([]).map { OcamlTypes.typexpr(it) }, performedType(op))
     }
     record = TypeDefinition(own + "_handler", OcamlTypes.ocamlParameters(d.typeParameters).map { OcamlTypes.parameter(it) } + [answer], RecordType(d.operations.map { op ->
-      result = OcamlTypes.typexpr(op.result)
       answers = when (op.parameters) {
-        None -> result
-        Some(ps) -> (ps.map { OcamlTypes.typexpr(it) } + [Arrow(result, answering)]).reversed().fold(answering) { r, p -> Arrow(p, r) }
+        None -> OcamlTypes.typexpr(op.result)
+        Some(ps) -> (ps.map { OcamlTypes.typexpr(it) } + [Arrow(performedType(op), answering)]).reversed().fold(answering) { r, p -> Arrow(p, r) }
       }
       // An operation's own type parameters, atomically<A>'s, are its field's: a handler answers it
       // whatever they are where it's performed.
@@ -72,6 +71,33 @@ module HandledEffects {
     defaults.fold(Application(Identifier(Naming.valueReference(main)), [arguments])) { inner, d -> handled(d.effect, moduleHandler(d.handler, d.effect), inner) }
   }
 
+  // What performing the operation gives back: its result, or, if it may fail, its result or why it
+  // failed.
+  @Lowering private performedType(op: DeclaredOperation): Typexpr =
+    if (op.failsAtCall) TypeApplication("result", [OcamlTypes.typexpr(op.result), TypeApplication("string", [])]) else OcamlTypes.typexpr(op.result)
+
+  // Performing the operation with what's carried: an operation that may fail is answered with why it
+  // did, to fail with here.
+  @Lowering performed(effect: Symbol, operation: String, carried: Expr): Expr = {
+    performing = Application(Identifier("Effect.perform"), [Construction(operationConstructor(effect, operation), Some(carried))])
+    if (!failsAtCall(effect, operation)) performing
+    else Match(performing, [
+      Case(ConstructorPat("Ok", Some(VariablePat("v"))), None, Identifier("v")),
+      Case(ConstructorPat("Error", Some(VariablePat("reason"))), None, failing(Identifier("reason"))),
+    ])
+  }
+
+  @Lowering private failsAtCall(effect: Symbol, operation: String): Boolean =
+    effectOf(effect.name).flatMap { d -> d.operations.find { it.name == operation } }.map { it.failsAtCall }.getOrElse(false)
+
+  // Failing with the reason, as fail(reason) does, from wherever this is.
+  @Lowering private failing(reason: Expr): Expr = when (effectOf(failEffect)) {
+    Some(fail) -> Match(Application(Identifier("Effect.perform"), [Construction(operationConstructor(fail.effect, "fail"), Some(reason))]), [Case(AnyPat, None, Verbatim("assert false"))])
+    None -> Application(Identifier("failwith"), [reason])
+  }
+
+  private failEffect: String = "fckt.effects.Fail"
+
   // The block, run with the handler handling the effect.
   @Lowering handled(effect: Symbol, handler: Expr, block: Expr): Expr =
     Application(Identifier(nextTo(effect, "handle_" + simpleSnake(effect))), [handler, Fun([ConstantPat(UnitConstant)], block)])
@@ -91,15 +117,32 @@ module HandledEffects {
     operations = operationsOf(effect)
     record = RecordExpr(given.map { name, a, resumes ->
       op = operations.find { it.name == name }
+      fails = failsAtCall(effect, name)
       FieldValue(Naming.snake(name), when (op.flatMap { it.parameters }) {
-        Some(parameters) if !resumes -> {
+        Some(parameters) -> {
           names = parameters.mapIndexed { i, _ -> "x$i" }
-          Fun(names.map { VariablePat(it) } + [VariablePat("k")], Application(Identifier("k"), [Application(a, if (names.isEmpty()) [ConstantExpr(UnitConstant)] else names.map { Identifier(it) })]))
+          arguments = if (names.isEmpty()) [ConstantExpr(UnitConstant)] else names.map { Identifier(it) }
+          taking = names.map { VariablePat(it) } + [VariablePat("k")]
+          if (resumes && !fails) a
+          // Resumed with what it gives, which didn't fail.
+          else if (resumes) Fun(taking, Application(a, arguments + [Fun([VariablePat("v")], Application(Identifier("k"), [Construction("Ok", Some(Identifier("v")))]))]))
+          else if (!fails) Fun(taking, Application(Identifier("k"), [Application(a, arguments)]))
+          // Its failing is caught as it gives its answer, and failed with again where it was performed.
+          else Fun(taking, Application(Identifier("k"), [caught(Application(a, arguments))]))
         }
-        _ -> a
+        None -> a
       })
     }, None)
     Annotated(record, TypeApplication(nextTo(effect, simpleSnake(effect) + "_handler"), (typeParametersOf(effect) + ["answer"]).map { TypeVar("_") }))
+  }
+
+  // What the answer gives, Ok, or, if it fails, Error with why.
+  @Lowering private caught(answer: Expr): Expr = when (effectOf(failEffect)) {
+    Some(fail) -> Match(answer, [
+      Case(VariablePat("v"), None, Construction("Ok", Some(Identifier("v")))),
+      Case(EffectPat(ConstructorPat(operationConstructor(fail.effect, "fail"), Some(VariablePat("reason"))), "_"), None, Construction("Error", Some(Identifier("reason")))),
+    ])
+    None -> Construction("Ok", Some(answer))
   }
 
   // [local], declared next to the effect, written from the module it's used in.

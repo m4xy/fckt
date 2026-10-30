@@ -22,7 +22,7 @@ module Expressions {
         [one] -> one
         _ -> TupleExpr(given)
       }
-      Application(Identifier("Effect.perform"), [Construction(HandledEffects.operationConstructor(effect, operation), Some(carried))])
+      HandledEffects.performed(effect, operation, carried)
     }
     Operated(And, [left, right]) -> Infix("&&", expression(left), expression(right))
     Operated(Or, [left, right]) -> Infix("||", expression(left), expression(right))

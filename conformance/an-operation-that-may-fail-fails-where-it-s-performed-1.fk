@@ -1,0 +1,34 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Store {
+  @Fail get(key: String): Int
+}
+
+module Broken : Store {
+  @Fail get(key: String): Int = fail("there's no $key")
+}
+
+@Store @Fail total(): Int = get("a") + get("bb")
+
+broken(): Result<Int, String> = Broken { attempt { total() } }
+
+said(result: Result<Int, String>): String = when (result) {
+  Ok(n) -> "got $n"
+  Error(why) -> "failed: $why"
+}
+
+main() = {
+  println(said(broken()))
+  println(said(Store(get = key -> key.length) { attempt { total() } }))
+  println(said(Store(get = (key, resume) -> resume(key.length * 10)) { attempt { total() } }))
+  println(said(Store(get = key -> if (key == "bb") fail("no bb") else 1) { attempt { total() } }))
+}
+
+// prints: failed: there's no a
+// prints: got 3
+// prints: got 30
+// prints: failed: no bb

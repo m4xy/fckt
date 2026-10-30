@@ -32,6 +32,9 @@ import uk.m4xy.fckt.syntax.TypeRef
 import uk.m4xy.fckt.syntax.VariantDef
 
 /** The checked program: declarations plus what lowering needs to know about them. */
+/** The effect of failing, which an operation can say it may: see [Checker.failsAtCall]. */
+const val FAIL_EFFECT = "fckt.effects.Fail"
+
 class Program(
     val records: List<Decl.Record>,
     val sealeds: List<Decl.Sealed>,
@@ -44,6 +47,8 @@ class Program(
     val cases: Map<String, List<CaseDecl>>,
     /** Sealed types that share cases with another, which become OCaml polymorphic variants. */
     val polymorphic: Set<String>,
+    /** Handled effects' operations that say they may fail: a handler's answer that fails fails where it was performed. */
+    val failingOperations: Set<SpecValue>,
     /** The declarations as written, nesting included, renamed to their full names. */
     val root: List<Decl>,
     /** Each function's type, generalized. */
@@ -523,6 +528,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             main = main,
             cases = caseDecls,
             polymorphic = polymorphic,
+            failingOperations = specs.values.filter { isEffect(it) }.flatMap { s -> s.values.filter { failsAtCall(s, it) } }.toSet(),
             // Annotations are only checked: their types aren't compiled.
             root = withoutAnnotationTypes(root),
             annotationTypes = annotationTypes.values.toList(),
@@ -1894,6 +1900,17 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return spec to op
     }
 
+    /**
+     * Whether [op] says it may fail, `@Fail get(key: String): Int`: then an answer to it that fails,
+     * in a handler that resumes with what it gives, fails where the operation was performed, so
+     * what's around that catches it, not what's around the handler.
+     */
+    private fun failsAtCall(spec: Decl.Spec, op: SpecValue): Boolean = op.params != null && FAIL_EFFECT in effectsOf(op.annotations, spec.path, op.pos)
+
+    /** What performing [op] does: its effect, and, if it may fail, [FAIL_EFFECT]. */
+    private fun performed(spec: Decl.Spec, op: SpecValue, label: Type.Con): List<Type.Con> =
+        listOf(label) + listOfNotNull(Type.Con(FAIL_EFFECT).takeIf { failsAtCall(spec, op) })
+
     /** A fresh instance of [op]'s type, and the effect using it does: [spec] with the type arguments it's used with. */
     private fun operationType(spec: Decl.Spec, op: SpecValue): Pair<Type, Type.Con> {
         val scheme = specSchemes.getValue(spec).getValue(op.name)
@@ -1914,7 +1931,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val order = argOrder(e.args.map { it.name to it.value.pos }, op.params!!.map { it.name }, e.pos, "'${op.name}'")
         checkArgs(e.args, order, fn.params, scope)
         e.resolved = CallRef.Function(order)
-        perform(Type.row(listOf(label), null), e.pos)
+        perform(Type.row(performed(spec, op, label), null), e.pos)
         return fn.result
     }
 
@@ -1925,7 +1942,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             perform(Type.row(listOf(label), null), pos)
             return type
         }
-        return Type.Fn(type.params, type.result, Type.row(listOf(label), u.fresh()))
+        return Type.Fn(type.params, type.result, Type.row(performed(spec, op, label), u.fresh()))
     }
 
     /**
@@ -1959,7 +1976,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val field = if (resuming) {
                 Type.Fn(t.params + Type.Fn(listOf(t.result), answer, answers), answer, answers)
             } else {
-                Type.Fn(t.params, t.result, answers)
+                // Failing, where the operation says it may, is the operation's caller's.
+                Type.Fn(t.params, t.result, if (failsAtCall(spec, v)) Type.row(listOf(Type.Con(FAIL_EFFECT)), answers) else answers)
             }
             try {
                 if (given != null) assign(arg, given, field) else check(arg, field, scope)
@@ -1982,7 +2000,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val answers = u.fresh()
         for (v in spec.values) {
             val f = globals.getValue("${module.name}.${v.name}")
-            (globalType(f) as? Type.Fn)?.let { subEffects(it.effects, answers) }
+            val answering = if (failsAtCall(spec, v)) Type.row(listOf(Type.Con(FAIL_EFFECT)), answers) else answers
+            (globalType(f) as? Type.Fn)?.let { subEffects(it.effects, answering) }
         }
         return Type.Con(Type.HANDLER + spec.name, listOf(u.fresh(), answers))
     }

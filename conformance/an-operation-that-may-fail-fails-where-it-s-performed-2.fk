@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Store {
+  @Fail get(key: String): Int
+}
+
+@Store first(): Int = get("a")
+
+main() = Unit
+
+// error: 'first' does @Fail, so it must say so

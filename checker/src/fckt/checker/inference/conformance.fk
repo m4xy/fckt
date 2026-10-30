@@ -211,7 +211,9 @@ declaredSpecs(environment: Environment): List<DeclaredSpec> =
     own = (every + value.typeParameters).map { (it, TypeParameter(it)) }.toMap()
     typeContext = TypeContext(Place(spec.file, spec.path), own)
     typeOf = (t: TypeRef) -> Conversion.typeOf(t, typeContext, environment.definitions)
-    DeclaredOperation(value.name, value.typeParameters.filter { !it.startsWith("@") }, value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } }, typeOf(value.valueType))
+    fails = value.parameters.isSome() &&
+      Annotations.effectsOf(value.annotations, Annotations.placeOf(spec), value.at, environment.definitions.namespace).contains(failEffect)
+    DeclaredOperation(value.name, value.typeParameters.filter { !it.startsWith("@") }, value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } }, typeOf(value.valueType), fails)
   }
   DeclaredEffect(spec, typeParameters, operations)
 }
