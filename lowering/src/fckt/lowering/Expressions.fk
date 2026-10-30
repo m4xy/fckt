@@ -102,11 +102,19 @@ module Expressions {
       _ -> expression(value)
     }
     // A module, as a value of its spec, whose own types, if it has any, are the module's.
-    ModulePacked(module, spec) -> Verbatim("module " + Naming.modulePath(module) + " : " + Specs.packageType(spec, Specs.ownTypes(spec).map { t -> Naming.modulePath(module) + "." + Naming.snake(t).removeSuffix("_") }))
+    ModulePacked(module, spec) -> Verbatim("module " + Naming.modulePath(module) + " : " + OcamlTypes.packageType(spec.name, OcamlTypes.ownTypes(spec.name).map { t -> Naming.modulePath(module) + "." + t }))
     // A value of a module given as a value: taken out of it.
-    ModuleMemberRead(value, spec, member) ->
-      if (Specs.ownTypes(spec).isEmpty()) Match(expression(value), [Case(PackedPat("Value", OcamlTypes.typeModuleReference(spec.name)), None, Identifier("Value." + Naming.snake(member)))])
-      else fail("a value of a module given as a value of a spec with types of its own")
+    ModuleMemberRead(value, spec, member) -> {
+      ownTypes = OcamlTypes.ownTypes(spec.name)
+      if (ownTypes.isEmpty()) Match(expression(value), [Case(PackedPat("Value", OcamlTypes.typeModuleReference(spec.name)), None, Identifier("Value." + Naming.snake(member)))])
+      // By a function of its own, in which they're locally abstract, as OCaml won't take a module
+      // apart whose type has unknowns in it, as a Format<A>'s may.
+      else {
+        names = ownTypes.mapIndexed { i, _ -> "fk_t$i" }
+        opening = "let open_value " + names.map { "(type " + it + ")" }.joinToString(" ") + " (m : (module " + OcamlTypes.packageType(spec.name, names) + ")) = let module Value = (val m) in Value." + Naming.snake(member) + " in open_value"
+        Application(Verbatim(opening), [expression(value)])
+      }
+    }
     // OCaml's told it gives whatever's wanted.
     Absurd(call) -> Match(expression(call), [Case(AnyPat, None, Verbatim("assert false"))])
     Pending(what) -> fail(what)

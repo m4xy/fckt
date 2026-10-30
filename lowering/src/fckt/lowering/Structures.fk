@@ -30,6 +30,7 @@ module Structures {
         toStringOf = typeName -> toStringOf(typeName),
         declarationOf = typeName -> declarationOf(typeName),
         isShared = typeName -> isShared(typeName),
+        specOf = specName -> specOf(specName),
         inside = ~path,
       ) {
         items(path, own)

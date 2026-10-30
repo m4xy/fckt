@@ -13,8 +13,10 @@ module OcamlTypes {
     TypeParameter(name) -> TypeVar("'" + name.lowercase())
     // A spec's own type, in its module type.
     SpecOwnType(name, arguments) -> TypeApplication(Naming.snake(name).removeSuffix("_"), arguments.map { typexprNaming(it, variables) })
-    // A module given as a value of a spec without types of its own.
-    ModuleValue(spec, _) -> TypeApplication("(module " + typeModuleReference(spec) + ")", [])
+    // A module given as a value of a spec: (module Format with type t = point), its own types as its
+    // type arguments say.
+    ModuleValue(spec, arguments) ->
+      TypeApplication("(module " + packageType(spec, arguments.map { Printer.typexpr(typexprNaming(it, variables), 0) }) + ")", [])
     Named(name, arguments, _) -> named(name, arguments, variables)
     Abstract(name, arguments) -> named(name, arguments, variables)
     TupleOf(parts) -> Product(parts.map { typexprNaming(it, variables) })
@@ -65,6 +67,16 @@ module OcamlTypes {
   }
 
   // A spec's module type, by its full name, written from the module it's used in: Formats.Format.
+  // A value of the spec, Format with type t = point: its own types, if it has any, as given.
+  @Lowering packageType(spec: String, given: List<String>): String =
+    typeModuleReference(spec) + ownTypes(spec).zip(given).mapIndexed { i, entry ->
+      (t, typeGiven) = entry
+      (if (i == 0) " with" else " and") + " type " + t + " = " + typeGiven
+    }.joinToString("")
+
+  // The spec's own types, as OCaml names them.
+  @Lowering ownTypes(spec: String): List<String> = specOf(spec).map { d -> d.types.map { name, _ -> Naming.snake(name).removeSuffix("_") } }.getOrElse([])
+
   @Lowering typeModuleReference(full: String): String = {
     parts = full.split(".")
     (Naming.relative(parts.dropLast(1)) + [parts.lastOrNone().getOrElse(full)]).map { Naming.moduleName(it) }.joinToString(".")

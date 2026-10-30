@@ -19,6 +19,7 @@ module Programs {
       toStringOf = name -> program.toStrings.get(name),
       declarationOf = name -> program.types.find { Declarations.declaredAt(it).name == name },
       isShared = name -> sharing(program).contains(name),
+      specOf = name -> program.specs.find { it.spec.name == name },
       inside = ~[],
     ) { items(program, whole) }
 

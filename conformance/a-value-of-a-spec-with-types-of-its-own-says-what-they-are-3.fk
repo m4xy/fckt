@@ -1,0 +1,50 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Format {
+  type T
+  of(value: T): String
+  read(text: String): Result<T, String>
+  both<B>(other: B, value: T): (B, T) = (other, value)
+}
+
+type Point(x: Int, y: Int)
+
+module PointText : Format {
+  type T = Point
+  of(value: Point): String = "${value.x},${value.y}"
+  read(text: String): Result<Point, String> = when (text.split(",")) {
+    [x, y] -> Ok(Point(x.toInt(), y.toInt()))
+    else -> Error("not a point: $text")
+  }
+}
+
+module Upper : Format {
+  type T = String
+  of(value: String): String = value.uppercase()
+  read(text: String): Result<String, String> = Ok(text.lowercase())
+}
+
+// Written once, for any format, whatever its T.
+readsBack<A>(format: Format<A>, value: A): Boolean = format.read(format.of(value)) == Ok(value)
+
+main() = {
+  println("${readsBack(PointText, Point(1, 2))}")
+  println("${readsBack(Upper, "shout")}")
+  println("${readsBack(Upper, "Shout")}")
+  formats: List<Format<Point>> = [PointText]
+  println("${formats.map { it.of(Point(3, 4)) }}")
+  println("${PointText.both("a", Point(5, 6))}")
+  f: Format<String> = Upper
+  println("${f.both(1, "x")}")
+}
+
+// prints: true
+// prints: true
+// prints: false
+// prints: [3,4]
+// prints: (a, Point(x=5, y=6))
+// prints: (1, x)

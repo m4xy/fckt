@@ -1,3 +1,4 @@
+import fckt.checker.core.DeclaredSpec
 import fckt.checker.core.TypeDeclaration
 import fckt.checker.symbols.Symbol
 
@@ -5,12 +6,14 @@ import fckt.checker.symbols.Symbol
 // how to show each of its type parameters, if it has one; a declared type's declaration, which says
 // its type parameters, those for effects among them, which OCaml's has none of, and whether it's
 // OCaml's own, written as it is; whether a type with cases shares them with
-// another, so that its cases are tags, as OCaml's polymorphic variants have; and the module what's
+// another, so that its cases are tags, as OCaml's polymorphic variants have; a spec's declaration,
+// which says its own types; and the module what's
 // written is in, by its path, from which a name is written: Ratios.make outside Ratios, make inside
 // it.
 effect Lowering {
   toStringOf(typeName: String): Option<Symbol>
   declarationOf(typeName: String): Option<TypeDeclaration>
   isShared(typeName: String): Boolean
+  specOf(specName: String): Option<DeclaredSpec>
   inside(): List<String>
 }
