@@ -648,6 +648,10 @@
         {
           "name": "keyword.control.fckt",
           "match": "!is\\b"
+        },
+        {
+          "name": "storage.modifier.fckt",
+          "match": "\\bvararg(?=\\s+[a-z_])"
         }
       ]
     },
