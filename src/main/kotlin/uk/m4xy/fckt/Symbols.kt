@@ -169,6 +169,7 @@ internal object Symbols {
         is TypeRef.Tuple -> t.elements.joinToString(", ", "(", ")") { type(it, program, typeParams) }
         is TypeRef.Function -> t.params.joinToString(", ", "(", ")") { type(it, program, typeParams) } + " -> " + type(t.result, program, typeParams)
         is TypeRef.Effects -> throw CompileError(t.pos, "effects can't be written as a symbol's type")
+        is TypeRef.Given -> t.name + " = " + type(t.type, program, typeParams)
     }
 
     /** A type the checker resolved, as `List<User>` is in `@Of(List<User>)`. */

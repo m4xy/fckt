@@ -22,6 +22,6 @@ module Tests(R: Reporting = Everything) : Plugin {
 }
 
 spec Sized { type T }
-f(s: Sized): Int = 1
+f(s: Sized<Int>): Int = 1
 
-// error: a Sized value says what its T is, in order: Sized<T>
+// error: a Sized value names its own types: Sized<T = Int>

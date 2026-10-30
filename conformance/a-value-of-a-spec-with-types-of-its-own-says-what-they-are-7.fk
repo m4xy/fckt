@@ -1,0 +1,33 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Format {
+  type T
+  of(value: T): String
+  read(text: String): Result<T, String>
+  both<B>(other: B, value: T): (B, T) = (other, value)
+}
+
+type Point(x: Int, y: Int)
+
+module PointText : Format {
+  type T = Point
+  of(value: Point): String = "${value.x},${value.y}"
+  read(text: String): Result<Point, String> = when (text.split(",")) {
+    [x, y] -> Ok(Point(x.toInt(), y.toInt()))
+    else -> Error("not a point: $text")
+  }
+}
+
+module Upper : Format {
+  type T = String
+  of(value: String): String = value.uppercase()
+  read(text: String): Result<String, String> = Ok(text.lowercase())
+}
+
+f: Format<T = Point, T = Point> = PointText
+
+// error: Format's T is given twice

@@ -12,7 +12,7 @@ sealed class Type {
      * live, so that changing one is changing that region. Regions are only checked, so [equals]
      * ignores them.
      */
-    data class Con(val name: String, val args: List<Type> = emptyList(), val region: Type? = null) : Type() {
+    data class Con(val name: String, val args: List<Type> = emptyList(), val region: Type? = null, val ownTypes: List<String>? = null) : Type() {
         override fun toString() = render(this, mutableMapOf())
         override fun equals(other: Any?) = other is Con && name == other.name && args == other.args
         override fun hashCode() = name.hashCode() * 31 + args.hashCode()
@@ -35,7 +35,7 @@ sealed class Type {
     /** The type with every bound variable replaced by what it's bound to. */
     fun zonk(): Type = when (val t = prune()) {
         is Var -> t
-        is Con -> Con(t.name, t.args.map { it.zonk() }, t.region?.zonk())
+        is Con -> Con(t.name, t.args.map { it.zonk() }, t.region?.zonk(), t.ownTypes)
         is Fn -> Fn(t.params.map { it.zonk() }, t.result.zonk(), t.effects.zonk())
     }
 
@@ -162,7 +162,9 @@ sealed class Type {
             }
             else if (t.name.startsWith(HANDLER)) "a handler for @${t.name.removePrefix(HANDLER).substringAfterLast('.')}"
             else if (t.name == TUPLE) "(${t.args.joinToString(", ") { render(it, names) }})"
-            else if (t.args.isEmpty()) displayName(t.name) else "${displayName(t.name)}<${t.args.joinToString(", ") { render(it, names) }}>"
+            else if (t.args.isEmpty()) displayName(t.name)
+            else if (t.ownTypes != null) "${displayName(t.name)}<${t.ownTypes.zip(t.args).joinToString(", ") { (own, arg) -> "$own = ${render(arg, names)}" }}>"
+            else "${displayName(t.name)}<${t.args.joinToString(", ") { render(it, names) }}>"
             is Fn -> effectNames(t.effects).sorted().joinToString("") { "@${displayName(it).substringAfterLast('.')} " } +
                 "(${t.params.joinToString(", ") { render(it, names) }}) -> ${render(t.result, names)}"
         }
@@ -195,7 +197,7 @@ class Unifier {
 
     fun substitute(type: Type, mapping: Map<Type.Var, Type>): Type = when (val t = type.prune()) {
         is Type.Var -> mapping[t] ?: t
-        is Type.Con -> Type.Con(t.name, t.args.map { substitute(it, mapping) }, t.region?.let { substitute(it, mapping) })
+        is Type.Con -> Type.Con(t.name, t.args.map { substitute(it, mapping) }, t.region?.let { substitute(it, mapping) }, t.ownTypes)
         is Type.Fn -> Type.Fn(t.params.map { substitute(it, mapping) }, substitute(t.result, mapping), substitute(t.effects, mapping))
     }
 

@@ -48,6 +48,8 @@ sealed interface TypeRef {
 
     /** `@Console @Clock`, or an effect parameter's `@E`: a type argument that's effects, as in `Queue<@Console>`. */
     data class Effects(override val pos: Pos, val effects: List<Annotation>) : TypeRef
+
+    data class Given(override val pos: Pos, val name: String, val type: TypeRef) : TypeRef
 }
 
 // ---- Declarations ----

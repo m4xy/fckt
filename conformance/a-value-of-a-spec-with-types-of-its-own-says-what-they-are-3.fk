@@ -28,17 +28,16 @@ module Upper : Format {
   read(text: String): Result<String, String> = Ok(text.lowercase())
 }
 
-// Written once, for any format, whatever its T.
-readsBack<A>(format: Format<A>, value: A): Boolean = format.read(format.of(value)) == Ok(value)
+readsBack(format: Format, value: format.T): Boolean = format.read(format.of(value)) == Ok(value)
 
 main() = {
   println("${readsBack(PointText, Point(1, 2))}")
   println("${readsBack(Upper, "shout")}")
   println("${readsBack(Upper, "Shout")}")
-  formats: List<Format<Point>> = [PointText]
+  formats: List<Format<T = Point>> = [PointText]
   println("${formats.map { it.of(Point(3, 4)) }}")
   println("${PointText.both("a", Point(5, 6))}")
-  f: Format<String> = Upper
+  f: Format<T = String> = Upper
   println("${f.both(1, "x")}")
 }
 

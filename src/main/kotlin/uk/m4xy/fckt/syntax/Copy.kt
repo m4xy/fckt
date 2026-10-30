@@ -36,6 +36,7 @@ class Copier(private val rename: (String) -> String, private val onCopy: (Decl, 
         is TypeRef.Function -> t.copy(params = t.params.map(::type), result = type(t.result))
         is TypeRef.Tuple -> t.copy(elements = t.elements.map(::type))
         is TypeRef.Effects -> t.copy()
+        is TypeRef.Given -> t.copy(type = type(t.type))
     }
 
     private fun named(t: TypeRef.Named) = t.copy(args = t.args.map(::type))

@@ -1,5 +1,5 @@
 // A way of writing a T as text, and reading it back: what's written is read back as it was, so
-// read(of(value)) is Ok(value). A module that follows it is a value of it, a Format<T>, so what
+// read(of(value)) is Ok(value). A module that follows it is a value of it, a Format<T = ...>, so what
 // works for any format, as a test that each reads back what it writes, is written once.
 spec Format {
   type T

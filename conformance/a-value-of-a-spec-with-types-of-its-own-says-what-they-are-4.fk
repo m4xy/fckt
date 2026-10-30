@@ -1,0 +1,43 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Format {
+  type T
+  of(value: T): String
+  read(text: String): Result<T, String>
+  both<B>(other: B, value: T): (B, T) = (other, value)
+}
+
+type Point(x: Int, y: Int)
+
+module PointText : Format {
+  type T = Point
+  of(value: Point): String = "${value.x},${value.y}"
+  read(text: String): Result<Point, String> = when (text.split(",")) {
+    [x, y] -> Ok(Point(x.toInt(), y.toInt()))
+    else -> Error("not a point: $text")
+  }
+}
+
+module Upper : Format {
+  type T = String
+  of(value: String): String = value.uppercase()
+  read(text: String): Result<String, String> = Ok(text.lowercase())
+}
+
+parsed(format: Format, text: String): Option<format.T> = format.read(text).toOption()
+
+shown(format: Format, values: List<format.T>): String = values.map { format.of(it) }.joinToString(" ")
+
+main() = {
+  println("${parsed(PointText, "1,2")}")
+  println("${parsed(Upper, "LOUD")}")
+  println(shown(PointText, [Point(1, 2), Point(3, 4)]))
+}
+
+// prints: Some(Point(x=1, y=2))
+// prints: Some(loud)
+// prints: 1,2 3,4

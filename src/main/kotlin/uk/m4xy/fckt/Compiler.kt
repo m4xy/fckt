@@ -988,6 +988,7 @@ private fun defaultOf(v: uk.m4xy.fckt.syntax.SpecValue, fixed: Map<String, (List
         is TypeRef.Function -> t.copy(params = t.params.map(::type), result = type(t.result))
         is TypeRef.Tuple -> t.copy(elements = t.elements.map(::type))
         is TypeRef.Effects -> t
+        is TypeRef.Given -> t.copy(type = type(t.type))
     }
     return Decl.Function(
         v.pos, v.name, v.typeParams,

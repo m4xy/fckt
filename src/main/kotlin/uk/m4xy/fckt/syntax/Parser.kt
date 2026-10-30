@@ -347,6 +347,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                         is TypeRef.Tuple -> t.elements.forEach(::walk)
                         is TypeRef.Function -> (t.params + t.result).forEach(::walk)
                         is TypeRef.Effects -> {}
+                        is TypeRef.Given -> walk(t.type)
                     }
                 }
                 val receiver = d.params!!.first().type!!
@@ -358,6 +359,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                     is TypeRef.Tuple -> "Tuple" + t.elements.joinToString("") { mangle(it) }
                     is TypeRef.Function -> "Function"
                     is TypeRef.Effects -> ""
+                    is TypeRef.Given -> mangle(t.type)
                 }
                 d.copy(name = mangle(receiver) + "$" + d.methodName, typeParams = params + d.typeParams)
             }
@@ -707,7 +709,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
             return TypeRef.Function(pos, params, type())
         }
         // A type may be qualified by modules: Ratios.Ratio
-        var name = upperIdent("a type")
+        var name = if (at(T.IDENT) && peek.text[0].isLowerCase() && peekAt(1).kind == T.DOT && peekAt(2).kind == T.IDENT && peekAt(2).text[0].isUpperCase()) next().text else upperIdent("a type")
         while (at(T.DOT) && peekAt(1).kind == T.IDENT && peekAt(1).text[0].isUpperCase()) {
             next()
             name += "." + next().text
@@ -715,10 +717,17 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         val args = mutableListOf<TypeRef>()
         if (accept(T.LT) != null) {
             // `_` marks where a spec's type takes its parameters: Monad<Result<_, String>>.
-            do args += accept(T.UNDERSCORE)?.let { TypeRef.Named(it.pos, "_", emptyList()) } ?: type() while (accept(T.COMMA) != null)
+            do args += accept(T.UNDERSCORE)?.let { TypeRef.Named(it.pos, "_", emptyList()) } ?: given() ?: type() while (accept(T.COMMA) != null)
             expect(T.GT, "'>'")
         }
         return TypeRef.Named(pos, name, args)
+    }
+
+    private fun given(): TypeRef? {
+        if (!at(T.IDENT) || peekAt(1).kind != T.ASSIGN) return null
+        val name = next()
+        next()
+        return TypeRef.Given(name.pos, name.text, type())
     }
 
     // ---- Expressions ----

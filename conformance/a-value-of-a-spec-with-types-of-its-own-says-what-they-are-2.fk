@@ -28,6 +28,6 @@ module Upper : Format {
   read(text: String): Result<String, String> = Ok(text.lowercase())
 }
 
-f(format: Format): Int = 1
+f(format: Format<Point>): Int = 1
 
-// error: a Format value says what its T is, in order: Format<T>
+// error: a Format value names its own types: Format<T = Point>

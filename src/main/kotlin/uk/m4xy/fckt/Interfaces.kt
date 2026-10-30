@@ -166,6 +166,7 @@ internal object Interfaces {
         is TypeRef.Tuple -> t.elements.flatMap { namesIn(it) }.toSet()
         is TypeRef.Function -> (t.params + t.result).flatMap { namesIn(it) }.toSet()
         is TypeRef.Effects -> emptySet()
+        is TypeRef.Given -> namesIn(t.type)
     }
 
     /** An extension's receiver, which a function type or tuple is in parentheses for. */
@@ -195,6 +196,7 @@ internal object Interfaces {
         is TypeRef.Function -> t.effects.joinToString("") { effect(it) + " " } + t.params.joinToString(", ", "(", ")") { type(it) } + " -> " + type(t.result)
         is TypeRef.Tuple -> t.elements.joinToString(", ", "(", ")") { type(it) }
         is TypeRef.Effects -> t.effects.joinToString(" ") { effect(it) }
+        is TypeRef.Given -> t.name + " = " + type(t.type)
     }
 
     private fun effect(a: Annotation) = "@" + a.name + if (a.typeArgs.isEmpty()) "" else a.typeArgs.joinToString(", ", "<", ">") { type(it) }

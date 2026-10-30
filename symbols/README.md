@@ -2,7 +2,7 @@
 
 What `fckt --symbols` writes, as typed values, for a program that reads a project's types, as a
 processor that writes code from them does. fckt's README sets out the format; this reads it, and
-writes it back, as a `Format<Symbols>`, `SymbolsText`:
+writes it back, as a `Format<T = Symbols>`, `SymbolsText`:
 
 ```kotlin
 import fckt.symbols.*

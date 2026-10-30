@@ -1,0 +1,40 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Store {
+  type Key
+  type Value
+  valueAt(key: Key): Value
+  shown(value: Value): String
+}
+
+module Lengths : Store {
+  type Key = String
+  type Value = Int
+  valueAt(key: String): Int = key.length
+  shown(value: Int): String = "$value long"
+}
+
+module Flags : Store {
+  type Key = String
+  type Value = Boolean
+  valueAt(key: String): Boolean = key.isEmpty()
+  shown(value: Boolean): String = if (value) "empty" else "not empty"
+}
+
+describe(store: Store<Key = String>, text: String): String = store.shown(store.valueAt(text))
+
+valueOf(store: Store<Key = String>, text: String): store.Value = store.valueAt(text)
+
+main() = {
+  println(describe(Lengths, "abc"))
+  println(describe(Flags, ""))
+  println("${valueOf(Lengths, "abcd") + 1}")
+}
+
+// prints: 3 long
+// prints: empty
+// prints: 5

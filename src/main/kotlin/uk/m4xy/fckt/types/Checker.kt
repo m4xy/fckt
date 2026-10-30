@@ -4,6 +4,7 @@ import uk.m4xy.fckt.ocaml.snake
 import uk.m4xy.fckt.syntax.Annotation
 import uk.m4xy.fckt.syntax.Application
 import uk.m4xy.fckt.syntax.Arg
+import uk.m4xy.fckt.syntax.Param
 import uk.m4xy.fckt.syntax.filePrivateName
 import uk.m4xy.fckt.syntax.OPERATOR_METHODS
 import uk.m4xy.fckt.syntax.RANGE_METHODS
@@ -206,6 +207,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private val viewed = mutableMapOf<Decl.Function, Type>()
     private var typeParams: Map<String, Type> = emptyMap()
+
+    private var valueParams: Map<String, Type> = emptyMap()
+
+    private var laterParams: Set<String> = emptySet()
+
+    private var openTypes: MutableMap<String, Type.Var> = mutableMapOf()
 
     /** While checking a spec, its own types and how many parameters each takes. */
     private var specTypes: Map<String, Int> = emptyMap()
@@ -645,6 +652,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> t.params.flatMap { namesIn(it) } + namesIn(t.result)
         is TypeRef.Tuple -> t.elements.flatMap { namesIn(it) }
         is TypeRef.Effects -> emptyList()
+        is TypeRef.Given -> namesIn(t.type)
     }
 
     /**
@@ -964,7 +972,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
 
     /**
      * The type of a module that follows [spec], as a value: `Plugin`; or, for a spec with types of
-     * its own, what they are, in order, as [args]: `Format<Point>`.
+     * its own, what they are, as [args], in the order the spec declares them.
      */
     private fun moduleType(spec: Decl.Spec, pos: Pos, args: List<Type>): Type {
         if (isEffect(spec)) throw CompileError(pos, "'${spec.simpleName}' is an effect: a function does it, written @${spec.simpleName}, and a handler answers it; no value has its type")
@@ -972,9 +980,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             throw CompileError(pos, "${spec.simpleName}'s ${it.name} takes type parameters, so a value of ${spec.simpleName} can't say what it is yet")
         }
         if (spec.typeParams.isNotEmpty()) throw CompileError(pos, "${spec.simpleName} takes type parameters, so it can't be a value's type yet")
-        if (args.size != spec.types.size) {
-            throw CompileError(pos, "a ${spec.simpleName} value says what its ${spec.types.joinToString(", ") { it.name }} ${if (spec.types.size == 1) "is" else "are"}, in order: ${spec.simpleName}<${spec.types.joinToString(", ") { it.name }}>")
-        }
+        if (spec.types.isNotEmpty()) return Type.Con(Type.MODULE + spec.name, args, ownTypes = spec.types.map { it.name })
         return Type.Con(Type.MODULE + spec.name, args)
     }
 
@@ -1269,6 +1275,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> ref.copy(params = ref.params.map { substitute(it, substitution) }, result = substitute(ref.result, substitution))
         is TypeRef.Tuple -> ref.copy(elements = ref.elements.map { substitute(it, substitution) })
         is TypeRef.Effects -> ref
+        is TypeRef.Given -> ref.copy(type = substitute(ref.type, substitution))
     }
 
     /** Written type syntax as text, ignoring positions. */
@@ -1277,6 +1284,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> "(${ref.params.joinToString(", ") { text(it) }}) -> ${text(ref.result)}"
         is TypeRef.Tuple -> "(${ref.elements.joinToString(", ") { text(it) }})"
         is TypeRef.Effects -> ref.effects.joinToString(" ") { "@" + it.name }
+        is TypeRef.Given -> "${ref.name} = ${text(ref.type)}"
     }
 
     /** The cases of sealed type [name] applied to [args], each with its field types. */
@@ -1327,7 +1335,10 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         )
         is TypeRef.Effects -> effectRow(ref.effects, open = false, pure = true)
         is TypeRef.Tuple -> Type.tuple(ref.elements.map { resolve(it) })
-        is TypeRef.Named -> {
+        is TypeRef.Given -> throw CompileError(ref.pos, "'${ref.name} = ...' gives a spec value's own type, as in Format<T = Int>")
+        is TypeRef.Named -> parameterOwnType(ref) ?: run {
+            specNamed(ref)?.let { return@run specValueType(it, ref, null) }
+            if (ref.args.any { it is TypeRef.Given }) throw CompileError(ref.pos, "'${ref.name}' isn't a spec, so its type arguments aren't named: ${text(ref.copy(args = ref.args.map { (it as? TypeRef.Given)?.type ?: it }))}")
             var args = ref.args.map { resolve(it) }
             fun arity(n: Int) {
                 if (args.size != n) throw CompileError(ref.pos, "'${ref.name}' takes $n type argument${if (n == 1) "" else "s"}, not ${args.size}")
@@ -1349,7 +1360,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                     typeOf(it, args)
                 }
                 ?: find(ref.name, specs, null)?.let { spec ->
-                    moduleType(spec, ref.pos, args).also { typeNames[ref] = Type.MODULE + spec.name }
+                    specValueType(spec, ref, null)
                 }
                 ?: find(ref.name, annotationTypes, null)?.let {
                     throw CompileError(ref.pos, "'${ref.name}' is an annotation, written @${ref.name}(...) before a declaration; no value has its type")
@@ -1357,6 +1368,52 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 ?: typeParams["@" + ref.name]?.let { throw CompileError(ref.pos, "'${ref.name}' is an effect parameter, written @${ref.name}, as in @${ref.name} () -> Unit") }
                 ?: throw CompileError(ref.pos, if (ref.name == "_") "'_' only marks a spec type's parameters, as in Monad<Result<_, String>>" else "unknown type '${ref.name}'${importHint(ref.name)}")
         }
+    }
+
+    private fun specNamed(ref: TypeRef.Named): Decl.Spec? {
+        if (typeParams[ref.name] != null || specTypes[ref.name] != null || typeNames[ref] != null || BUILTIN_TYPES[ref.name] != null) return null
+        if (lookupRecord(ref.name, null) != null || lookupSealed(ref.name, null) != null || lookupAlias(ref.name, null) != null) return null
+        return find(ref.name, specs, null)
+    }
+
+    private fun parameterType(ref: TypeRef, owner: String): Type =
+        (ref as? TypeRef.Named)?.takeIf { parameterOwnType(it) == null }?.let { named -> specNamed(named)?.let { specValueType(it, named, owner) } }
+            ?: resolve(ref)
+
+    private fun parameterOwnType(ref: TypeRef.Named): Type? {
+        val parameter = ref.name.substringBefore('.')
+        if (parameter == ref.name || !parameter[0].isLowerCase()) return null
+        val own = ref.name.substringAfter('.')
+        if (parameter in laterParams) throw CompileError(ref.pos, "'${ref.name}' names $parameter, which comes after it: a parameter's type can name only those before it")
+        val type = valueParams[parameter]?.prune() ?: return null
+        val spec = (type as? Type.Con)?.takeIf { it.name.startsWith(Type.MODULE) }?.let { specs[it.name.removePrefix(Type.MODULE)] }
+            ?: throw CompileError(ref.pos, "'$parameter' isn't a value of a spec with types of its own, so it has no $own")
+        if (ref.args.isNotEmpty()) throw CompileError(ref.pos, "${spec.simpleName}'s $own takes no type arguments")
+        val index = spec.types.indexOfFirst { it.name == own }
+        if (index < 0) throw CompileError(ref.pos, "${spec.simpleName} has no type '$own'")
+        return type.args[index]
+    }
+
+    private fun specValueType(spec: Decl.Spec, ref: TypeRef.Named, owner: String?): Type {
+        spec.types.firstOrNull { it.typeParams.isNotEmpty() }?.let {
+            throw CompileError(ref.pos, "${spec.simpleName}'s ${it.name} takes type parameters, so a value of ${spec.simpleName} can't say what it is yet")
+        }
+        val positional = ref.args.filter { it !is TypeRef.Given }
+        if (positional.isNotEmpty()) {
+            val named = spec.types.zip(positional).joinToString(", ") { (t, arg) -> "${t.name} = ${text(arg)}" }
+            throw CompileError(ref.pos, "a ${spec.simpleName} value names its own types: ${spec.simpleName}<${named.ifEmpty { spec.types.joinToString(", ") { "${it.name} = ..." } }}>")
+        }
+        val given = ref.args.filterIsInstance<TypeRef.Given>()
+        for ((i, g) in given.withIndex()) {
+            if (spec.types.none { it.name == g.name }) throw CompileError(g.pos, "${spec.simpleName} has no type '${g.name}'")
+            if (given.take(i).any { it.name == g.name }) throw CompileError(g.pos, "${spec.simpleName}'s ${g.name} is given twice")
+        }
+        val args = spec.types.map { t ->
+            given.firstOrNull { it.name == t.name }?.let { resolve(it.type) }
+                ?: owner?.let { openTypes.getOrPut("$it.${t.name}") { u.fresh() } }
+                ?: u.fresh()
+        }
+        return moduleType(spec, ref.pos, args).also { typeNames[ref] = Type.MODULE + spec.name }
     }
 
     /**
@@ -1427,6 +1484,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is TypeRef.Function -> false
             is TypeRef.Tuple -> ref.elements.any(::holds)
             is TypeRef.Effects -> false
+            is TypeRef.Given -> holds(ref.type)
             is TypeRef.Named -> ref.args.any(::holds) || (lookupRecord(ref.name, null) ?: lookupSealed(ref.name, null))?.name in regioned ||
                 lookupAlias(ref.name, null)?.let { holds(it.target) } == true
         }
@@ -2296,7 +2354,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Type.Con -> when {
                 p.name == Type.EFFECTS -> if (positive) open(p) else p
                 p.region != null -> p
-                else -> Type.Con(p.name, p.args.mapIndexed { i, arg -> if (covariant(p.name, i)) go(arg, positive) else arg }, p.region)
+                else -> Type.Con(p.name, p.args.mapIndexed { i, arg -> if (covariant(p.name, i)) go(arg, positive) else arg }, p.region, p.ownTypes)
             }
             else -> p
         }
@@ -2331,6 +2389,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 (positive || ref.effects.none { "@" + it.name == param })
             is TypeRef.Tuple -> ref.elements.all { only(it, positive) }
             is TypeRef.Effects -> positive || ref.effects.none { "@" + it.name == param }
+            is TypeRef.Given -> only(ref.type, positive)
         }
         return fields.all { f -> if (f.isVar) !mentions(f.type, param) else only(f.type, true) }
     }
@@ -2340,6 +2399,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> ref.params.any { mentions(it, param) } || mentions(ref.result, param) || ref.effects.any { "@" + it.name == param }
         is TypeRef.Tuple -> ref.elements.any { mentions(it, param) }
         is TypeRef.Effects -> ref.effects.any { "@" + it.name == param }
+        is TypeRef.Given -> mentions(ref.type, param)
     }
 
     /**
@@ -2804,8 +2864,31 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
     }
 
+    private fun parameterTypes(params: List<Param>): List<Type> {
+        val types = mutableListOf<Type>()
+        for ((i, p) in params.withIndex()) {
+            types += withValueParams(params.take(i).zip(types), params.drop(i + 1).map { it.name }.toSet()) {
+                p.type?.let { parameterType(it, p.name) }
+            } ?: u.fresh()
+        }
+        return types
+    }
+
+    private fun <A> withValueParams(given: List<Pair<Param, Type>>, later: Set<String>, body: () -> A): A {
+        val saved = valueParams to laterParams
+        valueParams = given.associate { (p, t) -> p.name to t }
+        laterParams = later
+        try {
+            return body()
+        } finally {
+            valueParams = saved.first
+            laterParams = saved.second
+        }
+    }
+
     private fun checkGroupBody(group: FunctionGroup) {
         val declaredParams = mutableMapOf<Decl.Function, Map<String, Type.Var>>()
+        val valueParamTypes = mutableMapOf<Decl.Function, Map<String, Type>>()
         val outside = mutableMapOf<Decl.Function, Type>()
         // Each function is read where it's written: a group's may be in different files of a package.
         fun at(decl: Decl.Function) {
@@ -2817,17 +2900,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for (decl in group.decls) {
             at(decl)
             val vars = decl.typeParams.associateWith { u.fresh() }
-            declaredParams[decl] = vars
             typeParams = vars
-            val result = decl.returnType?.let { resolve(it) } ?: u.fresh()
+            openTypes = mutableMapOf()
             // What it does: what its body's calls do, which is also what its function parameters may do.
             val row = u.fresh()
             rows[decl] = row
             declaredArgs[decl] = declaredLabels(decl.annotations, decl.path)
-            val inside = decl.params?.let { params ->
-                checkDistinct(params.map { it.name to it.pos })
-                Type.Fn(withArrowEffects(row) { params.map { p -> p.type?.let { resolve(it) } ?: u.fresh() } }, result, row)
-            } ?: result
+            decl.params?.let { params -> checkDistinct(params.map { it.name to it.pos }) }
+            val paramTypes = decl.params?.let { params -> withArrowEffects(row) { parameterTypes(params) } }
+            val result = withValueParams(decl.params.orEmpty().zip(paramTypes.orEmpty()), emptySet()) { decl.returnType?.let { resolve(it) } } ?: u.fresh()
+            val inside = paramTypes?.let { Type.Fn(it, result, row) } ?: result
+            declaredParams[decl] = vars + openTypes
+            valueParamTypes[decl] = decl.params.orEmpty().map { it.name }.zip(paramTypes.orEmpty()).toMap()
             provisional[decl] = inside
             // Inside, an opaque type is what it stands for; callers outside see the type as written.
             if (decl !in parameterMembers && opaqueAround(decl.path)) {
@@ -2863,6 +2947,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         for (decl in group.decls) {
             at(decl)
             typeParams = declaredParams.getValue(decl)
+            valueParams = valueParamTypes.getValue(decl)
             val type = provisional.getValue(decl)
             val scope = Scope(null)
             val row = rows.getValue(decl)
@@ -3099,6 +3184,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         is TypeRef.Function -> (ref.params + ref.result).flatMap { typeNamesIn(it) }.toSet()
         is TypeRef.Tuple -> ref.elements.flatMap { typeNamesIn(it) }.toSet()
         is TypeRef.Effects -> emptySet()
+        is TypeRef.Given -> typeNamesIn(ref.type)
     }
 
     // ---- Expressions ----
@@ -3125,8 +3211,25 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         if (retypeCase(e, expected)) return
         val before = actual.zonk()
         val wanted = expected.zonk()
-        if (!subtype(actual, expected)) mismatch(e.pos, wanted, before)
+        if (!subtype(actual, expected)) {
+            ownTypeMismatch(e, wanted, before)?.let { throw CompileError(e.pos, it) }
+            mismatch(e.pos, wanted, before)
+        }
         if (actual.zonk() != expected.zonk()) e.coerceTo = expected
+    }
+
+    private fun ownTypeMismatch(e: Expr, wanted: Type, found: Type): String? {
+        val w = wanted.prune() as? Type.Con ?: return null
+        val f = found.prune() as? Type.Con ?: return null
+        if (w.name != f.name || w.ownTypes == null) return null
+        val (own, pair) = w.ownTypes.zip(w.args.zip(f.args)).firstOrNull { (_, types) -> types.first.zonk() != types.second.zonk() } ?: return null
+        val module = when (e) {
+            is Expr.Name -> (e.resolved as? NameRef.Module)?.module?.simpleName
+            is Expr.Member -> (e.resolved as? MemberRef.Module)?.module?.simpleName
+            else -> null
+        }
+        val spec = Type.displayName(w.name).substringAfterLast('.')
+        return "${module ?: "this $spec"}'s $own is ${pair.second.zonk()}, but here it must be ${pair.first.zonk()}"
     }
 
     /** The case [e] spells out, as in `Alphabet.A` or `Cons(1, Nil)`, if it is one. */

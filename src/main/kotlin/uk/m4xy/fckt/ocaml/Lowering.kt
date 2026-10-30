@@ -444,8 +444,9 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     }
 
     /** A value of [spec]'s type, `Format with type t = point`: its own types as [args] say they are. */
-    private fun packageType(spec: Decl.Spec, args: List<String>): String =
-        ref(spec.name) { it } + spec.types.zip(args).joinToString("") { (t, arg) -> "${if (t == spec.types.first()) " with" else " and"} type ${snake(t.name)} = $arg" }
+    private fun packageType(spec: Decl.Spec, args: List<String?>): String =
+        ref(spec.name) { it } + spec.types.zip(args).mapNotNull { (t, arg) -> arg?.let { t to it } }
+            .mapIndexed { i, (t, arg) -> "${if (i == 0) " with" else " and"} type ${snake(t.name)} = $arg" }.joinToString("")
 
     /**
      * [value] of a value of [spec], which has types of its own: taken out of it by a function of its
@@ -540,6 +541,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         is TypeRef.Function -> ref.params.flatMap(::typeRefNames) + typeRefNames(ref.result)
         is TypeRef.Tuple -> ref.elements.flatMap(::typeRefNames)
         is TypeRef.Effects -> emptyList()
+        is TypeRef.Given -> typeRefNames(ref.type)
     }
 
     /** The full names of the user types a type declaration's fields use. */
@@ -743,7 +745,13 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         is TypeRef.Tuple -> tupleText(ref.elements.map { typeText(it, typeParams) to compound(it) })
         is TypeRef.Named ->
             if (ref.name in typeParams) typeVar(ref.name)
-            else {
+            else if (ref.name.substringBefore('.').let { it != ref.name && it[0].isLowerCase() } && program.typeNames[ref] == null) "_"
+            else if ((program.typeNames[ref] ?: "").startsWith(Type.MODULE)) {
+                val name = program.typeNames.getValue(ref)
+                val spec = program.specTypes.keys.first { it.name == name.removePrefix(Type.MODULE) }
+                val given = ref.args.filterIsInstance<TypeRef.Given>()
+                "(module ${packageType(spec, spec.types.map { t -> given.firstOrNull { it.name == t.name }?.let { typeText(it.type, typeParams) } ?: "_" })})"
+            } else {
                 val name = program.typeNames[ref] ?: ref.name
                 // An alias in `module Results<E>` takes E too: the E here, if there is one, else any.
                 val moduleArgs = aliases[name]?.let { a -> moduleTypeParams[a.path.joinToString(".")] }.orEmpty()
@@ -751,6 +759,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 applied(name, ref.args.filter { it !is TypeRef.Effects }.map { typeText(it, typeParams) to compound(it) } + moduleArgs)
             }
         is TypeRef.Effects -> error("effects aren't an OCaml type")
+        is TypeRef.Given -> typeText(ref.type, typeParams)
     }
 
     /** Whether a type needs parentheses as an argument or a tuple element. */
@@ -1607,6 +1616,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             if (ref.name in typeParams) Gen.Id("show_${ref.name.lowercase()}")
             else showCon(program.typeNames[ref] ?: if (ref.name == "Double") "Float" else ref.name, ref.args.filter { it !is TypeRef.Effects }.map { showRef(it, typeParams) })
         is TypeRef.Effects -> error("effects aren't shown")
+        is TypeRef.Given -> showRef(ref.type, typeParams)
     }
 
     /** The show functions for whichever of [types] need one; only those that call each other share a `let rec`. */

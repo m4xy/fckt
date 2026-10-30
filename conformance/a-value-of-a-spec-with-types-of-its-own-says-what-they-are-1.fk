@@ -28,6 +28,6 @@ module Upper : Format {
   read(text: String): Result<String, String> = Ok(text.lowercase())
 }
 
-f: Format<String> = PointText
+f: Format<T = String> = PointText
 
-// error: Point
+// error: PointText's T is Point, but here it must be String

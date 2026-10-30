@@ -498,16 +498,16 @@ class CompilerTest {
             }
 
             // Written once, for any format, whatever its T.
-            readsBack<A>(format: Format<A>, value: A): Boolean = format.read(format.of(value)) == Ok(value)
+            readsBack(format: Format, value: format.T): Boolean = format.read(format.of(value)) == Ok(value)
 
             main() = {
               assert(readsBack(PointText, Point(1, 2)))
               assert(readsBack(Upper, "shout"))
               assert(!readsBack(Upper, "Shout"))
-              formats: List<Format<Point>> = [PointText]
+              formats: List<Format<T = Point>> = [PointText]
               assertEquals(["3,4"], formats.map { it.of(Point(3, 4)) })
               assertEquals(("a", Point(5, 6)), PointText.both("a", Point(5, 6)))
-              f: Format<String> = Upper
+              f: Format<T = String> = Upper
               assertEquals((1, "x"), f.both(1, "x"))
             }
         """.trimIndent()
@@ -1510,7 +1510,7 @@ class CompilerTest {
             write("shop/Shape.fk", "type Shape<T> { Circle(radius: Double, tag: T), @Named(\"pt\") Point }")
             write("shop/Rounding.fk", "internal module Rounding {\n  internal type Level { Low, High }\n  private type Hidden(n: Int)\n}")
             // Code isn't checked, only what it declares, so it can use what's generated from the symbols.
-            write("shop/Generated.fk", "import fckt.text.Format\nmodule Generated {\n  user: Format<User> = UserSerializer\n}")
+            write("shop/Generated.fk", "import fckt.text.Format\nmodule Generated {\n  user: Format<T = User> = UserSerializer\n}")
             // A program apart isn't the project's types.
             write("shop/tool.fk", "type Tool(n: Int)\nmain() = println(Tool(1))")
             val symbols = compileSymbols(emptyList(), listOf(dir), emptyList(), others = listOf(STD))

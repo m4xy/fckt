@@ -98,6 +98,7 @@ class ParserTest {
         is TypeRef.Function -> "(FunctionType ${at(t.pos)} ${list(t.params.map { type(it) })} ${type(t.result)} ${list(t.effects.map { annotation(it) })})"
         is TypeRef.Tuple -> "(TupleType ${at(t.pos)} ${list(t.elements.map { type(it) })})"
         is TypeRef.Effects -> "(EffectsType ${at(t.pos)} ${list(t.effects.map { annotation(it) })})"
+        is TypeRef.Given -> "(GivenType ${at(t.pos)} ${quoted(t.name)} ${type(t.type)})"
     }
 
     private fun expr(e: Expr): String = when (e) {
