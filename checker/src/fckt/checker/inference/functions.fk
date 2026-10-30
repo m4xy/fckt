@@ -105,7 +105,11 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
     done,
   ).find { s, _ -> s.function.name == "main" }.forEach { s, row -> checkMainHandled(s.function, row, environment) }
   signatures.zip(done).forEach { s, row ->
-    if (!Signatures.isExternal(s.function)) checkEffects(s.function, row, environment) else Unit
+    if (!Signatures.isExternal(s.function) && !Signatures.isCompiled(s.function)) checkEffects(
+      s.function,
+      row,
+      environment,
+    ) else Unit
   }
   withSchemes = signatures.zip(done).fold(known) { k, entry ->
     (s, row) = entry
@@ -340,7 +344,9 @@ private isParameterOwn(
       namespace,
     ).map { Symbols.isSpec(it) }.getOrElse(false)
   }
-  f.name != "main" && !Defaults.isDefault(f) && !Signatures.isExternal(f) &&
+  f.name != "main" && !Defaults.isDefault(f) && !Signatures.isExternal(f) && !Signatures.isCompiled(
+    f,
+  ) &&
     Names.enclosingApplication(f.path, namespace).isNone() && parameterEffects(
       f.path,
       environment,
@@ -453,7 +459,11 @@ private allows(effects: List<String>): String = {
     FunctionOf(types, _, _) -> named(Signatures.parametersOf(f).getOrElse([]), types)
     else -> emptyMap()
   })
-  if (Signatures.isExternal(f)) {
+  if (Signatures.isCompiled(f)) {
+    does = if (Defaults.isDefault(f)) [] else allowed(f, environment)
+    unifyRows(s.row, Row(does.map { EffectLabel(it, []) }, Some(fresh())))
+    None
+  } else if (Signatures.isExternal(f)) {
     parameters = when (s.t) {
       FunctionOf(ps, _, _) -> ps
       else -> []

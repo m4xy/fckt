@@ -45,16 +45,16 @@ main(args: List<String>) = when (args) {
 @FileSystem core(): List<(List<String>, List<SourceText>)> = packagesIn(path("src/main/resources/std"), [], CoreProject, "core:")
 
 @FileSystem standard(): List<(List<String>, List<SourceText>)> =
-  packagesIn(path("std/src"), [], OtherProject(path("std/src").canonical().value), "std/src/")
+  packagesIn(path("std/src"), [], OtherProject(path("std/src").canonical().value), "std/src/", Some("Fckt_std"))
 
 // Each package under the folder, its own path given, with its files, named as positions name them:
 // the prefix, then the file's path under the folder.
-@FileSystem packagesIn(folder: Path, pkg: List<String>, project: Project, prefix: String): List<(List<String>, List<SourceText>)> = {
+@FileSystem packagesIn(folder: Path, pkg: List<String>, project: Project, prefix: String, compiledIn: Option<String> = None): List<(List<String>, List<SourceText>)> = {
   entries = folder.listFiles().sortedBy { it.name }
   files = entries.filter { it.extension == "fk" && !it.isDirectory() }.map { f ->
-    SourceText(Some(prefix + (pkg + [f.name]).joinToString("/")), project, f.readText())
+    SourceText(Some(prefix + (pkg + [f.name]).joinToString("/")), project, f.readText(), compiledIn)
   }
-  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d -> packagesIn(d, pkg + [d.name], project, prefix) }
+  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d -> packagesIn(d, pkg + [d.name], project, prefix, compiledIn) }
   [(pkg, files), *inner]
 }
 

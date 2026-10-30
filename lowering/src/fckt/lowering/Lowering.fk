@@ -8,14 +8,17 @@ import fckt.checker.symbols.Symbol
 // its type parameters, those for effects among them, which OCaml's has none of, and whether it's
 // OCaml's own, written as it is; whether a type with cases shares them with
 // another, so that its cases are tags, as OCaml's polymorphic variants have; a spec's declaration,
-// which says its own types; a handled effect's, which says which operations may fail; and the module what's
-// written is in, by its path, from which a name is written: Ratios.make outside Ratios, make inside
-// it.
+// which says its own types; a handled effect's, which says which operations may fail; whether a path
+// is a module's, and whether one of its name further in hides it, so it's named by its alias; and
+// the module what's written is in, by its path, from which a name is written: Ratios.make outside
+// Ratios, make inside it.
 effect Lowering {
   toStringOf(typeName: String): Option<Symbol>
   declarationOf(typeName: String): Option<TypeDeclaration>
   isShared(typeName: String): Boolean
   specOf(specName: String): Option<DeclaredSpec>
   effectOf(effectName: String): Option<DeclaredEffect>
+  isModule(path: List<String>): Boolean
+  isHidden(path: List<String>): Boolean
   inside(): List<String>
 }

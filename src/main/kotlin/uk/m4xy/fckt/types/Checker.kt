@@ -3946,6 +3946,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return when {
             w is Type.Var -> 0
             a is Type.Var -> 0
+            w is Type.Con && a is Type.Con && w.name == Type.EFFECTS && a.name == Type.EFFECTS -> 0
             w is Type.Con && a is Type.Con -> if (w.name != a.name || w.args.size != a.args.size) null
             else w.args.zip(a.args).fold(1 as Int?) { acc, (x, y) -> acc?.let { n -> fit(x, y)?.let { n + it } } }
             w is Type.Fn && a is Type.Fn -> if (w.params.size != a.params.size) null

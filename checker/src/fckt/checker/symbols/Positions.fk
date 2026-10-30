@@ -4,6 +4,7 @@ import fckt.parser.*
 module Positions {
   // Where an expression starts.
   of(e: Expression): Position = when (e) {
+    Compiled(at) -> at
     IntConstant(at, _) -> at
     FloatConstant(at, _) -> at
     BooleanConstant(at, _) -> at

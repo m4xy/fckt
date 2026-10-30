@@ -202,6 +202,7 @@ module Globals {
       0,
     )
     (TupleOf(xs), TupleOf(ys)) -> if (xs.size != ys.size) None else fitAll(xs, ys, 1)
+    (Effects(_), Effects(_)) -> Some(0)
     (Abstract(n, xs), Abstract(m, ys)) -> if (n != m || xs.size != ys.size) None else fitAll(
       xs,
       ys,

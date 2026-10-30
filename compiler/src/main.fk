@@ -2,30 +2,91 @@ import fckt.collections.Maps.*
 import fckt.effects.Failure.attempt
 import fckt.io.Channel
 import fckt.io.Channels.*
+import fckt.io.Console
 import fckt.io.Paths.*
 import fckt.io.Files.*
 import fckt.io.FileSystem
 import fckt.io.Path
 import fckt.io.Process
+import fckt.io.Processes.run
 import fckt.checker.*
 import fckt.checker.diagnostics.Diagnostic
 import fckt.checker.sources.*
 import fckt.lowering.Programs
 import fckt.ocaml.Printer
 
-// fckt's compiler, written in fckt:
+// fckt's compiler, written in fckt. It takes what fckt takes, as kiln gives it:
+//
+//   compiler <file.fk> -o <out.ml> [--separate] [--no-std] [-I <dir>]... [--other-project <dir>]... [-L <interface>]...
+//
+// compiles the program in the file, with the packages in each -I folder as its own, those in each
+// --other-project folder as other projects', and each -L folder's library, as its interface says
+// it is, to OCaml, linked with the core, the standard library and the libraries, each compiled on
+// its own. What it can't do yet, it has fckt's compiler written in Kotlin do: FCKT_KOTLIN, or fckt.
+// Its --version is that compiler's, said to be self-hosted, so kiln keeps what each compiles apart.
+// The core, and the standard library unless it's given as a library, are read from the fckt
+// repository FCKT_HOME names, or the one it's run in. It also takes
 //
 //   compiler [--whole] <file.fk> <out.ml> [<folder>...]
 //
-// compiles the program in the file, with the packages in each folder as its own, to OCaml, to be
-// linked with the core and the standard library as fckt's compiler compiles them on their own,
-// fckt --core and fckt --library; or, --whole, with them, as a program on its own. The standard library and the core are read from the fckt
-// repository it's run in, from std/src and src/main/resources/std. What's wrong with the program, it
-// says, and ends with exit code 1.
+// as fckt's own tests and bootstrap do: --whole compiles the core and the standard library in too.
 main(args: List<String>) = when (args) {
+  ["--version"] -> println("${run(kotlin(), ["--version"]).value.trim()}, self-hosted")
   ["--whole", file, out, *folders] -> compile(file, out, folders, true)
-  [file, out, *folders] -> compile(file, out, folders, false)
-  else -> failing(["usage: compiler [--whole] <file.fk> <out.ml> [<folder>...]"])
+  [file, out, *folders] if !(args.any { it.startsWith("-") }) -> compile(file, out, folders, false)
+  else -> when (options(args, Options(None, None, [], [], [], false, true))) {
+    Some(o) -> when (o.input) {
+      Some(file) -> program(o, file)
+      None -> delegated(args)
+    }
+    None -> delegated(args)
+  }
+}
+
+type Options(
+  input: Option<String>,
+  output: Option<String>,
+  own: List<String>,
+  others: List<String>,
+  libraries: List<String>,
+  noStd: Boolean,
+  separate: Boolean,
+)
+
+options(args: List<String>, o: Options): Option<Options> = when (args) {
+  [] -> Some(o)
+  ["-o", out, *rest] -> options(rest, o.copy(output = Some(out)))
+  ["-I", dir, *rest] -> options(rest, o.copy(own = o.own + [dir]))
+  ["--other-project", dir, *rest] -> options(rest, o.copy(others = o.others + [dir]))
+  ["-L", dir, *rest] -> options(rest, o.copy(libraries = o.libraries + [dir]))
+  ["--no-std", *rest] -> options(rest, o.copy(noStd = true))
+  ["--separate", *rest] -> options(rest, o.copy(separate = true))
+  [arg, *rest] if !arg.startsWith("-") && o.input.isNone() -> options(
+    rest,
+    o.copy(input = Some(arg)),
+  )
+  else -> None
+}
+
+@Process delegated(args: List<String>): Unit = exit(runAttached(kotlin(), args))
+
+@Process kotlin(): String = env("FCKT_KOTLIN").getOrElse("fckt")
+
+@FileSystem @Channel @Process @Console program(o: Options, file: String): Unit = {
+  home = path(env("FCKT_HOME").getOrElse("."))
+  own = o.own.flatMap { dir -> packagesIn(path(dir), [], ProgramProject, "$dir/") }
+  others = o.others.flatMap { dir -> packagesIn(path(dir), [], OtherProject(path(dir).canonical().value), "$dir/") }
+  libraries = o.libraries.flatMap { dir -> interfacesIn(path(dir)) }
+  tree = SourceTree(
+    merged(core(home) + (if (o.noStd) [] else standard(home)) + own + others + libraries),
+  )
+  checked(file, tree, false) { ml ->
+    when (o.output) {
+      Some("-") -> print(ml)
+      Some(out) -> path(out).writeText(ml)
+      None -> path(file.removeSuffix(".fk") + ".ml").writeText(ml)
+    }
+  }
 }
 
 @FileSystem @Channel @Process compile(
@@ -35,12 +96,23 @@ main(args: List<String>) = when (args) {
   whole: Boolean,
 ): Unit = {
   own = folders.flatMap { folder -> packagesIn(path(folder), [], ProgramProject, "$folder/") }
-  tree = SourceTree(merged(core() + standard() + own))
+  tree = SourceTree(merged(core(path(".")) + standard(path(".")) + own))
+  checked(file, tree, whole) { ml -> path(out).writeText(ml) }
+}
+
+// The program in the file, checked with the packages in the tree, as OCaml, given to write; or
+// what's wrong with it, said, ending with exit code 1.
+@FileSystem @Channel @Process checked(
+  file: String,
+  tree: SourceTree,
+  whole: Boolean,
+  write: @FileSystem @Channel (String) -> Unit,
+): Unit = {
   entry = SourceText(None, ProgramProject, path(file).readText())
   (program, errors) = Checker.check(entry, tree, true)
   when ((program, errors)) {
     (Some(p), []) -> when (attempt { Programs.ocaml(p, whole) }) {
-      Ok(items) -> path(out).writeText(Printer.file(items))
+      Ok(items) -> write(Printer.file(items))
       Error(why) -> failing(["can't lower $why"])
     }
     _ -> failing(
@@ -54,29 +126,43 @@ main(args: List<String>) = when (args) {
   exit(1)
 }
 
-@FileSystem core(): List<(List<String>, List<SourceText>)> = packagesIn(
-  path("src/main/resources/std"),
-  [],
-  CoreProject,
-  "core:",
-)
+@FileSystem core(home: Path): List<(List<String>, List<SourceText>)> =
+  packagesIn(home.resolve("src/main/resources/std"), [], CoreProject, "core:")
 
-@FileSystem standard(): List<(List<String>, List<SourceText>)> =
-  packagesIn(path("std/src"), [], OtherProject(path("std/src").canonical().value), "std/src/")
+@FileSystem standard(home: Path): List<(List<String>, List<SourceText>)> = {
+  std = home.resolve("std/src")
+  packagesIn(std, [], OtherProject(std.canonical().value), "std/src/", Some("Fckt_std"))
+}
+
+// A library's interface, as fckt --library writes it to a folder: its packages' declarations, and
+// the OCaml unit that has their code, in the folder's file unit.
+@FileSystem interfacesIn(dir: Path): List<(List<String>, List<SourceText>)> = {
+  unit = dir.resolve("unit").readText().trim()
+  packagesIn(dir, [], OtherProject(dir.canonical().value), "${dir.value}/", Some(unit), true)
+}
 
 // Each package under the folder, its own path given, with its files, named as positions name them:
-// the prefix, then the file's path under the folder.
+// the prefix, then the file's path under the folder; a library's interfaces, .fki, or its source.
 @FileSystem packagesIn(
   folder: Path,
   pkg: List<String>,
   project: Project,
   prefix: String,
+  compiledIn: Option<String> = None,
+  interface: Boolean = false,
 ): List<(List<String>, List<SourceText>)> = {
   entries = folder.listFiles().sortedBy { it.name }
-  files = entries.filter { it.extension == "fk" && !it.isDirectory() }.map { f ->
-    SourceText(Some(prefix + (pkg + [f.name]).joinToString("/")), project, f.readText())
+  extension = if (interface) "fki" else "fk"
+  files = entries.filter { it.extension == extension && !it.isDirectory() }.map { f ->
+    SourceText(
+      Some(prefix + (pkg + [f.name]).joinToString("/")),
+      project,
+      f.readText(),
+      compiledIn,
+      interface,
+    )
   }
-  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d -> packagesIn(d, pkg + [d.name], project, prefix) }
+  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d -> packagesIn(d, pkg + [d.name], project, prefix, compiledIn, interface) }
   [(pkg, files), *inner]
 }
 

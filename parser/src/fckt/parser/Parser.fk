@@ -7,10 +7,19 @@ import fckt.collections.Arrays.*
 module Parser {
   // The source's imports and declarations, or why it can't be read: each declaration that can't,
   // or the one reason it can't be split into tokens.
-  parse(source: String): Result<SourceFile, List<SyntaxError>> = when (Lexer.tokens(source)) {
+  parse(source: String): Result<SourceFile, List<SyntaxError>> = parsed(source, false)
+
+  // A library's interface, as fckt --library writes it: its declarations without their code. A
+  // function is its signature, greet(name: String): Unit, and a default is = compiled.
+  parseInterface(source: String): Result<SourceFile, List<SyntaxError>> = parsed(source, true)
+
+  private parsed(
+    source: String,
+    interface: Boolean,
+  ): Result<SourceFile, List<SyntaxError>> = when (Lexer.tokens(source)) {
     Error(error) -> Error([error])
     Ok(tokens) -> {
-      s = Parsing(tokens.toArray(), 0, [], [], [])
+      s = Parsing(tokens.toArray(), 0, [], [], [], interface)
       Rejecting(reject = (at, message, _) -> Error([SyntaxError(at, message)])) {
         skipNewlines(s)
         imports = importList(s)
@@ -33,6 +42,7 @@ module Parser {
     var indexes: List<Position>,
     var checks: List<(Expression, Check)>,
     var conjunctions: List<(Expression, List<Expression>, List<Position>)>,
+    interface: Boolean = false,
   )
 
   // e is T, or e !is T, as read: what's checked, the check, and whether it's !is.
@@ -369,12 +379,16 @@ module Parser {
     typeParameters = typeParameterList(s)
     parameters = if (looking(s, LeftParen)) Some(parameterList(s, true)) else None
     result = if (accepts(s, Colon)) Some(typeRef(s)) else None
-    expect(s, Assign, "'='")
-    skipNewlines(s)
+    body = if (s.interface && !looking(s, Assign)) Compiled(start)
+    else {
+      expect(s, Assign, "'='")
+      skipNewlines(s)
+      expression(s)
+    }
     Declaration(
       start,
       name,
-      FunctionDefinition(typeParameters, receiver, parameters, result, expression(s), None, false),
+      FunctionDefinition(typeParameters, receiver, parameters, result, body, None, false),
     )
   }
 
@@ -1412,7 +1426,10 @@ module Parser {
         Some(c) -> CharConstant(at, c)
         None -> reject(at, "empty character literal")
       }
-      Identifier -> Name(at, next(s).text)
+      Identifier -> if (s.interface && peek(s).text == "compiled") {
+        next(s)
+        Compiled(at)
+      } else Name(at, next(s).text)
       LeftParen -> {
         next(s)
         items = commaSeparated(s) { expression(s) }
@@ -1848,6 +1865,7 @@ module Parser {
   // ---- Where things are ----
 
   private atOf(e: Expression): Position = when (e) {
+    Compiled(at) -> at
     IntConstant(at, _) -> at
     FloatConstant(at, _) -> at
     BooleanConstant(at, _) -> at
@@ -1897,9 +1915,15 @@ module Parser {
 
   // At least one item, separated by commas, the last maybe with one after it, up to closer, which
   // isn't read.
-  @Rejecting @Mutating private commaSeparatedUntil<A>(s: Parsing, closer: Kind, item: () -> A): List<A> = {
+  @Rejecting @Mutating private commaSeparatedUntil<A>(
+    s: Parsing,
+    closer: Kind,
+    item: () -> A,
+  ): List<A> = {
     first = item()
-    if (accepts(s, Comma) && !looking(s, closer)) [first, *commaSeparatedUntil(s, closer, item)] else [first]
+    if (accepts(s, Comma) && !looking(s, closer)) [first, *commaSeparatedUntil(s, closer, item)] else [
+      first,
+    ]
   }
 
   // Items separated by commas, maybe none, up to closer, which isn't read.

@@ -228,7 +228,7 @@ module Loader {
   // The file's declarations and imports, or None, with why it can't be read reported.
   @Reporting private parsed(
     source: SourceText,
-  ): Option<SourceFile> = when (Parser.parse(source.text)) {
+  ): Option<SourceFile> = when (if (source.interface) Parser.parseInterface(source.text) else Parser.parse(source.text)) {
     Ok(file) -> Some(file)
     Error(errors) -> {
       errors.forEach { report(Diagnostic(source.path, it.at, it.message)) }

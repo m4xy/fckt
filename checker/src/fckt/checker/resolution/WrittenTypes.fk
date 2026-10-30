@@ -245,6 +245,7 @@ module WrittenTypes {
   ): List<WrittenType> = es.flatMap { inExpression(it, scope) }
 
   private inExpression(e: Expression, scope: TypeScope): List<WrittenType> = when (e) {
+    Compiled(_) -> []
     IntConstant(_, _) -> []
     FloatConstant(_, _) -> []
     BooleanConstant(_, _) -> []

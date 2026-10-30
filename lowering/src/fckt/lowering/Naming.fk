@@ -60,12 +60,21 @@ module Naming {
     m: Symbol,
   ): String = relative(m.path + [ownName(m)]).map { moduleName(it) }.joinToString(".")
 
-  // A path, without the start it shares with the module what's written is in.
+  // A path, without the start it shares with the module what's written is in; starting from the
+  // alias of a module that one of its name nearer here hides.
   @Lowering relative(path: List<String>): List<String> = {
     here = inside()
     common = path.zip(here).takeWhile { a, b -> a == b }.size
-    path.drop(common)
+    when (path.drop(common)) {
+      [first, *rest] if isHidden(path.take(common + 1)) && (common + 1..here.size).any { k ->
+        nearer = here.take(k) + [first]
+        nearer != path.take(common + 1) && isModule(nearer)
+      } -> [outerAlias(moduleName(first)), *rest]
+      other -> other
+    }
   }
+
+  outerAlias(module: String): String = "Fk_outer_$module"
 
   // The declaration's own name, without the modules it's in: List$sorted.
   ownName(

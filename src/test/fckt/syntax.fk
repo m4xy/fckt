@@ -111,6 +111,7 @@ expressionOf(e: Expression): String = when (e) {
   Block(p, statements, result, endsInBinding) ->
     "(Block ${at(p)} ${listOf(statements.map { statementOf(it) })} ${expressionOf(result)} $endsInBinding)"
   Monadic(p, monad, block) -> "(Monadic ${at(p)} ${expressionOf(monad)} ${expressionOf(block)})"
+  Compiled(p) -> "(Compiled ${at(p)})"
   Handle(p, handler, block, parameters) ->
     "(Handle ${at(p)} ${expressionOf(handler)} ${expressionOf(block)} ${optional(parameters.map { ps -> listOf(ps.map { parameterOf(it) }) })})"
 }

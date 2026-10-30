@@ -12,9 +12,20 @@ import fckt.ocaml.*
 // always such an order.
 module Structures {
   @Fail @Lowering items(path: List<String>, own: OwnCode): List<Item> = {
-    besides = own.besides.filter { p, _ -> p == path }.map { _, item -> item }
+    besides = own.besides.filter { p, _ -> p == path }.flatMap { p, item ->
+      when (item) {
+        ModuleItem(name, _) -> [item, *aliasOf(p + [name.take(1).lowercase() + name.drop(1)])]
+        else -> [item]
+      }
+    }
     besides + ordered(partsAt(path, own), own).flatMap { partItems(it, own) }
   }
+
+  // A module that one further in hides has an alias beside it, which the code there names it by.
+  @Lowering private aliasOf(path: List<String>): List<Item> = if (isHidden(path)) {
+    name = Naming.moduleName(path.lastOrNone().getOrElse(""))
+    [ModuleItem(Naming.outerAlias(name), ModulePath(name))]
+  } else []
 
   @Fail @Lowering private partItems(part: Part, own: OwnCode): List<Item> = when (part) {
     TypesPart(types) -> TypeItems.definitions(types) + TypeItems.shows(types)
@@ -32,11 +43,13 @@ module Structures {
         isShared = typeName -> isShared(typeName),
         specOf = specName -> specOf(specName),
         effectOf = effectName -> effectOf(effectName),
+        isModule = p -> isModule(p),
+        isHidden = p -> isHidden(p),
         inside = ~path,
       ) {
         items(path, own)
       }
-      [ModuleItem(Naming.moduleName(name), Structure(inner))]
+      [ModuleItem(Naming.moduleName(name), Structure(inner)), *aliasOf(path)]
     }
   }
 

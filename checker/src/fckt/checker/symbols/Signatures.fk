@@ -53,6 +53,12 @@ module Signatures {
     else -> false
   }
 
+  // A library's, in its interface, compiled already, trusted to do what it says.
+  isCompiled(s: Symbol): Boolean = when (s.declaration.definition) {
+    FunctionDefinition(_, _, _, _, Compiled(_), None, _) -> true
+    else -> false
+  }
+
   isOperator(s: Symbol): Boolean = when (s.declaration.definition) {
     FunctionDefinition(_, _, _, _, _, _, operator) -> operator
     else -> false

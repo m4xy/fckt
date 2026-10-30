@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.collections.Sets.*
 import fckt.effects.Fail
 import fckt.checker.CheckedProgram
 import fckt.checker.core.*
@@ -14,15 +15,31 @@ import fckt.parser.Definition
 // core's, the standard library's and every other project's code too, a program on its own. What it
 // can't lower yet, it fails saying.
 module Programs {
-  @Fail ocaml(program: CheckedProgram, whole: Boolean = false): List<Item> =
+  @Fail ocaml(program: CheckedProgram, whole: Boolean = false): List<Item> = {
+    modules = modulesOf(
+      program,
+      whole,
+    ) + (if (whole) [] else outermostCompiled(program).flatMap { pkg, _ -> prefixes(pkg) })
+    known = modules.map { it.joinToString(".") }.toSet()
+    hidden = hiddenAmong(modules).map { it.joinToString(".") }.toSet()
     Lowering(
       toStringOf = name -> program.toStrings.get(name),
       declarationOf = name -> program.types.find { Declarations.declaredAt(it).name == name },
       isShared = name -> sharing(program).contains(name),
       specOf = name -> program.specs.find { it.spec.name == name },
       effectOf = name -> program.effects.find { it.effect.name == name },
+      isModule = path -> known.contains(path.joinToString(".")),
+      isHidden = path -> hidden.contains(path.joinToString(".")),
       inside = ~[],
     ) { items(program, whole) }
+  }
+
+  // The modules one of the same name, further inside the module they're in, hides from the code in
+  // it, as uk.m4xy.kiln.fckt hides fckt, the standard library's, in uk.m4xy.kiln.
+  private hiddenAmong(modules: List<List<String>>): List<List<String>> = modules.filter { t ->
+    parent = t.dropLast(1)
+    modules.any { u -> u.size > t.size && u.lastOrNone() == t.lastOrNone() && u.take(parent.size) == parent }
+  }
 
   @Fail @Lowering private items(program: CheckedProgram, whole: Boolean): List<Item> = {
     isOwn = (s: Symbol) -> whole || ownedByProgram(s)
@@ -31,7 +48,7 @@ module Programs {
       functions = g.functions.mapNotNull { f -> bodies.find { s, _, _ -> s.name == f.name } }
       if (functions.isEmpty()) None else Some((g, functions))
     }
-    standard = if (whole) [] else aliases(program)
+    compiled = if (whole) [] else aliases(program)
     functors = functorsOf(program, whole)
     // A functor's own code isn't lowered: each module it makes is a copy of it, with the modules given.
     lowered = (s: Symbol) -> isOwn(
@@ -45,11 +62,9 @@ module Programs {
       program.types.filter { t -> lowered(Declarations.declaredAt(t)) },
       program.effects.filter { e -> lowered(e.effect) },
       program.specs.filter { s -> lowered(s.spec) },
-      modulesOf(
-        program,
-        whole,
-      ).filter { m -> functors.none { f -> m.size >= f.size && m.take(f.size) == f } } + (if (standard.isEmpty()) [] else [["fckt"]]),
-      standard.map { (["fckt"], it) },
+      (modulesOf(program, whole).filter { m -> functors.none { f -> m.size >= f.size && m.take(f.size) == f } } +
+        compiled.flatMap { at, _ -> prefixes(at) }).distinct(),
+      compiled,
     )
     main = program.functions.find { f -> isOwn(f.function) && f.function.path.isEmpty() && Naming.ownName(f.function) == "main" }.map { f ->
       takesArguments = Signatures.parametersOf(f.function).map { it.isNotEmpty() }.getOrElse(false)
@@ -77,18 +92,25 @@ module Programs {
   }.distinct()
 
   // Whether the declaration is the program's own: in its own project, not one it uses.
-  private ownedByProgram(s: Symbol): Boolean = s.file.source.project == ProgramProject
+  private ownedByProgram(s: Symbol): Boolean = !compiledApart(s.file)
+
+  // Whether the file's code is compiled on its own, as the core's and a library's are: what the
+  // program has of it is a reference to the unit that has it.
+  private compiledApart(f: LoadedFile): Boolean = unitOf(f).isSome()
+
+  private unitOf(f: LoadedFile): Option<String> =
+    if (f.source.project == CoreProject) Some("Fckt_core") else f.source.compiledIn
 
   // The path of each module and package the program's own project declares, those in them among them.
   private modulesOf(program: CheckedProgram, whole: Boolean): List<List<String>> =
-    program.workspace.files.filter { f -> whole || f.source.project == ProgramProject }.flatMap { f ->
+    program.workspace.files.filter { f -> whole || !compiledApart(f) }.flatMap { f ->
       packages = (1..f.package.size).map { n -> f.package.take(n) }
       packages + modulesIn(f.declarations, f.package)
     }.distinct()
 
   // The path of each functor the program's own project declares.
   private functorsOf(program: CheckedProgram, whole: Boolean): List<List<String>> =
-    program.workspace.files.filter { f -> whole || f.source.project == ProgramProject }.flatMap { f -> functorsIn(f.declarations, f.package) }
+    program.workspace.files.filter { f -> whole || !compiledApart(f) }.flatMap { f -> functorsIn(f.declarations, f.package) }
 
   private functorsIn(
     declarations: List<Declaration>,
@@ -116,14 +138,28 @@ module Programs {
 
   // The standard library's packages and the core, by the names the program's code writes them by,
   // in fckt's module: Fckt.Io is Fckt_std.Fckt.Io, and Fckt.Lang Fckt_core.Fckt.Lang.
-  private aliases(program: CheckedProgram): List<Item> =
-    program.workspace.files.filter { f -> f.source.project != ProgramProject }.mapNotNull { f ->
-      when (f.package) {
-        ["fckt", p, *_] -> Some(p)
-        else -> None
-      }
-    }.distinct().map { p ->
-      unit = if (p == "lang") "Fckt_core" else "Fckt_std"
-      ModuleItem(Naming.moduleName(p), ModulePath("$unit.Fckt.${Naming.moduleName(p)}"))
+  // Each package compiled on its own, by where it goes: in the module of the package it's in, a
+  // module that's its unit's, as module Regex = Uk_m4xy_fk_regex.Uk.M4xy.Regex; only the outermost
+  // of a unit's, as those in it come with it.
+  private aliases(program: CheckedProgram): List<(List<String>, Item)> =
+    outermostCompiled(program).map { pkg, unit ->
+      name = Naming.moduleName(pkg.lastOrNone().getOrElse(""))
+      path = ([unit] + pkg.map { Naming.moduleName(it) }).joinToString(".")
+      (pkg.dropLast(1), ModuleItem(name, ModulePath(path)))
     }
+
+  // Each package compiled on its own that isn't in another of its unit's, with the unit.
+  private outermostCompiled(program: CheckedProgram): List<(List<String>, String)> = {
+    compiled = program.workspace.files.filter { it.package.isNotEmpty() }.mapNotNull { f ->
+      unitOf(f).map { unit -> (f.package, unit) }
+    }.distinct()
+    compiled.filter { pkg, unit ->
+      compiled.none { other, otherUnit -> otherUnit == unit && other.size < pkg.size && pkg.take(other.size) == other }
+    }
+  }
+
+  // The path, and each it's in: [uk, m4xy], for uk.m4xy, is [[uk], [uk, m4xy]].
+  private prefixes(
+    path: List<String>,
+  ): List<List<String>> = (1..path.size).map { n -> path.take(n) }
 }

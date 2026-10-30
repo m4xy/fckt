@@ -1,0 +1,16 @@
+import fckt.io.Console
+
+type Job<@E>(name: String, run: @E () -> Unit)
+
+Job<@E>.renamed<@E>(name: String): Job<@E> = Job(name, this.run)
+
+job: Job = Job("hello") { println("ran") }
+
+main() = {
+  renamed = job.renamed("greeting")
+  println(renamed.name)
+  renamed.run()
+}
+
+// prints: greeting
+// prints: ran

@@ -31,6 +31,7 @@ import fckt.parser.*
 
 // What kind of expression it is, for saying what has no core yet.
 private kindOf(e: Expression): String = when (e) {
+  Compiled(_) -> "compiled code"
   Assign(_, _, _) -> "an assignment"
   Handle(_, _, _, _) -> "a handler's block"
   IntConstant(_, _) -> "an Int"
@@ -71,6 +72,7 @@ private kindOf(e: Expression): String = when (e) {
   scope: Scope,
   context: Context,
 ): Typed = when (e) {
+  Compiled(_) -> Typed(expected.getOrElse(Variable(fresh())), None, Pending("compiled code"))
   Assign(at, target, value) -> inferAssign(at, target, value, scope, context)
   Handle(at, handler, block, parameters) -> inferHandle(
     at,

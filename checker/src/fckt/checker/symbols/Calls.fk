@@ -5,6 +5,7 @@ module Calls {
   // Each call in the expression, and in what it holds, outermost first.
   of(e: Expression): List<CallIn> = when (e) {
     Call(at, callee, arguments, _) -> [CallIn(at, callee, arguments), *of(callee), *arguments.flatMap { of(it.value) }]
+    Compiled(_) -> []
     IntConstant(_, _) -> []
     FloatConstant(_, _) -> []
     BooleanConstant(_, _) -> []

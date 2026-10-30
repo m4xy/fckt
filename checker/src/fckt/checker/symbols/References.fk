@@ -25,6 +25,7 @@ module References {
 
   private into(e: Expression, bound: List<String>, found: List<String>): List<String> = when (e) {
     Name(_, name) -> if (bound.contains(name)) found else found + [name]
+    Compiled(_) -> found
     IntConstant(_, _) -> found
     FloatConstant(_, _) -> found
     BooleanConstant(_, _) -> found
