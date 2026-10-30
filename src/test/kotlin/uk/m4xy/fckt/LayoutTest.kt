@@ -54,9 +54,12 @@ class LayoutTest {
     }
 
     @Test
-    fun `patterns, conditions, lambdas' parameters and what's inside a lambda are left alone`() {
+    fun `patterns, conditions, lambdas' parameters and what's inside a lambda are left alone, a branch's call split`() {
+        assertEquals(
+            "when (xs) {\n  [first, second, *rest] -> describe(\n    first,\n    second,\n    rest,\n    $long,\n    $long,\n  )\n}",
+            Layout.formatted("when (xs) {\n  [first, second, *rest] -> describe(first, second, rest, $long, $long)\n}"),
+        )
         for (source in listOf(
-            "  [first, second, *rest] -> describe(first, second, rest, $long, $long)".let { "when (xs) {\n$it\n}" },
             "if (alphabet.contains(letter) && digits.contains(digit) && $long.isNotEmpty()) 1 else 2",
             "xs.map { item -> describe(item, $long, $long) }",
         )) assertEquals(source, Layout.formatted(source))
@@ -92,11 +95,78 @@ class LayoutTest {
         val source = "  @Console @Network @Clock @FileSystem @Process @Abandoning @Reporting private describedEverythingThatHappened(first: String, second: String): Unit = Unit"
         assertEquals(
             listOf(
-                "  @Console @Network @Clock @FileSystem @Process @Abandoning @Reporting",
+                "  @Console",
+                "  @Network",
+                "  @Clock",
+                "  @FileSystem",
+                "  @Process",
+                "  @Abandoning",
+                "  @Reporting",
                 "  private describedEverythingThatHappened(",
                 "    first: String,",
                 "    second: String,",
                 "  ): Unit = Unit",
+            ).joinToString("\n"),
+            Layout.formatted(source),
+        )
+    }
+
+    @Test
+    fun `annotations go on their own lines where there's no list to split instead`() {
+        val source = "@Test @SqlEngine @Network @Fail aStoreThatFailsFailsOnlyThatRequestAndTheNextIsAnswered() = service { check() }"
+        assertEquals(
+            listOf("@Test", "@SqlEngine", "@Network", "@Fail", "aStoreThatFailsFailsOnlyThatRequestAndTheNextIsAnswered() = service { check() }").joinToString("\n"),
+            Layout.formatted(source),
+        )
+    }
+
+    @Test
+    fun `parameters are split before annotations, and annotations only where they're what makes it too wide`() {
+        val source = "@Http @Fail shorten(url: String, slug: Option<String> = None): Response = postJson(base, ShortenRequestSerializer, ShortenRequest(url, slug))"
+        assertEquals(
+            listOf(
+                "@Http @Fail shorten(",
+                "  url: String,",
+                "  slug: Option<String> = None,",
+                "): Response = postJson(base, ShortenRequestSerializer, ShortenRequest(url, slug))",
+            ).joinToString("\n"),
+            Layout.formatted(source),
+        )
+        val long = "@Test @SqlEngine @Network @Fail " + "x".repeat(80) + "() = service { check(" + "y".repeat(30) + ") }"
+        assertEquals(long, Layout.formatted(long))
+    }
+
+    @Test
+    fun `a generic declaration's parameters are split, not its annotations`() {
+        val source = "@SqlEngine @Network @Fail service<A>(body: @Http @Database () -> A): A = Databases.opening(\":memory:\") {"
+        assertEquals(
+            listOf("@SqlEngine @Network @Fail service<A>(", "  body: @Http @Database () -> A,", "): A = Databases.opening(\":memory:\") {").joinToString("\n"),
+            Layout.formatted(source),
+        )
+    }
+
+    @Test
+    fun `a module's parameters take no comma after the last`() {
+        val source = "module FkTests(Configuration: TestConfiguration = StandardTests, Code: FcktConfiguration = StandardFckt) : Plugin {"
+        assertEquals(
+            listOf(
+                "module FkTests(",
+                "  Configuration: TestConfiguration = StandardTests,",
+                "  Code: FcktConfiguration = StandardFckt",
+                ") : Plugin {",
+            ).joinToString("\n"),
+            Layout.formatted(source),
+        )
+    }
+
+    @Test
+    fun `in a chain of calls, the last is split`() {
+        val source = "  path(\"build/test-repository/uk.m4xy/words/1.0.0\").copyRecursively(dir.resolve(\"team/uk.m4xy/words/1.0.0\"))"
+        assertEquals(
+            listOf(
+                "  path(\"build/test-repository/uk.m4xy/words/1.0.0\").copyRecursively(",
+                "    dir.resolve(\"team/uk.m4xy/words/1.0.0\"),",
+                "  )",
             ).joinToString("\n"),
             Layout.formatted(source),
         )

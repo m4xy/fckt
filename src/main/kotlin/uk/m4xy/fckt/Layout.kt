@@ -28,7 +28,13 @@ object Layout {
     fun unformatted(source: String): List<Int> {
         val tokens = tokensOf(source) ?: return emptyList()
         val lines = source.split('\n')
-        return lines.indices.filter { i -> lines[i].length > WIDTH && splittable(tokens, lines, i + 1) != null }.map { it + 1 }
+        return lines.indices.filter { i ->
+            lines[i].length > WIDTH &&
+                (
+                    splittable(tokens, lines, i + 1) != null ||
+                        annotationsApart(tokens, i + 1, lines[i], lines[i].takeWhile { it == ' ' })?.takeIf { it.last().length <= WIDTH } != null
+                    )
+        }.map { it + 1 }
     }
 
     /** [source] with its first line too wide that has a list in it split, or null if none has. */
@@ -37,13 +43,20 @@ object Layout {
         val lines = source.split('\n').toMutableList()
         for (i in lines.indices) {
             if (lines[i].length <= WIDTH) continue
-            val (open, close, commas) = splittable(tokens, lines, i + 1) ?: continue
             val line = lines[i]
             val indent = line.takeWhile { it == ' ' }
+            val (open, close, commas) = splittable(tokens, lines, i + 1) ?: run {
+                val apart = annotationsApart(tokens, i + 1, line, indent)?.takeIf { it.last().length <= WIDTH } ?: return@run null
+                lines.removeAt(i)
+                lines.addAll(i, apart)
+                return lines.joinToString("\n")
+            } ?: continue
             val cuts = listOf(open.pos.col) + commas.map { it.pos.col } + listOf(close.pos.col)
             val items = cuts.zipWithNext { from, to -> line.substring(from, to - 1).trim() }.filter { it.isNotEmpty() }
+            // A module's parameters, or the modules a functor's given, take no comma after the last.
+            val moduleList = tokens.any { it.pos.line == i + 1 && it.pos.col < open.pos.col && it.kind == T.MODULE }
             val replaced = annotatedApart(tokens, i + 1, line.substring(0, open.pos.col).trimEnd(), indent) +
-                items.map { "$indent  $it," } +
+                items.mapIndexed { n, it -> "$indent  $it" + if (moduleList && n == items.size - 1) "" else "," } +
                 listOf(indent + line.substring(close.pos.col - 1))
             lines.removeAt(i)
             lines.addAll(i, replaced)
@@ -54,17 +67,20 @@ object Layout {
 
     /**
      * A declaration's first line, [first], its annotations kept on it, as a function's effects are
-     * part of what it is: unless they make it too wide, when they go on a line of their own above,
-     * or, if that's too wide too, each on a line of its own.
+     * part of what it is: unless they make it too wide, when each goes on a line of its own above.
      */
-    private fun annotatedApart(tokens: List<Token>, line: Int, first: String, indent: String): List<String> {
-        if (first.length <= WIDTH) return listOf(first)
+    private fun annotatedApart(tokens: List<Token>, line: Int, first: String, indent: String): List<String> =
+        if (first.length <= WIDTH) listOf(first) else annotationsApart(tokens, line, first, indent) ?: listOf(first)
+
+    /** The line's annotations, at its start, each on a line of its own, and what follows them; null if it starts with none. */
+    private fun annotationsApart(tokens: List<Token>, line: Int, first: String, indent: String): List<String>? {
         val onLine = tokens.filter { it.pos.line == line }
         val ends = mutableListOf<Int>()
         var i = 0
         while (i < onLine.size && onLine[i].kind == T.AT) {
             i++
-            while (i < onLine.size && (onLine[i].kind == T.IDENT || onLine[i].kind == T.DOT)) i++
+            if (i < onLine.size && onLine[i].kind == T.IDENT) i++
+            while (i + 1 < onLine.size && onLine[i].kind == T.DOT && onLine[i + 1].kind == T.IDENT) i += 2
             if (i < onLine.size && onLine[i].kind == T.LPAREN && onLine[i].pos.col == onLine[i - 1].pos.col + onLine[i - 1].text.length) {
                 var depth = 0
                 while (i < onLine.size) {
@@ -74,20 +90,18 @@ object Layout {
                 }
                 i++
             }
-            ends += (onLine.getOrNull(i)?.pos?.col ?: return listOf(first)) - 1
+            ends += (onLine.getOrNull(i)?.pos?.col ?: return null) - 1
         }
-        if (ends.isEmpty()) return listOf(first)
+        if (ends.isEmpty() || first.substring(0, indent.length).isNotBlank()) return null
         val starts = listOf(indent.length) + ends.dropLast(1)
-        val annotations = starts.zip(ends).map { (from, to) -> first.substring(from, to).trim() }
-        val rest = indent + first.substring(ends.last()).trim()
-        val together = indent + annotations.joinToString(" ")
-        return (if (together.length <= WIDTH) listOf(together) else annotations.map { indent + it }) + rest
+        return starts.zip(ends).map { (from, to) -> indent + first.substring(from, to).trim() } + (indent + first.substring(ends.last()).trim())
     }
 
     /**
      * The list to split on [line]: a call's arguments, a declaration's parameters or a list's items,
      * between brackets, `(` or `[`, opened and closed on it, at the outermost level of brackets the
-     * line reaches, so what's split is all that's on the line. Not a condition, a lambda's or a
+     * line reaches: a declaration's parameters before anything in its body, and otherwise the last,
+     * as a chain of calls ends with what's long. Not a condition, a lambda's or a
      * function type's parameters, or a list that ends with what's spread into it. With its closing
      * bracket and the commas between them that are its own.
      */
@@ -96,23 +110,25 @@ object Layout {
         val onLine = tokens.indices.filter { tokens[it].pos.line == line }
         if (onLine.isEmpty()) return null
         val outermost = onLine.minOf { depths[it] }
+        val found = mutableListOf<Triple<Int, Int, List<Int>>>()
         for (index in onLine) {
             val open = tokens[index]
-            if (depths[index] != outermost || !opens(tokens, index)) continue
-            if (open.kind != T.LPAREN && open.kind != T.LBRACKET) return null
+            if (depths[index] != outermost || !opens(tokens, index) || open.kind == T.LT) continue
+            if (open.kind != T.LPAREN && open.kind != T.LBRACKET) break
+            val close = (index + 1 until tokens.size).firstOrNull { depths[it] == outermost && closes(tokens, it) } ?: break
+            if (tokens[close].pos.line != line) break
             val before = tokens.getOrNull(index - 1)
-            if (before?.kind in setOf(T.IF, T.WHEN) || before?.text in setOf("while", "for")) return null
-            if (open.kind == T.LPAREN && before?.kind != T.IDENT && before?.kind != T.GT) return null
-            val close = (index + 1 until tokens.size).firstOrNull { depths[it] == outermost && closes(tokens, it) } ?: return null
-            if (tokens[close].pos.line != line || close == index + 1) return null
-            if (tokens.getOrNull(close + 1)?.kind == T.ARROW) return null
+            if (close == index + 1 || tokens.getOrNull(close + 1)?.kind == T.ARROW) continue
+            if (before?.kind in setOf(T.IF, T.WHEN) || before?.text in setOf("while", "for")) continue
+            if (open.kind == T.LPAREN && before?.kind != T.IDENT && before?.kind != T.GT) continue
             val commas = (index + 1 until close).filter { tokens[it].kind == T.COMMA && depths[it] == outermost + 1 }
-            val lastItem = commas.lastOrNull()?.let { it + 1 } ?: (index + 1)
-            if (tokens[lastItem].kind == T.STAR) return null
-            if (onLine.any { it > close && depths[it] == outermost && tokens[it].kind in setOf(T.LPAREN, T.LBRACKET) }) return null
-            return Triple(open, tokens[close], commas.map { tokens[it] })
+            if (tokens[commas.lastOrNull()?.let { it + 1 } ?: (index + 1)].kind == T.STAR) continue
+            found += Triple(index, close, commas)
         }
-        return null
+        val first = found.firstOrNull() ?: return null
+        val declares = tokens[first.first].kind == T.LPAREN && tokens.getOrNull(first.second + 1)?.kind in setOf(T.COLON, T.ASSIGN)
+        val (open, close, commas) = if (declares) first else found.last()
+        return Triple(tokens[open], tokens[close], commas.map { tokens[it] })
     }
 
     /** Each token's depth: how many brackets are open before it, a generic's <...> among them. */
