@@ -5,6 +5,7 @@ import uk.m4xy.fckt.syntax.Annotation
 import uk.m4xy.fckt.syntax.Application
 import uk.m4xy.fckt.syntax.Arg
 import uk.m4xy.fckt.syntax.OPERATOR_METHODS
+import uk.m4xy.fckt.syntax.RANGE_METHODS
 import uk.m4xy.fckt.syntax.UNARY_MINUS
 import uk.m4xy.fckt.syntax.BinaryRef
 import uk.m4xy.fckt.syntax.CallRef
@@ -2593,7 +2594,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Expr.Binary -> e.call?.let { go(it) } ?: run {
                 go(e.left)
                 go(e.right)
-                if (e.resolved == null) OPERATOR_METHODS[e.op]?.let { into += "operator $it" }
+                if (e.resolved == null) (OPERATOR_METHODS[e.op] ?: RANGE_METHODS[e.op])?.let { into += "operator $it" }
             }
             is Expr.Unary -> e.call?.let { go(it) } ?: run {
                 go(e.operand)
@@ -3776,6 +3777,12 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 e.resolved = BinaryRef(if (e.op == "==") "=" else "<>", false, false)
                 return Type.BOOLEAN
             }
+        }
+        // a..b and a..<b: whatever the left side is, its operator rangeTo or rangeUntil.
+        RANGE_METHODS[e.op]?.let { method ->
+            val from = infer(e.left, null, scope).prune()
+            if (methodsFor(method, from).none { it.isOperator }) throw CompileError(e.pos, "'${e.op}' can't be applied to $from: ${noOperator(e.op, method, from)}")
+            return operatorCall(e.op, e.pos, e.left, method, listOf(e.right), scope).let { (call, type) -> e.call = call; type }
         }
         var l = infer(e.left, null, scope).prune()
         // A type's own operator: a Set's +, as its plus.

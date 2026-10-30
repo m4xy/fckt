@@ -51,7 +51,7 @@ class LexerTest {
             T.AT to "At", T.OP_ASSIGN to "OperatorAssign",
             T.PLUS to "Plus", T.MINUS to "Minus", T.STAR to "Star", T.SLASH to "Slash", T.PERCENT to "Percent",
             T.EQ to "Equal", T.NEQ to "NotEqual", T.LT to "Less", T.GT to "Greater", T.LE to "LessOrEqual",
-            T.GE to "GreaterOrEqual", T.AND to "And", T.OR to "Or",
+            T.GE to "GreaterOrEqual", T.AND to "And", T.OR to "Or", T.RANGE to "Range", T.RANGE_UNTIL to "RangeUntil",
             T.TYPE to "TypeKeyword", T.MODULE to "ModuleKeyword", T.PRIVATE to "PrivateKeyword", T.WHEN to "WhenKeyword",
             T.IF to "IfKeyword", T.ELSE to "ElseKeyword", T.IS to "IsKeyword", T.TRUE to "TrueKeyword", T.FALSE to "FalseKeyword",
         )

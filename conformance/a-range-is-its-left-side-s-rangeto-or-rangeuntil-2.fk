@@ -1,0 +1,11 @@
+import fckt.io.Console
+
+// Any type can have ranges, as its own operator.
+type Day(n: Int)
+operator Day.rangeTo(last: Day): List<Day> = (this.n..last.n).map { Day(it) }
+
+main() = (Day(1)..Day(3)).forEach { println("day ${it.n}") }
+
+// prints: day 1
+// prints: day 2
+// prints: day 3

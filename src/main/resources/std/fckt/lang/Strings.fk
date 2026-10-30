@@ -85,6 +85,8 @@ module Strings {
   // The character with that code point.
   external Int.toChar(): Char = "(fun n -> Uchar.to_int (Uchar.of_int n)) this"
   Char.isDigit(): Boolean = this >= '0' && this <= '9'
+  // The characters from this to last, by code point, last among them: 'a'..'e' is [a, b, c, d, e].
+  operator Char.rangeTo(last: Char): List<Char> = (this.code..last.code).map { it.toChar() }
   // Whether it's a letter: A to Z, a to z, or any character past U+007F that isn't a space or
   // punctuation of Latin-1.
   Char.isLetter(): Boolean = (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z') || (this.code > 191 && this.code != 215 && this.code != 247)

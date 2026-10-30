@@ -168,8 +168,9 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         if (at(T.IDENT) && peek.text == "operator" && peekAt(1).kind !in setOf(T.LPAREN, T.COLON, T.ASSIGN, T.DOT, T.LT)) {
             val at = next().pos
             val d = decl() as? Decl.Function ?: throw CompileError(at, "only a function can be an operator")
-            val arity = if (d.methodName == UNARY_MINUS) 0 else if (d.methodName in OPERATOR_METHODS.values) 1 else {
-                throw CompileError(d.pos, "there's no operator '${d.methodName}': an operator is one of ${(OPERATOR_METHODS.values + UNARY_MINUS).joinToString(", ")}")
+            val binary = OPERATOR_METHODS.values + RANGE_METHODS.values
+            val arity = if (d.methodName == UNARY_MINUS) 0 else if (d.methodName in binary) 1 else {
+                throw CompileError(d.pos, "there's no operator '${d.methodName}': an operator is one of ${(binary + UNARY_MINUS).joinToString(", ")}")
             }
             if (!d.extension) throw CompileError(d.pos, "an operator is a type's, so it's an extension: operator Type.${d.methodName}(...)")
             if (d.params.orEmpty().size - 1 != arity) throw CompileError(d.pos, "${d.methodName} takes ${if (arity == 0) "no parameters" else "one parameter, the right-hand side"}")
@@ -810,7 +811,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
      * e deciding that, in whose branch for T e is narrowed, as `is T ->` narrows it.
      */
     private fun typeCheck(): Expr {
-        var e = additive()
+        var e = range()
         while (at(T.IS) || (at(T.BANG) && peekAt(1).kind == T.IS)) {
             val negated = accept(T.BANG) != null
             val pos = next().pos
@@ -876,6 +877,8 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         }
         return Pattern.Constructor(pos, path.last(), null, isCheck = true, qualifier = path.dropLast(1).joinToString(".").ifEmpty { null })
     }
+    /** `a..b` and `a..<b`, as Kotlin's: tighter than a comparison, looser than `+` and `-`. */
+    private fun range(): Expr = binaryLevel(setOf(T.RANGE, T.RANGE_UNTIL)) { additive() }
     private fun additive(): Expr = binaryLevel(setOf(T.PLUS, T.MINUS)) { multiplicative() }
     private fun multiplicative(): Expr = binaryLevel(setOf(T.STAR, T.SLASH, T.PERCENT)) { unary() }
 

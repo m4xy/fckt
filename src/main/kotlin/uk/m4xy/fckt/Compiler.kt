@@ -13,6 +13,7 @@ import uk.m4xy.fckt.syntax.Parser
 import uk.m4xy.fckt.syntax.Pos
 import uk.m4xy.fckt.syntax.RawPart
 import uk.m4xy.fckt.syntax.SourceFile
+import uk.m4xy.fckt.syntax.RANGE_METHODS
 import uk.m4xy.fckt.syntax.T
 import uk.m4xy.fckt.syntax.Token
 import uk.m4xy.fckt.syntax.TypeRef
@@ -1036,6 +1037,8 @@ private fun mentioned(source: String, path: String?): Set<String> {
     fun scan(tokens: List<Token>) {
         for (token in tokens) {
             if (token.kind == T.IDENT) names += token.text
+            // a..b and a..<b name the operator they call.
+            if (token.kind == T.RANGE || token.kind == T.RANGE_UNTIL) names += RANGE_METHODS.getValue(token.text)
             for (part in token.parts) if (part is RawPart.Code) scan(Lexer(part.source, part.pos).tokenize())
         }
     }

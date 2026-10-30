@@ -24,7 +24,7 @@ module Lexer {
   // arguments at the end of a line, type S<A>; after a comparison, a parser skips the break.
   private continuesLine: List<Kind> = [
     Comma, Dot, Colon, Assign, OperatorAssign, Arrow, Pipe, Tilde, Bang, Plus, Minus, Star, Slash,
-    Percent, Equal, NotEqual, Less, LessOrEqual, GreaterOrEqual, And, Or, LeftParen, LeftBracket, LeftBrace,
+    Percent, Equal, NotEqual, Less, LessOrEqual, GreaterOrEqual, And, Or, Range, RangeUntil, LeftParen, LeftBracket, LeftBrace,
     Semicolon, Newline,
   ]
 
@@ -327,7 +327,10 @@ module Lexer {
 
   @Rejecting @Mutating private symbol(s: Scan, start: Position): Unit = {
     two = if (s.index + 1 < s.chars.size) text(s, s.index, s.index + 2) else ""
-    when (pair(two)) {
+    if (looking(s, "..<")) {
+      advanceBy(s, 3)
+      add(s, Token(RangeUntil, "..<", start))
+    } else when (pair(two)) {
       Some(kind) -> {
         advanceBy(s, 2)
         add(s, Token(kind, two, start))
@@ -369,6 +372,7 @@ module Lexer {
     ">=" -> Some(GreaterOrEqual)
     "&&" -> Some(And)
     "||" -> Some(Or)
+    ".." -> Some(Range)
     "+=", "-=", "*=", "/=", "%=" -> Some(OperatorAssign)
     else -> None
   }

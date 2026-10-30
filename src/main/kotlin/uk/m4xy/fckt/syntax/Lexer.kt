@@ -4,7 +4,7 @@ enum class T {
     IDENT, INT, FLOAT, STRING, CHAR, NEWLINE, EOF,
     LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
     COMMA, DOT, COLON, SEMI, ASSIGN, ARROW, PIPE, TILDE, BANG, UNDERSCORE, AT, OP_ASSIGN,
-    PLUS, MINUS, STAR, SLASH, PERCENT, EQ, NEQ, LT, GT, LE, GE, AND, OR,
+    PLUS, MINUS, STAR, SLASH, PERCENT, EQ, NEQ, LT, GT, LE, GE, AND, OR, RANGE, RANGE_UNTIL,
     TYPE, MODULE, PRIVATE, WHEN, IF, ELSE, IS, TRUE, FALSE,
 }
 
@@ -27,7 +27,7 @@ private val KEYWORDS = mapOf(
  */
 private val CONTINUES_LINE = setOf(
     T.COMMA, T.DOT, T.COLON, T.ASSIGN, T.OP_ASSIGN, T.ARROW, T.PIPE, T.TILDE, T.BANG, T.PLUS, T.MINUS, T.STAR, T.SLASH,
-    T.PERCENT, T.EQ, T.NEQ, T.LT, T.LE, T.GE, T.AND, T.OR, T.LPAREN, T.LBRACKET, T.LBRACE,
+    T.PERCENT, T.EQ, T.NEQ, T.LT, T.LE, T.GE, T.AND, T.OR, T.RANGE, T.RANGE_UNTIL, T.LPAREN, T.LBRACKET, T.LBRACE,
     T.SEMI, T.NEWLINE,
 )
 
@@ -269,10 +269,15 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
     }
 
     private fun symbol(pos: Pos) {
+        if (src.startsWith("..<", i)) {
+            advance(3)
+            add(Token(T.RANGE_UNTIL, "..<", pos))
+            return
+        }
         val two = if (i + 1 < src.length) src.substring(i, i + 2) else ""
         val twoKind = when (two) {
             "->" -> T.ARROW; "|>" -> T.PIPE; "==" -> T.EQ; "!=" -> T.NEQ; "<=" -> T.LE; ">=" -> T.GE
-            "&&" -> T.AND; "||" -> T.OR
+            "&&" -> T.AND; "||" -> T.OR; ".." -> T.RANGE
             "+=", "-=", "*=", "/=", "%=" -> T.OP_ASSIGN
             else -> null
         }

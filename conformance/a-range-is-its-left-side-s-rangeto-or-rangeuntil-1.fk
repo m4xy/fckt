@@ -1,0 +1,17 @@
+import fckt.io.Console
+
+main() = {
+  println((1..5).toString())
+  println((0..<3).toString())
+  println((3..1).toString())
+  println(4.downTo(1).toString())
+  println(('a'..'d').toString())
+  println((1 + 1..2 * 3).toString())
+}
+
+// prints: [1, 2, 3, 4, 5]
+// prints: [0, 1, 2]
+// prints: []
+// prints: [4, 3, 2, 1]
+// prints: [a, b, c, d]
+// prints: [2, 3, 4, 5, 6]

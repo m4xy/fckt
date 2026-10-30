@@ -11,6 +11,9 @@ module References {
   // The operators that are a method of their operand's type, where it has one: a + b is a.plus(b).
   operatorMethods: List<(String, String)> = [("+", "plus"), ("-", "minus"), ("*", "times"), ("/", "div"), ("%", "rem")]
 
+  // The operators that are always a method of their left side's type: a..b is a.rangeTo(b).
+  rangeMethods: List<(String, String)> = [("..", "rangeTo"), ("..<", "rangeUntil")]
+
   // The method -x is, where x's type has one.
   unaryMinus: String = "unaryMinus"
 
@@ -40,7 +43,7 @@ module References {
     }
     Binary(_, operator, left, right) -> {
       operands = into(right, bound, into(left, bound, found))
-      when (operatorMethods.lookup(operator)) {
+      when ((operatorMethods + rangeMethods).lookup(operator)) {
         Some(method) -> operands + ["operator $method"]
         None -> operands
       }

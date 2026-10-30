@@ -6,16 +6,28 @@ import fckt.checker.types.Types.*
 import fckt.checker.types.Unification.*
 import fckt.parser.*
 
-// Operators. && and || take Booleans; == and != any two values of a type; + joins lists and
-// strings; and the rest are numbers', an Int becoming a Float beside one, or, for a type whose
-// operators are its own, as a Set's are, its operator method: a + b is a.plus(b).
+// Operators. && and || take Booleans; == and != any two values of a type; .. and ..< are the left
+// side's rangeTo and rangeUntil; + joins lists and strings; and the rest are numbers', an Int
+// becoming a Float beside one, or, for a type whose operators are its own, as a Set's are, its
+// operator method: a + b is a.plus(b).
 
 @Inferring inferBinary(at: Position, operator: String, left: Expression, right: Expression, scope: Scope, context: Context): Type = when (operator) {
   "&&" -> logical(left, right, scope, context)
   "||" -> logical(left, right, scope, context)
   "==" -> equality(at, left, right, scope, context)
   "!=" -> equality(at, left, right, scope, context)
+  "..", "..<" -> range(at, operator, left, right, scope, context)
   else -> arithmetic(at, operator, left, right, scope, context)
+}
+
+// a..b and a..<b: whatever the left side is, its operator rangeTo or rangeUntil, as Int's is.
+@Inferring private range(at: Position, operator: String, left: Expression, right: Expression, scope: Scope, context: Context): Type = {
+  fromTyped = infer(left, None, scope, context)
+  from = resolved(fromTyped.t)
+  method = References.rangeMethods.lookup(operator).getOrElse("rangeTo")
+  if (Globals.extensionsNamed(method, context).any { s -> Signatures.isOperator(s) && fitsReceiver(s, from, context) })
+    operatorCall(operator, at, left, fromTyped, method, [right], scope, context)
+  else abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(from)}: ${noOperator(operator, method, from, context)}"))
 }
 
 @Inferring private logical(left: Expression, right: Expression, scope: Scope, context: Context): Type = {

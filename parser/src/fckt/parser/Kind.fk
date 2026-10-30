@@ -3,6 +3,6 @@ type Kind {
   Identifier, IntLiteral, FloatLiteral, StringLiteral, CharLiteral, Newline, End,
   LeftParen, RightParen, LeftBrace, RightBrace, LeftBracket, RightBracket,
   Comma, Dot, Colon, Semicolon, Assign, Arrow, Pipe, Tilde, Bang, Underscore, At, OperatorAssign,
-  Plus, Minus, Star, Slash, Percent, Equal, NotEqual, Less, Greater, LessOrEqual, GreaterOrEqual, And, Or,
+  Plus, Minus, Star, Slash, Percent, Equal, NotEqual, Less, Greater, LessOrEqual, GreaterOrEqual, And, Or, Range, RangeUntil,
   TypeKeyword, ModuleKeyword, PrivateKeyword, WhenKeyword, IfKeyword, ElseKeyword, IsKeyword, TrueKeyword, FalseKeyword,
 }

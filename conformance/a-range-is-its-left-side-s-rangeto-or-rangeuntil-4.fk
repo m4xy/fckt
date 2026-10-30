@@ -1,0 +1,5 @@
+type Day(n: Int)
+Day.rangeTo(last: Day): List<Day> = []
+main() = assert((Day(1)..Day(2)).isEmpty())
+
+// error: 3:24: error: '..' can't be applied to Day: its rangeTo isn't an operator; mark it operator to use '..' for it

@@ -1,0 +1,3 @@
+main() = assert(("a".."b").isEmpty())
+
+// error: 1:21: error: '..' can't be applied to String: there's no operator rangeTo

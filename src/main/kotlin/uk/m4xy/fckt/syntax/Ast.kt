@@ -683,6 +683,9 @@ sealed interface MemberRef {
  * is `a.plus(b)`, and `-a` is `a.unaryMinus()`. Numbers, strings and lists have theirs built in.
  */
 val OPERATOR_METHODS = mapOf("+" to "plus", "-" to "minus", "*" to "times", "/" to "div", "%" to "rem")
+
+/** `a..b` and `a..<b`: always a call of the left side's operator, as Int's in the standard library is. */
+val RANGE_METHODS = mapOf(".." to "rangeTo", "..<" to "rangeUntil")
 const val UNARY_MINUS = "unaryMinus"
 
 /** How a binary operator was typed: the OCaml operator and which operands need int→float. */

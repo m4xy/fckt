@@ -38,7 +38,8 @@ module Parser {
 
   private builtinTypes: List<String> = ["Int", "Float", "Double", "String", "Boolean", "Unit", "Char", "Byte", "Nothing", "List", "Option", "Lazy", "Result"]
 
-  private operators: List<String> = ["plus", "minus", "times", "div", "rem"]
+  // What an operator can be, besides unaryMinus: each binary operator's, and a..b's and a..<b's.
+  private operators: List<String> = ["plus", "minus", "times", "div", "rem", "rangeTo", "rangeUntil"]
 
   // What ends something, which a declaration can't start with.
   private closers: List<Kind> = [RightBrace, RightParen, RightBracket, Newline, Semicolon]
@@ -790,7 +791,7 @@ module Parser {
   // when on e, when (e) { is T -> true; else -> false }, so where it decides something, as an if's
   // condition, before && or ||, or a when's branch, it's read as a when on e deciding that, in
   // whose branch for T e is narrowed, as is T -> narrows it.
-  @Rejecting @Mutating private typeCheck(s: Parsing): Expression = typeChecks(s, additive(s))
+  @Rejecting @Mutating private typeCheck(s: Parsing): Expression = typeChecks(s, range(s))
 
   @Rejecting @Mutating private typeChecks(s: Parsing, e: Expression): Expression =
     if (looking(s, IsKeyword) || (looking(s, Bang) && peekAt(s, 1).kind == IsKeyword)) {
@@ -917,6 +918,8 @@ module Parser {
       [] -> When(at, None, branches)
     }
   }
+  // a..b and a..<b, as Kotlin's: tighter than a comparison, looser than + and -.
+  @Rejecting @Mutating private range(s: Parsing): Expression = binaryLevel(s, [Range, RangeUntil]) { additive(s) }
   @Rejecting @Mutating private additive(s: Parsing): Expression = binaryLevel(s, [Plus, Minus]) { multiplicative(s) }
   @Rejecting @Mutating private multiplicative(s: Parsing): Expression = binaryLevel(s, [Star, Slash, Percent]) { unary(s) }
 
