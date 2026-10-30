@@ -59,7 +59,8 @@ module Structures {
   // effects; then its groups, and the modules in it, each where its first function's group is, then
   // any with no functions.
   private partsAt(path: List<String>, own: OwnCode): List<Part> = {
-    types = own.types.filter { Declarations.declaredAt(it).path == path }
+    // An external type is its OCaml wherever it's written, so it isn't declared.
+    types = own.types.filter { t -> Declarations.declaredAt(t).path == path && t !is DeclaredExternal }
     effects = own.effects.filter { it.effect.path == path }.map { EffectPart(it) }
     specs = own.specs.filter { it.spec.path == path }.map { SpecPart(it) }
     fromGroups = own.groups.mapNotNull { g, _ ->

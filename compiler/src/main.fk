@@ -15,28 +15,31 @@ import fckt.ocaml.Printer
 
 // fckt's compiler, written in fckt:
 //
-//   compiler <file.fk> <out.ml> [<folder>...]
+//   compiler [--whole] <file.fk> <out.ml> [<folder>...]
 //
 // compiles the program in the file, with the packages in each folder as its own, to OCaml, to be
 // linked with the core and the standard library as fckt's compiler compiles them on their own,
-// fckt --core and fckt --library. The standard library and the core are read from the fckt
+// fckt --core and fckt --library; or, --whole, with them, as a program on its own. The standard library and the core are read from the fckt
 // repository it's run in, from std/src and src/main/resources/std. What's wrong with the program, it
 // says, and ends with exit code 1.
 main(args: List<String>) = when (args) {
-  [file, out, *folders] -> {
-    own = folders.flatMap { folder -> packagesIn(path(folder), [], ProgramProject, "$folder/") }
-    tree = SourceTree(merged(core() + standard() + own))
-    entry = SourceText(None, ProgramProject, path(file).readText())
-    (program, errors) = Checker.check(entry, tree, true)
-    when ((program, errors)) {
-      (Some(p), []) -> when (attempt { Programs.ocaml(p) }) {
-        Ok(items) -> path(out).writeText(Printer.file(items))
-        Error(why) -> failing(["can't lower $why"])
-      }
-      _ -> failing(errors.map { e -> "${e.file.getOrElse(file)}:${e.at.line}:${e.at.column}: error: ${e.message}" })
+  ["--whole", file, out, *folders] -> compile(file, out, folders, true)
+  [file, out, *folders] -> compile(file, out, folders, false)
+  else -> failing(["usage: compiler [--whole] <file.fk> <out.ml> [<folder>...]"])
+}
+
+@FileSystem @Channel @Process compile(file: String, out: String, folders: List<String>, whole: Boolean): Unit = {
+  own = folders.flatMap { folder -> packagesIn(path(folder), [], ProgramProject, "$folder/") }
+  tree = SourceTree(merged(core() + standard() + own))
+  entry = SourceText(None, ProgramProject, path(file).readText())
+  (program, errors) = Checker.check(entry, tree, true)
+  when ((program, errors)) {
+    (Some(p), []) -> when (attempt { Programs.ocaml(p, whole) }) {
+      Ok(items) -> path(out).writeText(Printer.file(items))
+      Error(why) -> failing(["can't lower $why"])
     }
+    _ -> failing(errors.map { e -> "${e.file.getOrElse(file)}:${e.at.line}:${e.at.column}: error: ${e.message}" })
   }
-  else -> failing(["usage: compiler <file.fk> <out.ml> [<folder>...]"])
 }
 
 @Channel @Process failing(problems: List<String>): Unit = {

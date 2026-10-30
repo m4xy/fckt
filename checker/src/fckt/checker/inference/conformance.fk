@@ -203,8 +203,12 @@ declaredSpecs(environment: Environment): List<DeclaredSpec> =
     SpecDefinition(_, _, ps, _, _) -> ps.filter { !it.startsWith("@") }
     else -> []
   }
+  every = when (spec.declaration.definition) {
+    SpecDefinition(_, _, ps, _, _) -> ps
+    else -> []
+  }
   operations = specValues(spec).map { value ->
-    own = (typeParameters + value.typeParameters).map { (it, TypeParameter(it)) }.toMap()
+    own = (every + value.typeParameters).map { (it, TypeParameter(it)) }.toMap()
     typeContext = TypeContext(Place(spec.file, spec.path), own)
     typeOf = (t: TypeRef) -> Conversion.typeOf(t, typeContext, environment.definitions)
     DeclaredOperation(value.name, value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } }, typeOf(value.valueType))
