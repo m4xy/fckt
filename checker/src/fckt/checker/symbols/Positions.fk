@@ -32,5 +32,6 @@ module Positions {
     FunctionType(at, _, _, _) -> at
     TupleType(at, _) -> at
     EffectsType(at, _) -> at
+    GivenType(at, _, _) -> at
   }
 }

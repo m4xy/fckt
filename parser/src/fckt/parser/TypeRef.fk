@@ -5,4 +5,5 @@ type TypeRef {
   FunctionType(at: Position, parameters: List<TypeRef>, result: TypeRef, effects: List<Annotation>),
   TupleType(at: Position, elements: List<TypeRef>),
   EffectsType(at: Position, effects: List<Annotation>),
+  GivenType(at: Position, name: String, given: TypeRef),
 }

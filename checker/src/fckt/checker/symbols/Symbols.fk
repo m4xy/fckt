@@ -113,6 +113,7 @@ module Symbols {
     TupleType(_, elements) -> "Tuple" + elements.map { mangled(it, typeParameters) }.joinToString("")
     FunctionType(_, _, _, _) -> "Function"
     EffectsType(_, _) -> ""
+    GivenType(_, _, given) -> mangled(given, typeParameters)
   }
 
   // The modules a full name is inside: geometry and Shapes, for geometry.Shapes.area.

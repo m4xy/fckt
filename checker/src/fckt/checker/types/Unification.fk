@@ -25,7 +25,7 @@ module Unification {
     }
     (Abstract(n, xs), Abstract(m, ys)) -> n == m && unifyAll(xs, ys)
     (SpecOwnType(n, xs), SpecOwnType(m, ys)) -> n == m && unifyAll(xs, ys)
-    (ModuleValue(n, xs), ModuleValue(m, ys)) -> n == m && unifyAll(xs, ys)
+    (ModuleValue(n, xs, _), ModuleValue(m, ys, _)) -> n == m && unifyAll(xs, ys)
     (Handler(n, xs), Handler(m, ys)) -> n == m && unifyAll(xs, ys)
     (TupleOf(xs), TupleOf(ys)) -> unifyAll(xs, ys)
     (FunctionOf(xs, xResult, xEffects), FunctionOf(ys, yResult, yEffects)) ->

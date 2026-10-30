@@ -98,7 +98,7 @@ specTypeNames(spec: Symbol): List<String> = when (spec.declaration.definition) {
   SpecOwnType(name, _) -> given.getOrNone(names.indexOf(name)).getOrElse(t)
   Named(n, arguments, region) -> Named(n, arguments.map { withOwnTypes(it, names, given) }, region)
   Abstract(n, arguments) -> Abstract(n, arguments.map { withOwnTypes(it, names, given) })
-  ModuleValue(n, arguments) -> ModuleValue(n, arguments.map { withOwnTypes(it, names, given) })
+  ModuleValue(n, arguments, own) -> ModuleValue(n, arguments.map { withOwnTypes(it, names, given) }, own)
   Handler(n, arguments) -> Handler(n, arguments.map { withOwnTypes(it, names, given) })
   TupleOf(elements) -> TupleOf(elements.map { withOwnTypes(it, names, given) })
   FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { withOwnTypes(it, names, given) }, withOwnTypes(result, names, given), effects)

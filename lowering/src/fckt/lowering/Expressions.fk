@@ -108,7 +108,7 @@ module Expressions {
       ownTypes = OcamlTypes.ownTypes(spec.name)
       if (ownTypes.isEmpty()) Match(expression(value), [Case(PackedPat("Value", OcamlTypes.typeModuleReference(spec.name)), None, Identifier("Value." + Naming.snake(member)))])
       // By a function of its own, in which they're locally abstract, as OCaml won't take a module
-      // apart whose type has unknowns in it, as a Format<A>'s may.
+      // apart whose type has unknowns in it, as a Format whose T is open may.
       else {
         names = ownTypes.mapIndexed { i, _ -> "fk_t$i" }
         opening = "let open_value " + names.map { "(type " + it + ")" }.joinToString(" ") + " (m : (module " + OcamlTypes.packageType(spec.name, names) + ")) = let module Value = (val m) in Value." + Naming.snake(member) + " in open_value"

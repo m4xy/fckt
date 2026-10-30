@@ -4,4 +4,4 @@ import fckt.checker.types.Type
 
 // Where code is being checked: what the program has, the place, which decides what names mean and
 // what can be seen, and what the type parameters in scope stand for.
-type Context(environment: Environment, place: Place, typeParameters: Map<String, Type>)
+type Context(environment: Environment, place: Place, typeParameters: Map<String, Type>, valueParameters: Map<String, Type> = emptyMap())

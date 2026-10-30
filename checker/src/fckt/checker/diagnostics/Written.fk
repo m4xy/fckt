@@ -9,6 +9,7 @@ module Written {
     FunctionType(_, parameters, result, _) -> "(${typeRefs(parameters)}) -> ${typeRef(result)}"
     TupleType(_, elements) -> "(${typeRefs(elements)})"
     EffectsType(_, effects) -> effects.map { "@${it.name}" }.joinToString(" ")
+    GivenType(_, name, given) -> "$name = ${typeRef(given)}"
   }
 
   private typeRefs(ts: List<TypeRef>): String = ts.map { typeRef(it) }.joinToString(", ")

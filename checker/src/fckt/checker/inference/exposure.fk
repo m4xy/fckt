@@ -58,7 +58,7 @@ import fckt.parser.*
   TupleOf(elements) -> elements.flatMap { privateTypesIn(it, table) }
   Abstract(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
   SpecOwnType(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
-  ModuleValue(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
+  ModuleValue(_, arguments, _) -> arguments.flatMap { privateTypesIn(it, table) }
   Handler(_, arguments) -> arguments.flatMap { privateTypesIn(it, table) }
   _ -> []
 }

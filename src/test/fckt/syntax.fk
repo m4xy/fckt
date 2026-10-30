@@ -83,6 +83,7 @@ typeOf(t: TypeRef): String = when (t) {
     "(FunctionType ${at(p)} ${listOf(parameters.map { typeOf(it) })} ${typeOf(result)} ${listOf(effects.map { annotationOf(it) })})"
   TupleType(p, elements) -> "(TupleType ${at(p)} ${listOf(elements.map { typeOf(it) })})"
   EffectsType(p, effects) -> "(EffectsType ${at(p)} ${listOf(effects.map { annotationOf(it) })})"
+  GivenType(p, name, given) -> "(GivenType ${at(p)} ${quoted(name)} ${typeOf(given)})"
 }
 
 expressionOf(e: Expression): String = when (e) {

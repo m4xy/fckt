@@ -228,6 +228,7 @@ module Expansion {
     FunctionType(at, parameters, result, effects) -> FunctionType(at, parameters.map { fixedType(it, fixed) }, fixedType(result, fixed), effects)
     TupleType(at, elements) -> TupleType(at, elements.map { fixedType(it, fixed) })
     EffectsType(_, _) -> t
+    GivenType(at, name, given) -> GivenType(at, name, fixedType(given, fixed))
   }
 
   private isBlank(t: TypeRef): Boolean = when (t) {

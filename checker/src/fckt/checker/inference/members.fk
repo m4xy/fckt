@@ -159,7 +159,7 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
   when (narrowed) {
     Some(field) -> Some(field)
     None -> when (resolved(receiver)) {
-      ModuleValue(spec, arguments) -> moduleValueMember(spec, arguments, name, context)
+      ModuleValue(spec, arguments, _) -> moduleValueMember(spec, arguments, name, context)
       Named(typeName, arguments, region) -> when (context.environment.definitions.namespace.table.records.get(typeName)) {
         None -> None
         Some(record) ->
@@ -411,7 +411,7 @@ called(function: Symbol, arguments: List<Core>): Core =
   Named(_, arguments, _) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
   Abstract(_, arguments) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
   SpecOwnType(_, arguments) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
-  ModuleValue(_, arguments) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
+  ModuleValue(_, arguments, _) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
   Handler(_, arguments) -> arguments.fold(found) { acc, a -> shownVariables(a, acc) }
   TupleOf(elements) -> elements.fold(found) { acc, e -> shownVariables(e, acc) }
   FunctionOf(parameters, result, _) -> shownVariables(result, parameters.fold(found) { acc, p -> shownVariables(p, acc) })

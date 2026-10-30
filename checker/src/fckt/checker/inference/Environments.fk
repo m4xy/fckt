@@ -59,7 +59,7 @@ module Environments {
     SpecOwnType(name, arguments) -> Conversion.outsideType(owner, name, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, context, definitions)
     Named(n, arguments, region) -> Named(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, region)
     Abstract(n, arguments) -> Abstract(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
-    ModuleValue(n, arguments) -> ModuleValue(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
+    ModuleValue(n, arguments, own) -> ModuleValue(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) }, own)
     Handler(n, arguments) -> Handler(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
     TupleOf(elements) -> TupleOf(elements.map { withOwnTypesOutside(it, owner, context, definitions) })
     FunctionOf(parameters, result, effects) ->

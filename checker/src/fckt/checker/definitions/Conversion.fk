@@ -22,8 +22,106 @@ module Conversion {
     )
     EffectsType(_, effects) -> Effects(rowOf(effects, false, true, context, definitions))
     TupleType(_, elements) -> TupleOf(elements.map { typeOf(it, context, definitions) })
-    NamedType(at, name, arguments) -> namedType(at, name, arguments, arguments.map { typeOf(it, context, definitions) }, context, definitions)
+    GivenType(at, name, _) -> abandon(problem(context, at, "'$name = ...' gives a spec value's own type, as in Format<T = Int>"))
+    NamedType(at, name, arguments) -> when (parameterOwnType(at, name, arguments, context, definitions)) {
+      Some(own) -> own
+      None -> when (specNamed(name, context, definitions)) {
+        Some(spec) -> specValueType(spec, at, name, arguments, context, definitions)
+        None ->
+          if (arguments.any { isGiven(it) })
+            abandon(problem(context, at, "'$name' isn't a spec, so its type arguments aren't named: ${Written.typeRef(NamedType(at, name, arguments.map { unnamed(it) }))}"))
+          else namedType(at, name, arguments, arguments.map { typeOf(it, context, definitions) }, context, definitions)
+      }
+    }
   }
+
+  specNamed(name: String, context: TypeContext, definitions: Definitions): Option<Symbol> =
+    if (context.typeParameters.containsKey(name) || context.specTypes.containsKey(name) || Types.builtins.containsKey(name)) None
+    else when (TypeNames.meaning(name, scopeOf(context), definitions.namespace)) {
+      Found(SpecModuleType(spec)) -> Some(spec)
+      else -> None
+    }
+
+  @Solving @Abandoning private parameterOwnType(at: Position, name: String, arguments: List<TypeRef>, context: TypeContext, definitions: Definitions): Option<Type> = {
+    parameter = name.split(".").firstOrNone().getOrElse(name)
+    own = name.drop(parameter.length + 1)
+    if (parameter == name || !startsLowerCase(parameter)) None
+    else if (context.laterParameters.contains(parameter))
+      abandon(problem(context, at, "'$name' names $parameter, which comes after it: a parameter's type can name only those before it"))
+    else context.valueParameters.get(parameter).map { given ->
+      when (resolved(given)) {
+        ModuleValue(specName, ownArguments, _) -> when (definitions.namespace.table.specs.get(specName)) {
+          Some(spec) -> {
+            if (arguments.isNotEmpty()) abandon(problem(context, at, "${Symbols.simpleName(spec)}'s $own takes no type arguments")) else Unit
+            names = ownTypeNames(spec)
+            if (!names.contains(own)) abandon(problem(context, at, "${Symbols.simpleName(spec)} has no type '$own'"))
+            else ownArguments.getOrNone(names.indexOf(own)).getOrElse(given)
+          }
+          None -> abandon(problem(context, at, "'$parameter' isn't a value of a spec with types of its own, so it has no $own"))
+        }
+        else -> abandon(problem(context, at, "'$parameter' isn't a value of a spec with types of its own, so it has no $own"))
+      }
+    }
+  }
+
+  @Solving @Abandoning private specValueType(
+    spec: Symbol,
+    at: Position,
+    name: String,
+    arguments: List<TypeRef>,
+    context: TypeContext,
+    definitions: Definitions,
+  ): Type = {
+    own = Symbols.simpleName(spec)
+    types = ownTypesOf(spec)
+    types.find { it.typeParameters.isNotEmpty() }.forEach { t ->
+      abandon(problem(context, at, "$own's ${t.name} takes type parameters, so a value of $own can't say what it is yet"))
+    }
+    positional = arguments.filter { !isGiven(it) }
+    if (types.isEmpty() && arguments.isNotEmpty()) abandon(problem(context, at, "'$name' takes 0 type arguments, not ${arguments.size}")) else Unit
+    if (positional.isNotEmpty()) {
+      named = types.zip(positional).map { t, written -> "${t.name} = ${Written.typeRef(written)}" }.joinToString(", ")
+      abandon(problem(context, at, "a $own value names its own types: $own<$named>"))
+    } else Unit
+    given = arguments.mapNotNull { a ->
+      when (a) {
+        GivenType(givenAt, givenName, written) -> Some((givenAt, givenName, written))
+        else -> None
+      }
+    }
+    given.forEachIndexed { i, entry ->
+      (givenAt, givenName, _) = entry
+      if (types.none { it.name == givenName }) abandon(problem(context, givenAt, "$own has no type '$givenName'"))
+      else if (given.take(i).any { _, earlier, _ -> earlier == givenName }) abandon(problem(context, givenAt, "$own's $givenName is given twice"))
+      else Unit
+    }
+    ownArguments = types.map { t ->
+      when (given.find { _, givenName, _ -> givenName == t.name }) {
+        Some((_, _, written)) -> typeOf(written, context, definitions)
+        None -> Variable(fresh())
+      }
+    }
+    moduleType(spec, at, ownArguments, context, definitions)
+  }
+
+  private ownTypesOf(spec: Symbol): List<SpecType> = when (spec.declaration.definition) {
+    SpecDefinition(ts, _, _, _, _) -> ts
+    else -> []
+  }
+
+  ownTypeNames(spec: Symbol): List<String> = ownTypesOf(spec).map { it.name }
+
+  private isGiven(t: TypeRef): Boolean = when (t) {
+    GivenType(_, _, _) -> true
+    else -> false
+  }
+
+  private unnamed(t: TypeRef): TypeRef = when (t) {
+    GivenType(_, _, written) -> written
+    else -> t
+  }
+
+  private startsLowerCase(name: String): Boolean = name.toList().firstOrNone().map { it.isLowerCase() }.getOrElse(false)
 
   @Solving @Abandoning private namedType(
     at: Position,
@@ -65,7 +163,7 @@ module Conversion {
         checkArity(name, parameters.size, given, at, context)
         declared(symbol, given, context, definitions)
       }
-      Found(SpecModuleType(spec)) -> moduleType(spec, at, arguments, context, definitions)
+      Found(SpecModuleType(spec)) -> specValueType(spec, at, name, written, context, definitions)
       Found(_) -> abandon(problem(context, at, "unknown type '$name'"))
       Refused(why) -> abandon(problem(context, at, why))
       NotFound -> abandon(problem(context, at, "unknown type '$name'"))
@@ -73,7 +171,7 @@ module Conversion {
   }
 
   // The type of a module that follows the spec, as a value: Plugin; or, for a spec with types of its
-  // own, with what they are, in order: Format<Point>.
+  // own, with what they are, in the order the spec declares them.
   @Abandoning moduleType(spec: Symbol, at: Position, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type = {
     own = Symbols.simpleName(spec)
     (types, typeParameters) = when (spec.declaration.definition) {
@@ -87,11 +185,7 @@ module Conversion {
       abandon(problem(context, at, "$own's ${t.name} takes type parameters, so a value of $own can't say what it is yet"))
     }
     if (typeParameters.isNotEmpty()) abandon(problem(context, at, "$own takes type parameters, so it can't be a value's type yet")) else Unit
-    if (arguments.size != types.size) {
-      names = types.map { it.name }.joinToString(", ")
-      abandon(problem(context, at, "a $own value says what its $names ${if (types.size == 1) "is" else "are"}, in order: $own<$names>"))
-    } else Unit
-    ModuleValue(spec.name, arguments)
+    ModuleValue(spec.name, arguments, types.map { it.name })
   }
 
   // What TypeNames needs of the context: the names of the type parameters in scope.

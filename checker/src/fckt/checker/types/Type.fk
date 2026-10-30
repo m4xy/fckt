@@ -17,8 +17,8 @@ type Type {
   // One of a spec's own types, in what the spec says: what each module that follows it says it is.
   SpecOwnType(name: String, arguments: List<Type>),
   // A module that follows the spec, as a value, with what the spec's own types are in it, in order:
-  // Format<Point>, for a module that follows Format and says its T is Point. By the spec's full name.
-  ModuleValue(spec: String, arguments: List<Type>),
+  // Format<T = Point>, for a module that follows Format and says its T is Point. By the spec's full name.
+  ModuleValue(spec: String, arguments: List<Type>, ownTypes: List<String> = []),
   // A handler for the handled effect, by its full name: its arguments are the effect's type
   // arguments, then what the block it handles gives, then what its answers do.
   Handler(effect: String, arguments: List<Type>),

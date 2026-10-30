@@ -170,7 +170,7 @@ module Structures {
     TupleOf(parts) -> parts.flatMap { typeNames(it) }
     FunctionOf(parameters, result, _) -> parameters.flatMap { typeNames(it) } + typeNames(result)
     // A module as a value of a spec names the spec.
-    ModuleValue(spec, arguments) -> [spec] + arguments.flatMap { typeNames(it) }
+    ModuleValue(spec, arguments, _) -> [spec] + arguments.flatMap { typeNames(it) }
     _ -> []
   }
 

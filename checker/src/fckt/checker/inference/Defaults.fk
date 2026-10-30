@@ -102,5 +102,6 @@ module Defaults {
     FunctionType(_, parameters, result, _) -> parameters.flatMap { namesIn(it) } + namesIn(result)
     TupleType(_, elements) -> elements.flatMap { namesIn(it) }
     EffectsType(_, _) -> []
+    GivenType(_, _, given) -> namesIn(given)
   }
 }

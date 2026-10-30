@@ -160,7 +160,7 @@ typeNamed(full: String, table: SymbolTable): Option<Symbol> =
   SpecOwnType(name, arguments) -> own(name, arguments.map { ownTypesReplaced(it, own) })
   Named(n, arguments, region) -> Named(n, arguments.map { ownTypesReplaced(it, own) }, region)
   Abstract(n, arguments) -> Abstract(n, arguments.map { ownTypesReplaced(it, own) })
-  ModuleValue(n, arguments) -> ModuleValue(n, arguments.map { ownTypesReplaced(it, own) })
+  ModuleValue(n, arguments, names) -> ModuleValue(n, arguments.map { ownTypesReplaced(it, own) }, names)
   Handler(n, arguments) -> Handler(n, arguments.map { ownTypesReplaced(it, own) })
   TupleOf(elements) -> TupleOf(elements.map { ownTypesReplaced(it, own) })
   FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { ownTypesReplaced(it, own) }, ownTypesReplaced(result, own), effects)

@@ -95,7 +95,7 @@ typeText(t: Type, named: List<TypeVariable>): (String, List<TypeVariable>) = whe
   Named(name, arguments, _) -> applied(name, arguments, named)
   Abstract(name, arguments) -> applied("abstract $name", arguments, named)
   SpecOwnType(name, arguments) -> applied("@$name", arguments, named)
-  ModuleValue(spec, arguments) -> applied("module $spec", arguments, named)
+  ModuleValue(spec, arguments, _) -> applied("module $spec", arguments, named)
   Handler(effect, arguments) -> applied("handler $effect", arguments, named)
   TupleOf(elements) -> applied("Tuple", elements, named)
   Effects(_) -> ("effects", named)

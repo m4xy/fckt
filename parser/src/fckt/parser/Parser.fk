@@ -550,6 +550,7 @@ module Parser {
     TupleType(_, elements) -> elements.flatMap { bareNames(it) }
     FunctionType(_, parameters, result, _) -> (parameters + [result]).flatMap { bareNames(it) }
     EffectsType(_, _) -> []
+    GivenType(_, _, given) -> bareNames(given)
   }
 
   // A capital letter, maybe with digits: A, T1.
@@ -682,11 +683,18 @@ module Parser {
       }
     } else {
       // A type may be qualified by modules: Ratios.Ratio
-      name = qualified(s, upperIdent(s, "a type"))
+      first = if (looking(s, Identifier) && !upper(peek(s).text) && peekAt(s, 1).kind == Dot && peekAt(s, 2).kind == Identifier && upper(peekAt(s, 2).text)) next(s).text
+        else upperIdent(s, "a type")
+      name = qualified(s, first)
       arguments = if (accepts(s, Less)) {
         // _ marks where a spec's type takes its parameters: Monad<Result<_, String>>.
         read = commaSeparated(s) {
-          if (looking(s, Underscore)) NamedType(next(s).at, "_", []) else typeRef(s)
+          if (looking(s, Underscore)) NamedType(next(s).at, "_", [])
+          else if (looking(s, Identifier) && peekAt(s, 1).kind == Assign) {
+            given = next(s)
+            next(s)
+            GivenType(given.at, given.text, typeRef(s))
+          } else typeRef(s)
         }
         expect(s, Greater, "'>'")
         read

@@ -451,7 +451,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     /**
      * [value] of a value of [spec], which has types of its own: taken out of it by a function of its
      * own, in which they're locally abstract, as OCaml won't take a module apart whose type has type
-     * variables in it, as a `Format<A>`'s may.
+     * variables in it, as a `Format` whose `T` is open may.
      */
     private fun memberOfValue(spec: Decl.Spec, value: String): Gen {
         val names = spec.types.indices.map { "fk_t$it" }

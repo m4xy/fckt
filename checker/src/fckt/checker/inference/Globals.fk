@@ -76,10 +76,11 @@ module Globals {
     TupleType(_, elements) -> elements.flatMap { namesIn(it) }
     FunctionType(_, parameters, result, _) -> parameters.flatMap { namesIn(it) } + namesIn(result)
     EffectsType(_, _) -> []
+    GivenType(_, _, given) -> namesIn(given)
   }
 
   // How written types are read where the code is.
-  typeContext(context: Context): TypeContext = TypeContext(context.place, context.typeParameters)
+  typeContext(context: Context): TypeContext = TypeContext(context.place, context.typeParameters, valueParameters = context.valueParameters)
 
   // ---- Extensions ----
 

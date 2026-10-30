@@ -91,7 +91,7 @@ module WrittenTypes {
     AliasDefinition(typeParameters, target) -> inTypeRef(target, TypeScope(place, moduleTypeParameters + typeParameters, []))
     // A function in a module with type parameters takes them too, as expansion has it.
     FunctionDefinition(typeParameters, receiver, parameters, result, body, _, _) -> {
-      scope = TypeScope(place, typeParameters, [])
+      scope = TypeScope(place, typeParameters, [], parameters.getOrElse([]).map { it.name })
       receiver.toList().flatMap { inTypeRef(it, scope) } +
         parameters.getOrElse([]).flatMap { inParameter(it, scope) } +
         result.toList().flatMap { inTypeRef(it, scope) } +
@@ -153,6 +153,7 @@ module WrittenTypes {
     FunctionType(_, parameters, result, _) -> parameters.flatMap { inTypeRef(it, scope) } + inTypeRef(result, scope)
     TupleType(_, elements) -> elements.flatMap { inTypeRef(it, scope) }
     EffectsType(_, _) -> []
+    GivenType(_, _, given) -> inTypeRef(given, scope)
   }
 
   private inExpressions(es: List<Expression>, scope: TypeScope): List<WrittenType> = es.flatMap { inExpression(it, scope) }

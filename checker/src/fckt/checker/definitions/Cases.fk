@@ -116,6 +116,7 @@ module Cases {
     FunctionType(at, parameters, result, effects) -> FunctionType(at, parameters.map { substituted(it, substitution) }, substituted(result, substitution), effects)
     TupleType(at, elements) -> TupleType(at, elements.map { substituted(it, substitution) })
     EffectsType(_, _) -> t
+    GivenType(at, name, given) -> GivenType(at, name, substituted(given, substitution))
   }
 
   private problem(symbol: Symbol, position: Position, message: String): Diagnostic = Diagnostic(symbol.file.source.path, position, message)

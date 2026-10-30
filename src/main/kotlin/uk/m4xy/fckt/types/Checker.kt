@@ -1399,6 +1399,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             throw CompileError(ref.pos, "${spec.simpleName}'s ${it.name} takes type parameters, so a value of ${spec.simpleName} can't say what it is yet")
         }
         val positional = ref.args.filter { it !is TypeRef.Given }
+        if (spec.types.isEmpty() && ref.args.isNotEmpty()) throw CompileError(ref.pos, "'${ref.name}' takes 0 type arguments, not ${ref.args.size}")
         if (positional.isNotEmpty()) {
             val named = spec.types.zip(positional).joinToString(", ") { (t, arg) -> "${t.name} = ${text(arg)}" }
             throw CompileError(ref.pos, "a ${spec.simpleName} value names its own types: ${spec.simpleName}<${named.ifEmpty { spec.types.joinToString(", ") { "${it.name} = ..." } }}>")
@@ -2917,9 +2918,16 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (decl !in parameterMembers && opaqueAround(decl.path)) {
                 outsideView = true
                 try {
-                    val shownResult = decl.returnType?.let { resolve(it) } ?: result
+                    val given = decl.params.orEmpty().zip(paramTypes.orEmpty())
+                    val shownResult = withValueParams(given, emptySet()) { decl.returnType?.let { resolve(it) } } ?: result
                     outside[decl] = if (inside is Type.Fn) {
-                        val params = withArrowEffects(row) { decl.params!!.zip(inside.params).map { (p, t) -> p.type?.let { resolve(it) } ?: t } }
+                        val params = withArrowEffects(row) {
+                            decl.params!!.zip(inside.params).mapIndexed { i, (p, t) ->
+                                val written = p.type
+                                if (written == null || (written is TypeRef.Named && specNamed(written) != null)) t
+                                else withValueParams(given.take(i), emptySet()) { resolve(written) }
+                            }
+                        }
                         Type.Fn(params, shownResult, row)
                     } else {
                         shownResult
@@ -2983,6 +2991,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         effects = u.fresh()
         typeParams = emptyMap()
+        valueParams = emptyMap()
         // What each does as callers see it: changing values that never left it doesn't count.
         val done = rows.mapValues { (decl, row) -> masked(row, provisional.getValue(decl)) }
         // A generic effect's declared type arguments are what it does: @Yielding<Int> yields Ints.

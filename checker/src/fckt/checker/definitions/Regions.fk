@@ -41,6 +41,7 @@ module Regions {
     EffectsType(_, _) -> false
     TupleType(_, elements) -> elements.any { holds(it, place, found, namespace) }
     NamedType(_, name, arguments) -> arguments.any { holds(it, place, found, namespace) } || isHolding(name, place, found, namespace)
+    GivenType(_, _, given) -> holds(given, place, found, namespace)
   }
 
   // Whether the type of that name is one found, or an alias for a type that holds one.

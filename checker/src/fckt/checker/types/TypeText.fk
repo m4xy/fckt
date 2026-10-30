@@ -30,7 +30,8 @@ module TypeText {
     Named(name, arguments, _) -> applied(name, arguments, naming)
     Abstract(name, arguments) -> applied(name, arguments, naming)
     SpecOwnType(name, arguments) -> applied(name, arguments, naming)
-    ModuleValue(spec, arguments) -> applied(spec, arguments, naming)
+    ModuleValue(spec, arguments, []) -> applied(spec, arguments, naming)
+    ModuleValue(spec, arguments, own) -> "$spec<${own.zip(arguments).map { name, a -> "$name = ${render(a, naming)}" }.joinToString(", ")}>"
     Handler(effect, _) -> "a handler for @${lastPart(effect)}"
     TupleOf(elements) -> "(${renderAll(elements, naming)})"
     // Only what calling it does is shown, not whether it may do more.

@@ -20,4 +20,6 @@ type TypeContext(
   specTypes: Map<String, Int> = emptyMap(),
   outsideView: Boolean = false,
   seenFrom: Option<Place> = None,
+  valueParameters: Map<String, Type> = emptyMap(),
+  laterParameters: List<String> = [],
 )

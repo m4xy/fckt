@@ -120,7 +120,7 @@ private matcherOf(p: Parameter): Matcher = if (p.name == "_") AnyMatcher else Na
 
 // A parameter's written type, where a function type without effects does what the lambda does.
 @Solving @Abandoning parameterType(t: TypeRef, row: Row, context: Context): Type =
-  Conversion.typeOf(t, TypeContext(context.place, context.typeParameters, None, Some(row)), context.environment.definitions)
+  Conversion.typeOf(t, TypeContext(context.place, context.typeParameters, None, Some(row), valueParameters = context.valueParameters), context.environment.definitions)
 
 // What block gives, checked as code that does the row.
 @Solving @Abandoning doingIn<A>(row: Row, context: Context, block: @Doing () -> A): A = Doings.doing(row, context.place.file.source.path, block)

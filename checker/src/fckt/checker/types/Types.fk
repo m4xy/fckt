@@ -67,7 +67,7 @@ module Types {
     Named(name, arguments, region) -> Named(name, arguments.map { resolvedFully(it) }, region.map { resolvedFully(it) })
     Abstract(name, arguments) -> Abstract(name, arguments.map { resolvedFully(it) })
     SpecOwnType(name, arguments) -> SpecOwnType(name, arguments.map { resolvedFully(it) })
-    ModuleValue(spec, arguments) -> ModuleValue(spec, arguments.map { resolvedFully(it) })
+    ModuleValue(spec, arguments, own) -> ModuleValue(spec, arguments.map { resolvedFully(it) }, own)
     Handler(effect, arguments) -> Handler(effect, arguments.map { resolvedFully(it) })
     TupleOf(elements) -> TupleOf(elements.map { resolvedFully(it) })
     FunctionOf(parameters, result, effects) -> FunctionOf(parameters.map { resolvedFully(it) }, resolvedFully(result), resolvedRowFully(effects))
@@ -142,7 +142,7 @@ module Types {
     }
     Abstract(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
     SpecOwnType(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
-    ModuleValue(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
+    ModuleValue(_, arguments, _) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
     Handler(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
     TupleOf(elements) -> elements.fold(found) { acc, e -> variablesInto(e, acc) }
     FunctionOf(parameters, result, effects) ->
@@ -173,7 +173,7 @@ module Types {
     Named(name, arguments, region) -> Named(name, arguments.map { substitute(it, mapping) }, region.map { substitute(it, mapping) })
     Abstract(name, arguments) -> Abstract(name, arguments.map { substitute(it, mapping) })
     SpecOwnType(name, arguments) -> SpecOwnType(name, arguments.map { substitute(it, mapping) })
-    ModuleValue(spec, arguments) -> ModuleValue(spec, arguments.map { substitute(it, mapping) })
+    ModuleValue(spec, arguments, own) -> ModuleValue(spec, arguments.map { substitute(it, mapping) }, own)
     Handler(effect, arguments) -> Handler(effect, arguments.map { substitute(it, mapping) })
     TupleOf(elements) -> TupleOf(elements.map { substitute(it, mapping) })
     FunctionOf(parameters, result, effects) ->

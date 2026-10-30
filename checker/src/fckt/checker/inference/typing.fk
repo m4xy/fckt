@@ -45,8 +45,31 @@ private covariant: List<String> = ["List", "Option", "Lazy", "Result"]
   else {
     before = TypeText.shown(typed.t)
     wanted = TypeText.shown(expected)
-    if (!isSubtype(typed.t, expected, context)) mismatch(Positions.of(e), wanted, before, context) else Unit
+    found = resolvedFully(typed.t)
+    sought = resolvedFully(expected)
+    if (!isSubtype(typed.t, expected, context)) when (ownTypeMismatch(typed, sought, found)) {
+      Some(why) -> abandon(Globals.problem(context, Positions.of(e), why))
+      None -> mismatch(Positions.of(e), wanted, before, context)
+    } else Unit
   }
+
+private differs(pair: (Type, Type)): Boolean = {
+  (a, b) = pair
+  a != b
+}
+
+@Solving private ownTypeMismatch(typed: Typed, wanted: Type, found: Type): Option<String> = when ((wanted, found)) {
+  (ModuleValue(w, ws, own), ModuleValue(f, fs, _)) if w == f && own.isNotEmpty() ->
+    own.zip(ws.zip(fs)).find { _, pair -> differs(pair) }.map { name, pair ->
+      module = when (typed.core) {
+        ModulePacked(m, _) -> Symbols.simpleName(m)
+        else -> "this ${w.split(".").lastOrNone().getOrElse(w)}"
+      }
+      (expectedOwn, foundOwn) = pair
+      "$module's $name is ${TypeText.shown(foundOwn)}, but here it must be ${TypeText.shown(expectedOwn)}"
+    }
+  else -> None
+}
 
 // Whether the case the expression spells out is one the wanted type with cases has: Alphabet.E is a
 // Vowel where a Vowel is wanted.

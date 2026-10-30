@@ -155,37 +155,83 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
 
 // The context a function's signature and body are read in: where it's written, with its type
 // parameters as the unknowns given.
-private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, environment: Environment): Context =
-  Context(environment, Place(f.file, f.path), typeVariables.map { name, v -> (name, Variable(v)) }.toMap())
+private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, environment: Environment, valueParameters: Map<String, Type> = emptyMap()): Context =
+  Context(environment, Place(f.file, f.path), typeVariables.map { name, v -> (name, Variable(v)) }.toMap(), valueParameters)
 
 // A function's type as its group sees it before its body's checked: what it's written to take and
 // give, and unknowns for what isn't written. A function type among its parameters' types that
 // doesn't say what it does does what the function does.
 @Solving @Abandoning private signatureOf(f: Symbol, environment: Environment): Signature = {
-  typeVariables = Signatures.typeParametersOf(f).map { p -> (p, fresh()) }
-  context = contextOf(f, typeVariables, environment)
-  result = Signatures.resultOf(f).map { t -> Conversion.typeOf(t, Globals.typeContext(context), environment.definitions) }.getOrElse(Variable(fresh()))
+  declared = Signatures.typeParametersOf(f).map { p -> (p, fresh()) }
+  context = contextOf(f, declared, environment)
   row = Row([], Some(fresh()))
+  parameters = Signatures.parametersOf(f).getOrElse([])
+  Signatures.parametersOf(f).forEach { ps -> checkDistinct(ps.map { p -> (p.name, p.at) }, context) }
+  parameterTypes = typesOf(parameters, [], row, context, environment)
+  valueParameters = named(parameters, parameterTypes)
+  result = Signatures.resultOf(f).map { t ->
+    Conversion.typeOf(t, TypeContext(context.place, context.typeParameters, valueParameters = valueParameters), environment.definitions)
+  }.getOrElse(Variable(fresh()))
+  typeVariables = declared + parameters.zip(parameterTypes).flatMap { p, t -> openTypesOf(p, t, context, environment) }
   t = when (Signatures.parametersOf(f)) {
-    Some(ps) -> {
-      checkDistinct(ps.map { p -> (p.name, p.at) }, context)
-      FunctionOf(ps.map { p -> p.parameterType.map { parameterType(it, row, context) }.getOrElse(Variable(fresh())) }, result, row)
-    }
+    Some(_) -> FunctionOf(parameterTypes, result, row)
     None -> result
   }
   // Inside, an opaque type is what it stands for; callers outside see the type as written.
   outside = if (!Conversion.isOpaqueAround(f.path, environment.definitions)) None else {
-    outsideContext = TypeContext(context.place, context.typeParameters, None, None, [], emptyMap(), true)
+    outsideContext = TypeContext(context.place, context.typeParameters, None, None, [], emptyMap(), true, valueParameters = valueParameters)
     shownResult = Signatures.resultOf(f).map { r -> Conversion.typeOf(r, outsideContext, environment.definitions) }.getOrElse(result)
     Some(when ((t, Signatures.parametersOf(f))) {
-      (FunctionOf(parameters, _, _), Some(ps)) -> FunctionOf(ps.zip(parameters).map { p, inside ->
-        p.parameterType.map { written -> Conversion.typeOf(written, TypeContext(context.place, context.typeParameters, None, Some(row), [], emptyMap(), true), environment.definitions) }.getOrElse(inside)
+      (FunctionOf(insides, _, _), Some(ps)) -> FunctionOf(ps.zip(insides).mapIndexed { i, entry ->
+        (p, inside) = entry
+        when (p.parameterType) {
+          Some(written) if !isSpecValue(written, context, environment) -> Conversion.typeOf(written,
+            TypeContext(context.place, context.typeParameters, None, Some(row), [], emptyMap(), true, valueParameters = named(ps.take(i), insides)), environment.definitions)
+          else -> inside
+        }
       }, shownResult, row)
       _ -> shownResult
     })
   }
   Signature(f, typeVariables, row, t, outside)
 }
+
+@Solving @Abandoning private typesOf(parameters: List<Parameter>, done: List<Type>, row: Row, context: Context, environment: Environment): List<Type> =
+  when (parameters.drop(done.size)) {
+    [] -> done
+    [p, *rest] -> {
+      seen = TypeContext(context.place, context.typeParameters, None, Some(row),
+        valueParameters = named(parameters.take(done.size), done), laterParameters = rest.map { it.name })
+      typesOf(parameters, done + [p.parameterType.map { Conversion.typeOf(it, seen, environment.definitions) }.getOrElse(Variable(fresh()))], row, context, environment)
+    }
+  }
+
+private named(parameters: List<Parameter>, types: List<Type>): Map<String, Type> = parameters.zip(types).map { p, t -> (p.name, t) }.toMap()
+
+private isSpecValue(t: TypeRef, context: Context, environment: Environment): Boolean = when (t) {
+  NamedType(_, name, _) -> !isParameterOwn(name) && Conversion.specNamed(name, Globals.typeContext(context), environment.definitions).isSome()
+  else -> false
+}
+
+private isParameterOwn(name: String): Boolean = name.contains(".") && name.toList().firstOrNone().map { it.isLowerCase() }.getOrElse(false)
+
+@Solving private openTypesOf(p: Parameter, t: Type, context: Context, environment: Environment): List<(String, TypeVariable)> =
+  when ((p.parameterType, resolved(t))) {
+    (Some(NamedType(_, name, written)), ModuleValue(_, arguments, own)) if isSpecValue(NamedType(p.at, name, written), context, environment) ->
+      own.zip(arguments).mapNotNull { ownName, argument ->
+        given = written.any { w ->
+          when (w) {
+            GivenType(_, givenName, _) -> givenName == ownName
+            else -> false
+          }
+        }
+        when (resolved(argument)) {
+          Variable(v) if !given -> Some(("${p.name}.$ownName", v))
+          else -> None
+        }
+      }
+    else -> []
+  }
 
 // How the others in a group of several see a function that says what it does: as doing that. A
 // @Mutating one is taken, as an external is, to change what any of its parameters holds. Not main,
@@ -287,7 +333,10 @@ private allows(effects: List<String>): String = {
 // trusted to do what it says, and, if it's @Mutating, to change what it's given.
 @Solving @Abandoning @Covering private checkBody(s: Signature, environment: Environment): Option<CoreFunction> = {
   f = s.function
-  context = contextOf(f, s.typeVariables, environment)
+  context = contextOf(f, s.typeVariables, environment, when (s.t) {
+    FunctionOf(types, _, _) -> named(Signatures.parametersOf(f).getOrElse([]), types)
+    else -> emptyMap()
+  })
   if (Signatures.isExternal(f)) {
     parameters = when (s.t) {
       FunctionOf(ps, _, _) -> ps
@@ -413,7 +462,7 @@ private allows(effects: List<String>): String = {
   }
   Abstract(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
   SpecOwnType(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
-  ModuleValue(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
+  ModuleValue(_, arguments, _) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
   Handler(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
   TupleOf(elements) -> elements.fold(found) { acc, e -> regionsInto(e, skip, acc) }
   else -> found

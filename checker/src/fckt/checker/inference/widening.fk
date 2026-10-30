@@ -59,6 +59,7 @@ private only(ref: TypeRef, p: String, positive: Boolean, own: String): Boolean =
     parameters.all { only(it, p, !positive, own) } && only(result, p, positive, own) && (positive || effects.none { "@" + it.name == p })
   TupleType(_, elements) -> elements.all { only(it, p, positive, own) }
   EffectsType(_, effects) -> positive || effects.none { "@" + it.name == p }
+  GivenType(_, _, given) -> only(given, p, positive, own)
 }
 
 private mentions(ref: TypeRef, p: String): Boolean = when (ref) {
@@ -66,6 +67,7 @@ private mentions(ref: TypeRef, p: String): Boolean = when (ref) {
   FunctionType(_, parameters, result, effects) -> parameters.any { mentions(it, p) } || mentions(result, p) || effects.any { "@" + it.name == p }
   TupleType(_, elements) -> elements.any { mentions(it, p) }
   EffectsType(_, effects) -> effects.any { "@" + it.name == p }
+  GivenType(_, _, given) -> mentions(given, p)
 }
 
 private lastPart(name: String): String = name.split(".").lastOrNone().getOrElse(name)
