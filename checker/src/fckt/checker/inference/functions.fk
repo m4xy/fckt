@@ -120,7 +120,8 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
   }
 }
 
-// That a function may do what its body does: what it says, or what its module allows. main may do
+// That a function may do what its body does: what it says, or what its module allows; a private
+// one, anything its module allows. main may do
 // anything, as running a program is what it's for; a default's does what the call that leaves its
 // argument out does; a top-level value can't do anything, as it runs on its own when the program
 // starts.
@@ -143,6 +144,9 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
       else when (ceiling(f.path, environment)) {
         Some((m, effects)) -> abandon(Diagnostic(f.file.source.path, f.declaration.at,
           "'$own' does ${Doings.shown(undeclared)}, but it's in ${Symbols.simpleName(m)}, which may only ${allows(effects)}"))
+        // A private function's effects are worked out from its body, and its callers', which are
+        // beside it, say them; a public one's are its contract, so it says them itself.
+        None if f.declaration.visibility == Private -> Unit
         None -> abandon(Diagnostic(f.file.source.path, f.declaration.at,
           "'$own' does ${Doings.shown(undeclared)}, so it must say so: ${Doings.shown(undeclared)} $own(...)"))
       }

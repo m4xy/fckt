@@ -2212,7 +2212,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     /**
-     * That [decl] may do what its body does, [row]: what it declares, or what its module allows.
+     * That [decl] may do what its body does, [row]: what it declares, or what its module allows; a
+     * private one, anything its module allows.
      * `main` may do anything, as running a program is what it's for; a top-level value can't do
      * anything, as it runs on its own.
      */
@@ -2233,6 +2234,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         ceiling(decl.path)?.let { (module, effects) ->
             throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(undeclared)}, but it's in ${module.simpleName}, which may only ${allows(effects)}")
         }
+        // A private function's effects are worked out from its body, and its callers', which are
+        // beside it, say them; a public one's are its contract, so it says them itself.
+        if (decl.isPrivate) return
         throw CompileError(decl.pos, "'${decl.simpleName}' does ${shown(undeclared)}, so it must say so: ${shown(undeclared)} ${decl.simpleName}(...)")
     }
 

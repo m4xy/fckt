@@ -1,0 +1,15 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+@Fail module Quiet {
+  private shout(name: String): Unit = println(name.uppercase())
+
+  @Fail greet(name: String): Unit = shout(name)
+}
+
+main() = Quiet.greet("ada")
+
+// error: 'shout' does @Console, but it's in Quiet, which may only

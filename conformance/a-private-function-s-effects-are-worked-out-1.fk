@@ -1,0 +1,27 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+module Greeter {
+  private shout(name: String): Unit = println(name.uppercase())
+
+  private twice(name: String): Unit = {
+    shout(name)
+    shout(name)
+  }
+
+  @Console greet(name: String): Unit = twice(name)
+}
+
+private log(line: String): Unit = println("log: $line")
+
+main() = {
+  Greeter.greet("ada")
+  log("done")
+}
+
+// prints: ADA
+// prints: ADA
+// prints: log: done
