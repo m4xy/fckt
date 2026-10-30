@@ -1,0 +1,40 @@
+import uk.m4xy.fktests.api.Test
+import fckt.compiler.Json
+import fckt.compiler.Jsons
+import fckt.compiler.Jsons.*
+
+// JSON as editors send it, read and written back.
+@Test aMessageIsRead() = {
+  message = Jsons.parse(
+    """{"jsonrpc": "2.0", "id": 7, "params": {"items": [1, -2.5e3, true, null], "text": "a"}}""",
+  )
+  assertEquals(Some(7), message.flatMap { it.field("id") }.flatMap { it.int })
+  assertEquals(
+    [JsonNumber("1"), JsonNumber("-2.5e3"), JsonBoolean(true), JsonNull],
+    message.flatMap { it.field("params") }.flatMap { it.field("items") }.map { it.items }.getOrElse([]),
+  )
+}
+
+// Escapes are undone: a quote, a newline, and characters by their code, a pair of them for one
+// beyond the first 65536.
+@Test escapesAreRead() = assertEquals(
+  Some(JsonString("say \"hi\"\nü é 😀")),
+  Jsons.parse(""""say \"hi\"\nü \u00e9 \ud83d\ude00""""),
+)
+
+@Test whatIsntJsonIsNone() = {
+  assertEquals(None, Jsons.parse("{\"a\": }"))
+  assertEquals(None, Jsons.parse("[1, 2"))
+  assertEquals(None, Jsons.parse("tru"))
+  assertEquals(None, Jsons.parse("{} extra"))
+}
+
+// What's written reads back as it was, with what has to be escaped escaped.
+@Test whatsWrittenReadsBack() = {
+  value = JsonObject([
+    ("text", JsonString("line one\nline \"two\"\t\\ ${8.toChar()}")),
+    ("list", JsonArray([JsonNumber("1"), JsonNull, JsonObject([])])),
+  ])
+  assertEquals(Some(value), Jsons.parse(Jsons.render(value)))
+  assertEquals("[]", Jsons.render(JsonArray([])))
+}

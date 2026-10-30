@@ -3,6 +3,7 @@
 // fckt, the compiler kiln uses unless FCKT says another.
 import uk.m4xy.kiln.fckt.Fckt
 import uk.m4xy.kiln.fckt.FcktTasks
+import uk.m4xy.fktests.kiln.*
 
 project = Project(
   name = "compiler",
@@ -11,7 +12,7 @@ project = Project(
   dependencies = [projectAt("../lowering")],
 )
 
-plugins = [Fckt()]
+plugins = [Fckt(), FkTests()]
 
 install = Named("install")
 
