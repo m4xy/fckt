@@ -1,0 +1,2 @@
+// A polymorphic variant's tag, without its backquote, and the types of what it carries, as a tuple.
+type Tag(name: String, carries: List<Typexpr>)

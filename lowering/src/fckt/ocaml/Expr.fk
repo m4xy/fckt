@@ -27,6 +27,8 @@ type Expr {
   Construction(name: String, argument: Option<Expr>),
   // (e : t)
   Annotated(expression: Expr, typexpr: Typexpr),
+  // (e :> t): a value of a narrower polymorphic variant, as a wider one.
+  Coerced(expression: Expr, typexpr: Typexpr),
   // ~label:value, an argument given by its label.
   Labelled(label: String, value: Expr),
   // OCaml written out already, as an external's is: printed in parentheses, as it is.

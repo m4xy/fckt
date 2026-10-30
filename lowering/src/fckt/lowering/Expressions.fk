@@ -56,14 +56,17 @@ module Expressions {
     Constructed(BuiltinCase(name), fields, _) -> inOrder(fields) { given -> Constructors.built(BuiltinCase(name), given) }
     Constructed(constructor, fields, t) -> inOrder(fields) { given -> Annotated(Constructors.built(constructor, given), OcamlTypes.typexpr(t)) }
     FieldRead(record, owner, field) -> FieldAccess(expression(record), Constructors.label(owner, field))
-    NarrowedRead(local, caseName, field) -> FieldAccess(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field))
+    // A shared case's fields are bound each to its own name; another's, its record.
+    NarrowedRead(local, caseName, caseType, field) ->
+      if (isShared(caseType)) Identifier(Constructors.narrowedName(local, caseName) + "_" + Naming.snake(field))
+      else FieldAccess(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field))
     FieldWritten(record, owner, field, value) -> inOrder([record, value]) { given ->
       when (given) {
         [r, v] -> FieldUpdate(r, Constructors.label(owner, field), v)
         else -> fail("changing a field")
       }
     }
-    NarrowedWritten(local, caseName, field, value) ->
+    NarrowedWritten(local, caseName, _, field, value) ->
       FieldUpdate(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field), expression(value))
     CaseName(value, cases) -> Match(expression(value), cases.map { c ->
       Case(ConstructorPat(Constructors.caseName(c), None), None, ConstantExpr(StringConstant(c.definition.name)))
@@ -78,6 +81,10 @@ module Expressions {
     HandlerMade(effect, answers) -> HandledEffects.madeHandler(effect, answers.map { a -> (a.operation, expression(a.answer), a.resumes) })
     ModuleHandler(module, effect) -> HandledEffects.moduleHandler(module, effect)
     Handled(effect, handler, block) -> HandledEffects.handled(effect, expression(handler), expression(block))
+    Widened(value, t) -> when (t) {
+      Named(name, _, _) if isShared(name) -> Coerced(expression(value), OcamlTypes.typexpr(t))
+      _ -> expression(value)
+    }
     // OCaml's told it gives whatever's wanted.
     Absurd(call) -> Match(expression(call), [Case(AnyPat, None, Verbatim("assert false"))])
     Pending(what) -> fail(what)
@@ -92,8 +99,11 @@ module Expressions {
     TupleMatcher(parts) -> TuplePat(parts.map { pat(it) })
     ConstantMatcher(literal) -> ConstantPat(constant(literal))
     CaseMatcher(constructor, fields, narrowed) -> Constructors.pattern(constructor, fields.map { fs -> fs.map { pat(it) } }, narrowed)
-    // is Vowel, where Vowel's cases are its own: anything the subject's type has.
-    CaseTypeMatcher(_, _) -> AnyPat
+    // is Vowel: any of its tags, as Vowel, or, where its cases are its own, anything the subject's type
+    // has.
+    CaseTypeMatcher(caseType, narrowed) ->
+      if (!isShared(caseType.name)) AnyPat
+      else narrowed.map { local -> AliasPat(TypePat(OcamlTypes.typeReference(caseType.name)), Naming.snake(local)) }.getOrElse(TypePat(OcamlTypes.typeReference(caseType.name)))
     ListMatcher(items, None) -> ListPat(items.map { pat(it) })
     ListMatcher(items, Some(rest)) -> items.reversed().fold(pat(rest)) { tail, item -> ConsPat(pat(item), tail) }
   }

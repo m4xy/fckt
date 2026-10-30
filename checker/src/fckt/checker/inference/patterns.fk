@@ -185,7 +185,7 @@ private literalOf(core: Core): Literal = when (core) {
   when ((isCheck, shape.constructor, subject)) {
     (true, CaseConstructor(c), Some(Name(_, local))) if shape.fieldTypes.isNotEmpty() -> when (Scopes.lookup(scope, local)) {
       Some(existing) -> Scopes.bind(scope, local, Local(existing.t, existing.region,
-        Some(Narrowing(c.definition.name, c.definition.fields, shape.fieldNames.zip(shape.fieldTypes).toMap(), isShared(c.owner.name, context))),
+        Some(Narrowing(c.definition.name, c.owner.name, c.definition.fields, shape.fieldNames.zip(shape.fieldTypes).toMap(), isShared(c.owner.name, context))),
         existing.hides))
       None -> scope
     }

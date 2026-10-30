@@ -307,7 +307,7 @@ constructorValue(shape: ConstructorShape): Core =
       fieldType = infer(target, None, scope, context).t
       writing = (v: Core) -> when ((field, receiverExpression)) {
         (Some(RecordField(record, _)), _) -> FieldWritten(receiverTyped.core, record, name, v)
-        (Some(NarrowedField(narrowing, _)), Name(_, local)) -> NarrowedWritten(local, narrowing.caseName, name, v)
+        (Some(NarrowedField(narrowing, _)), Name(_, local)) -> NarrowedWritten(local, narrowing.caseName, narrowing.caseType, name, v)
         else -> Pending("changing a field")
       }
       when (receiver) {

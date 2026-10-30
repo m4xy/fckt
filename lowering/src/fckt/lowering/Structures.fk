@@ -23,7 +23,12 @@ module Structures {
     }
     ModulePart(path) -> {
       name = path.lastOrNone().getOrElse("")
-      inner = Lowering(toStringOf = typeName -> toStringOf(typeName), typeParametersOf = typeName -> typeParametersOf(typeName), inside = ~path) {
+      inner = Lowering(
+        toStringOf = typeName -> toStringOf(typeName),
+        typeParametersOf = typeName -> typeParametersOf(typeName),
+        isShared = typeName -> isShared(typeName),
+        inside = ~path,
+      ) {
         items(path, own)
       }
       [ModuleItem(Naming.moduleName(name), Structure(inner))]

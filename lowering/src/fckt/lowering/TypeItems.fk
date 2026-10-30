@@ -20,6 +20,9 @@ module TypeItems {
   @Lowering private definition(d: TypeDeclaration): TypeDefinition = when (d) {
     DeclaredRecord(record, parameters, fields) ->
       TypeDefinition(OcamlTypes.ownName(record.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, RecordType(fields.map { field(it) }))
+    DeclaredCases(caseType, parameters, cases) if isShared(caseType.name) ->
+      TypeDefinition(OcamlTypes.ownName(caseType.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) },
+        PolymorphicVariantType(cases.map { c -> Tag(Constructors.tagName(c.case), c.fields.map { OcamlTypes.typexpr(it.t) }) }))
     DeclaredCases(caseType, parameters, cases) ->
       TypeDefinition(OcamlTypes.ownName(caseType.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, VariantType(cases.map { c ->
         ConstructorDeclaration(c.case.definition.name, if (c.fields.isEmpty()) Bare else InlineRecord(c.fields.map { field(it) }))
@@ -37,6 +40,21 @@ module TypeItems {
   @Fail @Lowering private showBinding(d: TypeDeclaration): Option<Binding> = when (d) {
     DeclaredRecord(record, parameters, fields) ->
       Some(showFunction(record.name, parameters, fieldsText(Naming.ownName(record), fields, Identifier("v"))))
+    // Tags carry their fields as a tuple; each is bound to show it.
+    DeclaredCases(caseType, parameters, cases) if isShared(caseType.name) ->
+      Some(showFunction(caseType.name, parameters, Match(Identifier("v"), cases.map { c ->
+        name = c.case.definition.name
+        names = c.fields.mapIndexed { i, _ -> "x$i" }
+        payload = when (names) {
+          [] -> None
+          [one] -> Some(VariablePat(one))
+          _ -> Some(TuplePat(names.map { VariablePat(it) }))
+        }
+        shown = if (c.fields.isEmpty()) ConstantExpr(StringConstant(name)) else Shows.joined([ConstantExpr(StringConstant("$name("))] + c.fields.mapIndexed { i, f ->
+          [ConstantExpr(StringConstant((if (i > 0) ", " else "") + f.name + "=")), Application(Shows.show(f.t), [Identifier("x$i")])]
+        }.flatMap { it } + [ConstantExpr(StringConstant(")"))])
+        Case(ConstructorPat(Constructors.tag(c.case), payload), None, shown)
+      })))
     DeclaredCases(caseType, parameters, cases) ->
       Some(showFunction(caseType.name, parameters, Match(Identifier("v"), cases.map { c ->
         name = c.case.definition.name

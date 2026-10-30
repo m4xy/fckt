@@ -2,6 +2,7 @@ import fckt.collections.Maps.*
 import fckt.parser.Field
 import fckt.checker.types.Type
 
-// What is Circle found a local to be: a case, by its name, with its fields as declared and their
-// types; and whether the case is shared with another type, whose fields can't be changed in place.
-type Narrowing(caseName: String, fields: List<Field>, types: Map<String, Type>, shared: Boolean)
+// What is Circle found a local to be: a case, by its name, of the type with cases it's of, by its
+// full name, with its fields as declared and their types; and whether the case is shared with
+// another type, whose fields can't be changed in place.
+type Narrowing(caseName: String, caseType: String, fields: List<Field>, types: Map<String, Type>, shared: Boolean)

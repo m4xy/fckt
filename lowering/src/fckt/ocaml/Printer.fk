@@ -54,6 +54,9 @@ module Printer {
     AliasType(t) -> " = " + typexpr(t, 0)
     RecordType(fields) -> " = " + recordFields(fields)
     VariantType(constructors) -> " =" + constructors.map { "\n$indent  | " + constructorDeclaration(it) }.joinToString("")
+    PolymorphicVariantType(tags) -> " = [ " + tags.map { t ->
+      "`" + t.name + (if (t.carries.isEmpty()) "" else " of " + t.carries.map { typexpr(it, productPart) }.joinToString(" * "))
+    }.joinToString(" | ") + " ]"
   }
 
   private typeParameters(parameters: List<String>): String = when (parameters) {
@@ -127,6 +130,7 @@ module Printer {
       TypedPat(pattern, t) -> "(" + pat(pattern, aliasPattern) + " : " + typexpr(t, 0) + ")"
       OrPat(left, right) -> pat(left, orPattern) + " | " + pat(right, consPattern)
       EffectPat(operation, k) -> "effect " + pat(operation, atomicPattern) + ", " + k
+      TypePat(name) -> "#" + name
     }
     if (level < minimum) "($text)" else text
   }
@@ -174,6 +178,7 @@ module Printer {
     Construction(name, None) -> name
     Construction(name, Some(argument)) -> name + " " + expr(argument, Argument, indent)
     Annotated(inner, t) -> "(" + expr(inner, Anywhere, indent) + " : " + typexpr(t, 0) + ")"
+    Coerced(inner, t) -> "(" + expr(inner, Anywhere, indent) + " :> " + typexpr(t, 0) + ")"
     Labelled(label, value) -> "~$label:" + expr(value, Argument, indent)
     Verbatim(code) -> "($code)"
   }

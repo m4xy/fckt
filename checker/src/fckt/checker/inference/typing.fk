@@ -26,11 +26,16 @@ private covariant: List<String> = ["List", "Option", "Lazy", "Result"]
   if (!unify(actual, expected)) mismatch(at, shownExpected, shownActual, context) else Unit
 }
 
-// That the expression can be used where the type is wanted; and its core.
+// That the expression can be used where the type is wanted; and its core, as the wider type with
+// cases it's used as, if it's one.
 @Inferring check(e: Expression, expected: Type, scope: Scope, context: Context): Core = {
   typed = infer(e, Some(expected), scope, context)
   assign(e, typed, expected, context)
-  typed.core
+  when ((resolved(typed.t), resolved(expected))) {
+    (Named(narrower, _, _), Named(wider, _, _)) if narrower != wider && caseTypeNamed(narrower, context).isSome() && caseTypeNamed(wider, context).isSome() ->
+      Widened(typed.core, expected)
+    else -> typed.core
+  }
 }
 
 // That what the expression was found to be can be used where the type is wanted: it's the same, or

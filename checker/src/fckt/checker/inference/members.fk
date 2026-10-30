@@ -53,7 +53,7 @@ import fckt.parser.*
           when (fieldOf(at, target, name, receiver, scope, context)) {
             Some(RecordField(record, t)) -> Typed(t, None, FieldRead(targetTyped.core, record, name))
             Some(NarrowedField(narrowing, t)) -> Typed(t, None, when (target) {
-              Name(_, local) -> NarrowedRead(local, narrowing.caseName, name)
+              Name(_, local) -> NarrowedRead(local, narrowing.caseName, narrowing.caseType, name)
               else -> Pending("a narrowed field")
             })
             Some(field) -> Typed(fieldType(field), None, Pending("a module value's member"))

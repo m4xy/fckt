@@ -8,4 +8,7 @@ type TypeBody {
   RecordType(fields: List<FieldDeclaration>),
   // type t = A | B of int | C of { x : int }
   VariantType(constructors: List<ConstructorDeclaration>),
+  // type t = [ `A | `B of int * string ]: a closed polymorphic variant, whose tags other types can
+  // have too.
+  PolymorphicVariantType(tags: List<Tag>),
 }

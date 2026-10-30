@@ -16,6 +16,7 @@ module Programs {
     Lowering(
       toStringOf = name -> program.toStrings.get(name),
       typeParametersOf = name -> program.types.find { Structures.declaredAt(it).name == name }.map { Structures.declaredParameters(it) },
+      isShared = name -> sharing(program).contains(name),
       inside = ~[],
     ) { items(program) }
 
@@ -32,6 +33,14 @@ module Programs {
     }
     [VerbatimItem(Helpers.items), aliases(program)] + Structures.items([], own) + main.toList()
   }
+
+  // The types with cases that share them: one that has another's case, and the other.
+  private sharing(program: CheckedProgram): List<String> = program.types.flatMap { t ->
+    when (t) {
+      DeclaredCases(caseType, _, cases) -> cases.filter { c -> c.case.owner.name != caseType.name }.flatMap { c -> [caseType.name, c.case.owner.name] }
+      else -> []
+    }
+  }.distinct()
 
   // Whether the declaration is the program's own: in the file it was given, not one it uses.
   private isOwn(s: Symbol): Boolean = s.file.source.path.isNone()

@@ -22,7 +22,8 @@ module Cores {
     Conditional(condition, then, otherwise) -> runs(condition) || runs(then) || runs(otherwise)
     Constructed(_, fields, _) -> fields.any { runs(it) }
     FieldRead(record, _, _) -> runs(record)
-    NarrowedRead(_, _, _) -> false
+    NarrowedRead(_, _, _, _) -> false
+    Widened(value, _) -> runs(value)
     else -> true
   }
 
@@ -64,7 +65,7 @@ module Cores {
     } + all(fields)
     FieldRead(record, owner, _) -> [owner] + references(record)
     FieldWritten(record, owner, _, value) -> [owner] + references(record) + references(value)
-    NarrowedWritten(_, _, _, value) -> references(value)
+    NarrowedWritten(_, _, _, _, value) -> references(value)
     CaseName(value, cases) -> cases.map { it.owner } + references(value)
     ListMade(items) -> items.flatMap { item ->
       when (item) {
@@ -77,7 +78,7 @@ module Cores {
     Assertion(condition, _) -> references(condition)
     EqualityAssertion(expected, actual, _, _) -> references(expected) + references(actual)
     Matched(subject, branches) -> references(subject) + branches.flatMap { b -> b.guard.map { references(it) }.getOrElse([]) + references(b.body) }
-    NarrowedRead(_, _, _) -> []
+    NarrowedRead(_, _, _, _) -> []
     Conditional(condition, then, otherwise) -> references(condition) + references(then) + references(otherwise)
     Bound(_, value, body) -> references(value) + references(body)
     VarBound(_, value, body) -> references(value) + references(body)
@@ -86,6 +87,7 @@ module Cores {
     Sequenced(first, then) -> references(first) + references(then)
     FunctionValue(_, body, _) -> references(body)
     Absurd(call) -> references(call)
+    Widened(value, _) -> references(value)
     HandlerMade(effect, answers) -> [effect] + all(answers.map { it.answer })
     ModuleHandler(module, effect) -> [module, effect]
     Handled(effect, handler, block) -> [effect] + references(handler) + references(block)

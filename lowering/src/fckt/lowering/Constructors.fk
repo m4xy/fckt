@@ -11,6 +11,12 @@ module Constructors {
   // What the constructor builds, given its fields, in the order it declares them.
   @Lowering built(constructor: Constructor, fields: List<Expr>): Expr = when (constructor) {
     RecordConstructor(record) -> RecordExpr(labelled(record, fieldNames(record), fields), None)
+    // A shared case is a tag, carrying its fields as one value or a tuple.
+    CaseConstructor(c) if isShared(c.owner.name) -> Construction(tag(c), when (fields) {
+      [] -> None
+      [one] -> Some(one)
+      _ -> Some(TupleExpr(fields))
+    })
     CaseConstructor(c) ->
       if (c.definition.fields.isEmpty()) Construction(caseName(c), None)
       else Construction(caseName(c), Some(RecordExpr(c.definition.fields.map { it.name }.zip(fields).map { name, value -> FieldValue(Naming.snake(name), value) }, None)))
@@ -27,6 +33,15 @@ module Constructors {
       }, false)
       None -> AnyPat
     }
+    CaseConstructor(c) if isShared(c.owner.name) -> {
+      // is Case binds each field to read; otherwise each is matched.
+      given = fields.getOrElse(c.definition.fields.map { f -> narrowed.map { local -> VariablePat(narrowedName(local, c.definition.name) + "_" + Naming.snake(f.name)) }.getOrElse(AnyPat) })
+      ConstructorPat(tag(c), when (given) {
+        [] -> None
+        [one] -> Some(one)
+        _ -> Some(TuplePat(given))
+      })
+    }
     CaseConstructor(c) ->
       if (c.definition.fields.isEmpty()) ConstructorPat(caseName(c), None)
       else ConstructorPat(caseName(c), Some(when (fields) {
@@ -37,8 +52,17 @@ module Constructors {
     BuiltinCase(name) -> ConstructorPat(name, Some(fields.flatMap { it.firstOrNone() }.getOrElse(AnyPat)))
   }
 
-  // A case, written from the module it's used in: Circle, or Geometry.Circle.
-  @Lowering caseName(c: CaseSymbol): String = (Naming.relative(c.owner.path).map { Naming.moduleName(it) } + [c.definition.name]).joinToString(".")
+  // A case, written from the module it's used in: Circle, or Geometry.Circle; or, if its type shares
+  // its cases, its tag.
+  @Lowering caseName(c: CaseSymbol): String =
+    if (isShared(c.owner.name)) tag(c)
+    else (Naming.relative(c.owner.path).map { Naming.moduleName(it) } + [c.definition.name]).joinToString(".")
+
+  // A shared case's tag, named after the type that declares it: `Alphabet_A.
+  tag(c: CaseSymbol): String = "`" + tagName(c)
+
+  // A shared case's tag's name, without its backquote: Alphabet_A.
+  tagName(c: CaseSymbol): String = c.owner.name.replace(".", "_") + "_" + c.definition.name
 
   // A record's field's label, written from the module it's used in: x, or Geometry.x.
   @Lowering label(record: Symbol, field: String): String = (Naming.relative(record.path).map { Naming.moduleName(it) } + [Naming.snake(field)]).joinToString(".")
