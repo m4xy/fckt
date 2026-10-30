@@ -27,6 +27,16 @@ module Channels {
     None -> []
   }
 
+  // The program's standard input, output and error. Reading what's piped in to its end:
+  // readingFrom(standardInput) { forEachLine { line -> ... } }.
+  external standardInput: InputHandle = "stdin"
+  external standardOutput: OutputHandle = "stdout"
+  external standardError: OutputHandle = "stderr"
+
+  // Writes a line to the program's standard error, where it tells what went wrong, apart from what it
+  // prints.
+  @Channel printError(text: String): Unit = writeTo(standardError, "$text\n".encodeToBytes())
+
   // Runs body reading input, and leaves it open.
   @Channel readingFrom<A>(input: InputHandle, body: @Reader () -> A): A =
     Reader(nextLine = ~readLineFrom(input), nextBytes = count -> readFrom(input, count)) { body() }
