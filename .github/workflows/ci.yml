@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # Kastor comes from ../kastor, through a Gradle included build.
+      - uses: actions/checkout@v5
+        with:
+          path: fckt
+      - uses: actions/checkout@v5
+        with:
+          repository: m4xy/kastor
+          path: kastor
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v5
+      # The tests run what fckt writes with ocaml, and are skipped where it isn't installed.
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5
+      # The compiler alone: the IntelliJ plugin builds against an installed IntelliJ IDEA.
+      - name: Test
+        working-directory: fckt
+        run: opam exec -- ./gradlew :test :installDist
