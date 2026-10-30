@@ -24,7 +24,7 @@ import fckt.parser.*
   context: Context,
 ): Typed = when (liftedModule(at, context)) {
   // A functor applied here is the module made for it, as a value of the functor's spec.
-  Some(made) -> Typed(moduleAsValue(made, at, context))
+  Some(made) -> moduleAsValue(made, at, context)
   None -> inferUnlifted(at, callee, arguments, typeArguments, expected, scope, context)
 }
 

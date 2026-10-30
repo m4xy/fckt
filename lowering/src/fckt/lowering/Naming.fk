@@ -48,6 +48,9 @@ module Naming {
   // A function's or value's name, written from the module it's used in.
   @Lowering valueReference(s: Symbol): String = reference(s) { snake(it) }
 
+  // A module, written from the module it's used in: Fckt.Io.Terminal.
+  @Lowering modulePath(m: Symbol): String = relative(m.path + [ownName(m)]).map { moduleName(it) }.joinToString(".")
+
   // A path, without the start it shares with the module what's written is in.
   @Lowering relative(path: List<String>): List<String> = {
     here = inside()

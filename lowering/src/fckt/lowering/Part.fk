@@ -2,10 +2,12 @@ import fckt.checker.core.*
 import fckt.checker.inference.FunctionGroup
 
 // What a module's items are made of: types that name each other, which OCaml defines together, with
-// their show functions; a handled effect; a group of its functions; or a module in it, by its path.
+// their show functions; a handled effect; a spec, as a module type; a group of its functions; or a
+// module in it, by its path.
 type Part {
   TypesPart(types: List<TypeDeclaration>),
   EffectPart(effect: DeclaredEffect),
+  SpecPart(spec: DeclaredSpec),
   GroupPart(group: FunctionGroup),
   ModulePart(path: List<String>),
 }

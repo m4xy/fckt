@@ -1,0 +1,40 @@
+import fckt.checker.core.*
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.*
+import fckt.ocaml.*
+import fckt.parser.Definition
+
+// Specs, as OCaml's module types: a spec's own types, abstract, then its values; and a module, as a
+// value of one, its own types as the module says they are.
+module Specs {
+  // module type Spec = sig type 'a m val size : 'a m -> int end
+  @Lowering moduleType(d: DeclaredSpec): Item = ModuleTypeItem(Naming.ownName(d.spec),
+    d.types.map { name, parameters -> TypeSignature(TypeDefinition(Naming.snake(name).removeSuffix("_"), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, AbstractType)) } +
+      d.values.map { name, t -> ValueSignature(Naming.snake(name), OcamlTypes.typexprNaming(t, named(t))) })
+
+  // A value of the spec: Format with type t = point, its own types as given.
+  @Lowering packageType(spec: Symbol, types: List<String>): String =
+    OcamlTypes.typeModuleReference(spec.name) + ownTypes(spec).zip(types).mapIndexed { i, entry ->
+      (t, given) = entry
+      (if (i == 0) " with" else " and") + " type " + Naming.snake(t).removeSuffix("_") + " = " + given
+    }.joinToString("")
+
+  // The spec's own types, by their names.
+  ownTypes(spec: Symbol): List<String> = when (spec.declaration.definition) {
+    SpecDefinition(types, _, _, _, _) -> types.map { it.name }
+    else -> []
+  }
+
+  // Each unknown in the type, named 'a, 'b, in the order it's met, as a signature names them.
+  private named(t: Type): List<(TypeVariable, String)> = unknowns(t, []).mapIndexed { i, v -> (v, "'" + "abcdefghijklmnopqrstuvwxyz".toList().getOrNone(i % 26).map { it.toString() }.getOrElse("a") + (if (i >= 26) "${i / 26}" else "")) }
+
+  private unknowns(t: Type, found: List<TypeVariable>): List<TypeVariable> = when (t) {
+    Variable(v) -> if (found.contains(v)) found else found + [v]
+    Named(_, arguments, _) -> arguments.fold(found) { f, a -> unknowns(a, f) }
+    Abstract(_, arguments) -> arguments.fold(found) { f, a -> unknowns(a, f) }
+    SpecOwnType(_, arguments) -> arguments.fold(found) { f, a -> unknowns(a, f) }
+    TupleOf(parts) -> parts.fold(found) { f, a -> unknowns(a, f) }
+    FunctionOf(parameters, result, _) -> unknowns(result, parameters.fold(found) { f, a -> unknowns(a, f) })
+    _ -> found
+  }
+}

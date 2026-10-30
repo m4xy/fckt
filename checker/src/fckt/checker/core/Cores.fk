@@ -25,6 +25,7 @@ module Cores {
     Copied(record, _, changes) -> runs(record) || changes.any { _, c -> runs(c) }
     NarrowedRead(_, _, _, _) -> false
     Widened(value, _) -> runs(value)
+    ModulePacked(_, _) -> false
     else -> true
   }
 
@@ -90,6 +91,8 @@ module Cores {
     FunctionValue(_, body, _) -> references(body)
     Absurd(call) -> references(call)
     Widened(value, _) -> references(value)
+    ModulePacked(module, spec) -> [module, spec]
+    ModuleMemberRead(value, spec, _) -> [spec] + references(value)
     HandlerMade(effect, answers) -> [effect] + all(answers.map { it.answer })
     ModuleHandler(module, effect) -> [module, effect]
     Handled(effect, handler, block) -> [effect] + references(handler) + references(block)

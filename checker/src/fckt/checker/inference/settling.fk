@@ -44,6 +44,8 @@ import fckt.checker.types.Types.*
   FunctionValue(parameters, body, drops) -> FunctionValue(parameters, settledCore(body), drops)
   Absurd(call) -> Absurd(settledCore(call))
   Widened(value, t) -> Widened(settledCore(value), resolvedFully(t))
+  ModulePacked(_, _) -> c
+  ModuleMemberRead(value, spec, member) -> ModuleMemberRead(settledCore(value), spec, member)
   HandlerMade(effect, answers) -> HandlerMade(effect, answers.map { a -> a.copy(answer = settledCore(a.answer)) })
   ModuleHandler(_, _) -> c
   Handled(effect, handler, block) -> Handled(effect, settledCore(handler), settledCore(block))

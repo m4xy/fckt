@@ -10,14 +10,15 @@ that compiles itself. It's meant to be read, as the checker is.
 
 ## Where it's got to
 
-It lowers a program's own file, to be linked with the core and the standard library as fckt's own
-compiler compiles them on their own: its types, with a show function for each; its handled
-effects; its modules; and its functions, with constants, names, calls, externals, extensions,
-operations, handlers, operators, string templates, lists, tuples, lambdas, if, when and its
-patterns, blocks, vars, changing fields, pipes and assertions. 40 of the 44 conformance cases that
-print print what they should. What it can't lower yet, it fails on, saying what: functors and
-specs' modules used as values, and cases shared between types, which OCaml has as polymorphic
-variants.
+It lowers a program and its own project's packages, to be linked with the core and the standard
+library as fckt's own compiler compiles them on their own: its types, with a show function for each,
+cases shared between types as polymorphic variants; its handled effects; its specs, as module types;
+its modules, and each module a functor makes, as a copy of the functor's with the modules given;
+modules as values of their specs; and its functions, with constants, names, calls, externals,
+extensions, operations, handlers, operators, string templates, lists, tuples, lambdas, if, when and
+its patterns, blocks, vars, changing fields, copies, pipes and assertions. Every conformance case
+that prints prints what it should, and it compiles itself: see `fckt.compiler`. What it can't lower
+yet, it fails on, saying what, as a module's block, Options { ... }.
 
 ## Tests
 

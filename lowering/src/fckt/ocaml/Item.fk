@@ -10,6 +10,8 @@ type Item {
   EffectItem(operations: List<EffectOperation>),
   // (* text *)
   CommentItem(text: String),
+  // module type Name = sig ... end: what a module must have, as a spec says.
+  ModuleTypeItem(name: String, signature: List<SignatureItem>),
   // Items written out already, as OCaml.
   VerbatimItem(code: String),
 }

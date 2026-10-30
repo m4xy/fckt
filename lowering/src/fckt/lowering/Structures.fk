@@ -19,6 +19,7 @@ module Structures {
   @Fail @Lowering private partItems(part: Part, own: OwnCode): List<Item> = when (part) {
     TypesPart(types) -> TypeItems.definitions(types) + TypeItems.shows(types)
     EffectPart(effect) -> HandledEffects.declarations(effect)
+    SpecPart(spec) -> [Specs.moduleType(spec)]
     GroupPart(group) -> {
       bindings = own.groups.find { g, _ -> g == group }.map { _, functions -> functions.map { f, t, body -> binding(f, t, body) } }.getOrElse([])
       if (bindings.isEmpty()) [] else [LetItem(group.recursive, bindings)]
@@ -60,6 +61,7 @@ module Structures {
   private partsAt(path: List<String>, own: OwnCode): List<Part> = {
     types = own.types.filter { Declarations.declaredAt(it).path == path }
     effects = own.effects.filter { it.effect.path == path }.map { EffectPart(it) }
+    specs = own.specs.filter { it.spec.path == path }.map { SpecPart(it) }
     fromGroups = own.groups.mapNotNull { g, _ ->
       groupPath = g.functions.firstOrNone().map { it.path }.getOrElse([])
       if (groupPath == path) Some(GroupPart(g))
@@ -67,7 +69,7 @@ module Structures {
       else None
     }.distinct()
     others = own.modules.filter { m -> m.size == path.size + 1 && m.take(path.size) == path }.map { ModulePart(it) }
-    typeGroups(types).map { TypesPart(it) } + effects + fromGroups + others.filter { !fromGroups.contains(it) }
+    typeGroups(types).map { TypesPart(it) } + specs + effects + fromGroups + others.filter { !fromGroups.contains(it) }
   }
 
   // The types, each with those it names that name it back, in the order they're declared.
@@ -118,12 +120,14 @@ module Structures {
   private isIn(s: Symbol, part: Part): Boolean = when (part) {
     TypesPart(types) -> types.any { Declarations.declaredAt(it).name == s.name }
     EffectPart(effect) -> effect.effect.name == s.name
+    SpecPart(spec) -> spec.spec.name == s.name
     GroupPart(group) -> group.functions.any { it.name == s.name }
     ModulePart(path) -> within(s.path, path)
   }
 
   private typeIsIn(name: String, part: Part): Boolean = when (part) {
     TypesPart(types) -> types.any { Declarations.declaredAt(it).name == name }
+    SpecPart(spec) -> spec.spec.name == name
     ModulePart(path) -> within(name.split(".").dropLast(1), path)
     else -> false
   }
@@ -136,6 +140,7 @@ module Structures {
     functionsOf(part, own).flatMap { _, t, _ -> typeNames(t) } + when (part) {
       TypesPart(types) -> types.flatMap { declaredTypeNames(it) }
       EffectPart(effect) -> effectTypeNames(effect)
+      SpecPart(spec) -> spec.values.flatMap { _, t -> typeNames(t) }
       GroupPart(_) -> []
       ModulePart(path) -> own.types.filter { t -> within(Declarations.declaredAt(t).path, path) }.flatMap { declaredTypeNames(it) } +
         own.effects.filter { e -> within(e.effect.path, path) }.flatMap { effectTypeNames(it) }
@@ -158,6 +163,8 @@ module Structures {
     Abstract(name, arguments) -> [name] + arguments.flatMap { typeNames(it) }
     TupleOf(parts) -> parts.flatMap { typeNames(it) }
     FunctionOf(parameters, result, _) -> parameters.flatMap { typeNames(it) } + typeNames(result)
+    // A module as a value of a spec names the spec.
+    ModuleValue(spec, arguments) -> [spec] + arguments.flatMap { typeNames(it) }
     _ -> []
   }
 

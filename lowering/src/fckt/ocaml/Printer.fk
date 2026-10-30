@@ -15,6 +15,15 @@ module Printer {
     EffectItem(operations) -> "type _ Effect.t +=" + operations.map { "\n$indent  | ${effectOperation(it)}" }.joinToString("")
     CommentItem(text) -> "(* $text *)"
     VerbatimItem(code) -> code
+    ModuleTypeItem(name, signature) -> {
+      inner = indent + "  "
+      "module type $name = sig" + signature.map { "\n$inner" + signatureItem(it, inner) }.joinToString("") + "\n${indent}end"
+    }
+  }
+
+  private signatureItem(i: SignatureItem, indent: String): String = when (i) {
+    TypeSignature(d) -> "type " + typeDefinition(d, indent)
+    ValueSignature(name, t) -> "val $name : " + typexpr(t, 0)
   }
 
   private moduleExpr(m: ModuleExpr, indent: String): String = when (m) {
@@ -131,6 +140,7 @@ module Printer {
       OrPat(left, right) -> pat(left, orPattern) + " | " + pat(right, consPattern)
       EffectPat(operation, k) -> "effect " + pat(operation, atomicPattern) + ", " + k
       TypePat(name) -> "#" + name
+      PackedPat(module, signature) -> "(module $module : $signature)"
     }
     if (level < minimum) "($text)" else text
   }

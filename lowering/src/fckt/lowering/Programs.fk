@@ -28,11 +28,18 @@ module Programs {
       if (functions.isEmpty()) None else Some((g, functions))
     }
     standard = aliases(program)
+    functors = functorsOf(program)
+    // A functor's own code isn't lowered: each module it makes is a copy of it, with the modules given.
+    lowered = (s: Symbol) -> isOwn(s) && functors.none { f -> s.path.size >= f.size && s.path.take(f.size) == f }
     own = OwnCode(
-      groups,
-      program.types.filter { t -> isOwn(Declarations.declaredAt(t)) },
-      program.effects.filter { e -> isOwn(e.effect) },
-      modulesOf(program) + (if (standard.isEmpty()) [] else [["fckt"]]),
+      groups.mapNotNull { g, functions ->
+        kept = functions.filter { f, _, _ -> lowered(f) }
+        if (kept.isEmpty()) None else Some((g, kept))
+      },
+      program.types.filter { t -> lowered(Declarations.declaredAt(t)) },
+      program.effects.filter { e -> lowered(e.effect) },
+      program.specs.filter { s -> lowered(s.spec) },
+      modulesOf(program).filter { m -> functors.none { f -> m.size >= f.size && m.take(f.size) == f } } + (if (standard.isEmpty()) [] else [["fckt"]]),
       standard.map { (["fckt"], it) },
     )
     main = program.functions.find { f -> isOwn(f.function) && f.function.path.isEmpty() && Naming.ownName(f.function) == "main" }.map { f ->
@@ -59,6 +66,18 @@ module Programs {
       packages = (1..f.package.size).map { n -> f.package.take(n) }
       packages + modulesIn(f.declarations, f.package)
     }.distinct()
+
+  // The path of each functor the program's own project declares.
+  private functorsOf(program: CheckedProgram): List<List<String>> =
+    program.workspace.files.filter { f -> f.source.project == ProgramProject }.flatMap { f -> functorsIn(f.declarations, f.package) }
+
+  private functorsIn(declarations: List<Declaration>, path: List<String>): List<List<String>> = declarations.flatMap { d ->
+    when (d.definition) {
+      ModuleDefinition(_, _, [_, *_], _, _) -> [path + [d.name]]
+      ModuleDefinition(inner, _, [], None, _) -> functorsIn(inner, path + [d.name])
+      else -> []
+    }
+  }
 
   private modulesIn(declarations: List<Declaration>, path: List<String>): List<List<String>> = declarations.flatMap { d ->
     when (d.definition) {

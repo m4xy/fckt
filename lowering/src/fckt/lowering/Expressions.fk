@@ -52,8 +52,10 @@ module Expressions {
     FunctionValue(parameters, body, dropsResult) ->
       Fun(parametersOf(parameters), if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(body))
     // A declared record or case, with its type, so that OCaml can tell which it is where another type
-    // has a case or a field of the same name; Some, None, Ok and Error are OCaml's.
+    // has a case or a field of the same name; Some, None, Ok and Error are OCaml's, and a shared case's
+    // tag is any type's that has it.
     Constructed(BuiltinCase(name), fields, _) -> inOrder(fields) { given -> Constructors.built(BuiltinCase(name), given) }
+    Constructed(CaseConstructor(c), fields, _) if isShared(c.owner.name) -> inOrder(fields) { given -> Constructors.built(CaseConstructor(c), given) }
     Constructed(constructor, fields, t) -> inOrder(fields) { given -> Annotated(Constructors.built(constructor, given), OcamlTypes.typexpr(t)) }
     // The record annotated with its type, so OCaml knows the label wherever another record has it.
     FieldRead(record, owner, field) -> FieldAccess(Constructors.annotatedRecord(expression(record), owner), Constructors.label(owner, field))
@@ -99,6 +101,12 @@ module Expressions {
       Named(name, _, _) if isShared(name) -> Coerced(expression(value), OcamlTypes.typexpr(t))
       _ -> expression(value)
     }
+    // A module, as a value of its spec, whose own types, if it has any, are the module's.
+    ModulePacked(module, spec) -> Verbatim("module " + Naming.modulePath(module) + " : " + Specs.packageType(spec, Specs.ownTypes(spec).map { t -> Naming.modulePath(module) + "." + Naming.snake(t).removeSuffix("_") }))
+    // A value of a module given as a value: taken out of it.
+    ModuleMemberRead(value, spec, member) ->
+      if (Specs.ownTypes(spec).isEmpty()) Match(expression(value), [Case(PackedPat("Value", OcamlTypes.typeModuleReference(spec.name)), None, Identifier("Value." + Naming.snake(member)))])
+      else fail("a value of a module given as a value of a spec with types of its own")
     // OCaml's told it gives whatever's wanted.
     Absurd(call) -> Match(expression(call), [Case(AnyPat, None, Verbatim("assert false"))])
     Pending(what) -> fail(what)

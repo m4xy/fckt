@@ -1,0 +1,7 @@
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.Type
+
+// A spec a program declares, as lowering writes its module type: its own types, by their names, each
+// with its type parameters; and its values, each with its type, generic in what it's written as
+// TypeVariable, and naming its own types as SpecOwnType.
+type DeclaredSpec(spec: Symbol, types: List<(String, List<String>)>, values: List<(String, Type)>)

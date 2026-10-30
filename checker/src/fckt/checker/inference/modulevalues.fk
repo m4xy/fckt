@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.annotations.*
 import fckt.checker.definitions.*
 import fckt.checker.diagnostics.*
@@ -13,10 +14,13 @@ import fckt.parser.*
 // functions do must be what the spec says they may.
 
 // What a module named as a value is.
-@Inferring moduleAsValue(m: ModuleSymbol, at: Position, context: Context): Type = when (m) {
+@Inferring moduleAsValue(m: ModuleSymbol, at: Position, context: Context): Typed = when (m) {
   DeclaredModule(s) -> when (context.environment.moduleSpecs.get(s.name)) {
-    Some(spec) if Annotations.isEffect(spec, context.environment.definitions.namespace) -> moduleHandler(s, spec, at, context)
-    _ -> moduleValue(s, at, context)
+    Some(spec) if Annotations.isEffect(spec, context.environment.definitions.namespace) -> Typed(moduleHandler(s, spec, at, context), None, ModuleHandler(s, spec))
+    spec -> {
+      t = moduleValue(s, at, context)
+      Typed(t, None, spec.map { sp -> ModulePacked(s, sp) }.getOrElse(Pending("a module, as a value")))
+    }
   }
   PackageModule(name) -> abandon(Globals.problem(context, at,
     "${name.split(".").lastOrNone().getOrElse(name)} is a module, which is a value only of a spec it follows: module ${name.split(".").lastOrNone().getOrElse(name)} : Spec { ... }"))

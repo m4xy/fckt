@@ -244,7 +244,7 @@ private joined(parts: List<Core>): Core = when (parts) {
           None -> when (builtinFunction(name)) {
             Some(t) -> Typed(t, None, if (name == "Unit") Value(UnitLiteral) else Pending("$name, used as a value"))
             None -> when (Lookups.found(Lookups.moduleNamed(name, context.place, context.environment.definitions.namespace, Skipping))) {
-              Some(m) -> Typed(moduleAsValue(m, at, context))
+              Some(m) -> moduleAsValue(m, at, context)
               None ->
                 if (name == "it") abandon(Globals.problem(context, at, "there's no 'it' here: only a block given as a function of one parameter has one, as in xs.filter { it > 1 }"))
                 else abandon(Globals.problem(context, at, "unknown name '$name'${ImportHints.forName(name, context.environment.definitions.namespace)}"))

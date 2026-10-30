@@ -4,19 +4,28 @@ import fckt.ocaml.*
 
 // fckt's types as OCaml's: Int is int, List<A> 'a list, a type declared in geometry Geometry.shape.
 module OcamlTypes {
-  @Lowering typexpr(t: Type): Typexpr = when (t) {
+  @Lowering typexpr(t: Type): Typexpr = typexprNaming(t, [])
+
+  // The type, with each unknown named as given, as a signature's values are; any other, whatever
+  // OCaml works out.
+  @Lowering typexprNaming(t: Type, variables: List<(TypeVariable, String)>): Typexpr = when (t) {
+    Variable(v) -> TypeVar(variables.find { variable, _ -> variable == v }.map { _, name -> name }.getOrElse("_"))
     TypeParameter(name) -> TypeVar("'" + name.lowercase())
-    Named(name, arguments, _) -> named(name, arguments)
-    Abstract(name, arguments) -> named(name, arguments)
-    TupleOf(parts) -> Product(parts.map { typexpr(it) })
+    // A spec's own type, in its module type.
+    SpecOwnType(name, arguments) -> TypeApplication(Naming.snake(name).removeSuffix("_"), arguments.map { typexprNaming(it, variables) })
+    // A module given as a value of a spec without types of its own.
+    ModuleValue(spec, _) -> TypeApplication("(module " + typeModuleReference(spec) + ")", [])
+    Named(name, arguments, _) -> named(name, arguments, variables)
+    Abstract(name, arguments) -> named(name, arguments, variables)
+    TupleOf(parts) -> Product(parts.map { typexprNaming(it, variables) })
     FunctionOf(parameters, result, _) ->
-      (if (parameters.isEmpty()) [TypeApplication("unit", [])] else parameters.map { typexpr(it) }).reversed().fold(typexpr(result)) { r, p -> Arrow(p, r) }
+      (if (parameters.isEmpty()) [TypeApplication("unit", [])] else parameters.map { typexprNaming(it, variables) }).reversed().fold(typexprNaming(result, variables)) { r, p -> Arrow(p, r) }
     // What OCaml can work out for itself.
     _ -> TypeVar("_")
   }
 
-  @Lowering private named(name: String, arguments: List<Type>): Typexpr = {
-    given = ocamlArguments(name, arguments).map { typexpr(it) }
+  @Lowering private named(name: String, arguments: List<Type>, variables: List<(TypeVariable, String)>): Typexpr = {
+    given = ocamlArguments(name, arguments).map { typexprNaming(it, variables) }
     when (declarationOf(name)) {
       // OCaml's own type, as its OCaml is written, each type parameter P, written 'p, replaced.
       Some(DeclaredExternal(_, parameters, ocaml)) -> TypeApplication("(" + externalText(ocaml, parameters, given) + ")", [])
@@ -53,6 +62,12 @@ module OcamlTypes {
   @Lowering typeReference(full: String): String = {
     parts = full.split(".")
     (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [Naming.snake(parts.lastOrNone().getOrElse(full))]).joinToString(".")
+  }
+
+  // A spec's module type, by its full name, written from the module it's used in: Formats.Format.
+  @Lowering typeModuleReference(full: String): String = {
+    parts = full.split(".")
+    (Naming.relative(parts.dropLast(1)) + [parts.lastOrNone().getOrElse(full)]).map { Naming.moduleName(it) }.joinToString(".")
   }
 
   // The OCaml name a declared type has where it's declared: shape.

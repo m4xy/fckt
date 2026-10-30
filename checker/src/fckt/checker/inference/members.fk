@@ -46,7 +46,7 @@ import fckt.parser.*
       member = Member(at, target, name)
       asModule = moduleNamedBy(member, scope, context).filter { m -> !isEffectModule(m, context) }
       when (asModule) {
-        Some(m) -> Typed(moduleAsValue(m, at, context), None, Pending("a module, as a value"))
+        Some(m) -> moduleAsValue(m, at, context)
         None -> {
           targetTyped = infer(target, None, scope, context)
           receiver = resolved(targetTyped.t)
@@ -56,7 +56,7 @@ import fckt.parser.*
               Name(_, local) -> NarrowedRead(local, narrowing.caseName, narrowing.caseType, name)
               else -> Pending("a narrowed field")
             })
-            Some(field) -> Typed(fieldType(field), None, Pending("a module value's member"))
+            Some(ModuleMember(spec, value, t)) -> Typed(t, None, ModuleMemberRead(targetTyped.core, spec, value.name))
             None -> propertyOf(at, target, targetTyped.core, name, receiver, scope, context)
           }
         }

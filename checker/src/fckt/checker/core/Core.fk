@@ -78,6 +78,10 @@ type Core {
   Handled(effect: Symbol, handler: Core, block: Core),
   // A value of a type with cases, as the wider type it's used as, which has each of its cases.
   Widened(value: Core, t: Type),
+  // A module that follows the spec, as a value of it.
+  ModulePacked(module: Symbol, spec: Symbol),
+  // A value of a module given as a value, as its spec has it.
+  ModuleMemberRead(value: Core, spec: Symbol, member: String),
   // A call that never returns, as one giving Nothing doesn't: it fits wherever it is.
   Absurd(call: Core),
   // An expression whose core fckt.checker doesn't make yet: what it is.

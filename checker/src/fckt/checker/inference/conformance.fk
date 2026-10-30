@@ -175,6 +175,19 @@ needsHandler(name: String, environment: Environment): Boolean =
     Annotations.isEffect(spec, environment.definitions.namespace) && specValues(spec).isNotEmpty()
   }.getOrElse(false)
 
+// Each spec that isn't an effect, with its values' types, as lowering declares their module types.
+declaredSpecs(environment: Environment): List<DeclaredSpec> =
+  environment.definitions.namespace.table.specs.toList()
+    .filter { _, spec -> !Annotations.isEffect(spec, environment.definitions.namespace) }
+    .map { _, spec ->
+      types = when (spec.declaration.definition) {
+        SpecDefinition(specTypes, _, _, _, _) -> specTypes.map { t -> (t.name, t.typeParameters) }
+        else -> []
+      }
+      schemes = environment.specTypes.get(spec.name).map { it.values }.getOrElse(emptyMap())
+      DeclaredSpec(spec, types, specValues(spec).mapNotNull { v -> schemes.get(v.name).map { s -> (v.name, s.template) } })
+    }
+
 // Each handled effect with operations, with their types worked out, as lowering declares them: each
 // that can be worked out, as checking has said why of any that can't.
 @Solving declaredEffects(environment: Environment): List<DeclaredEffect> =

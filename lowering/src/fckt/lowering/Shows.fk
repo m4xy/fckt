@@ -30,6 +30,8 @@ module Shows {
     TypeParameter(name) -> Identifier("show_" + name.lowercase())
     // A declared type's own toString, or else its show function, beside it, given how to show its
     // type parameters.
+    // An opaque type, outside its module: shown as its module shows it.
+    Abstract(name, arguments) -> show(Named(name, arguments, None))
     // OCaml's own type: its name, as it can't be seen into.
     Named(name, _, _) if declarationOf(name).map { it is DeclaredExternal }.getOrElse(false) ->
       Fun([AnyPat], ConstantExpr(StringConstant("<" + name.split(".").lastOrNone().getOrElse(name) + ">")))

@@ -1,0 +1,7 @@
+// What a signature says a module has: a type, or a value of a type.
+type SignatureItem {
+  // type 'a t, or type 'a t = ...
+  TypeSignature(definition: TypeDefinition),
+  // val name : t
+  ValueSignature(name: String, typexpr: Typexpr),
+}

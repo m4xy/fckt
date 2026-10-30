@@ -19,6 +19,8 @@ type Pat {
   TypedPat(pattern: Pat, typexpr: Typexpr),
   // p | q
   OrPat(left: Pat, right: Pat),
+  // (module Name : Signature): a module given as a value, unpacked, as Name.
+  PackedPat(module: String, signature: String),
   // #t: any of a polymorphic variant type's tags.
   TypePat(typeName: String),
   // effect p, k: an effect performed, as a match's case catches one, with the rest of what performed
