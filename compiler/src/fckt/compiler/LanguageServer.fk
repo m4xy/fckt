@@ -9,6 +9,10 @@ import fckt.io.Process
 import fckt.effects.Failure.attempt
 import fckt.text.Encodings.*
 import fckt.checker.Checker
+import fckt.checker.CheckedProgram
+import fckt.checker.inference.CheckedFunction
+import fckt.checker.types.TypeText
+import fckt.checker.types.Solutions
 import fckt.parser.Parser
 import fckt.checker.diagnostics.Diagnostic
 import fckt.checker.sources.*
@@ -25,13 +29,16 @@ module LanguageServer {
   private type Session(
     var open: Map<String, String>,
     var said: Map<String, List<String>>,
+    var programs: Map<String, List<CheckedProgram>>,
     var stopping: Boolean,
   )
 
   // A project: the folders of its own packages, and the libraries' interfaces.
   private type Project(root: Path, folders: List<Path>, libraries: List<Path>)
 
-  @FileSystem @Channel @Process serve(): Unit = served(Session(emptyMap(), emptyMap(), false))
+  @FileSystem @Channel @Process serve(): Unit = served(
+    Session(emptyMap(), emptyMap(), emptyMap(), false),
+  )
 
   @FileSystem @Channel @Process private served(session: Session): Unit = when (received()) {
     None -> exit(if (session.stopping) 0 else 1)
@@ -50,6 +57,8 @@ module LanguageServer {
         ("capabilities", JsonObject([
           ("textDocumentSync", number(1)),
           ("documentFormattingProvider", JsonBoolean(true)),
+          ("hoverProvider", JsonBoolean(true)),
+          ("definitionProvider", JsonBoolean(true)),
         ])),
         ("serverInfo", JsonObject([("name", JsonString("fckt"))])),
       ]))
@@ -78,6 +87,18 @@ module LanguageServer {
           if (laid == text) None else Some(whole(text, laid))
         }
       }.toList()))
+      "textDocument/hover" -> answer(id, uri.flatMap { u -> named(session, u, params) }.map { f ->
+        JsonObject([
+          ("contents", JsonObject([
+            ("kind", JsonString("markdown")),
+            ("value", JsonString("```fckt\n${f.function.declaration.name}: ${typeOf(f)}\n```")),
+          ])),
+        ])
+      }.getOrElse(JsonNull))
+      "textDocument/definition" -> answer(
+        id,
+        uri.flatMap { u -> named(session, u, params) }.flatMap { definitionOf(it) }.getOrElse(JsonNull),
+      )
       method -> if (id.isSome() && !method.startsWith("$/")) refuse(id, method) else Unit
     }
   }
@@ -123,10 +144,12 @@ module LanguageServer {
       declaresMain(it.text)
     }
     entries = [SourceText(None, ProgramProject, imported.joinToString(""))] + mains
-    problems = entries.flatMap { entry ->
-      (_, found) = Checker.check(entry, tree, true)
-      found
-    }.distinct()
+    results = entries.map { entry -> Checker.check(entry, tree, true) }
+    problems = results.flatMap { _, found -> found }.distinct()
+    session.programs = session.programs.put(
+      project.root.value,
+      results.flatMap { program, _ -> program.toList() },
+    )
     found = problems.filter { it.file.isSome() }
     byFile = found.fold(emptyMap()) { m, d ->
       key = uriOf(d.file.getOrElse(""))
@@ -145,6 +168,54 @@ module LanguageServer {
     Ok(file) -> file.declarations.any { it.name == "main" }
     Error(_) -> false
   }
+
+  // The function the name at params' position means: the one declared there, or the one function
+  // of that name the project last checked has, if there's only one.
+  @FileSystem private named(
+    session: Session,
+    uri: String,
+    params: Json,
+  ): Option<CheckedFunction> = {
+    position = params.field("position")
+    line = position.flatMap { it.field("line") }.flatMap { it.int }.getOrElse(0)
+    character = position.flatMap { it.field("character") }.flatMap { it.int }.getOrElse(0)
+    file = pathOf(uri)
+    text = session.open.get(uri).getOrElse(readOrEmpty(file))
+    name = wordAt(text.split("\n").getOrNone(line).getOrElse(""), character)
+    programs = session.programs.getOrDefault(projectOf(file).root.value, [])
+    candidates = programs.flatMap { it.functions }.filter { it.function.declaration.name == name }
+    distinct = candidates.fold(emptyMap()) { m, f -> m.put(f.function.name, f) }.values
+    here = distinct.find { f ->
+      f.function.file.source.path == Some(file.value) && f.function.declaration.at.line == line + 1
+    }
+    if (name.isEmpty()) None
+    else when (here) {
+      Some(found) -> Some(found)
+      None -> if (distinct.size == 1) distinct.firstOrNone() else None
+    }
+  }
+
+  // Where f is declared, as LSP says where.
+  private definitionOf(f: CheckedFunction): Option<Json> = f.function.file.source.path.map { file ->
+    at = f.function.declaration.at
+    JsonObject([
+      ("uri", JsonString(uriOf(file))),
+      ("range", range(at.line - 1, at.column - 1, at.line - 1, at.column - 1)),
+    ])
+  }
+
+  // The name the character at column is in, or "".
+  private wordAt(line: String, column: Int): String = {
+    cs = line.toList()
+    isName = (c: Char) -> c.isLetterOrDigit() || c == '_'
+    start = cs.take(column).reversed().takeWhile { isName(it) }.size
+    end = cs.drop(column).takeWhile { isName(it) }.size
+    cs.drop(column - start).take(start + end).map { it.toString() }.joinToString("")
+  }
+
+  private typeOf(
+    f: CheckedFunction,
+  ): String = Solutions.solving { TypeText.shown(f.scheme.template) }
 
   // The source's text: as it is in the editor, if it's open there.
   private editing(session: Session, source: SourceText): String =

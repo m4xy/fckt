@@ -2,8 +2,8 @@
 
 Syntax highlighting for fckt (`.fk`) files. It's a TextMate grammar, so one file works in VS Code
 and in any IntelliJ IDE. In VS Code, the extension also runs `fckt --language-server`, fckt's
-language server, which says what's wrong with each file of the project as you type, and formats a
-file as `fckt --format` does. It runs the `fckt` on `PATH`; the setting `fckt.path` names another.
+language server, which says what's wrong with each file of the project as you type, shows a
+function's type on hover, goes to its declaration, and formats a file as `fckt --format` does. It runs the `fckt` on `PATH`; the setting `fckt.path` names another.
 
 ## VS Code
 
