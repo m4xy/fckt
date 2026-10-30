@@ -415,7 +415,7 @@ module Parser {
       typeParameters = typeParameterList(s)
       // module Name(M: Spec, ...): a functor
       parameters = if (accepts(s, LeftParen)) {
-        read = commaSeparated(s) { moduleParameter(s) }
+        read = commaSeparatedUntil(s, RightParen) { moduleParameter(s) }
         expect(s, RightParen, "')'")
         read
       } else []
@@ -450,7 +450,7 @@ module Parser {
     )
     at = peek(s).at
     all = before + [ModuleArgument(name, NamedType(at, moduleName(s, "a module, by name"), []))]
-    if (accepts(s, Comma)) moduleArguments(s, all) else all
+    if (accepts(s, Comma) && !looking(s, RightParen)) moduleArguments(s, all) else all
   }
 
   @Rejecting @Mutating private moduleParameter(s: Parsing): ModuleParameter = {
@@ -1893,6 +1893,13 @@ module Parser {
   @Rejecting @Mutating private commaSeparated<A>(s: Parsing, item: () -> A): List<A> = {
     first = item()
     if (accepts(s, Comma)) [first, *commaSeparated(s, item)] else [first]
+  }
+
+  // At least one item, separated by commas, the last maybe with one after it, up to closer, which
+  // isn't read.
+  @Rejecting @Mutating private commaSeparatedUntil<A>(s: Parsing, closer: Kind, item: () -> A): List<A> = {
+    first = item()
+    if (accepts(s, Comma) && !looking(s, closer)) [first, *commaSeparatedUntil(s, closer, item)] else [first]
   }
 
   // Items separated by commas, maybe none, up to closer, which isn't read.

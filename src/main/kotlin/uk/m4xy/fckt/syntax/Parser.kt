@@ -204,7 +204,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                         if (argName == null && args.any { it.name != null }) throw error("a module given by position goes before those given by name")
                         val argPos = peek.pos
                         args += ModuleArg(argName, TypeRef.Named(argPos, moduleName("a module, by name"), emptyList()))
-                    } while (accept(T.COMMA) != null)
+                    } while (accept(T.COMMA) != null && !at(T.RPAREN))
                     expect(T.RPAREN, "')'")
                     return Decl.Module(pos, name, emptyList(), application = Application(TypeRef.Named(functorPos, functor, emptyList()), args))
                 }
@@ -221,7 +221,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                         val spec = specName()
                         val default = if (accept(T.ASSIGN) != null) TypeRef.Named(peek.pos, moduleName("the module it's given by default"), emptyList()) else null
                         params += ModuleParam(paramPos, paramName, spec, default)
-                    } while (accept(T.COMMA) != null)
+                    } while (accept(T.COMMA) != null && !at(T.RPAREN))
                     expect(T.RPAREN, "')'")
                 }
                 // module Name : Spec { ... }

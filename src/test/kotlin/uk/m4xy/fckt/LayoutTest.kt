@@ -146,13 +146,13 @@ class LayoutTest {
     }
 
     @Test
-    fun `a module's parameters take no comma after the last`() {
+    fun `a module's parameters are split as any list is`() {
         val source = "module FkTests(Configuration: TestConfiguration = StandardTests, Code: FcktConfiguration = StandardFckt) : Plugin {"
         assertEquals(
             listOf(
                 "module FkTests(",
                 "  Configuration: TestConfiguration = StandardTests,",
-                "  Code: FcktConfiguration = StandardFckt",
+                "  Code: FcktConfiguration = StandardFckt,",
                 ") : Plugin {",
             ).joinToString("\n"),
             Layout.formatted(source),

@@ -1,0 +1,39 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+spec Words {
+  word(): String
+}
+
+module Hello : Words {
+  word(): String = "hello"
+}
+
+module World : Words {
+  word(): String = "world"
+}
+
+module Phrase(
+  First: Words = Hello,
+  Second: Words = World,
+) : Words {
+  word(): String = "${First.word()} ${Second.word()}"
+}
+
+module Greeting = Phrase(
+  First = Hello,
+  Second = World,
+)
+
+module Echo = Phrase(Hello, Hello,)
+
+main() = {
+  println(Greeting.word())
+  println(Echo.word())
+}
+
+// prints: hello world
+// prints: hello hello

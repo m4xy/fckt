@@ -53,10 +53,8 @@ object Layout {
             } ?: continue
             val cuts = listOf(open.pos.col) + commas.map { it.pos.col } + listOf(close.pos.col)
             val items = cuts.zipWithNext { from, to -> line.substring(from, to - 1).trim() }.filter { it.isNotEmpty() }
-            // A module's parameters, or the modules a functor's given, take no comma after the last.
-            val moduleList = tokens.any { it.pos.line == i + 1 && it.pos.col < open.pos.col && it.kind == T.MODULE }
             val replaced = annotatedApart(tokens, i + 1, line.substring(0, open.pos.col).trimEnd(), indent) +
-                items.mapIndexed { n, it -> "$indent  $it" + if (moduleList && n == items.size - 1) "" else "," } +
+                items.map { "$indent  $it," } +
                 listOf(indent + line.substring(close.pos.col - 1))
             lines.removeAt(i)
             lines.addAll(i, replaced)
