@@ -190,6 +190,20 @@ OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the res
 when it's installed. Among them is [conformance](conformance/README.md): programs, each with what
 it prints or the error it's refused with, which say what any implementation of fckt does.
 
+### The compiler written in fckt
+
+`compiler/` is fckt's compiler written in fckt, from `parser/`, `checker/` and `lowering/`. It takes
+the same options as the one above, and it's the `fckt` kiln uses once it's installed. Build it
+with kiln, using the compiler above the first time, then install it:
+
+```sh
+cd compiler
+FCKT=../build/install/fckt/bin/fckt kiln install   # ~/.kiln/bin/fckt, or KILN_HOME's
+```
+
+That puts it in `~/.kiln/bin`, where kiln is, with the core and the standard library it reads in
+`~/.kiln/lib/fckt`. kiln uses whichever `fckt` comes first on `PATH`, unless `FCKT` names another.
+
 ### Compiling separately
 
 A program's `.ml` normally has in it what it uses of the core, the standard library and its

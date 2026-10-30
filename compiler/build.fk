@@ -1,6 +1,8 @@
 // fckt's compiler, written in fckt: fckt.parser, fckt.checker and fckt.lowering, as a command that
-// compiles a program to OCaml. kiln build makes build/bin/compiler.
+// compiles a program to OCaml. kiln build makes build/bin/compiler; kiln install puts it on PATH as
+// fckt, the compiler kiln uses unless FCKT says another.
 import uk.m4xy.kiln.fckt.Fckt
+import uk.m4xy.kiln.fckt.FcktTasks
 
 project = Project(
   name = "compiler",
@@ -10,3 +12,31 @@ project = Project(
 )
 
 plugins = [Fckt()]
+
+install = Named("install")
+
+tasks = [
+  Task(
+    install,
+    "Installs the compiler to ~/.kiln, or KILN_HOME: bin/fckt, and the core and standard " +
+      "library it reads in lib/fckt",
+    dependsOn = [FcktTasks.compile],
+    action = installCompiler,
+  ),
+]
+
+// The program to bin, as fckt, and the core and the standard library to lib/fckt, where it looks
+// for them.
+@Building installCompiler(build: Invocation): Unit = {
+  home = path(env("KILN_HOME").getOrElse(env("HOME").getOrElse(".") + "/.kiln"))
+  home.resolve("bin").makeDirs()
+  build.project.output.resolve("bin/compiler").copyTo(home.resolve("bin/fckt"))
+  library = home.resolve("lib/fckt")
+  library.delete()
+  library.makeDirs()
+  path("../src/main/resources/std").copyRecursively(library.resolve("core"))
+  library.resolve("std").makeDirs()
+  path("../std/src").copyRecursively(library.resolve("std/src"))
+  bin = home.resolve("bin")
+  println("  installed ${bin.resolve("fckt").value}; ${bin.value} goes on PATH")
+}

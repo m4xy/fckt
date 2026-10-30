@@ -210,8 +210,19 @@ version: String = "0.1.0-SNAPSHOT"
   }
 }
 
-// The fckt repository the core and the standard library are read from.
-@Process home(): Path = path(env("FCKT_HOME").getOrElse("."))
+// Where the core and the standard library are read from: FCKT_HOME; or, installed, lib/fckt beside
+// the bin it's in, with the core in core and the standard library in std/src; or the fckt
+// repository it's run in.
+@FileSystem @Process home(): Path = when (env("FCKT_HOME")) {
+  Some(given) -> path(given)
+  None -> {
+    installed = executable().canonical().parent.map { it.resolve("../lib/fckt") }
+    when (installed) {
+      Some(lib) if lib.resolve("core").isDirectory() -> lib
+      _ -> path(".")
+    }
+  }
+}
 
 @FileSystem @Console writeOutput(output: String, ml: String): Unit =
   if (output == "-") print(ml) else path(output).writeText(ml)
@@ -383,8 +394,11 @@ private shown(e: Diagnostic, file: String): String =
   exit(1)
 }
 
-@FileSystem core(home: Path): List<(List<String>, List<SourceText>)> =
-  packagesIn(home.resolve("src/main/resources/std"), [], CoreProject, "core:")
+@FileSystem core(home: Path): List<(List<String>, List<SourceText>)> = {
+  installed = home.resolve("core")
+  folder = if (installed.isDirectory()) installed else home.resolve("src/main/resources/std")
+  packagesIn(folder, [], CoreProject, "core:")
+}
 
 @FileSystem standard(home: Path): List<(List<String>, List<SourceText>)> = {
   std = home.resolve("std/src")
