@@ -214,11 +214,37 @@ declaredSpecs(environment: Environment): List<DeclaredSpec> =
 
 // Each handled effect that has a default, with its default: what main is run in, by the effect's
 // name.
-defaultHandlers(environment: Environment): List<DefaultHandler> =
-  environment.definitions.namespace.table.specs.toList()
+@Solving defaultHandlers(environment: Environment, known: Known): List<DefaultHandler> = {
+  defaults = environment.definitions.namespace.table.specs.toList()
     .filter { name, _ -> needsHandler(name, environment) }
     .mapNotNull { name, spec -> defaultHandler(name, environment).map { m -> DefaultHandler(spec, m) } }
     .sortedBy { it.effect.name }
+  // What each one's handler does besides its own effect: what its functions do.
+  does = defaults.map { d ->
+    done = specValues(d.effect).flatMap { v ->
+      known.schemes.get("${d.handler.name}.${v.name}").map { s ->
+        when (s.template) {
+          FunctionOf(_, _, row) -> effectNames(row)
+          _ -> []
+        }
+      }.getOrElse([])
+    }
+    (d.effect.name, done.filter { it != d.effect.name }.distinct())
+  }.toMap()
+  insideOut(defaults, does)
+}
+
+// The default handlers from the innermost out, each inside the effects its handler does, which must
+// be handled around it, as Http's handler connects through @Network. Where they do each other, they
+// stay as they are.
+private insideOut(left: List<DefaultHandler>, does: Map<String, List<String>>): List<DefaultHandler> = when (left) {
+  [] -> []
+  _ -> {
+    unneeded = left.filter { d -> left.none { other -> other != d && does.getOrDefault(other.effect.name, []).contains(d.effect.name) } }
+    inner = if (unneeded.isEmpty()) left else unneeded
+    inner + insideOut(left.filter { !inner.contains(it) }, does)
+  }
+}
 
 // The module @HandledBy names as the effect's default, which main uses if it doesn't handle it.
 defaultHandler(name: String, environment: Environment): Option<Symbol> = {
