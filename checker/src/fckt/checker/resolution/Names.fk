@@ -84,7 +84,10 @@ module Names {
   ): Lookup<A> = when (enclosingApplication(place.path, namespace).flatMap { app -> namespace.modules.applications.get(app).map { made -> (app, made) } }) {
     None -> NotFound
     Some((app, made)) -> {
-      inFunctor = Place(place.file, made.functor.name.split(".") + place.path.drop(app.split(".").size))
+      inFunctor = Place(
+        place.file,
+        made.functor.name.split(".") + place.path.drop(app.split(".").size),
+      )
       isParameters = (full: String) -> namespace.modules.parameterModules.any { p -> full == p || full.startsWith("$p.") }
       when (find(name, entries, symbolOf, alike, inFunctor, namespace, strictness)) {
         Found(entry) if symbolOf(entry).map { s -> !isParameters(s.name) }.getOrElse(true) -> Found(entry)
@@ -197,7 +200,9 @@ module Names {
       clashing = if (similar.size > 1) similar else found
       when (strictness) {
         Skipping -> NotFound
-        Refusing -> Refused("'$first' is imported from ${clashing.joinToString(" and ")}; import the one you mean by name")
+        Refusing -> Refused(
+          "'$first' is imported from ${clashing.joinToString(" and ")}; import the one you mean by name",
+        )
       }
     } else when (found) {
       [full] -> when (entries.get(full)) {
@@ -219,7 +224,10 @@ module Names {
   importedNames(name: String, place: Place, namespace: Namespace): List<String> = {
     first = name.split(".").firstOrNone().getOrElse(name)
     rest = name.removePrefix(first)
-    imports = namespace.imports.getOrDefault(place.file.source.path, FileImports(emptyMap(), emptyMap()))
+    imports = namespace.imports.getOrDefault(
+      place.file.source.path,
+      FileImports(emptyMap(), emptyMap()),
+    )
     targets = when (imports.named.get(first)) {
       Some(target) -> [target]
       None -> imports.ambiguous.getOrDefault(first, [])

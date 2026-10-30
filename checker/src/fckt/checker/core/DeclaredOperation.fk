@@ -3,4 +3,10 @@ import fckt.checker.types.Type
 // One of a handled effect's operations: its name, its own type parameters, as atomically<A>'s, its
 // parameters' types, if it's a function rather than a value, the type of what it gives, and whether
 // it may fail, where it's performed.
-type DeclaredOperation(name: String, typeParameters: List<String>, parameters: Option<List<Type>>, result: Type, failsAtCall: Boolean)
+type DeclaredOperation(
+  name: String,
+  typeParameters: List<String>,
+  parameters: Option<List<Type>>,
+  result: Type,
+  failsAtCall: Boolean,
+)

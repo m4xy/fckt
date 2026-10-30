@@ -41,7 +41,13 @@ module Doings {
       allowed = effectNames(effects)
       extra = flat.labels.map { it.name }.filter { !allowed.contains(it) }.distinct()
       can = if (allowed.isEmpty()) "says it's pure" else "says it can only do ${shown(allowed)}"
-      abandon(Diagnostic(file, at, "this does ${shown(extra)}, but the type of the function it's in $can"))
+      abandon(
+        Diagnostic(
+          file,
+          at,
+          "this does ${shown(extra)}, but the type of the function it's in $can",
+        ),
+      )
     } else Unit
   }
 

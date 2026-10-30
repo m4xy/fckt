@@ -33,7 +33,13 @@ module Inference {
       }
     }
     reportingAbandoned { checkExposure(environment, known) }
-    Inferred(environment, known, environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s, known.bodies.get(f.name)) } }, metaTypes, groups)
+    Inferred(
+      environment,
+      known,
+      environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s, known.bodies.get(f.name)) } },
+      metaTypes,
+      groups,
+    )
   }
 
   // What block gives up on, reported, going on after it.
@@ -49,7 +55,12 @@ module Inference {
     // Not those a spec's type arguments make, which are worked out where they're used.
     fixed = definitions.namespace.modules.fixedTypes.toList().map { _, a -> a.name }
     table.declarations.filter { a -> Symbols.isAlias(a) && !fixed.contains(a.name) }.forEach { a ->
-      Conversion.expand(a, Conversion.typeParametersOf(a).map { TypeParameter(it) }, TypeContext(Place(a.file, a.path), emptyMap()), definitions)
+      Conversion.expand(
+        a,
+        Conversion.typeParametersOf(a).map { TypeParameter(it) },
+        TypeContext(Place(a.file, a.path), emptyMap()),
+        definitions,
+      )
       Unit
     }
     table.declarations.forEach { d ->
@@ -60,7 +71,10 @@ module Inference {
           Unit
         }
         CasesDefinition(typeParameters, cases, _, includes) -> {
-          context = TypeContext(Place(d.file, d.path), typeParameters.map { p -> (p, TypeParameter(p)) }.toMap())
+          context = TypeContext(
+            Place(d.file, d.path),
+            typeParameters.map { p -> (p, TypeParameter(p)) }.toMap(),
+          )
           cases.forEach { c ->
             checkFieldNames(d, c.fields)
             c.fields.forEach { f ->

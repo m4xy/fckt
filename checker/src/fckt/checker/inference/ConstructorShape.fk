@@ -2,4 +2,9 @@ import fckt.checker.core.*
 import fckt.checker.types.Type
 
 // A constructor, as it's used here: its fields' names and types, and the type it builds.
-type ConstructorShape(constructor: Constructor, fieldNames: List<String>, fieldTypes: List<Type>, result: Type)
+type ConstructorShape(
+  constructor: Constructor,
+  fieldNames: List<String>,
+  fieldTypes: List<Type>,
+  result: Type,
+)

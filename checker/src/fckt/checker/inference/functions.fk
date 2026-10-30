@@ -155,8 +155,18 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
 
 // The context a function's signature and body are read in: where it's written, with its type
 // parameters as the unknowns given.
-private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, environment: Environment, valueParameters: Map<String, Type> = emptyMap()): Context =
-  Context(environment, Place(f.file, f.path), typeVariables.map { name, v -> (name, Variable(v)) }.toMap(), valueParameters)
+private contextOf(
+  f: Symbol,
+  typeVariables: List<(String, TypeVariable)>,
+  environment: Environment,
+  valueParameters: Map<String, Type> = emptyMap(),
+): Context =
+  Context(
+    environment,
+    Place(f.file, f.path),
+    typeVariables.map { name, v -> (name, Variable(v)) }.toMap(),
+    valueParameters,
+  )
 
 // A function's type as its group sees it before its body's checked: what it's written to take and
 // give, and unknowns for what isn't written. A function type among its parameters' types that
@@ -170,7 +180,11 @@ private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, enviro
   parameterTypes = typesOf(parameters, [], row, context, environment)
   valueParameters = named(parameters, parameterTypes)
   result = Signatures.resultOf(f).map { t ->
-    Conversion.typeOf(t, TypeContext(context.place, context.typeParameters, valueParameters = valueParameters), environment.definitions)
+    Conversion.typeOf(
+      t,
+      TypeContext(context.place, context.typeParameters, valueParameters = valueParameters),
+      environment.definitions,
+    )
   }.getOrElse(Variable(fresh()))
   typeVariables = declared + parameters.zip(parameterTypes).flatMap { p, t -> openTypesOf(p, t, context, environment) }
   t = when (Signatures.parametersOf(f)) {
@@ -179,7 +193,16 @@ private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, enviro
   }
   // Inside, an opaque type is what it stands for; callers outside see the type as written.
   outside = if (!Conversion.isOpaqueAround(f.path, environment.definitions)) None else {
-    outsideContext = TypeContext(context.place, context.typeParameters, None, None, [], emptyMap(), true, valueParameters = valueParameters)
+    outsideContext = TypeContext(
+      context.place,
+      context.typeParameters,
+      None,
+      None,
+      [],
+      emptyMap(),
+      true,
+      valueParameters = valueParameters,
+    )
     shownResult = Signatures.resultOf(f).map { r -> Conversion.typeOf(r, outsideContext, environment.definitions) }.getOrElse(result)
     Some(when ((t, Signatures.parametersOf(f))) {
       (FunctionOf(insides, _, _), Some(ps)) -> FunctionOf(ps.zip(insides).mapIndexed { i, entry ->
@@ -202,7 +225,15 @@ private contextOf(f: Symbol, typeVariables: List<(String, TypeVariable)>, enviro
     [p, *rest] -> {
       seen = TypeContext(context.place, context.typeParameters, None, Some(row),
         valueParameters = named(parameters.take(done.size), done), laterParameters = rest.map { it.name })
-      typesOf(parameters, done + [p.parameterType.map { Conversion.typeOf(it, seen, environment.definitions) }.getOrElse(Variable(fresh()))], row, context, environment)
+      typesOf(
+        parameters,
+        done + [
+          p.parameterType.map { Conversion.typeOf(it, seen, environment.definitions) }.getOrElse(Variable(fresh())),
+        ],
+        row,
+        context,
+        environment,
+      )
     }
   }
 
@@ -275,7 +306,12 @@ private isParameterOwn(name: String): Boolean = name.contains(".") && name.toLis
 // otherwise what it says itself.
 @Abandoning allowed(f: Symbol, environment: Environment): List<String> = {
   namespace = environment.definitions.namespace
-  own = Annotations.effectsOf(f.declaration.annotations, Place(f.file, f.path), f.declaration.at, namespace)
+  own = Annotations.effectsOf(
+    f.declaration.annotations,
+    Place(f.file, f.path),
+    f.declaration.at,
+    namespace,
+  )
   when (ceiling(f.path, environment)) {
     None -> own
     Some((m, effects)) -> {
@@ -297,7 +333,12 @@ private isParameterOwn(name: String): Boolean = name.contains(".") && name.toLis
     around = namespace.modules.applications.get(name).map { made -> DeclaredModule(made.functor) }.orElse { namespace.table.modules.get(name) }
     when (around) {
       Some(DeclaredModule(m)) -> {
-        effects = Annotations.effectsOf(m.declaration.annotations, Place(m.file, m.path), m.declaration.at, namespace)
+        effects = Annotations.effectsOf(
+          m.declaration.annotations,
+          Place(m.file, m.path),
+          m.declaration.at,
+          namespace,
+        )
         if (effects.isEmpty()) None else Some((m, effects))
       }
       else -> None
@@ -425,7 +466,13 @@ private allows(effects: List<String>): String = {
       }
     } else when (resolved(Variable(v))) {
       Variable(w) if !seen.contains(Variable(w)) -> seen + [Variable(w)]
-      other -> abandon(Diagnostic(f.file.source.path, f.declaration.at, "type parameter $name of '${f.name}' is always ${TypeText.shown(other)} here"))
+      other -> abandon(
+        Diagnostic(
+          f.file.source.path,
+          f.declaration.at,
+          "type parameter $name of '${f.name}' is always ${TypeText.shown(other)} here",
+        ),
+      )
     }
   }
   Unit
@@ -457,7 +504,11 @@ private allows(effects: List<String>): String = {
   Named(_, arguments, region) -> arguments.fold(found + region.map { r -> [resolved(r)] }.getOrElse([])) { acc, a -> regionsInto(a, skip, acc) }
   Effects(row) -> found + rowRegions(row, skip)
   FunctionOf(parameters, result, effects) -> {
-    inside = regionsInto(result, skip, parameters.fold(found) { acc, p -> regionsInto(p, skip, acc) })
+    inside = regionsInto(
+      result,
+      skip,
+      parameters.fold(found) { acc, p -> regionsInto(p, skip, acc) },
+    )
     if (skip.map { own -> flattened(own) == flattened(effects) }.getOrElse(false)) inside else inside + rowRegions(effects, skip)
   }
   Abstract(_, arguments) -> arguments.fold(found) { acc, a -> regionsInto(a, skip, acc) }
@@ -494,7 +545,13 @@ private allows(effects: List<String>): String = {
     else -> {
       shown = missing.map { Coverage.shown(it) }
       listed = if (shown.size > 10) shown.take(8).joinToString(", ") + " and ${shown.size - 8} more" else shown.joinToString(", ")
-      abandon(Diagnostic(pending.file, pending.at, "this when doesn't cover $listed; add ${if (shown.size == 1) "it" else "them"}, or an else"))
+      abandon(
+        Diagnostic(
+          pending.file,
+          pending.at,
+          "this when doesn't cover $listed; add ${if (shown.size == 1) "it" else "them"}, or an else",
+        ),
+      )
     }
   }
 }

@@ -13,7 +13,10 @@ module Expressions {
     GlobalRead(function) -> Identifier(Naming.valueReference(function))
     ExternalRead(function) -> Externals.asValue(function)
     Applied(function, arguments) -> inOrder(arguments) { given ->
-      Application(expression(function), if (given.isEmpty()) [ConstantExpr(UnitConstant)] else given)
+      Application(
+        expression(function),
+        if (given.isEmpty()) [ConstantExpr(UnitConstant)] else given,
+      )
     }
     ExternalApplied(function, arguments) -> inOrder(arguments) { given -> Externals.applied(function, given) }
     Performed(effect, operation, arguments) -> inOrder(arguments) { given ->
@@ -37,20 +40,55 @@ module Expressions {
       }
     }
     Assertion(condition, where) ->
-      IfThenElse(expression(condition), ConstantExpr(UnitConstant), Application(Identifier("failwith"), [ConstantExpr(StringConstant("$where: assertion failed"))]))
+      IfThenElse(
+        expression(condition),
+        ConstantExpr(UnitConstant),
+        Application(
+          Identifier("failwith"),
+          [ConstantExpr(StringConstant("$where: assertion failed"))],
+        ),
+      )
     EqualityAssertion(expected, actual, t, where) -> inOrder([expected, actual]) { given ->
-      Application(Identifier("fk_assert_equals"), [Shows.show(t), ConstantExpr(StringConstant(where)), *given])
+      Application(
+        Identifier("fk_assert_equals"),
+        [Shows.show(t), ConstantExpr(StringConstant(where)), *given],
+      )
     }
     Conditional(condition, then, otherwise) -> IfThenElse(expression(condition), expression(then), expression(otherwise))
     Bound(pattern, value, body) -> LetIn(false, [Binding(pat(pattern), [], None, expression(value))], expression(body))
     VarBound(name, value, body) ->
-      LetIn(false, [Binding(VariablePat(Naming.snake(name)), [], None, Application(Identifier("ref"), [expression(value)]))], expression(body))
+      LetIn(
+        false,
+        [
+          Binding(
+            VariablePat(Naming.snake(name)),
+            [],
+            None,
+            Application(Identifier("ref"), [expression(value)]),
+          ),
+        ],
+        expression(body),
+      )
     VarWritten(name, value) -> Infix(":=", Identifier(Naming.snake(name)), expression(value))
     FunctionBound(name, parameters, body, rest) ->
-      LetIn(true, [Binding(VariablePat(Naming.snake(name)), parametersOf(parameters), None, expression(body))], expression(rest))
+      LetIn(
+        true,
+        [
+          Binding(
+            VariablePat(Naming.snake(name)),
+            parametersOf(parameters),
+            None,
+            expression(body),
+          ),
+        ],
+        expression(rest),
+      )
     Sequenced(first, then) -> Sequence(expression(first), expression(then))
     FunctionValue(parameters, body, dropsResult) ->
-      Fun(parametersOf(parameters), if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(body))
+      Fun(
+        parametersOf(parameters),
+        if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(body),
+      )
     // A declared record or case, with its type, so that OCaml can tell which it is where another type
     // has a case or a field of the same name; Some, None, Ok and Error are OCaml's, and a shared case's
     // tag is any type's that has it.
@@ -83,9 +121,17 @@ module Expressions {
       }
     }
     NarrowedWritten(local, caseName, _, field, value) ->
-      FieldUpdate(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field), expression(value))
+      FieldUpdate(
+        Identifier(Constructors.narrowedName(local, caseName)),
+        Naming.snake(field),
+        expression(value),
+      )
     CaseName(value, cases) -> Match(expression(value), cases.map { c ->
-      Case(ConstructorPat(Constructors.caseName(c), None), None, ConstantExpr(StringConstant(c.definition.name)))
+      Case(
+        ConstructorPat(Constructors.caseName(c), None),
+        None,
+        ConstantExpr(StringConstant(c.definition.name)),
+      )
     })
     Matched(subject, branches) -> Match(expression(subject), branches.map { b ->
       pattern = when (b.patterns) {

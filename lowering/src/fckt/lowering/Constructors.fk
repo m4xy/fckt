@@ -19,7 +19,15 @@ module Constructors {
     })
     CaseConstructor(c) ->
       if (c.definition.fields.isEmpty()) Construction(caseName(c), None)
-      else Construction(caseName(c), Some(RecordExpr(c.definition.fields.map { it.name }.zip(fields).map { name, value -> FieldValue(Naming.snake(name), value) }, None)))
+      else Construction(
+        caseName(c),
+        Some(
+          RecordExpr(
+            c.definition.fields.map { it.name }.zip(fields).map { name, value -> FieldValue(Naming.snake(name), value) },
+            None,
+          ),
+        ),
+      )
     BuiltinCase(name) -> Construction(name, fields.firstOrNone())
   }
 
@@ -35,7 +43,9 @@ module Constructors {
     }
     CaseConstructor(c) if isShared(c.owner.name) -> {
       // is Case binds each field to read; otherwise each is matched.
-      given = fields.getOrElse(c.definition.fields.map { f -> narrowed.map { local -> VariablePat(narrowedName(local, c.definition.name) + "_" + Naming.snake(f.name)) }.getOrElse(AnyPat) })
+      given = fields.getOrElse(
+        c.definition.fields.map { f -> narrowed.map { local -> VariablePat(narrowedName(local, c.definition.name) + "_" + Naming.snake(f.name)) }.getOrElse(AnyPat) },
+      )
       ConstructorPat(tag(c), when (given) {
         [] -> None
         [one] -> Some(one)
@@ -57,7 +67,9 @@ module Constructors {
   @Lowering annotatedRecord(record: Expr, owner: Symbol): Expr = Annotated(record, recordType(owner))
 
   @Lowering private recordType(owner: Symbol): Typexpr = {
-    parameters = OcamlTypes.ocamlParameters(declarationOf(owner.name).map { Declarations.parameters(it) }.getOrElse([]))
+    parameters = OcamlTypes.ocamlParameters(
+      declarationOf(owner.name).map { Declarations.parameters(it) }.getOrElse([]),
+    )
     TypeApplication(OcamlTypes.typeReference(owner.name), parameters.map { TypeVar("_") })
   }
 

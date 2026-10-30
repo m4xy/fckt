@@ -19,13 +19,28 @@ letX(value: Expr, body: Expr): Expr = LetIn(false, [Binding(VariablePat("x"), []
   assertEquals("x - y - 1", expression(Infix("-", Infix("-", x, y), one), ""))
   assertEquals("x :: y :: []", expression(Infix("::", x, Infix("::", y, ListExpr([]))), ""))
   assertEquals("(x :: y) :: []", expression(Infix("::", Infix("::", x, y), ListExpr([])), ""))
-  assertEquals("x ^ \"a\" ^ y", expression(Infix("^", x, Infix("^", ConstantExpr(StringConstant("a")), y)), ""))
+  assertEquals(
+    "x ^ \"a\" ^ y",
+    expression(Infix("^", x, Infix("^", ConstantExpr(StringConstant("a")), y)), ""),
+  )
 }
 
 @Test argumentsAreAtomsOrFields() = {
-  assertEquals("f x (g y) (x + 1) r.a", expression(apply("f", [x, apply("g", [y]), plus(x, one), FieldAccess(Identifier("r"), "a")]), ""))
-  assertEquals("f (-1) (fun x -> x)", expression(apply("f", [ConstantExpr(IntConstant(-1)), Fun([VariablePat("x")], x)]), ""))
-  assertEquals("Some (Some x)", expression(Construction("Some", Some(Construction("Some", Some(x)))), ""))
+  assertEquals(
+    "f x (g y) (x + 1) r.a",
+    expression(
+      apply("f", [x, apply("g", [y]), plus(x, one), FieldAccess(Identifier("r"), "a")]),
+      "",
+    ),
+  )
+  assertEquals(
+    "f (-1) (fun x -> x)",
+    expression(apply("f", [ConstantExpr(IntConstant(-1)), Fun([VariablePat("x")], x)]), ""),
+  )
+  assertEquals(
+    "Some (Some x)",
+    expression(Construction("Some", Some(Construction("Some", Some(x)))), ""),
+  )
   assertEquals("(f x).a", expression(FieldAccess(apply("f", [x]), "a"), ""))
 }
 
@@ -34,30 +49,48 @@ letX(value: Expr, body: Expr): Expr = LetIn(false, [Binding(VariablePat("x"), []
   assertEquals("let x = 1 in\nx;\ny", expression(letX(one, Sequence(x, y)), ""))
   assertEquals("[(fun x -> x); y]", expression(ListExpr([Fun([VariablePat("x")], x), y]), ""))
   assertEquals("if x then (x;\n   y) else 1", expression(IfThenElse(x, Sequence(x, y), one), ""))
-  assertEquals("if x then 1 else if y then 1 else x", expression(IfThenElse(x, one, IfThenElse(y, one, x)), ""))
+  assertEquals(
+    "if x then 1 else if y then 1 else x",
+    expression(IfThenElse(x, one, IfThenElse(y, one, x)), ""),
+  )
 }
 
 @Test aMatchInACaseIsParenthesizedUnlessItsTheLast() = {
   inner = Match(y, [Case(AnyPat, None, one)])
   assertEquals(
     "match x with\n| 0 -> (match y with\n     | _ -> 1)\n| _ -> match y with\n    | _ -> 1",
-    expression(Match(x, [Case(ConstantPat(IntConstant(0)), None, inner), Case(AnyPat, None, inner)]), ""),
+    expression(
+      Match(x, [Case(ConstantPat(IntConstant(0)), None, inner), Case(AnyPat, None, inner)]),
+      "",
+    ),
   )
 }
 
 @Test patterns() = {
-  assertEquals("Some (x :: rest)", pat(ConstructorPat("Some", Some(ConsPat(VariablePat("x"), VariablePat("rest")))), 0))
+  assertEquals(
+    "Some (x :: rest)",
+    pat(ConstructorPat("Some", Some(ConsPat(VariablePat("x"), VariablePat("rest")))), 0),
+  )
   assertEquals("(x, _) as pair", pat(AliasPat(TuplePat([VariablePat("x"), AnyPat]), "pair"), 0))
-  assertEquals("Circle { r = r; _ }", pat(ConstructorPat("Circle", Some(RecordPat([FieldPat("r", VariablePat("r"))], true))), 0))
+  assertEquals(
+    "Circle { r = r; _ }",
+    pat(ConstructorPat("Circle", Some(RecordPat([FieldPat("r", VariablePat("r"))], true))), 0),
+  )
   assertEquals("A | B", pat(OrPat(ConstructorPat("A", None), ConstructorPat("B", None)), 0))
 }
 
 @Test types() = {
   int = TypeApplication("int", [])
   string = TypeApplication("string", [])
-  assertEquals("int list list", typexpr(TypeApplication("list", [TypeApplication("list", [int])]), 0))
+  assertEquals(
+    "int list list",
+    typexpr(TypeApplication("list", [TypeApplication("list", [int])]), 0),
+  )
   assertEquals("(int, string) result", typexpr(TypeApplication("result", [int, string]), 0))
-  assertEquals("(int -> int) -> int * string -> 'a", typexpr(Arrow(Arrow(int, int), Arrow(Product([int, string]), TypeVar("'a"))), 0))
+  assertEquals(
+    "(int -> int) -> int * string -> 'a",
+    typexpr(Arrow(Arrow(int, int), Arrow(Product([int, string]), TypeVar("'a"))), 0),
+  )
   assertEquals("(int * int) list", typexpr(TypeApplication("list", [Product([int, int])]), 0))
 }
 
@@ -70,18 +103,53 @@ letX(value: Expr, body: Expr): Expr = LetIn(false, [Binding(VariablePat("x"), []
 
 @Test items() = {
   shape = TypeItem([TypeDefinition("shape", [], VariantType([
-    ConstructorDeclaration("Circle", InlineRecord([FieldDeclaration("r", TypeApplication("float", []), false)])),
+    ConstructorDeclaration(
+      "Circle",
+      InlineRecord([FieldDeclaration("r", TypeApplication("float", []), false)]),
+    ),
     ConstructorDeclaration("Empty", Bare),
   ]))])
   assertEquals("type shape =\n  | Circle of { r : float }\n  | Empty", item(shape, ""))
-  twice = LetItem(true, [Binding(VariablePat("twice"), [TypedPat(VariablePat("n"), TypeApplication("int", []))], Some(TypeApplication("int", [])), plus(Identifier("n"), Identifier("n")))])
+  twice = LetItem(
+    true,
+    [
+      Binding(
+        VariablePat("twice"),
+        [TypedPat(VariablePat("n"), TypeApplication("int", []))],
+        Some(TypeApplication("int", [])),
+        plus(Identifier("n"), Identifier("n")),
+      ),
+    ],
+  )
   assertEquals("let rec twice (n : int) : int =\n  n + n", item(twice, ""))
   assertEquals(
     "type _ Effect.t +=\n  | Console_println : string -> unit Effect.t",
-    item(EffectItem([EffectOperation("Console_println", [TypeApplication("string", [])], TypeApplication("unit", []))]), ""),
+    item(
+      EffectItem(
+        [
+          EffectOperation(
+            "Console_println",
+            [TypeApplication("string", [])],
+            TypeApplication("unit", []),
+          ),
+        ],
+      ),
+      "",
+    ),
   )
   assertEquals(
     "module Io = struct\n  type t = int\n\n  let x =\n    1\nend",
-    item(ModuleItem("Io", Structure([TypeItem([TypeDefinition("t", [], AliasType(TypeApplication("int", [])))]), LetItem(false, [Binding(VariablePat("x"), [], None, one)])])), ""),
+    item(
+      ModuleItem(
+        "Io",
+        Structure(
+          [
+            TypeItem([TypeDefinition("t", [], AliasType(TypeApplication("int", [])))]),
+            LetItem(false, [Binding(VariablePat("x"), [], None, one)]),
+          ],
+        ),
+      ),
+      "",
+    ),
   )
 }

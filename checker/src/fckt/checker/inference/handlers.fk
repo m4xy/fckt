@@ -34,7 +34,15 @@ import fckt.parser.*
     // A method: path.reading { ... }, xs.fold(0) { ... }.
     Member(_, _, _) -> inferCall(at, handler, [blockArgument], [], expected, scope, context)
     Call(_, Member(memberAt, target, name), arguments, typeArguments) if startsLowerCase(name) ->
-      inferCall(at, Member(memberAt, target, name), arguments.map { written(it) } + [blockArgument], typeArguments, expected, scope, context)
+      inferCall(
+        at,
+        Member(memberAt, target, name),
+        arguments.map { written(it) } + [blockArgument],
+        typeArguments,
+        expected,
+        scope,
+        context,
+      )
     else -> {
       (callee, given, typeArguments) = when (handler) {
         Call(_, c, arguments, ts) if !makesHandler -> (Some(c), arguments.map { written(it) }, ts)
@@ -44,8 +52,26 @@ import fckt.parser.*
       lastNamed = callee.flatMap { c -> blockAsLastByName(c, given, scope, context) }
       when ((callee, lastNamed)) {
         (Some(c), Some(last)) ->
-          inferCall(at, c, given + [CallArgument(Some(last), blockArgument.value)], typeArguments, expected, scope, context)
-        else -> handled(at, handler, makesHandler, blockArgument, block, parameters, expected, scope, context)
+          inferCall(
+            at,
+            c,
+            given + [CallArgument(Some(last), blockArgument.value)],
+            typeArguments,
+            expected,
+            scope,
+            context,
+          )
+        else -> handled(
+          at,
+          handler,
+          makesHandler,
+          blockArgument,
+          block,
+          parameters,
+          expected,
+          scope,
+          context,
+        )
       }
     }
   }
@@ -83,7 +109,17 @@ private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLo
   asLast = when (handler) {
     Call(_, callee, arguments, typeArguments) if !makesHandler -> when (resolved(infer(callee, None, scope, context).t)) {
       FunctionOf(ps, _, _) if ps.size == arguments.size + 1 ->
-        Some(inferCall(at, callee, arguments.map { written(it) } + [blockArgument], typeArguments, expected, scope, context))
+        Some(
+          inferCall(
+            at,
+            callee,
+            arguments.map { written(it) } + [blockArgument],
+            typeArguments,
+            expected,
+            scope,
+            context,
+          ),
+        )
       else -> None
     }
     else -> None
@@ -99,7 +135,11 @@ private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLo
           n = arguments.size
           handled = handling(effect, arguments.take(n - 2), arguments.getOrNone(n - 2).getOrElse(Variable(fresh())),
             arguments.getOrNone(n - 1).getOrElse(Variable(fresh())), block, expected, scope, at, context)
-          Typed(handled.t, None, effectNamed(effect, context).map { e -> Handled(e, handlerTyped.core, handled.core) }.getOrElse(Pending("a handler of an unknown effect")))
+          Typed(
+            handled.t,
+            None,
+            effectNamed(effect, context).map { e -> Handled(e, handlerTyped.core, handled.core) }.getOrElse(Pending("a handler of an unknown effect")),
+          )
         }
       else -> abandon(Globals.problem(context, Positions.of(handler),
         "this isn't a handler: make one from a handled effect, as Console(println = ...), or use a module that follows one"))
@@ -151,7 +191,9 @@ effectNamed(name: String, context: Context): Option<Symbol> = context.environmen
   dottedUnbound(target, scope).flatMap { d -> effectSpecNamed(d, context) }.map { spec ->
     when (specValues(spec).find { it.name == name }) {
       Some(value) -> Operation(spec, value)
-      None -> abandon(Globals.problem(context, at, "${Symbols.simpleName(spec)} has no operation '$name'"))
+      None -> abandon(
+        Globals.problem(context, at, "${Symbols.simpleName(spec)} has no operation '$name'"),
+      )
     }
   }
 
@@ -175,7 +217,13 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
       mapping = scheme.variables.map { v -> (v, Variable(fresh())) }.toMap()
       (substitute(scheme.template, mapping), EffectLabel(operation.effect.name, types.parameters.map { v -> mapping.getOrDefault(v, Variable(v)) }))
     }
-    None -> abandon(Globals.problem(context, at, "'${operation.value.name}' is used before ${Symbols.simpleName(operation.effect)} is checked"))
+    None -> abandon(
+      Globals.problem(
+        context,
+        at,
+        "'${operation.value.name}' is used before ${Symbols.simpleName(operation.effect)} is checked",
+      ),
+    )
   }
 
 // println("hi"): does Console's println, so the code it's in does @Console.
@@ -184,12 +232,28 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
   name = operation.value.name
   when (t) {
     FunctionOf(parameterTypes, result, _) -> {
-      order = argumentOrder(arguments, operation.value.parameters.getOrElse([]).map { it.name }, at, "'$name'", context)
+      order = argumentOrder(
+        arguments,
+        operation.value.parameters.getOrElse([]).map { it.name },
+        at,
+        "'$name'",
+        context,
+      )
       cores = checkArguments(arguments, order, parameterTypes, scope, context)
       perform(Row(performed(operation, label, context), None), at)
-      Typed(result, None, Cores.inWrittenOrder(cores, order) { args -> Performed(operation.effect, name, args) })
+      Typed(
+        result,
+        None,
+        Cores.inWrittenOrder(cores, order) { args -> Performed(operation.effect, name, args) },
+      )
     }
-    else -> abandon(Globals.problem(context, at, "'$name' is a value of ${Symbols.simpleName(operation.effect)}, not a function; write it without ()"))
+    else -> abandon(
+      Globals.problem(
+        context,
+        at,
+        "'$name' is a value of ${Symbols.simpleName(operation.effect)}, not a function; write it without ()",
+      ),
+    )
   }
 }
 
@@ -208,7 +272,12 @@ failEffect: String = "fckt.effects.Fail"
 
 // An answer's effects: the handler's, but failing, where the operation says it may, is the
 // operation's caller's.
-@Abandoning private answeringIn(spec: Symbol, value: SpecValue, answers: Row, context: Context): Row =
+@Abandoning private answeringIn(
+  spec: Symbol,
+  value: SpecValue,
+  answers: Row,
+  context: Context,
+): Row =
   if (failsAtCall(spec, value, context)) Row([EffectLabel(failEffect, [])], answers.rest) else answers
 
 // An operation used as a value, as in xs.forEach(println): a function that does it when called.
@@ -248,7 +317,11 @@ failEffect: String = "fckt.effects.Fail"
       else -> None
     }
   }
-  Typed(Handler(spec.name, given + [answer, Variable(answersRest)]), None, HandlerMade(spec, answerCores))
+  Typed(
+    Handler(spec.name, given + [answer, Variable(answersRest)]),
+    None,
+    HandlerMade(spec, answerCores),
+  )
 }
 
 // That the argument answers the operation: a value, for a value; for a function, a function of its

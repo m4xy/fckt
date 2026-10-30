@@ -2,4 +2,8 @@ import fckt.checker.symbols.Symbol
 
 // A handled effect a program declares, with its type parameters, which its operations' types have
 // as TypeParameter, and its operations.
-type DeclaredEffect(effect: Symbol, typeParameters: List<String>, operations: List<DeclaredOperation>)
+type DeclaredEffect(
+  effect: Symbol,
+  typeParameters: List<String>,
+  operations: List<DeclaredOperation>,
+)

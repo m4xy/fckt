@@ -42,12 +42,22 @@ import fckt.checker.types.Unification.*
 
 @Test anOpenRowTakesWhatTheOtherHas() = assertEquals(["fckt.io.Console", "fckt.io.FileSystem"], Solutions.solving {
   rest = fresh()
-  assert(unifyRows(Row([EffectLabel("fckt.io.Console", [])], Some(rest)), rowOf(["fckt.io.Console", "fckt.io.FileSystem"], None)))
+  assert(
+    unifyRows(
+      Row([EffectLabel("fckt.io.Console", [])], Some(rest)),
+      rowOf(["fckt.io.Console", "fckt.io.FileSystem"], None),
+    ),
+  )
   effectNames(Row([EffectLabel("fckt.io.Console", [])], Some(rest)))
 })
 
 @Test aClosedRowTakesNoMore() = Solutions.solving {
-  assert(!unifyRows(rowOf(["fckt.io.Console"], None), rowOf(["fckt.io.Console", "fckt.io.FileSystem"], None)))
+  assert(
+    !unifyRows(
+      rowOf(["fckt.io.Console"], None),
+      rowOf(["fckt.io.Console", "fckt.io.FileSystem"], None),
+    ),
+  )
   assert(!unifyRows(rowOf(["fckt.io.Console"], None), rowOf(["fckt.io.FileSystem"], Some(fresh()))))
   assert(unifyRows(rowOf(["fckt.io.Console"], None), rowOf(["fckt.io.Console"], None)))
 }
@@ -61,16 +71,30 @@ import fckt.checker.types.Unification.*
 
 @Test aGenericEffectHasTheSameArgumentsInBoth() = assertEquals(int, Solutions.solving {
   v = Variable(fresh())
-  assert(unifyRows(Row([EffectLabel("Yielding", [int])], None), Row([EffectLabel("Yielding", [v])], None)))
-  assert(!unifyRows(Row([EffectLabel("Yielding", [int])], None), Row([EffectLabel("Yielding", [string])], None)))
+  assert(
+    unifyRows(
+      Row([EffectLabel("Yielding", [int])], None),
+      Row([EffectLabel("Yielding", [v])], None),
+    ),
+  )
+  assert(
+    !unifyRows(
+      Row([EffectLabel("Yielding", [int])], None),
+      Row([EffectLabel("Yielding", [string])], None),
+    ),
+  )
   resolvedFully(v)
 })
 
 @Test changingOneRegionIsntChangingAnother() = Solutions.solving {
   r = Variable(fresh())
   s = Variable(fresh())
-  assert(!unifyRows(Row([EffectLabel(mutating, [r])], None), Row([EffectLabel(mutating, [s])], None)))
-  assert(unifyRows(Row([EffectLabel(mutating, [r])], None), Row([EffectLabel(mutating, [r])], None)))
+  assert(
+    !unifyRows(Row([EffectLabel(mutating, [r])], None), Row([EffectLabel(mutating, [s])], None)),
+  )
+  assert(
+    unifyRows(Row([EffectLabel(mutating, [r])], None), Row([EffectLabel(mutating, [r])], None)),
+  )
   // A written @Mutating, with no region, is any.
   assert(unifyRows(Row([EffectLabel(mutating, [])], None), Row([EffectLabel(mutating, [s])], None)))
 }

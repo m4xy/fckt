@@ -30,13 +30,26 @@ module Symbols {
     specs = uniquely(declared.filter { isSpec(it) }) { s -> "spec '${simpleName(s)}' is declared twice" }
     types = typeTables(declared)
     functions = functionTable(declared)
-    SymbolTable(modules, types.records, types.caseTypes, types.aliases, types.annotationTypes, specs, functions, caseTable(types), declared, declared.any { it.name.contains("'") })
+    SymbolTable(
+      modules,
+      types.records,
+      types.caseTypes,
+      types.aliases,
+      types.annotationTypes,
+      specs,
+      functions,
+      caseTable(types),
+      declared,
+      declared.any { it.name.contains("'") },
+    )
   }
 
   // Every declaration in the workspace's files, and each inside the modules among them, by its full
   // name, in the order they're taken.
   declarations(workspace: Workspace): List<Symbol> =
-    filePrivate(ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file, workspace.borrowed) })
+    filePrivate(
+      ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file, workspace.borrowed) },
+    )
 
   // The symbols, with each private function or type at the top of a lower-case file whose name
   // another declaration has too given a name of its own, filePrivateName's: as in Kotlin, a private
@@ -200,12 +213,20 @@ module Symbols {
     cases = casesOf(owner)
     cases.forEach { c ->
       if (tables.records.containsKey((owner.path + [c.name]).joinToString("."))) {
-        abandon(Diagnostic(owner.file.source.path, c.at, "'${c.name}' is both a type and a variant"))
+        abandon(
+          Diagnostic(owner.file.source.path, c.at, "'${c.name}' is both a type and a variant"),
+        )
       } else Unit
     }
     cases.forEachIndexed { i, c ->
       if (cases.take(i).any { it.name == c.name }) {
-        abandon(Diagnostic(owner.file.source.path, c.at, "variant '${c.name}' is declared twice in ${owner.name}"))
+        abandon(
+          Diagnostic(
+            owner.file.source.path,
+            c.at,
+            "variant '${c.name}' is declared twice in ${owner.name}",
+          ),
+        )
       } else Unit
     }
   }
@@ -229,7 +250,12 @@ module Symbols {
     if (!table.containsKey(symbol.name)) table.put(symbol.name, symbol)
     else when (symbol.declaration.definition) {
       FunctionDefinition(_, Some(receiver), _, _, _, _, _) ->
-        abandon(at(symbol, "'${symbol.declaration.name}' is declared twice for ${Written.typeRef(receiver)}"))
+        abandon(
+          at(
+            symbol,
+            "'${symbol.declaration.name}' is declared twice for ${Written.typeRef(receiver)}",
+          ),
+        )
       else -> abandon(at(symbol, "'${simpleName(symbol)}' is declared twice"))
     }
   }

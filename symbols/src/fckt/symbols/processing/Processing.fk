@@ -28,7 +28,9 @@ module Processing {
         Error(problems) -> fail(problems.map { problemText(it) }.joinToString("\n"))
       }
     }
-    else -> fail("a processor is given the symbols' file and the folder to write to, not ${args.joinToString(" ")}")
+    else -> fail(
+      "a processor is given the symbols' file and the folder to write to, not ${args.joinToString(" ")}",
+    )
   }
 
   // A problem as a compiler's error is written: where it is, then what it is.

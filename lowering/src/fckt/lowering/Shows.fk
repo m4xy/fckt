@@ -22,7 +22,11 @@ module Shows {
     TupleOf(elements) -> {
       names = elements.mapIndexed { i, _ -> "x$i" }
       shown = elements.mapIndexed { i, e -> Application(show(e), [Identifier("x$i")]) }
-      parts = [ConstantExpr(StringConstant("(")), *between(shown, ConstantExpr(StringConstant(", "))), ConstantExpr(StringConstant(")"))]
+      parts = [
+        ConstantExpr(StringConstant("(")),
+        *between(shown, ConstantExpr(StringConstant(", "))),
+        ConstantExpr(StringConstant(")")),
+      ]
       Fun([TuplePat(names.map { VariablePat(it) })], joined(parts))
     }
     FunctionOf(_, _, _) -> Fun([AnyPat], ConstantExpr(StringConstant("<fun>")))
@@ -34,7 +38,10 @@ module Shows {
     Abstract(name, arguments) -> show(Named(name, arguments, None))
     // OCaml's own type: its name, as it can't be seen into.
     Named(name, _, _) if declarationOf(name).map { it is DeclaredExternal }.getOrElse(false) ->
-      Fun([AnyPat], ConstantExpr(StringConstant("<" + name.split(".").lastOrNone().getOrElse(name) + ">")))
+      Fun(
+        [AnyPat],
+        ConstantExpr(StringConstant("<" + name.split(".").lastOrNone().getOrElse(name) + ">")),
+      )
     Named(name, arguments, _) -> {
       shown = OcamlTypes.ocamlArguments(name, arguments).map { show(it) }
       when (toStringOf(name)) {

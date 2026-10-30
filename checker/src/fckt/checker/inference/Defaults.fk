@@ -36,7 +36,9 @@ module Defaults {
           when (parameters.find { other -> refs.contains(other.name) }) {
             Some(other) -> abandon(Diagnostic(s.file.source.path, Positions.of(value),
               "a default can't use the other parameters, as '${other.name}' here: it's worked out on its own"))
-            None -> [made(s, s.name, p.name, p.at, p.parameterType, value, Signatures.typeParametersOf(s))]
+            None -> [
+              made(s, s.name, p.name, p.at, p.parameterType, value, Signatures.typeParametersOf(s)),
+            ]
           }
         }
       }
@@ -78,7 +80,17 @@ module Defaults {
             when (own) {
               Some(name) -> abandon(Diagnostic(s.file.source.path, Positions.of(value),
                 "a default is worked out on its own, so it can't be a $name, which each module says what it is"))
-              None -> [made(s, "${s.name}$${v.name}", p.name, p.at, p.parameterType, value, v.typeParameters)]
+              None -> [
+                made(
+                  s,
+                  "${s.name}$${v.name}",
+                  p.name,
+                  p.at,
+                  p.parameterType,
+                  value,
+                  v.typeParameters,
+                ),
+              ]
             }
           }
         }
@@ -93,7 +105,12 @@ module Defaults {
     full = nameOf(ownerName, name)
     definition = FunctionDefinition(typeParameters, None, Some([]), valueType, value, None, false)
     visibility = if (owner.declaration.visibility == Private) Private else Public
-    Symbol(full, owner.path, Declaration(at, full.split(".").lastOrNone().getOrElse(full), definition, visibility), owner.file)
+    Symbol(
+      full,
+      owner.path,
+      Declaration(at, full.split(".").lastOrNone().getOrElse(full), definition, visibility),
+      owner.file,
+    )
   }
 
   // The names of the types a type is written with.

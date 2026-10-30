@@ -11,5 +11,11 @@ type Pattern {
   // [], [a, b], [head, *tail]
   ListPattern(at: Position, elements: List<Pattern>, rest: Option<Pattern>),
   // Some(x), Shape.Circle, None, or with check, is Circle
-  CasePattern(at: Position, name: String, arguments: Option<List<Pattern>>, check: Boolean, qualifier: Option<String>),
+  CasePattern(
+    at: Position,
+    name: String,
+    arguments: Option<List<Pattern>>,
+    check: Boolean,
+    qualifier: Option<String>,
+  ),
 }

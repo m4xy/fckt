@@ -15,13 +15,17 @@ module Visibility {
     else if (symbol.declaration.visibility == Internal && symbol.file.source.project != place.file.source.project)
       Some("'$own' is internal to its project, ${projectName(symbol.file.source.project)}")
     else if (symbol.declaration.visibility == Private && !isInside(place, symbol.path))
-      Some("'$own' is private to ${if (symbol.path.isEmpty()) "this file" else symbol.path.joinToString(".")}")
+      Some(
+        "'$own' is private to ${if (symbol.path.isEmpty()) "this file" else symbol.path.joinToString(".")}",
+      )
     else if (symbol.declaration.visibility == Private && !Symbols.isModule(symbol) && isInPackage(symbol, table) && symbol.file.source.path != place.file.source.path)
       Some("'$own' is private to ${symbol.file.source.path.getOrElse("the program's file")}")
     else when (enclosingFunctor(symbol.path, table)) {
       Some(functor) if !isInside(place, Symbols.pathOf(functor.name) + [Symbols.simpleName(functor)]) -> {
         name = Symbols.simpleName(functor)
-        Some("'$own' is in the functor $name, which makes modules: use it through one, made with module Name = $name(...)")
+        Some(
+          "'$own' is in the functor $name, which makes modules: use it through one, made with module Name = $name(...)",
+        )
       }
       else -> hiddenModuleAround(symbol.path, 1, place, table)
     }

@@ -36,7 +36,13 @@ import fckt.parser.*
     t = specOwnTypes(spec).find { it.name == typeName }
     wantedParameters = t.map { it.typeParameters.size }.getOrElse(0)
     when (typeNamed("${declared.name}.$typeName", table)) {
-      None -> abandon(Diagnostic(declared.file.source.path, declared.declaration.at, "$own doesn't define type $typeName, which its spec $specName needs"))
+      None -> abandon(
+        Diagnostic(
+          declared.file.source.path,
+          declared.declaration.at,
+          "$own doesn't define type $typeName, which its spec $specName needs",
+        ),
+      )
       Some(d) -> {
         if (d.declaration.visibility == Private) abandon(Diagnostic(d.file.source.path, d.declaration.at, "$typeName is in $own's spec $specName, so it can't be private")) else Unit
         n = Conversion.typeParametersOf(d).size
@@ -49,7 +55,13 @@ import fckt.parser.*
   }
   specValues(spec).forEach { v ->
     when (environment.functions.get("${declared.name}.${v.name}")) {
-      None -> abandon(Diagnostic(declared.file.source.path, declared.declaration.at, "$own doesn't define '${v.name}', which its spec $specName needs"))
+      None -> abandon(
+        Diagnostic(
+          declared.file.source.path,
+          declared.declaration.at,
+          "$own doesn't define '${v.name}', which its spec $specName needs",
+        ),
+      )
       Some(f) ->
         if (f.declaration.visibility == Private) abandon(Diagnostic(f.file.source.path, f.declaration.at, "'${v.name}' is in $own's spec $specName, so it can't be private"))
         else Unit
@@ -92,7 +104,12 @@ typeNamed(full: String, table: SymbolTable): Option<Symbol> =
   named = wanted.variables.zip(v.typeParameters)
   open = wanted.variables.drop(named.size).map { variable -> (variable, Variable(fresh())) }
   rigid = (named.map { variable, name -> (variable, TypeParameter(name)) } + open).toMap()
-  inside = withModuleTypes(substitute(wanted.template, rigid), owner, moduleContext(f, definitions), definitions)
+  inside = withModuleTypes(
+    substitute(wanted.template, rigid),
+    owner,
+    moduleContext(f, definitions),
+    definitions,
+  )
   actual = instantiate(scheme)
   shownActual = TypeText.shown(actual)
   if (!unify(actual, inside)) {
@@ -124,7 +141,10 @@ typeNamed(full: String, table: SymbolTable): Option<Symbol> =
   // Callers outside see the spec's view: with what the spec says it does, or, where the spec says
   // nothing, what this one does. Generic, too, in the module's own type parameters.
   moduleVariables = Conversion.moduleTypeParameters(f.path, definitions).map { p -> (p, fresh()) }
-  outsideContext = TypeContext(Place(f.file, f.path), moduleVariables.map { p, variable -> (p, Variable(variable)) }.toMap())
+  outsideContext = TypeContext(
+    Place(f.file, f.path),
+    moduleVariables.map { p, variable -> (p, Variable(variable)) }.toMap(),
+  )
   shownType = ownTypesReplaced(wanted.template) { name, arguments -> Conversion.outsideType(owner, name, arguments, outsideContext, definitions) }
   variables = wanted.variables + moduleVariables.map { _, variable -> variable }
   outside = when ((declared.isEmpty(), shownType)) {
@@ -140,14 +160,27 @@ typeNamed(full: String, table: SymbolTable): Option<Symbol> =
 // How a function's module sees types: from where it's written, its module's type parameters as new
 // unknowns.
 @Solving private moduleContext(f: Symbol, definitions: Definitions): TypeContext =
-  TypeContext(Place(f.file, f.path), Conversion.moduleTypeParameters(f.path, definitions).map { p -> (p, Variable(fresh())) }.toMap())
+  TypeContext(
+    Place(f.file, f.path),
+    Conversion.moduleTypeParameters(f.path, definitions).map { p -> (p, Variable(fresh())) }.toMap(),
+  )
 
 // A spec's type, its type parameters by their names, its own types as written: (A) -> T<A>.
 @Solving private specShown(wanted: Scheme, named: List<(TypeVariable, String)>): String =
-  TypeText.shown(substitute(wanted.template, named.map { variable, name -> (variable, TypeParameter(name)) }.toMap()))
+  TypeText.shown(
+    substitute(
+      wanted.template,
+      named.map { variable, name -> (variable, TypeParameter(name)) }.toMap(),
+    ),
+  )
 
 // A type a spec says, with each of its own types the module's of that name.
-@Solving @Abandoning withModuleTypes(t: Type, owner: String, context: TypeContext, definitions: Definitions): Type =
+@Solving @Abandoning withModuleTypes(
+  t: Type,
+  owner: String,
+  context: TypeContext,
+  definitions: Definitions,
+): Type =
   ownTypesReplaced(t) { name, arguments ->
     when (typeNamed("$owner.$name", definitions.namespace.table)) {
       Some(d) -> Conversion.declared(d, arguments, context, definitions)
@@ -185,7 +218,11 @@ declaredSpecs(environment: Environment): List<DeclaredSpec> =
         else -> []
       }
       schemes = environment.specTypes.get(spec.name).map { it.values }.getOrElse(emptyMap())
-      DeclaredSpec(spec, types, specValues(spec).mapNotNull { v -> schemes.get(v.name).map { s -> (v.name, s.template) } })
+      DeclaredSpec(
+        spec,
+        types,
+        specValues(spec).mapNotNull { v -> schemes.get(v.name).map { s -> (v.name, s.template) } },
+      )
     }
 
 // Each handled effect with operations, with their types worked out, as lowering declares them: each
@@ -213,7 +250,13 @@ declaredSpecs(environment: Environment): List<DeclaredSpec> =
     typeOf = (t: TypeRef) -> Conversion.typeOf(t, typeContext, environment.definitions)
     fails = value.parameters.isSome() &&
       Annotations.effectsOf(value.annotations, Annotations.placeOf(spec), value.at, environment.definitions.namespace).contains(failEffect)
-    DeclaredOperation(value.name, value.typeParameters.filter { !it.startsWith("@") }, value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } }, typeOf(value.valueType), fails)
+    DeclaredOperation(
+      value.name,
+      value.typeParameters.filter { !it.startsWith("@") },
+      value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } },
+      typeOf(value.valueType),
+      fails,
+    )
   }
   DeclaredEffect(spec, typeParameters, operations)
 }
@@ -275,7 +318,13 @@ defaultHandler(name: String, environment: Environment): Option<Symbol> = {
   flattened(done).labels.forEach { label ->
     if (needsHandler(label.name, environment) && defaultHandler(label.name, environment).isNone()) {
       effect = label.name.split(".").lastOrNone().getOrElse(label.name)
-      abandon(Diagnostic(main.file.source.path, main.declaration.at, "main does @$effect, but nothing handles it: run it in a handler, like $effect(...) { ... }"))
+      abandon(
+        Diagnostic(
+          main.file.source.path,
+          main.declaration.at,
+          "main does @$effect, but nothing handles it: run it in a handler, like $effect(...) { ... }",
+        ),
+      )
     } else Unit
   }
 
@@ -375,9 +424,16 @@ buildsOn(spec: Symbol, other: Symbol, namespace: Namespace, seen: List<String>):
               open = wanted.variables.drop(named.size).map { variable -> (variable, Variable(fresh())) }
               rigid = (named.map { variable, name -> (variable, TypeParameter(name)) } + open).toMap()
               context = TypeContext(Place(app.file, app.path), emptyMap())
-              inside = withModuleTypes(substitute(wanted.template, rigid), argument.name, context, definitions)
+              inside = withModuleTypes(
+                substitute(wanted.template, rigid),
+                argument.name,
+                context,
+                definitions,
+              )
               // As it's seen from where the module's made: from outside its own module.
-              actual = instantiate(known.outside.get(f.name).orElse { known.schemes.get(f.name) }.getOrElse(Scheme([], unit)))
+              actual = instantiate(
+                known.outside.get(f.name).orElse { known.schemes.get(f.name) }.getOrElse(Scheme([], unit)),
+              )
               shownActual = TypeText.shown(actual)
               if (!unify(actual, inside)) {
                 abandon(Diagnostic(app.file.source.path, app.declaration.at,

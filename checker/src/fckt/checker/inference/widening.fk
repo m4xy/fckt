@@ -24,11 +24,19 @@ import fckt.parser.*
 
 @Solving private widenedIn(t: Type, positive: Boolean, open: @Solving (Row) -> Row, table: SymbolTable): Type = when (t) {
   FunctionOf(parameters, result, effects) ->
-    FunctionOf(parameters.map { widenedIn(it, !positive, open, table) }, widenedIn(result, positive, open, table), if (positive) open(effects) else effects)
+    FunctionOf(
+      parameters.map { widenedIn(it, !positive, open, table) },
+      widenedIn(result, positive, open, table),
+      if (positive) open(effects) else effects,
+    )
   Effects(row) -> if (positive) Effects(open(row)) else t
   Named(_, _, Some(_)) -> t
   Named(name, arguments, None) ->
-    Named(name, arguments.mapIndexed { i, a -> if (isCovariant(name, i, table)) widenedIn(a, positive, open, table) else a }, None)
+    Named(
+      name,
+      arguments.mapIndexed { i, a -> if (isCovariant(name, i, table)) widenedIn(a, positive, open, table) else a },
+      None,
+    )
   TupleOf(elements) -> TupleOf(elements.map { widenedIn(it, positive, open, table) })
   _ -> t
 }

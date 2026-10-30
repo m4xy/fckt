@@ -5,4 +5,9 @@ import fckt.checker.symbols.SymbolTable
 // path, None for the program's own; and what modules are beyond what they declare, which is known
 // once functors' parameters and applications are; and where to look for what a name that means
 // nothing here may mean elsewhere.
-type Namespace(table: SymbolTable, imports: Map<Option<String>, FileImports>, modules: Modules, hints: Hints)
+type Namespace(
+  table: SymbolTable,
+  imports: Map<Option<String>, FileImports>,
+  modules: Modules,
+  hints: Hints,
+)

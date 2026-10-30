@@ -90,13 +90,31 @@ module Expansion {
         SpecDefinition(_, _, _, Some(_), _) -> copiedEffect(target, outline, seen + [s.name])
         _ -> target.declaration
       }
-      notEffect = Diagnostic(s.file.source.path, at, "'$name' isn't an effect, so there's nothing to copy")
+      notEffect = Diagnostic(
+        s.file.source.path,
+        at,
+        "'$name' isn't an effect, so there's nothing to copy",
+      )
       if (original.annotations.none { it.name == "Effect" }) abandon(notEffect) else Unit
       when (original.definition) {
         SpecDefinition(types, values, typeParameters, _, parents) ->
-          Declaration(d.at, d.name, SpecDefinition(types, values, typeParameters, None, parents), d.visibility, d.opaque, d.annotations)
+          Declaration(
+            d.at,
+            d.name,
+            SpecDefinition(types, values, typeParameters, None, parents),
+            d.visibility,
+            d.opaque,
+            d.annotations,
+          )
         RecordDefinition(_, _, _, _, _) ->
-          Declaration(d.at, d.name, RecordDefinition([], [], false, true, None), d.visibility, d.opaque, d.annotations)
+          Declaration(
+            d.at,
+            d.name,
+            RecordDefinition([], [], false, true, None),
+            d.visibility,
+            d.opaque,
+            d.annotations,
+          )
         _ -> abandon(notEffect)
       }
     }
@@ -125,7 +143,13 @@ module Expansion {
               _ -> []
             }
             if (arguments.isNotEmpty() || parentTypeParameters.isNotEmpty()) {
-              abandon(Diagnostic(s.file.source.path, at, "a spec can't build on one with type arguments yet"))
+              abandon(
+                Diagnostic(
+                  s.file.source.path,
+                  at,
+                  "a spec can't build on one with type arguments yet",
+                ),
+              )
             } else Unit
             if (p.declaration.annotations.any { it.name == "Effect" } || d.annotations.any { it.name == "Effect" }) {
               abandon(Diagnostic(s.file.source.path, at, "an effect can't build on another yet"))
@@ -140,7 +164,14 @@ module Expansion {
       }
       own = values.map { it.name }
       allValues = inherited.flatMap { specValues(it) }.filter { v -> !own.contains(v.name) }.distinctBy { it.name } + values
-      Declaration(d.at, d.name, SpecDefinition(allTypes, allValues, typeParameters, copyOf, parents), d.visibility, d.opaque, d.annotations)
+      Declaration(
+        d.at,
+        d.name,
+        SpecDefinition(allTypes, allValues, typeParameters, copyOf, parents),
+        d.visibility,
+        d.opaque,
+        d.annotations,
+      )
     }
     else -> s.declaration
   }
@@ -187,7 +218,14 @@ module Expansion {
           _ -> inner
         }
       }
-      Declaration(d.at, d.name, ModuleDefinition(all, spec, parameters, application, typeParameters), d.visibility, d.opaque, d.annotations)
+      Declaration(
+        d.at,
+        d.name,
+        ModuleDefinition(all, spec, parameters, application, typeParameters),
+        d.visibility,
+        d.opaque,
+        d.annotations,
+      )
     }
     else -> s.declaration
   }
@@ -249,10 +287,19 @@ module Expansion {
 
   // The workspace with each declaration replaced by what f makes of it, given its full name; a
   // module's own declarations replaced first.
-  @Abandoning private mapDeclarations(workspace: Workspace, f: @Abandoning (Symbol) -> Declaration): Workspace =
+  @Abandoning private mapDeclarations(
+    workspace: Workspace,
+    f: @Abandoning (Symbol) -> Declaration,
+  ): Workspace =
     Workspace(workspace.files.map { file ->
       prefix = if (file.package.isEmpty()) "" else file.package.joinToString(".") + "."
-      LoadedFile(file.source, file.package, file.role, file.imports, mapIn(file.declarations, prefix, file, f))
+      LoadedFile(
+        file.source,
+        file.package,
+        file.role,
+        file.imports,
+        mapIn(file.declarations, prefix, file, f),
+      )
     }, workspace.apart, workspace.borrowed)
 
   @Abandoning private mapIn(declarations: List<Declaration>, prefix: String, file: LoadedFile, f: @Abandoning (Symbol) -> Declaration): List<Declaration> =
@@ -260,7 +307,20 @@ module Expansion {
       name = prefix + Symbols.ownName(d)
       inner = when (d.definition) {
         ModuleDefinition(inside, spec, parameters, application, typeParameters) ->
-          Declaration(d.at, d.name, ModuleDefinition(mapIn(inside, "$name.", file, f), spec, parameters, application, typeParameters), d.visibility, d.opaque, d.annotations)
+          Declaration(
+            d.at,
+            d.name,
+            ModuleDefinition(
+              mapIn(inside, "$name.", file, f),
+              spec,
+              parameters,
+              application,
+              typeParameters,
+            ),
+            d.visibility,
+            d.opaque,
+            d.annotations,
+          )
         _ -> d
       }
       f(Symbol(name, Symbols.pathOf(name), inner, file))

@@ -16,7 +16,13 @@ module OcamlTypes {
     // A module given as a value of a spec: (module Format with type t = point), its own types as its
     // type arguments say.
     ModuleValue(spec, arguments, _) ->
-      TypeApplication("(module " + packageType(spec, arguments.map { Printer.typexpr(typexprNaming(it, variables), 0) }) + ")", [])
+      TypeApplication(
+        "(module " + packageType(
+          spec,
+          arguments.map { Printer.typexpr(typexprNaming(it, variables), 0) },
+        ) + ")",
+        [],
+      )
     Named(name, arguments, _) -> named(name, arguments, variables)
     Abstract(name, arguments) -> named(name, arguments, variables)
     TupleOf(parts) -> Product(parts.map { typexprNaming(it, variables) })

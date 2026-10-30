@@ -34,7 +34,13 @@ module Groups {
     components.map { component ->
       recursive = component.size > 1 || component.any { f -> usedBy(f).any { it.name == f.name } }
       component.find { f -> !Signatures.isFunction(f) && recursive }.forEach { f ->
-        abandon(Diagnostic(f.file.source.path, f.declaration.at, "value '${Symbols.simpleName(f)}' is defined in terms of itself"))
+        abandon(
+          Diagnostic(
+            f.file.source.path,
+            f.declaration.at,
+            "value '${Symbols.simpleName(f)}' is defined in terms of itself",
+          ),
+        )
       }
       when (component) {
         [first, *_] if component.map { it.path }.distinct().size > 1 -> abandon(Diagnostic(first.file.source.path, first.declaration.at,
@@ -66,7 +72,11 @@ module Groups {
     if (name.startsWith(".")) {
       method = name.drop(1)
       found = Globals.extensionsNamed(method, context) + defaultsUsed(method, context)
-      NameUses(found, found.filter { f -> Signatures.isExtension(f) && isOnlyPackageMates(f, context) }, [])
+      NameUses(
+        found,
+        found.filter { f -> Signatures.isExtension(f) && isOnlyPackageMates(f, context) },
+        [],
+      )
     } else if (name.startsWith("operator ")) {
       found = Globals.extensionsNamed(name.removePrefix("operator "), context).filter { Signatures.isOperator(it) }
       NameUses(found, found.filter { isOnlyPackageMates(it, context) }, [])
@@ -104,7 +114,14 @@ module Groups {
   private declaredOrMember(name: String, context: Context): Option<Symbol> = Lookups.found(Globals.find(name, context, Skipping)).orElse {
     parts = name.split(".")
     if (parts.size < 2) None
-    else Lookups.found(Lookups.moduleNamed(parts.dropLast(1).joinToString("."), context.place, context.environment.definitions.namespace, Skipping))
+    else Lookups.found(
+      Lookups.moduleNamed(
+        parts.dropLast(1).joinToString("."),
+        context.place,
+        context.environment.definitions.namespace,
+        Skipping,
+      ),
+    )
       .flatMap { m -> context.environment.functions.get("${Symbols.moduleName(m)}.${parts.lastOrNone().getOrElse(name)}") }
       .filter { Globals.visible(it, context) }
   }

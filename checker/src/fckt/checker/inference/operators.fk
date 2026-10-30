@@ -28,7 +28,13 @@ import fckt.parser.*
   method = References.rangeMethods.lookup(operator).getOrElse("rangeTo")
   if (Globals.extensionsNamed(method, context).any { s -> Signatures.isOperator(s) && fitsReceiver(s, from, context) })
     operatorCall(operator, at, left, fromTyped, method, [right], scope, context)
-  else abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(from)}: ${noOperator(operator, method, from, context)}"))
+  else abandon(
+    Globals.problem(
+      context,
+      at,
+      "'$operator' can't be applied to ${TypeText.shown(from)}: ${noOperator(operator, method, from, context)}",
+    ),
+  )
 }
 
 @Inferring private logical(primitive: Primitive, left: Expression, right: Expression, scope: Scope, context: Context): Typed = {
@@ -100,10 +106,20 @@ import fckt.parser.*
       // An Int beside a Float is one.
       operands = [(leftTyped.core, x), (rightTyped.core, y)].map { core, t -> if (isFloat && isNamed(t, "Int")) Operated(Promoted, [core]) else core }
       if (!isArithmetic) Typed(boolean, None, Operated(comparison(operator), operands))
-      else Typed(if (isFloat) float else int, None, Operated(arithmeticOn(operator, isFloat), operands))
+      else Typed(
+        if (isFloat) float else int,
+        None,
+        Operated(arithmeticOn(operator, isFloat), operands),
+      )
     } else if (isArithmetic) {
       why = method.filter { ownsOperators(x) }.map { m -> ": ${noOperator(operator, m, x, context)}" }.getOrElse("")
-      abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(x)} and ${TypeText.shown(y)}$why"))
+      abandon(
+        Globals.problem(
+          context,
+          at,
+          "'$operator' can't be applied to ${TypeText.shown(x)} and ${TypeText.shown(y)}$why",
+        ),
+      )
     } else {
       expect(y, x, Positions.of(right), context)
       Typed(boolean, None, Operated(comparison(operator), [leftTyped.core, rightTyped.core]))
@@ -146,12 +162,28 @@ ownsOperators(t: Type): Boolean = when (t) {
   notOperator = () -> abandon(Globals.problem(context, at, "'$operator' can't be applied to ${TypeText.shown(t)}: its $method isn't an operator; mark it operator to use '$operator' for it"))
   when (extensionFor(at, method, t, context)) {
     Some(s) if Signatures.isOperator(s) ->
-      callExtension(at, at, operand, operandTyped.core, s, t, arguments.map { CallArgument(None, WrittenValue(it)) }, [], scope, context)
+      callExtension(
+        at,
+        at,
+        operand,
+        operandTyped.core,
+        s,
+        t,
+        arguments.map { CallArgument(None, WrittenValue(it)) },
+        [],
+        scope,
+        context,
+      )
     else -> notOperator()
   }
 }
 
 // Why the operator can't be applied to a type whose operators are its own, as its method.
-@Solving @Abandoning noOperator(operator: String, method: String, t: Type, context: Context): String =
+@Solving @Abandoning noOperator(
+  operator: String,
+  method: String,
+  t: Type,
+  context: Context,
+): String =
   if (Globals.extensionsNamed(method, context).any { fitsReceiver(it, t, context) }) "its $method isn't an operator; mark it operator to use '$operator' for it"
   else "there's no operator $method${methodImportHint(method, t, context)}"

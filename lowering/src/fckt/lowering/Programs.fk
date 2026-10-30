@@ -48,7 +48,17 @@ module Programs {
     )
     main = program.functions.find { f -> isOwn(f.function) && f.function.path.isEmpty() && Naming.ownName(f.function) == "main" }.map { f ->
       takesArguments = Signatures.parametersOf(f.function).map { it.isNotEmpty() }.getOrElse(false)
-      LetItem(false, [Binding(ConstantPat(UnitConstant), [], None, HandledEffects.runningMain(f.function, takesArguments, program.defaultHandlers))])
+      LetItem(
+        false,
+        [
+          Binding(
+            ConstantPat(UnitConstant),
+            [],
+            None,
+            HandledEffects.runningMain(f.function, takesArguments, program.defaultHandlers),
+          ),
+        ],
+      )
     }
     [VerbatimItem(Helpers.items)] + Structures.items([], own) + main.toList()
   }

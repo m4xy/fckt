@@ -2,9 +2,20 @@
 type Definition {
   // type Name<T>(fields), type Name private(...), an annotation type, or an external type, which is
   // OCaml's.
-  RecordDefinition(typeParameters: List<String>, fields: List<Field>, privateConstructor: Boolean, annotation: Boolean, external: Option<String>),
+  RecordDefinition(
+    typeParameters: List<String>,
+    fields: List<Field>,
+    privateConstructor: Boolean,
+    annotation: Boolean,
+    external: Option<String>,
+  ),
   // type Name<T> { Case(fields), Other.Case, *Other }
-  CasesDefinition(typeParameters: List<String>, cases: List<CaseDefinition>, caseRefs: List<CaseRef>, includes: List<TypeRef>),
+  CasesDefinition(
+    typeParameters: List<String>,
+    cases: List<CaseDefinition>,
+    caseRefs: List<CaseRef>,
+    includes: List<TypeRef>,
+  ),
   // type Name<T> = Other<T>
   AliasDefinition(typeParameters: List<String>, target: TypeRef),
   // name<T>(parameters): R = body, a value without parameters, or an extension, Receiver.name(...),
@@ -27,5 +38,11 @@ type Definition {
     typeParameters: List<String>,
   ),
   // spec Name<T> : Parents { types and values }, or an effect, or a copy of one, effect A = B
-  SpecDefinition(types: List<SpecType>, values: List<SpecValue>, typeParameters: List<String>, copyOf: Option<TypeRef>, parents: List<TypeRef>),
+  SpecDefinition(
+    types: List<SpecType>,
+    values: List<SpecValue>,
+    typeParameters: List<String>,
+    copyOf: Option<TypeRef>,
+    parents: List<TypeRef>,
+  ),
 }

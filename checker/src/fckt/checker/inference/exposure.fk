@@ -21,20 +21,32 @@ import fckt.parser.*
   types = table.declarations.filter { d -> Symbols.isRecord(d) && !Symbols.isAnnotation(d) } + table.declarations.filter { Symbols.isCaseType(it) }
   types.forEach { d ->
     parameters = Conversion.typeParametersOf(d)
-    context = TypeContext(Place(d.file, d.path), parameters.map { p -> (p, TypeParameter(p)) }.toMap())
+    context = TypeContext(
+      Place(d.file, d.path),
+      parameters.map { p -> (p, TypeParameter(p)) }.toMap(),
+    )
     fields = if (Symbols.isRecord(d)) recordFieldsOf(d)
       else definitions.cases.getOrDefault(d.name, []).flatMap { c -> Cases.writtenFields(c).map { t -> Field(d.declaration.at, "", t) } }
     fields.forEach { field -> checkShows(d, Conversion.typeOf(field.fieldType, context, definitions), table) }
   }
   (types + table.declarations.filter { Symbols.isAlias(it) }).forEach { d ->
     if (d.declaration.opaque && d.path.isEmpty()) {
-      abandon(Diagnostic(d.file.source.path, d.declaration.at, "an opaque type is opaque outside its module, so it needs to be in one"))
+      abandon(
+        Diagnostic(
+          d.file.source.path,
+          d.declaration.at,
+          "an opaque type is opaque outside its module, so it needs to be in one",
+        ),
+      )
     } else Unit
   }
   fixed = definitions.namespace.modules.fixedTypes.toList().map { _, a -> a.name }
   table.declarations.filter { a -> Symbols.isAlias(a) && !fixed.contains(a.name) }.forEach { a ->
     parameters = Conversion.typeParametersOf(a) + Conversion.moduleTypeParameters(a.path, definitions)
-    context = TypeContext(Place(a.file, a.path), parameters.map { p -> (p, TypeParameter(p)) }.toMap())
+    context = TypeContext(
+      Place(a.file, a.path),
+      parameters.map { p -> (p, TypeParameter(p)) }.toMap(),
+    )
     when (a.declaration.definition) {
       AliasDefinition(_, target) -> checkShows(a, Conversion.typeOf(target, context, definitions), table)
       _ -> Unit

@@ -60,7 +60,11 @@ import fckt.parser.*
 // That an opaque type can't be built or looked into outside its module.
 opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
   owner = s.path.joinToString(".")
-  Globals.problem(context, at, "${Symbols.simpleName(s)} is opaque outside $owner: only $owner can build one or look into it")
+  Globals.problem(
+    context,
+    at,
+    "${Symbols.simpleName(s)} is opaque outside $owner: only $owner can build one or look into it",
+  )
 }
 
 @Inferring private recordShape(r: Symbol, at: Position, building: Boolean, context: Context): ConstructorShape = {
@@ -70,12 +74,23 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
     RecordDefinition(typeParameters, fields, privateConstructor, _, external) -> {
       if (external.isSome()) abandon(Globals.problem(context, at, "$own is an OCaml type, made by its functions, not by $own(...)")) else Unit
       if (building && privateConstructor && !Visibility.isInside(context.place, r.path)) {
-        abandon(Globals.problem(context, at, "$own's constructor is private to ${r.path.joinToString(".")}"))
+        abandon(
+          Globals.problem(
+            context,
+            at,
+            "$own's constructor is private to ${r.path.joinToString(".")}",
+          ),
+        )
       } else Unit
       arguments = typeParameters.map { Variable(fresh()) }
       definitions = context.environment.definitions
       region = Conversion.newRegion(r, definitions)
-      ConstructorShape(RecordConstructor(r), fields.map { it.name }, Conversion.recordFields(r, arguments, region, definitions, Some(context.place)), Named(r.name, arguments, region))
+      ConstructorShape(
+        RecordConstructor(r),
+        fields.map { it.name },
+        Conversion.recordFields(r, arguments, region, definitions, Some(context.place)),
+        Named(r.name, arguments, region),
+      )
     }
     else -> abandon(Globals.problem(context, at, "$own isn't a record"))
   }
@@ -119,7 +134,9 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
       Some(t) -> when (allCases.getOrDefault(t.name, []).filter { it.definition.name == name }) {
         [c] -> Some(c)
         [] -> abandon(Globals.problem(context, at, "${Symbols.simpleName(t)} has no case '$name'"))
-        else -> abandon(Globals.problem(context, at, "${Symbols.simpleName(t)} has several cases named '$name'"))
+        else -> abandon(
+          Globals.problem(context, at, "${Symbols.simpleName(t)} has several cases named '$name'"),
+        )
       }
       None -> when (hintedType.map { h -> allCases.getOrDefault(h.name, []).filter { it.definition.name == name } }.getOrElse([])) {
         [c] -> Some(c)
@@ -138,7 +155,9 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
         region = Conversion.newRegion(home, definitions)
         fieldTypes = Conversion.casesWithFields(home, arguments, region, definitions, Some(context.place)).find { info, _ -> Cases.same(info, c) }.map { _, types -> types }.getOrElse([])
         Some(ConstructorShape(
-          CaseConstructor(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition)),
+          CaseConstructor(
+            CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition),
+          ),
           c.definition.fields.map { it.name },
           fieldTypes,
           Named(home.name, arguments, region),
@@ -187,7 +206,9 @@ private importedCase(name: String, context: Context): Option<CaseSymbol> =
   error = Variable(fresh())
   when (name) {
     "Ok" -> Some(ConstructorShape(BuiltinCase("Ok"), ["value"], [value], resultOf(value, error)))
-    "Error" -> Some(ConstructorShape(BuiltinCase("Error"), ["error"], [error], resultOf(value, error)))
+    "Error" -> Some(
+      ConstructorShape(BuiltinCase("Error"), ["error"], [error], resultOf(value, error)),
+    )
     else -> None
   }
 }
@@ -205,7 +226,9 @@ private importedCase(name: String, context: Context): Option<CaseSymbol> =
       }
       if (isValue) None
       else if (Lookups.found(Lookups.caseType(qualifier, context.place, namespace, Skipping)).isSome() ||
-        Lookups.found(Lookups.moduleNamed(qualifier, context.place, namespace, Skipping)).isSome()) Some(qualifier)
+        Lookups.found(Lookups.moduleNamed(qualifier, context.place, namespace, Skipping)).isSome()) Some(
+          qualifier,
+        )
       else None
     }
   }
@@ -225,7 +248,11 @@ dottedUnbound(e: Expression, scope: Scope): Option<String> = References.dotted(e
       else -> false
     }
     if (isValue) None
-    else refusing(Lookups.moduleNamed(name, context.place, context.environment.definitions.namespace, Refusing), Positions.of(e), context)
+    else refusing(
+      Lookups.moduleNamed(name, context.place, context.environment.definitions.namespace, Refusing),
+      Positions.of(e),
+      context,
+    )
   }
 }
 

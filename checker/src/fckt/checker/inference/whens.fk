@@ -70,5 +70,9 @@ private conditions(branches: List<(Option<Core>, Core)>): Core = when (branches)
   }
   guard = branch.guard.map { check(it, boolean, inner, context) }
   (body, bodyCore) = branchBody(branch.body, wanted, inner, context)
-  CheckedBranch(body, if (branch.patterns.isEmpty()) [Coverage.anything] else matches, MatchBranch(matchers, guard, bodyCore))
+  CheckedBranch(
+    body,
+    if (branch.patterns.isEmpty()) [Coverage.anything] else matches,
+    MatchBranch(matchers, guard, bodyCore),
+  )
 }

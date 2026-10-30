@@ -75,13 +75,21 @@ private literalOf(core: Core): Literal = when (core) {
       fields = recordFieldsOf(r)
       if (elements.size != fields.size) abandon(Globals.problem(context, at, "${r.name} has ${fields.size} fields, not ${elements.size}")) else Unit
       (after, matches, matchers) = checkEach(elements, Conversion.recordFields(r, arguments, region, context.environment.definitions, Some(context.place)), scope, context)
-      CheckedPattern(after, product(matches).map { Matches(Some(RecordShape(r.name)), it) }, CaseMatcher(RecordConstructor(r), Some(matchers), None))
+      CheckedPattern(
+        after,
+        product(matches).map { Matches(Some(RecordShape(r.name)), it) },
+        CaseMatcher(RecordConstructor(r), Some(matchers), None),
+      )
     }
     None -> {
       parts = elements.map { Variable(fresh()) }
       expect(TupleOf(parts), t, at, context)
       (after, matches, matchers) = checkEach(elements, parts, scope, context)
-      CheckedPattern(after, product(matches).map { Matches(Some(TupleShape(elements.size)), it) }, TupleMatcher(matchers))
+      CheckedPattern(
+        after,
+        product(matches).map { Matches(Some(TupleShape(elements.size)), it) },
+        TupleMatcher(matchers),
+      )
     }
   }
 }
@@ -181,11 +189,25 @@ private literalOf(core: Core): Literal = when (core) {
 
 // The scope after is Variant on a local: the local, narrowed to the case, so what's matched can read
 // its fields.
-@Solving private narrowedTo(shape: ConstructorShape, isCheck: Boolean, scope: Scope, subject: Option<Expression>, context: Context): Scope =
+@Solving private narrowedTo(
+  shape: ConstructorShape,
+  isCheck: Boolean,
+  scope: Scope,
+  subject: Option<Expression>,
+  context: Context,
+): Scope =
   when ((isCheck, shape.constructor, subject)) {
     (true, CaseConstructor(c), Some(Name(_, local))) if shape.fieldTypes.isNotEmpty() -> when (Scopes.lookup(scope, local)) {
       Some(existing) -> Scopes.bind(scope, local, Local(existing.t, existing.region,
-        Some(Narrowing(c.definition.name, c.owner.name, c.definition.fields, shape.fieldNames.zip(shape.fieldTypes).toMap(), isShared(c.owner.name, context))),
+        Some(
+          Narrowing(
+            c.definition.name,
+            c.owner.name,
+            c.definition.fields,
+            shape.fieldNames.zip(shape.fieldTypes).toMap(),
+            isShared(c.owner.name, context),
+          ),
+        ),
         existing.hides))
       None -> scope
     }
@@ -202,9 +224,19 @@ isShared(name: String, context: Context): Boolean = context.environment.definiti
 @Inferring private narrow(at: Position, name: String, target: Symbol, subjectType: Type, scope: Scope, subject: Option<Expression>, context: Context): CheckedPattern = {
   subjectCaseType = when (subjectType) {
     Named(n, _, _) if caseTypeNamed(n, context).isSome() -> subjectType
-    _ -> abandon(Globals.problem(context, at, "'is $name' needs the subject to be a type with cases, not ${TypeText.shown(subjectType)}"))
+    _ -> abandon(
+      Globals.problem(
+        context,
+        at,
+        "'is $name' needs the subject to be a type with cases, not ${TypeText.shown(subjectType)}",
+      ),
+    )
   }
-  narrowed = Named(target.name, Cases.typeParametersOf(target).map { Variable(fresh()) }, Conversion.newRegion(target, context.environment.definitions))
+  narrowed = Named(
+    target.name,
+    Cases.typeParametersOf(target).map { Variable(fresh()) },
+    Conversion.newRegion(target, context.environment.definitions),
+  )
   allCases = context.environment.definitions.cases
   if (!isCaseSubset(narrowed, subjectCaseType, context)) {
     subjectName = when (subjectCaseType) {
@@ -223,7 +255,10 @@ isShared(name: String, context: Context): Boolean = context.environment.definiti
     else -> scope
   }
   CheckedPattern(narrowedScope, allCases.getOrDefault(target.name, []).map { c ->
-    Matches(Some(CaseShape(c.origin.name, c.definition.name)), c.definition.fields.map { Coverage.anything })
+    Matches(
+      Some(CaseShape(c.origin.name, c.definition.name)),
+      c.definition.fields.map { Coverage.anything },
+    )
   })
 }
 

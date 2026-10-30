@@ -154,7 +154,11 @@ operationCore(operation: Operation): Core = when (operation.value.parameters) {
   None -> Performed(operation.effect, operation.value.name, [])
   Some(ps) -> {
     names = ps.mapIndexed { i, _ -> "fk_given${i + 1}" }
-    FunctionValue(names.map { NameMatcher(it) }, Performed(operation.effect, operation.value.name, names.map { LocalRead(it, false) }), false)
+    FunctionValue(
+      names.map { NameMatcher(it) },
+      Performed(operation.effect, operation.value.name, names.map { LocalRead(it, false) }),
+      false,
+    )
   }
 }
 
@@ -183,7 +187,11 @@ private joined(parts: List<Core>): Core = when (parts) {
     if (!isNamed(after, "Int") && !isNamed(after, "Float")) {
       why = if (ownsOperators(after)) ": ${noOperator(operator, References.unaryMinus, after, context)}" else ""
       abandon(Globals.problem(context, at, "can't negate a ${TypeText.shown(after)}$why"))
-    } else Typed(after, None, Operated(if (isNamed(after, "Float")) FloatNegate else IntNegate, [typed.core]))
+    } else Typed(
+      after,
+      None,
+      Operated(if (isNamed(after, "Float")) FloatNegate else IntNegate, [typed.core]),
+    )
   }
 }
 
@@ -206,7 +214,13 @@ private joined(parts: List<Core>): Core = when (parts) {
     when (branch) {
       Variable(_) -> Unit
       _ if isNamed(branch, "Unit") -> Unit
-      else -> abandon(Globals.problem(context, at, "an 'if' without 'else' gives Unit, but this branch gives ${TypeText.shown(branch)}: add an 'else' to give a value"))
+      else -> abandon(
+        Globals.problem(
+          context,
+          at,
+          "an 'if' without 'else' gives Unit, but this branch gives ${TypeText.shown(branch)}: add an 'else' to give a value",
+        ),
+      )
     }
     assign(then, thenTyped, unit, context)
     otherwiseTyped = infer(otherwise, Some(unit), scope, context)
@@ -219,14 +233,24 @@ private joined(parts: List<Core>): Core = when (parts) {
     None -> {
       thenTyped = infer(then, None, scope, context)
       otherwiseTyped = infer(otherwise, None, scope, context)
-      Typed(join([(then, thenTyped), (otherwise, otherwiseTyped)], at, context), None, Conditional(conditionCore, thenTyped.core, otherwiseTyped.core))
+      Typed(
+        join([(then, thenTyped), (otherwise, otherwiseTyped)], at, context),
+        None,
+        Conditional(conditionCore, thenTyped.core, otherwiseTyped.core),
+      )
     }
   }
 }
 
 // What a name means: a local; a function or value; a handled effect's operation, as a function
 // that does it; a constructor; one of the language's own; or a module, as a handler or a value.
-@Inferring private inferName(at: Position, name: String, expected: Option<Type>, scope: Scope, context: Context): Typed =
+@Inferring private inferName(
+  at: Position,
+  name: String,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed =
   when (Scopes.lookup(scope, name)) {
     Some(local) ->
       if (local.hides) abandon(Globals.problem(context, at, "this block's 'it' hides the 'it' outside it: name this block's parameter, { x -> ... }"))
@@ -247,7 +271,13 @@ private joined(parts: List<Core>): Core = when (parts) {
               Some(m) -> moduleAsValue(m, at, context)
               None ->
                 if (name == "it") abandon(Globals.problem(context, at, "there's no 'it' here: only a block given as a function of one parameter has one, as in xs.filter { it > 1 }"))
-                else abandon(Globals.problem(context, at, "unknown name '$name'${ImportHints.forName(name, context.environment.definitions.namespace)}"))
+                else abandon(
+                  Globals.problem(
+                    context,
+                    at,
+                    "unknown name '$name'${ImportHints.forName(name, context.environment.definitions.namespace)}",
+                  ),
+                )
             }
           }
         }
@@ -261,7 +291,11 @@ constructorValue(shape: ConstructorShape): Core =
   if (shape.fieldTypes.isEmpty()) Constructed(shape.constructor, [], shape.result)
   else {
     names = shape.fieldTypes.mapIndexed { i, _ -> "field$i" }
-    FunctionValue(names.map { NameMatcher(it) }, Constructed(shape.constructor, names.map { LocalRead(it, false) }, shape.result), false)
+    FunctionValue(
+      names.map { NameMatcher(it) },
+      Constructed(shape.constructor, names.map { LocalRead(it, false) }, shape.result),
+      false,
+    )
   }
 
 // The language's own functions: Unit, which is both the type and its one value; and assert and
@@ -284,7 +318,13 @@ constructorValue(shape: ConstructorShape): Core =
       None -> abandon(Globals.problem(context, nameAt,
         if (Lookups.found(Globals.find(name, context, Skipping)).isSome()) "'$name' is a top-level value, which can't be changed" else "unknown name '$name'"))
       Some(local) -> when (local.region) {
-        None -> abandon(Globals.problem(context, nameAt, "'$name' can't be changed; declare it with var $name = ..."))
+        None -> abandon(
+          Globals.problem(
+            context,
+            nameAt,
+            "'$name' can't be changed; declare it with var $name = ...",
+          ),
+        )
         Some(r) -> (r, infer(target, None, scope, context).t, (v: Core) -> VarWritten(name, v))
       }
     }
@@ -302,7 +342,13 @@ constructorValue(shape: ConstructorShape): Core =
         None -> abandon(noField(memberAt, receiverExpression, name, receiver, context))
       }
       if (!fields.any { f -> f.name == name && f.variable }) {
-        abandon(Globals.problem(context, memberAt, "$owner's $name can't be changed; declare it with var $name: ..."))
+        abandon(
+          Globals.problem(
+            context,
+            memberAt,
+            "$owner's $name can't be changed; declare it with var $name: ...",
+          ),
+        )
       } else Unit
       fieldType = infer(target, None, scope, context).t
       writing = (v: Core) -> when ((field, receiverExpression)) {

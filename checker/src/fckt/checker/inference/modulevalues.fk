@@ -19,7 +19,11 @@ import fckt.parser.*
     Some(spec) if Annotations.isEffect(spec, context.environment.definitions.namespace) -> Typed(moduleHandler(s, spec, at, context), None, ModuleHandler(s, spec))
     spec -> {
       t = moduleValue(s, at, context)
-      Typed(t, None, spec.map { sp -> ModulePacked(s, sp) }.getOrElse(Pending("a module, as a value")))
+      Typed(
+        t,
+        None,
+        spec.map { sp -> ModulePacked(s, sp) }.getOrElse(Pending("a module, as a value")),
+      )
     }
   }
   PackageModule(name) -> abandon(Globals.problem(context, at,
@@ -44,7 +48,13 @@ isEffectModule(m: ModuleSymbol, context: Context): Boolean = when (m) {
     abandon(Globals.problem(context, at, "$own is a functor's module, which can't be a value yet"))
   } else Unit
   when (context.environment.moduleSpecs.get(m.name)) {
-    None -> abandon(Globals.problem(context, at, "$own is a module, which is a value only of a spec it follows: module $own : Spec { ... }"))
+    None -> abandon(
+      Globals.problem(
+        context,
+        at,
+        "$own is a module, which is a value only of a spec it follows: module $own : Spec { ... }",
+      ),
+    )
     Some(spec) -> {
       table = context.environment.definitions.namespace.table
       ownTypes = specTypeNames(spec).map { t ->
@@ -54,7 +64,13 @@ isEffectModule(m: ModuleSymbol, context: Context): Boolean = when (m) {
           None -> abandon(Globals.problem(context, at, "$own doesn't say what its $t is"))
         }
       }
-      t = Conversion.moduleType(spec, at, ownTypes, Globals.typeContext(context), context.environment.definitions)
+      t = Conversion.moduleType(
+        spec,
+        at,
+        ownTypes,
+        Globals.typeContext(context),
+        context.environment.definitions,
+      )
       specValues(spec).forEach { value ->
         context.environment.functions.get("${m.name}.${value.name}").forEach { f ->
           done = when (resolved(Globals.typeOf(f, at, context))) {
@@ -122,6 +138,10 @@ specTypeNames(spec: Symbol): List<String> = when (spec.declaration.definition) {
   encapsulates = "fckt.lang.Encapsulates"
   Annotations.effectsOf(value.annotations, place, value.at, namespace).isEmpty() &&
     Annotations.reached(spec.declaration.annotations, place, spec.declaration.at, namespace).any { r ->
-      r.declaration.name == encapsulates || Annotations.isMarked(r.declaration, encapsulates, namespace)
+      r.declaration.name == encapsulates || Annotations.isMarked(
+        r.declaration,
+        encapsulates,
+        namespace,
+      )
     }
 }

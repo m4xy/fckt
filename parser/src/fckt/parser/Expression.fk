@@ -25,7 +25,13 @@ type Expression {
   // value |> function
   Pipe(at: Position, value: Expression, function: Expression),
   // if (condition) then else otherwise; without an else, otherwise is Unit
-  If(at: Position, condition: Expression, then: Expression, otherwise: Expression, hasElse: Boolean),
+  If(
+    at: Position,
+    condition: Expression,
+    then: Expression,
+    otherwise: Expression,
+    hasElse: Boolean,
+  ),
   When(at: Position, subject: Option<Expression>, branches: List<Branch>),
   // { statements; result }; one that ends with name = value, which may change a var, has that
   // last among its statements, and Unit for its result

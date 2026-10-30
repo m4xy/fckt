@@ -83,7 +83,10 @@ private differs(pair: (Type, Type)): Boolean = {
 }
 
 // Whether the case is the one the symbol names.
-isCase(info: CaseInfo, c: CaseSymbol): Boolean = info.origin.name == c.owner.name && info.definition.name == c.definition.name
+isCase(
+  info: CaseInfo,
+  c: CaseSymbol,
+): Boolean = info.origin.name == c.owner.name && info.definition.name == c.definition.name
 
 // The type with cases of that full name, if it is one.
 caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environment.definitions.namespace.table.caseTypes.get(name)
@@ -180,7 +183,13 @@ caseTypeNamed(name: String, context: Context): Option<Symbol> = context.environm
     Some(t) -> t
     None -> {
       shown = needed.distinctBy { "${it.origin.name}.${it.definition.name}" }.map { "${it.origin.name}.${it.definition.name}" }.joinToString(", ")
-      abandon(Globals.problem(context, at, "no type has all of $shown; declare one that does, or annotate the type"))
+      abandon(
+        Globals.problem(
+          context,
+          at,
+          "no type has all of $shown; declare one that does, or annotate the type",
+        ),
+      )
     }
   }
 }

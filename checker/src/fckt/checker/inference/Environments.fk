@@ -63,7 +63,11 @@ module Environments {
     Handler(n, arguments) -> Handler(n, arguments.map { withOwnTypesOutside(it, owner, context, definitions) })
     TupleOf(elements) -> TupleOf(elements.map { withOwnTypesOutside(it, owner, context, definitions) })
     FunctionOf(parameters, result, effects) ->
-      FunctionOf(parameters.map { withOwnTypesOutside(it, owner, context, definitions) }, withOwnTypesOutside(result, owner, context, definitions), effects)
+      FunctionOf(
+        parameters.map { withOwnTypesOutside(it, owner, context, definitions) },
+        withOwnTypesOutside(result, owner, context, definitions),
+        effects,
+      )
     other -> other
   }
 
@@ -80,7 +84,21 @@ module Environments {
   @Solving @Abandoning specTypesOf(spec: Symbol, definitions: Definitions): SpecTypes = when (spec.declaration.definition) {
     SpecDefinition(types, values, typeParameters, _, _) -> {
       place = Place(spec.file, spec.path)
-      context = Context(Environment(definitions, emptyMap(), [], emptyMap(), emptyMap(), emptyMap(), emptyMap(), emptyMap(), Known(emptyMap(), emptyMap(), emptyMap(), emptyMap())), place, emptyMap())
+      context = Context(
+        Environment(
+          definitions,
+          emptyMap(),
+          [],
+          emptyMap(),
+          emptyMap(),
+          emptyMap(),
+          emptyMap(),
+          emptyMap(),
+          Known(emptyMap(), emptyMap(), emptyMap(), emptyMap()),
+        ),
+        place,
+        emptyMap(),
+      )
       checkDistinct(types.map { t -> (t.name, t.at) }, context)
       checkDistinct(values.map { v -> (v.name, v.at) }, context)
       types.find { t -> Types.builtins.containsKey(t.name) }.forEach { t ->
@@ -106,8 +124,19 @@ module Environments {
           Some(ps) -> {
             checkDistinct(ps.map { p -> (p.name, p.at) }, context)
             // A function type among its parameters' does what the spec's function does.
-            withRow = TypeContext(typeContext.place, typeContext.typeParameters, None, Some(row), [], typeContext.specTypes)
-            FunctionOf(ps.map { p -> p.parameterType.map { Conversion.typeOf(it, withRow, definitions) }.getOrElse(Variable(fresh())) }, result, row)
+            withRow = TypeContext(
+              typeContext.place,
+              typeContext.typeParameters,
+              None,
+              Some(row),
+              [],
+              typeContext.specTypes,
+            )
+            FunctionOf(
+              ps.map { p -> p.parameterType.map { Conversion.typeOf(it, withRow, definitions) }.getOrElse(Variable(fresh())) },
+              result,
+              row,
+            )
           }
           None -> result
         }

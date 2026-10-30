@@ -38,7 +38,10 @@ module Processes {
     private external close(output: InputHandle): Int =
       "(fun c -> match Unix.close_process_in c with Unix.WEXITED n -> n | Unix.WSIGNALED n | Unix.WSTOPPED n -> 128 + n) output"
     private external getenv(name: String): Option<String> = "Sys.getenv_opt name"
-    private external system(command: String, args: List<String>): Int = "(fun c a -> Sys.command (Filename.quote_command c a)) command args"
+    private external system(
+      command: String,
+      args: List<String>,
+    ): Int = "(fun c a -> Sys.command (Filename.quote_command c a)) command args"
     private external putenv(name: String, value: String): Unit = "Unix.putenv name value"
     private external executableName(u: Unit): String = "(fun _ -> Sys.executable_name) u"
     private external stop(code: Int): Nothing = "exit code"

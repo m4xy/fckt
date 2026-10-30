@@ -3,6 +3,11 @@
 import uk.m4xy.kiln.fckt.Fckt
 import uk.m4xy.fktests.kiln.*
 
-project = Project(name = "lowering", group = "fckt", version = "0.1.0", dependencies = [projectAt("../checker")])
+project = Project(
+  name = "lowering",
+  group = "fckt",
+  version = "0.1.0",
+  dependencies = [projectAt("../checker")],
+)
 
 plugins = [Fckt(), FkTests()]

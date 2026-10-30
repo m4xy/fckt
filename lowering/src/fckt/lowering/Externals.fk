@@ -31,7 +31,10 @@ module Externals {
       if (pieces.drop(1) == parameters.map { it.name }) Identifier(pieces.firstOrNone().getOrElse("()"))
       else {
         names = parameters.mapIndexed { i, _ -> "x$i" }
-        Fun(if (names.isEmpty()) [ConstantPat(UnitConstant)] else names.map { VariablePat(it) }, applied(function, names.map { Identifier(it) }))
+        Fun(
+          if (names.isEmpty()) [ConstantPat(UnitConstant)] else names.map { VariablePat(it) },
+          applied(function, names.map { Identifier(it) }),
+        )
       }
     }
   }

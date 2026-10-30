@@ -37,7 +37,11 @@ import fckt.parser.*
     (true, Some(FunctionOf(wanted, result, _))) if written.isEmpty() && wanted.size == 1 -> {
       // A block given one parameter calls it it.
       t = wanted.getOrNone(0).getOrElse(Variable(fresh()))
-      inner = Scopes.bind(Scopes.inside(scope), "it", Local(t, None, None, Scopes.lookup(scope, "it").isSome()))
+      inner = Scopes.bind(
+        Scopes.inside(scope),
+        "it",
+        Local(t, None, None, Scopes.lookup(scope, "it").isSome()),
+      )
       (core, drops) = doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
       Typed(FunctionOf([t], result, row), None, FunctionValue([NameMatcher("it")], core, drops))
     }
@@ -62,7 +66,11 @@ import fckt.parser.*
     else -> ([], Variable(fresh()))
   }
   (core, drops) = doingIn(row, context) { checkLambdaBody(body, result, scope, context) }
-  Typed(FunctionOf(parameters, result, row), None, FunctionValue(parameters.map { AnyMatcher }, core, drops))
+  Typed(
+    FunctionOf(parameters, result, row),
+    None,
+    FunctionValue(parameters.map { AnyMatcher }, core, drops),
+  )
 }
 
 // Several parameters where one is expected take apart a tuple, as pairs.map((k, v) -> ...) does.
@@ -84,7 +92,11 @@ import fckt.parser.*
     Scopes.bind(s, p.name, Local(part))
   }
   (core, drops) = doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
-  Typed(FunctionOf([tuple], result, row), None, FunctionValue([TupleMatcher(written.map { matcherOf(it) })], core, drops))
+  Typed(
+    FunctionOf([tuple], result, row),
+    None,
+    FunctionValue([TupleMatcher(written.map { matcherOf(it) })], core, drops),
+  )
 }
 
 // Each parameter of the type written for it, or else the one expected, or else unknown.
@@ -112,7 +124,11 @@ import fckt.parser.*
   }
   result = hintedResult.getOrElse(Variable(fresh()))
   (core, drops) = doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
-  Typed(FunctionOf(types, result, row), None, FunctionValue(written.map { matcherOf(it) }, core, drops))
+  Typed(
+    FunctionOf(types, result, row),
+    None,
+    FunctionValue(written.map { matcherOf(it) }, core, drops),
+  )
 }
 
 // A lambda's parameter, as a pattern: its name, or _, which binds nothing.
@@ -120,7 +136,17 @@ private matcherOf(p: Parameter): Matcher = if (p.name == "_") AnyMatcher else Na
 
 // A parameter's written type, where a function type without effects does what the lambda does.
 @Solving @Abandoning parameterType(t: TypeRef, row: Row, context: Context): Type =
-  Conversion.typeOf(t, TypeContext(context.place, context.typeParameters, None, Some(row), valueParameters = context.valueParameters), context.environment.definitions)
+  Conversion.typeOf(
+    t,
+    TypeContext(
+      context.place,
+      context.typeParameters,
+      None,
+      Some(row),
+      valueParameters = context.valueParameters,
+    ),
+    context.environment.definitions,
+  )
 
 // What block gives, checked as code that does the row.
 @Solving @Abandoning doingIn<A>(row: Row, context: Context, block: @Doing () -> A): A = Doings.doing(row, context.place.file.source.path, block)

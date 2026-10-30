@@ -102,7 +102,13 @@ module WrittenTypes {
       // A functor's body is read again in each module it makes, where its modules are those given.
       made = namespace.modules.applications.toList().filter { _, application -> application.functor.name == full }.map { name, _ -> name }
       ([full] + made).flatMap { reading ->
-        inDeclarations(declarations, Place(place.file, reading.split(".")), moduleTypeParameters + typeParameters, namespace, borrowed)
+        inDeclarations(
+          declarations,
+          Place(place.file, reading.split(".")),
+          moduleTypeParameters + typeParameters,
+          namespace,
+          borrowed,
+        )
       }
     }
     SpecDefinition(_, values, typeParameters, _, _) -> {

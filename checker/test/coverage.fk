@@ -57,6 +57,9 @@ missed(patterns: List<Matches>, t: Sample): List<String> = missing(patterns, t, 
 @Test checksEachPartOfATuple() = {
   pair = Pair(Flag, Flag)
   tuple = (a: Boolean, b: Boolean) -> shape(TupleShape(2), [flag(a), flag(b)])
-  assertEquals(["(false, false)"], missed([tuple(true, true), tuple(true, false), tuple(false, true)], pair))
+  assertEquals(
+    ["(false, false)"],
+    missed([tuple(true, true), tuple(true, false), tuple(false, true)], pair),
+  )
   assertEquals(["(false, _)"], missed([tuple(true, true), tuple(true, false)], pair))
 }

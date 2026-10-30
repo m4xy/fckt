@@ -13,7 +13,14 @@ import fckt.parser.*
 // module as a value, a field, an extension property, or a case's name; and target.name(...), a
 // method call.
 
-@Inferring inferMember(at: Position, target: Expression, name: String, expected: Option<Type>, scope: Scope, context: Context): Typed =
+@Inferring inferMember(
+  at: Position,
+  target: Expression,
+  name: String,
+  expected: Option<Type>,
+  scope: Scope,
+  context: Context,
+): Typed =
   when (moduleMember(at, target, name, scope, context)) {
     Some(global) -> Typed(Globals.typeOf(global, at, context), None, if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global))
     None -> when (qualifiedCase(target, scope, context)) {
@@ -66,7 +73,15 @@ import fckt.parser.*
 }
 
 // What target.name is where it's not a field: an extension property, or a case's name.
-@Inferring private propertyOf(at: Position, target: Expression, targetCore: Core, name: String, receiver: Type, scope: Scope, context: Context): Typed =
+@Inferring private propertyOf(
+  at: Position,
+  target: Expression,
+  targetCore: Core,
+  name: String,
+  receiver: Type,
+  scope: Scope,
+  context: Context,
+): Typed =
   when (extensionFor(at, name, receiver, context)) {
     Some(extension) ->
       if (!Signatures.isProperty(extension)) abandon(Globals.problem(context, at, "'$name' is a method; call it with ()"))
@@ -84,7 +99,14 @@ import fckt.parser.*
       when (named) {
         Some(caseType) if context.environment.definitions.cases.getOrDefault(caseType.name, []).all { it.definition.fields.isEmpty() } -> {
           bareCases(caseType, at, context)
-          Typed(string, None, CaseName(targetCore, context.environment.definitions.cases.getOrDefault(caseType.name, []).map { c -> CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition) }))
+          Typed(
+            string,
+            None,
+            CaseName(
+              targetCore,
+              context.environment.definitions.cases.getOrDefault(caseType.name, []).map { c -> CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition) },
+            ),
+          )
         }
         else -> when (receiver) {
           Variable(_) -> abandon(Globals.problem(context, at, "can't tell what '$name' is: the receiver's type isn't known here; annotate it"))
@@ -111,7 +133,11 @@ fieldType(field: FieldReference): Type = when (field) {
       if (context.environment.definitions.cases.getOrDefault(caseType.name, []).any { it.definition.name == name }) None
       else {
         bareCases(caseType, at, context)
-        Some(listOf(Named(caseType.name, Cases.typeParametersOf(caseType).map { Variable(fresh()) }, None)))
+        Some(
+          listOf(
+            Named(caseType.name, Cases.typeParametersOf(caseType).map { Variable(fresh()) }, None),
+          ),
+        )
       }
   }
 
@@ -123,7 +149,15 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
   }
   when (Lookups.found(Lookups.caseType(qualifier, context.place, context.environment.definitions.namespace, Skipping))) {
     Some(caseType) -> ListMade(context.environment.definitions.cases.getOrDefault(caseType.name, []).map { c ->
-      OneItem(Constructed(CaseConstructor(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition)), [], element))
+      OneItem(
+        Constructed(
+          CaseConstructor(
+            CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition),
+          ),
+          [],
+          element,
+        ),
+      )
     })
     None -> Pending("a type's values")
   }
@@ -169,7 +203,13 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
             hasExtension: Option<Symbol> = extensionFor(at, name, receiver, context)
             if (hasExtension.isSome()) None else abandon(opaque(record, at, context))
           } else {
-            types = Conversion.recordFields(record, arguments, region, context.environment.definitions, Some(context.place))
+            types = Conversion.recordFields(
+              record,
+              arguments,
+              region,
+              context.environment.definitions,
+              Some(context.place),
+            )
             index = recordFieldsOf(record).indexOfFirst { it.name == name }
             types.getOrNone(index).map { t -> RecordField(record, t) }
           }
@@ -229,14 +269,36 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
   when (fieldOf(memberAt, target, name, receiver, scope, context)) {
     Some(ModuleMember(spec, value, _)) -> when (value.parameters) {
       Some(parameters) -> {
-        given = withDefaults(at, arguments, parameters.map { p -> (p.name, p.default.isSome()) }, "${spec.name}$${value.name}", true, emptyMap())
+        given = withDefaults(
+          at,
+          arguments,
+          parameters.map { p -> (p.name, p.default.isSome()) },
+          "${spec.name}$${value.name}",
+          true,
+          emptyMap(),
+        )
         order = argumentOrder(given, parameters.map { it.name }, at, "'${value.name}'", context)
-        CalledField(order.mapNotNull { i -> given.getOrNone(i).map { a -> CallArgument(None, a.value) } })
+        CalledField(
+          order.mapNotNull { i -> given.getOrNone(i).map { a -> CallArgument(None, a.value) } },
+        )
       }
       None -> CalledField(arguments)
     }
     Some(_) -> CalledField(arguments)
-    None -> CalledMethod(methodOf(at, memberAt, target, targetTyped.core, name, receiver, arguments, typeArguments, scope, context))
+    None -> CalledMethod(
+      methodOf(
+        at,
+        memberAt,
+        target,
+        targetTyped.core,
+        name,
+        receiver,
+        arguments,
+        typeArguments,
+        scope,
+        context,
+      ),
+    )
   }
 }
 
@@ -270,10 +332,27 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
         Some(s) -> callExtension(at, memberAt, target, targetCore, s, receiver, arguments, typeArguments, scope, context)
         None -> when (builtinMethod(name, receiver, arguments, at, context)) {
           Some(t) -> {
-            given = checkArguments(arguments, arguments.mapIndexed { i, _ -> i }, [string], scope, context)
+            given = checkArguments(
+              arguments,
+              arguments.mapIndexed { i, _ -> i },
+              [string],
+              scope,
+              context,
+            )
             Typed(t, None, builtinCore(name, targetCore, receiver, given))
           }
-          None -> calledFirst(at, memberAt, target, targetCore, name, receiver, arguments, typeArguments, scope, context)
+          None -> calledFirst(
+            at,
+            memberAt,
+            target,
+            targetCore,
+            name,
+            receiver,
+            arguments,
+            typeArguments,
+            scope,
+            context,
+          )
         }
       }
     }
@@ -282,7 +361,12 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
 
 // One of the language's own methods, as core: toString() shows any value, and a list's
 // joinToString(separator) shows each item.
-@Solving private builtinCore(name: String, receiverCore: Core, receiver: Type, arguments: List<Core>): Core =
+@Solving private builtinCore(
+  name: String,
+  receiverCore: Core,
+  receiver: Type,
+  arguments: List<Core>,
+): Core =
   if (name == "toString") (if (resolved(receiver) == string) receiverCore else Shown(receiverCore, receiver))
   else when ((resolved(receiver), arguments)) {
     (Named("List", [element], _), [separator]) -> Joined(receiverCore, separator, element)
@@ -313,7 +397,13 @@ called(function: Symbol, arguments: List<Core>): Core =
       written = Signatures.writtenParametersOf(s).getOrElse([]).map { p -> (p.name, p.default.isSome()) }
       given = withDefaults(at, arguments, written, s.name, false, emptyMap())
       if (parameters.size != given.size) {
-        abandon(Globals.problem(context, at, "'$method' takes ${parameters.size} argument${if (parameters.size == 1) "" else "s"}, not ${given.size}"))
+        abandon(
+          Globals.problem(
+            context,
+            at,
+            "'$method' takes ${parameters.size} argument${if (parameters.size == 1) "" else "s"}, not ${given.size}",
+          ),
+        )
       } else Unit
       assign(target, Typed(receiver), receiverType, context)
       cores = checkArguments(given, given.mapIndexed { i, _ -> i }, parameters, scope, context)
@@ -357,7 +447,13 @@ called(function: Symbol, arguments: List<Core>): Core =
     Some(s) -> when (resolved(Globals.typeForCall(s, typeArguments, at, context))) {
       FunctionOf([first, *parameters], result, effects) -> {
         assign(target, Typed(receiver), first, context)
-        cores = checkArguments(arguments, arguments.mapIndexed { i, _ -> i }, parameters, scope, context)
+        cores = checkArguments(
+          arguments,
+          arguments.mapIndexed { i, _ -> i },
+          parameters,
+          scope,
+          context,
+        )
         perform(effects, at)
         Typed(result, None, called(s, [targetCore, *cores]))
       }
@@ -365,7 +461,13 @@ called(function: Symbol, arguments: List<Core>): Core =
     }
     None -> when (receiver) {
       Variable(_) -> abandon(Globals.problem(context, memberAt, "can't tell what '$name' is: the receiver's type isn't known here; annotate it"))
-      _ -> abandon(Globals.problem(context, memberAt, "${TypeText.shown(receiver)} has no method '$name'${methodImportHint(name, receiver, context)}"))
+      _ -> abandon(
+        Globals.problem(
+          context,
+          memberAt,
+          "${TypeText.shown(receiver)} has no method '$name'${methodImportHint(name, receiver, context)}",
+        ),
+      )
     }
   }
 }
@@ -379,14 +481,26 @@ called(function: Symbol, arguments: List<Core>): Core =
     else -> false
   }
   if (privateConstructor && !Visibility.isInside(context.place, record.path)) {
-    abandon(Globals.problem(context, memberAt, "$own's constructor is private to ${record.path.joinToString(".")}, so only it can copy one"))
+    abandon(
+      Globals.problem(
+        context,
+        memberAt,
+        "$own's constructor is private to ${record.path.joinToString(".")}, so only it can copy one",
+      ),
+    )
   } else Unit
   if (arguments.any { it.name.isNone() }) abandon(Globals.problem(context, at, "copy takes named arguments: copy(field = value)")) else Unit
   (recordArguments, region) = when (receiver) {
     Named(_, typeArguments, r) -> (typeArguments, r)
     else -> ([], None)
   }
-  types = Conversion.recordFields(record, recordArguments, region, context.environment.definitions, Some(context.place))
+  types = Conversion.recordFields(
+    record,
+    recordArguments,
+    region,
+    context.environment.definitions,
+    Some(context.place),
+  )
   fields = recordFieldsOf(record)
   arguments.fold([]) { changes, argument ->
     fieldName = argument.name.getOrElse("")

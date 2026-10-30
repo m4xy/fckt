@@ -15,7 +15,14 @@ module Lexer {
 
   // How far splitting has got: the source's characters, the next one's index, line and column; the
   // tokens so far, the latest first; and the brackets open, the innermost first.
-  private type Scan(chars: Array<Char>, var index: Int, var line: Int, var column: Int, var tokens: List<Token>, var open: List<Kind>)
+  private type Scan(
+    chars: Array<Char>,
+    var index: Int,
+    var line: Int,
+    var column: Int,
+    var tokens: List<Token>,
+    var open: List<Kind>,
+  )
 
   // A string literal's pieces so far, the latest first: its parts, and the text since the last.
   private type Pieces(var parts: List<StringPart>, var text: List<Char>)
@@ -150,7 +157,14 @@ module Lexer {
       if (ahead(s, 0) == Some('+') || ahead(s, 0) == Some('-')) advance(s)
       skipWhile(s) { it.isDigit() }
     }
-    add(s, Token(if (fraction || exponent) FloatLiteral else IntLiteral, text(s, from, s.index).replace("_", ""), start))
+    add(
+      s,
+      Token(
+        if (fraction || exponent) FloatLiteral else IntLiteral,
+        text(s, from, s.index).replace("_", ""),
+        start,
+      ),
+    )
   }
 
   // ---- Characters and strings ----
@@ -187,7 +201,10 @@ module Lexer {
     }
     when ("0x$hex".toIntOrNone()) {
       Some(code) if (braced || hex.length == 4) && code >= 0 && code <= 1114111 && (code < 55296 || code > 57343) -> code.toChar().toString()
-      else -> reject(start, "\\u takes four hex digits, as \\u00e9, or a code point in braces, as \\u{1F600}")
+      else -> reject(
+        start,
+        "\\u takes four hex digits, as \\u00e9, or a code point in braces, as \\u{1F600}",
+      )
     }
   }
 

@@ -29,8 +29,21 @@ module Conversion {
         Some(spec) -> specValueType(spec, at, name, arguments, context, definitions)
         None ->
           if (arguments.any { isGiven(it) })
-            abandon(problem(context, at, "'$name' isn't a spec, so its type arguments aren't named: ${Written.typeRef(NamedType(at, name, arguments.map { unnamed(it) }))}"))
-          else namedType(at, name, arguments, arguments.map { typeOf(it, context, definitions) }, context, definitions)
+            abandon(
+              problem(
+                context,
+                at,
+                "'$name' isn't a spec, so its type arguments aren't named: ${Written.typeRef(NamedType(at, name, arguments.map { unnamed(it) }))}",
+              ),
+            )
+          else namedType(
+            at,
+            name,
+            arguments,
+            arguments.map { typeOf(it, context, definitions) },
+            context,
+            definitions,
+          )
       }
     }
   }
@@ -47,7 +60,13 @@ module Conversion {
     own = name.drop(parameter.length + 1)
     if (parameter == name || !startsLowerCase(parameter)) None
     else if (context.laterParameters.contains(parameter))
-      abandon(problem(context, at, "'$name' names $parameter, which comes after it: a parameter's type can name only those before it"))
+      abandon(
+        problem(
+          context,
+          at,
+          "'$name' names $parameter, which comes after it: a parameter's type can name only those before it",
+        ),
+      )
     else context.valueParameters.get(parameter).map { given ->
       when (resolved(given)) {
         ModuleValue(specName, ownArguments, _) -> when (definitions.namespace.table.specs.get(specName)) {
@@ -57,9 +76,21 @@ module Conversion {
             if (!names.contains(own)) abandon(problem(context, at, "${Symbols.simpleName(spec)} has no type '$own'"))
             else ownArguments.getOrNone(names.indexOf(own)).getOrElse(given)
           }
-          None -> abandon(problem(context, at, "'$parameter' isn't a value of a spec with types of its own, so it has no $own"))
+          None -> abandon(
+            problem(
+              context,
+              at,
+              "'$parameter' isn't a value of a spec with types of its own, so it has no $own",
+            ),
+          )
         }
-        else -> abandon(problem(context, at, "'$parameter' isn't a value of a spec with types of its own, so it has no $own"))
+        else -> abandon(
+          problem(
+            context,
+            at,
+            "'$parameter' isn't a value of a spec with types of its own, so it has no $own",
+          ),
+        )
       }
     }
   }
@@ -75,7 +106,13 @@ module Conversion {
     own = Symbols.simpleName(spec)
     types = ownTypesOf(spec)
     types.find { it.typeParameters.isNotEmpty() }.forEach { t ->
-      abandon(problem(context, at, "$own's ${t.name} takes type parameters, so a value of $own can't say what it is yet"))
+      abandon(
+        problem(
+          context,
+          at,
+          "$own's ${t.name} takes type parameters, so a value of $own can't say what it is yet",
+        ),
+      )
     }
     positional = arguments.filter { !isGiven(it) }
     if (types.isEmpty() && arguments.isNotEmpty()) abandon(problem(context, at, "'$name' takes 0 type arguments, not ${arguments.size}")) else Unit
@@ -179,10 +216,22 @@ module Conversion {
       else -> ([], [])
     }
     if (Annotations.isEffect(spec, definitions.namespace)) {
-      abandon(problem(context, at, "'$own' is an effect: a function does it, written @$own, and a handler answers it; no value has its type"))
+      abandon(
+        problem(
+          context,
+          at,
+          "'$own' is an effect: a function does it, written @$own, and a handler answers it; no value has its type",
+        ),
+      )
     } else Unit
     types.find { it.typeParameters.isNotEmpty() }.forEach { t ->
-      abandon(problem(context, at, "$own's ${t.name} takes type parameters, so a value of $own can't say what it is yet"))
+      abandon(
+        problem(
+          context,
+          at,
+          "$own's ${t.name} takes type parameters, so a value of $own can't say what it is yet",
+        ),
+      )
     }
     if (typeParameters.isNotEmpty()) abandon(problem(context, at, "$own takes type parameters, so it can't be a value's type yet")) else Unit
     ModuleValue(spec.name, arguments, types.map { it.name })
@@ -192,9 +241,21 @@ module Conversion {
   private scopeOf(context: TypeContext): TypeScope =
     TypeScope(context.place, context.typeParameters.toList().map { name, _ -> name }, [])
 
-  @Abandoning private checkArity(name: String, arity: Int, arguments: List<Type>, at: Position, context: TypeContext): Unit =
+  @Abandoning private checkArity(
+    name: String,
+    arity: Int,
+    arguments: List<Type>,
+    at: Position,
+    context: TypeContext,
+  ): Unit =
     if (arguments.size == arity) Unit
-    else abandon(problem(context, at, "'$name' takes $arity type argument${if (arity == 1) "" else "s"}, not ${arguments.size}"))
+    else abandon(
+      problem(
+        context,
+        at,
+        "'$name' takes $arity type argument${if (arity == 1) "" else "s"}, not ${arguments.size}",
+      ),
+    )
 
   // The arguments written for a type whose parameters these are, with what goes to its effect
   // parameters: effects, as in Queue<@Console>, and, for any left out, anything, as Queue is.
@@ -211,9 +272,17 @@ module Conversion {
     else if (arguments.size == parameters.size) {
       parameters.zip(written).forEach { parameter, given ->
         if (parameter.startsWith("@") && !isEffectsRef(given))
-          abandon(problem(context, Positions.ofType(given), "$name's ${parameter.removePrefix("@")} is effects, like $name<@Console>, not a type"))
+          abandon(
+            problem(
+              context,
+              Positions.ofType(given),
+              "$name's ${parameter.removePrefix("@")} is effects, like $name<@Console>, not a type",
+            ),
+          )
         else if (!parameter.startsWith("@") && isEffectsRef(given))
-          abandon(problem(context, Positions.ofType(given), "$name's $parameter is a type, not effects"))
+          abandon(
+            problem(context, Positions.ofType(given), "$name's $parameter is a type, not effects"),
+          )
         else Unit
       }
       arguments
@@ -250,10 +319,20 @@ module Conversion {
 
   // The declared type applied to the arguments, as seen from the context's place, with a region
   // if its values can change.
-  @Solving @Abandoning declared(symbol: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
+  @Solving @Abandoning declared(
+    symbol: Symbol,
+    arguments: List<Type>,
+    context: TypeContext,
+    definitions: Definitions,
+  ): Type =
     withRegion(symbol, seenFrom(symbol, arguments, context, definitions), context, definitions)
 
-  @Solving @Abandoning private seenFrom(symbol: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
+  @Solving @Abandoning private seenFrom(
+    symbol: Symbol,
+    arguments: List<Type>,
+    context: TypeContext,
+    definitions: Definitions,
+  ): Type =
     if (isAbstractHere(symbol, context.seenFrom.getOrElse(context.place), definitions) || (context.outsideView && isAbstract(symbol, definitions))) outsideType(symbol.path.joinToString("."), Symbols.simpleName(symbol), arguments, context, definitions)
     else when (symbol.declaration.definition) {
       AliasDefinition(_, _) -> expand(symbol, arguments, context, definitions)
@@ -267,7 +346,9 @@ module Conversion {
 
   // Whether the type is abstract outside its module: opaque, or a functor's parameter's.
   isAbstract(symbol: Symbol, definitions: Definitions): Boolean =
-    symbol.declaration.opaque || definitions.namespace.modules.parameterModules.contains(symbol.path.joinToString("."))
+    symbol.declaration.opaque || definitions.namespace.modules.parameterModules.contains(
+      symbol.path.joinToString("."),
+    )
 
   // Whether a module the path is in has an opaque alias, which its functions' inferred types show as
   // what it stands for, and callers outside see as written.
@@ -303,7 +384,13 @@ module Conversion {
       Ok(t) -> t
       Error(d) ->
         if (n == 0) abandon(d)
-        else abandon(Diagnostic(d.file, d.at, "$name takes $n type parameter${if (n == 1) "" else "s"}, so its type argument must take $n more: ${d.message}"))
+        else abandon(
+          Diagnostic(
+            d.file,
+            d.at,
+            "$name takes $n type parameter${if (n == 1) "" else "s"}, so its type argument must take $n more: ${d.message}",
+          ),
+        )
     }
   }
 
@@ -321,11 +408,22 @@ module Conversion {
   // What the alias stands for, applied to the arguments; its target means what it does where it's
   // written. In module Results<E>, type M<A> = Result<A, E> has the E of what uses it there;
   // elsewhere, any.
-  @Solving @Abandoning expand(alias: Symbol, arguments: List<Type>, context: TypeContext, definitions: Definitions): Type =
+  @Solving @Abandoning expand(
+    alias: Symbol,
+    arguments: List<Type>,
+    context: TypeContext,
+    definitions: Definitions,
+  ): Type =
     when (alias.declaration.definition) {
       AliasDefinition(typeParameters, target) ->
         if (context.expanding.contains(alias.name)) {
-          abandon(Diagnostic(alias.file.source.path, alias.declaration.at, "type '${Symbols.simpleName(alias)}' is defined in terms of itself"))
+          abandon(
+            Diagnostic(
+              alias.file.source.path,
+              alias.declaration.at,
+              "type '${Symbols.simpleName(alias)}' is defined in terms of itself",
+            ),
+          )
         } else {
           inModule = Visibility.isInside(context.place, alias.path)
           moduleParameters = moduleTypeParameters(alias.path, definitions).map { p ->
@@ -367,7 +465,9 @@ module Conversion {
     labels = labelsOf(named, context, definitions).filter { !pure || it.name != "fckt.lang.Pure" }
     when (parameters) {
       [parameter, *_] -> {
-        own = rowOfType(context.typeParameters.getOrElse("@${parameter.name}") { Effects(Types.pure) })
+        own = rowOfType(
+          context.typeParameters.getOrElse("@${parameter.name}") { Effects(Types.pure) },
+        )
         Row((labels + own.labels).distinct(), own.rest)
       }
       [] -> Row(labels, if (open) Some(fresh()) else None)
@@ -387,7 +487,13 @@ module Conversion {
     annotations.flatMap { a ->
       namespace = definitions.namespace
       when (Annotations.declarationOf(a, context.place, namespace)) {
-        None -> abandon(problem(context, a.at, "unknown effect '${a.name}'${ImportHints.forName(a.name, namespace)}"))
+        None -> abandon(
+          problem(
+            context,
+            a.at,
+            "unknown effect '${a.name}'${ImportHints.forName(a.name, namespace)}",
+          ),
+        )
         Some(declaration) if Symbols.isSpec(declaration) && a.typeArguments.isNotEmpty() ->
           [EffectLabel(declaration.name, a.typeArguments.map { typeOf(it, context, definitions) })]
         Some(_) -> when (Annotations.effectsOf([a], context.place, a.at, namespace)) {
@@ -404,7 +510,16 @@ module Conversion {
   @Solving @Abandoning recordFields(record: Symbol, arguments: List<Type>, region: Option<Type>, definitions: Definitions, seenFrom: Option<Place> = None): List<Type> =
     when (record.declaration.definition) {
       RecordDefinition(typeParameters, fields, _, _, _) -> {
-        context = TypeContext(Place(record.file, record.path), typeParameters.zip(arguments).toMap(), region, None, [], emptyMap(), false, seenFrom)
+        context = TypeContext(
+          Place(record.file, record.path),
+          typeParameters.zip(arguments).toMap(),
+          region,
+          None,
+          [],
+          emptyMap(),
+          false,
+          seenFrom,
+        )
         fields.map { typeOf(it.fieldType, context, definitions) }
       }
       else -> []
@@ -416,13 +531,38 @@ module Conversion {
   @Solving @Abandoning caseFields(c: CaseInfo, parameters: List<String>, arguments: List<Type>, region: Option<Type>, definitions: Definitions, seenFrom: Option<Place> = None): List<Type> =
     when (c.source) {
       OwnCase -> {
-        context = TypeContext(Place(c.origin.file, c.origin.path), parameters.zip(arguments).toMap(), region, None, [], emptyMap(), false, seenFrom)
+        context = TypeContext(
+          Place(c.origin.file, c.origin.path),
+          parameters.zip(arguments).toMap(),
+          region,
+          None,
+          [],
+          emptyMap(),
+          false,
+          seenFrom,
+        )
         c.definition.fields.map { typeOf(it.fieldType, context, definitions) }
       }
       NamedCase(from) -> caseFields(from, [], [], region, definitions, seenFrom)
       IncludedCase(included, written, place, from) -> {
-        context = TypeContext(place, parameters.zip(arguments).toMap(), region, None, [], emptyMap(), false, seenFrom)
-        caseFields(from, Cases.typeParametersOf(included), written.map { typeOf(it, context, definitions) }, region, definitions, seenFrom)
+        context = TypeContext(
+          place,
+          parameters.zip(arguments).toMap(),
+          region,
+          None,
+          [],
+          emptyMap(),
+          false,
+          seenFrom,
+        )
+        caseFields(
+          from,
+          Cases.typeParametersOf(included),
+          written.map { typeOf(it, context, definitions) },
+          region,
+          definitions,
+          seenFrom,
+        )
       }
     }
 

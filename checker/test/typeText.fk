@@ -21,13 +21,19 @@ import fckt.checker.types.TypeText.*
 }
 
 @Test showsWhatAFunctionDoes() = Solutions.solving {
-  assertEquals("@Console @FileSystem () -> Unit", shown(FunctionOf([], unit, rowOf(["fckt.io.FileSystem", "fckt.io.Console"], Some(fresh())))))
+  assertEquals(
+    "@Console @FileSystem () -> Unit",
+    shown(FunctionOf([], unit, rowOf(["fckt.io.FileSystem", "fckt.io.Console"], Some(fresh())))),
+  )
 }
 
 @Test showsEffectsAsATypeArgument() = Solutions.solving {
   e = fresh()
   assertEquals("Queue<@Pure>", shown(Named("Queue", [Effects(pure)], None)))
-  assertEquals("Queue<@Console @T1>", shown(Named("Queue", [Effects(rowOf(["fckt.io.Console"], Some(e)))], None)))
+  assertEquals(
+    "Queue<@Console @T1>",
+    shown(Named("Queue", [Effects(rowOf(["fckt.io.Console"], Some(e)))], None)),
+  )
 }
 
 @Test showsWhatsBeenSolved() = Solutions.solving {

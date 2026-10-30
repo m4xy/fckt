@@ -20,7 +20,10 @@ module Cases {
   }
 
   // Whether two are the same case: the same type's case of the same name.
-  same(a: CaseInfo, b: CaseInfo): Boolean = a.origin.name == b.origin.name && a.definition.name == b.definition.name
+  same(
+    a: CaseInfo,
+    b: CaseInfo,
+  ): Boolean = a.origin.name == b.origin.name && a.definition.name == b.definition.name
 
   // The case's fields' types as written, in the terms of the type that has it: an included case's
   // with the type arguments it's included with in place of its own type's parameters.
@@ -70,14 +73,26 @@ module Cases {
     }
 
   // Owner.Case: the case of that name of a type that takes no type parameters.
-  @Abandoning @Mutating private namedCase(computing: Computing, symbol: Symbol, ref: CaseRef, place: Place, visiting: List<String>): CaseInfo =
+  @Abandoning @Mutating private namedCase(
+    computing: Computing,
+    symbol: Symbol,
+    ref: CaseRef,
+    place: Place,
+    visiting: List<String>,
+  ): CaseInfo =
     when (Lookups.caseType(ref.owner, place, computing.namespace, Refusing)) {
       Refused(why) -> abandon(problem(symbol, ref.at, why))
       NotFound -> abandon(problem(symbol, ref.at, "unknown type '${ref.owner}'"))
       Found(owner) -> {
         own = Symbols.simpleName(owner)
         if (typeParametersOf(owner).isNotEmpty()) {
-          abandon(problem(symbol, ref.at, "can't take single cases from the generic type $own; include it whole with *$own<...>"))
+          abandon(
+            problem(
+              symbol,
+              ref.at,
+              "can't take single cases from the generic type $own; include it whole with *$own<...>",
+            ),
+          )
         } else Unit
         when (casesOf(computing, owner, visiting).filter { it.definition.name == ref.caseName }) {
           [c] -> CaseInfo(c.origin, c.definition, NamedCase(c))
@@ -92,7 +107,9 @@ module Cases {
     when (include) {
       NamedType(at, name, arguments) -> when (Lookups.caseType(name, place, computing.namespace, Refusing)) {
         Refused(why) -> abandon(problem(symbol, at, why))
-        NotFound -> abandon(problem(symbol, at, "'*' takes a type with cases, and '$name' isn't one"))
+        NotFound -> abandon(
+          problem(symbol, at, "'*' takes a type with cases, and '$name' isn't one"),
+        )
         Found(other) -> casesOf(computing, other, visiting).map { c ->
           (CaseInfo(c.origin, c.definition, IncludedCase(other, arguments, place, c)), at)
         }
@@ -106,7 +123,13 @@ module Cases {
       None -> cases + [c]
       Some(existing) ->
         if (writtenFields(existing).map { Written.typeRef(it) } == writtenFields(c).map { Written.typeRef(it) }) cases
-        else abandon(problem(symbol, at, "'${symbol.name}' takes ${c.origin.name}.${c.definition.name} twice, with different types"))
+        else abandon(
+          problem(
+            symbol,
+            at,
+            "'${symbol.name}' takes ${c.origin.name}.${c.definition.name} twice, with different types",
+          ),
+        )
     }
 
   // A type as written, with each name the substitution has, and no type arguments, in its place.

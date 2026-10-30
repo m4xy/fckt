@@ -28,7 +28,11 @@ module HandledEffects {
     variables = OcamlTypes.ocamlParameters(d.typeParameters).map { TypeVar(OcamlTypes.parameter(it)) }
     answering = TypeVar(answer)
     constructors = d.operations.map { op ->
-      EffectOperation(Naming.ownName(d.effect) + "_" + op.name, op.parameters.getOrElse([]).map { OcamlTypes.typexpr(it) }, performedType(op))
+      EffectOperation(
+        Naming.ownName(d.effect) + "_" + op.name,
+        op.parameters.getOrElse([]).map { OcamlTypes.typexpr(it) },
+        performedType(op),
+      )
     }
     record = TypeDefinition(own + "_handler", OcamlTypes.ocamlParameters(d.typeParameters).map { OcamlTypes.parameter(it) } + [answer], RecordType(d.operations.map { op ->
       answers = when (op.parameters) {
@@ -38,7 +42,11 @@ module HandledEffects {
       // An operation's own type parameters, atomically<A>'s, are its field's: a handler answers it
       // whatever they are where it's performed.
       own = OcamlTypes.ocamlParameters(op.typeParameters).map { OcamlTypes.parameter(it) }
-      FieldDeclaration(Naming.snake(op.name), if (own.isEmpty()) answers else Polymorphic(own, answers), false)
+      FieldDeclaration(
+        Naming.snake(op.name),
+        if (own.isEmpty()) answers else Polymorphic(own, answers),
+        false,
+      )
     }))
     // A generic effect's values are what the checker made sure they are, but OCaml can't see that.
     known = (e: Expr) -> if (generic) Application(Identifier("Obj.magic"), [e]) else e
@@ -54,11 +62,18 @@ module HandledEffects {
         None -> Application(Identifier("Effect.Deep.continue"), [Identifier("k"), known(field)])
         Some(_) -> Application(field, names.map { known(Identifier(it)) } + [Fun([VariablePat("v")], Application(Identifier("Effect.Deep.continue"), [Identifier("k"), known(Identifier("v"))]))])
       }
-      Case(EffectPat(ConstructorPat(Naming.ownName(d.effect) + "_" + op.name, Some(carried)), "k"), None, answered)
+      Case(
+        EffectPat(ConstructorPat(Naming.ownName(d.effect) + "_" + op.name, Some(carried)), "k"),
+        None,
+        answered,
+      )
     }
     handlerType = TypeApplication(own + "_handler", variables + [answering])
     handle = Binding(VariablePat("handle_$own"),
-      [TypedPat(VariablePat("h"), handlerType), TypedPat(VariablePat("f"), Arrow(TypeApplication("unit", []), answering))],
+      [
+        TypedPat(VariablePat("h"), handlerType),
+        TypedPat(VariablePat("f"), Arrow(TypeApplication("unit", []), answering)),
+      ],
       Some(answering),
       Match(Application(Identifier("f"), [ConstantExpr(UnitConstant)]), [Case(VariablePat("v"), None, Identifier("v"))] + cases))
     [EffectItem(constructors), TypeItem([record]), LetItem(false, [handle])]
@@ -79,11 +94,18 @@ module HandledEffects {
   // Performing the operation with what's carried: an operation that may fail is answered with why it
   // did, to fail with here.
   @Lowering performed(effect: Symbol, operation: String, carried: Expr): Expr = {
-    performing = Application(Identifier("Effect.perform"), [Construction(operationConstructor(effect, operation), Some(carried))])
+    performing = Application(
+      Identifier("Effect.perform"),
+      [Construction(operationConstructor(effect, operation), Some(carried))],
+    )
     if (!failsAtCall(effect, operation)) performing
     else Match(performing, [
       Case(ConstructorPat("Ok", Some(VariablePat("v"))), None, Identifier("v")),
-      Case(ConstructorPat("Error", Some(VariablePat("reason"))), None, failing(Identifier("reason"))),
+      Case(
+        ConstructorPat("Error", Some(VariablePat("reason"))),
+        None,
+        failing(Identifier("reason")),
+      ),
     ])
   }
 
@@ -100,12 +122,18 @@ module HandledEffects {
 
   // The block, run with the handler handling the effect.
   @Lowering handled(effect: Symbol, handler: Expr, block: Expr): Expr =
-    Application(Identifier(nextTo(effect, "handle_" + simpleSnake(effect))), [handler, Fun([ConstantPat(UnitConstant)], block)])
+    Application(
+      Identifier(nextTo(effect, "handle_" + simpleSnake(effect))),
+      [handler, Fun([ConstantPat(UnitConstant)], block)],
+    )
 
   // A module that follows the effect's spec, as its record of answers: each operation's, the
   // module's function of its name, resumed with what it gives; a value as it is.
   @Lowering moduleHandler(module: Symbol, effect: Symbol): Expr =
-    answers(effect, operationsOf(effect).map { op -> (op.name, Identifier(modulePath(module) + "." + Naming.snake(op.name)), false) })
+    answers(
+      effect,
+      operationsOf(effect).map { op -> (op.name, Identifier(modulePath(module) + "." + Naming.snake(op.name)), false) },
+    )
 
   // A handler made from an answer to each operation.
   @Lowering madeHandler(effect: Symbol, given: List<(String, Expr, Boolean)>): Expr = answers(effect, given)
@@ -133,14 +161,27 @@ module HandledEffects {
         None -> a
       })
     }, None)
-    Annotated(record, TypeApplication(nextTo(effect, simpleSnake(effect) + "_handler"), (typeParametersOf(effect) + ["answer"]).map { TypeVar("_") }))
+    Annotated(
+      record,
+      TypeApplication(
+        nextTo(effect, simpleSnake(effect) + "_handler"),
+        (typeParametersOf(effect) + ["answer"]).map { TypeVar("_") },
+      ),
+    )
   }
 
   // What the answer gives, Ok, or, if it fails, Error with why.
   @Lowering private caught(answer: Expr): Expr = when (effectOf(failEffect)) {
     Some(fail) -> Match(answer, [
       Case(VariablePat("v"), None, Construction("Ok", Some(Identifier("v")))),
-      Case(EffectPat(ConstructorPat(operationConstructor(fail.effect, "fail"), Some(VariablePat("reason"))), "_"), None, Construction("Error", Some(Identifier("reason")))),
+      Case(
+        EffectPat(
+          ConstructorPat(operationConstructor(fail.effect, "fail"), Some(VariablePat("reason"))),
+          "_",
+        ),
+        None,
+        Construction("Error", Some(Identifier("reason"))),
+      ),
     ])
     None -> Construction("Ok", Some(answer))
   }

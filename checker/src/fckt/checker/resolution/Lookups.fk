@@ -44,11 +44,27 @@ module Lookups {
 
   private ofType(name: String, entries: Map<String, Symbol>, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> = {
     table = namespace.table
-    Names.find(name, entries, s -> Some(s), full -> table.records.containsKey(full) || table.caseTypes.containsKey(full) || table.aliases.containsKey(full), place, namespace, strictness)
+    Names.find(
+      name,
+      entries,
+      s -> Some(s),
+      full -> table.records.containsKey(full) || table.caseTypes.containsKey(full) || table.aliases.containsKey(full),
+      place,
+      namespace,
+      strictness,
+    )
   }
 
   private ofKind(name: String, entries: Map<String, Symbol>, place: Place, namespace: Namespace, strictness: Strictness): Lookup<Symbol> =
-    Names.find(name, entries, s -> Some(s), full -> entries.containsKey(full), place, namespace, strictness)
+    Names.find(
+      name,
+      entries,
+      s -> Some(s),
+      full -> entries.containsKey(full),
+      place,
+      namespace,
+      strictness,
+    )
 
   // What a lookup found, if anything.
   found<A>(lookup: Lookup<A>): Option<A> = when (lookup) {

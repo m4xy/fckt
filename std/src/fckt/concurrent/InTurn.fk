@@ -37,7 +37,10 @@ module InTurn : Executor {
     join = (joined, resume) -> {
       if (state.ended.contains(joined.id)) resume(Unit)
       else {
-        state.joining = state.joining.put(joined.id, state.joining.get(joined.id).getOrElse([]) + [~resume(Unit)])
+        state.joining = state.joining.put(
+          joined.id,
+          state.joining.get(joined.id).getOrElse([]) + [~resume(Unit)],
+        )
       }
     },
     pause = resume -> { state.ready = state.ready + [~resume(Unit)] },

@@ -52,7 +52,10 @@ module Imports {
     cases = table.caseTypes.toList().fold(emptyMap<String, List<(String, String)>>()) { m, entry ->
       (name, owner) = entry
       parent = parentOf(name)
-      m.put(parent, m.getOrDefault(parent, []) + Symbols.casesOf(owner).map { c -> (c.name, "$name.${c.name}") })
+      m.put(
+        parent,
+        m.getOrDefault(parent, []) + Symbols.casesOf(owner).map { c -> (c.name, "$name.${c.name}") },
+      )
     }
     parents = (inside.toList().map { p, _ -> p } + cases.toList().map { p, _ -> p }).distinct()
     members = parents.map { p ->
@@ -94,7 +97,13 @@ module Imports {
       name = i.alias.getOrElse(i.path.lastOrNone().getOrElse(full))
       when (named.get(name)) {
         Some(other) if other != full ->
-          abandon(Diagnostic(file.source.path, i.at, "'$name' is imported already, as $other; import this one as another name, with as"))
+          abandon(
+            Diagnostic(
+              file.source.path,
+              i.at,
+              "'$name' is imported already, as $other; import this one as another name, with as",
+            ),
+          )
         else -> (named.put(name, full), implying(implied, alongside(full, importable, table)))
       }
     }

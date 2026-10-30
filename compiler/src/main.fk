@@ -38,7 +38,9 @@ main(args: List<String>) = when (args) {
       Ok(items) -> path(out).writeText(Printer.file(items))
       Error(why) -> failing(["can't lower $why"])
     }
-    _ -> failing(errors.map { e -> "${e.file.getOrElse(file)}:${e.at.line}:${e.at.column}: error: ${e.message}" })
+    _ -> failing(
+      errors.map { e -> "${e.file.getOrElse(file)}:${e.at.line}:${e.at.column}: error: ${e.message}" },
+    )
   }
 }
 

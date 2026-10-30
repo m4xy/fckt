@@ -1,7 +1,14 @@
 // A line of a block.
 type Statement {
   // name = value, var name = value, name: T = value, or a local function, name(parameters) = value
-  Binding(at: Position, name: String, parameters: Option<List<Parameter>>, valueType: Option<TypeRef>, value: Expression, variable: Boolean),
+  Binding(
+    at: Position,
+    name: String,
+    parameters: Option<List<Parameter>>,
+    valueType: Option<TypeRef>,
+    value: Expression,
+    variable: Boolean,
+  ),
   // an expression, run for what it does
   Evaluation(at: Position, expression: Expression),
   // (a, b) = value

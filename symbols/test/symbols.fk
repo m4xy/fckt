@@ -53,14 +53,25 @@ record shop.User
     Ok(s) -> s
     Error(reason) -> fail(reason)
   }
-  assertEquals(["shop.Address", "shop.Rounding.Level", "shop.Shape", "shop.User"], symbols.types.map { it.name })
+  assertEquals(
+    ["shop.Address", "shop.Rounding.Level", "shop.Shape", "shop.User"],
+    symbols.types.map { it.name },
+  )
   assertEquals(
     TypeDeclaration(
       "shop.Shape",
       Location(1, 1, "src/shop/Shape.fk"),
       Cases([
-        Case("Circle", Location(1, 17, "src/shop/Shape.fk"), [Field("radius", Named("Float")), Field("tag", Parameter("T"))]),
-        Case("Point", Location(1, 62, "src/shop/Shape.fk"), annotations = [Annotation("shop.Named", [Argument("name", Text("pt"))])]),
+        Case(
+          "Circle",
+          Location(1, 17, "src/shop/Shape.fk"),
+          [Field("radius", Named("Float")), Field("tag", Parameter("T"))],
+        ),
+        Case(
+          "Point",
+          Location(1, 62, "src/shop/Shape.fk"),
+          annotations = [Annotation("shop.Named", [Argument("name", Text("pt"))])],
+        ),
       ]),
       parameters = ["T"],
     ),
@@ -69,15 +80,26 @@ record shop.User
   user = typeNamed(symbols, "shop.User")
   assertEquals(
     Fields([
-      Field("name", Named("String"), annotations = [Annotation("shop.Named", [Argument("name", Text("full_name"))])]),
+      Field(
+        "name",
+        Named("String"),
+        annotations = [Annotation("shop.Named", [Argument("name", Text("full_name"))])],
+      ),
       Field("age", Named("Int"), hasDefault = true),
-      Field("scores", Named("fckt.collections.Maps.Map", [Named("String"), Named("Float")]), mutable = true),
+      Field(
+        "scores",
+        Named("fckt.collections.Maps.Map", [Named("String"), Named("Float")]),
+        mutable = true,
+      ),
       Field("home", Named("Option", [Named("shop.Address")])),
     ]),
     user.body,
   )
   assertEquals(
-    [Argument("of", TypeOf(Named("List", [Named("shop.Address")]))), Argument("tags", Items([Text("a"), Text("b\"c")]))],
+    [
+      Argument("of", TypeOf(Named("List", [Named("shop.Address")]))),
+      Argument("tags", Items([Text("a"), Text("b\"c")])),
+    ],
     user.annotations.named("shop.Tagged").map { it.arguments }.getOrElse([]),
   )
   // And writes it back as it was.
@@ -106,7 +128,10 @@ record shop.User
     "shop.Everything",
     Location(3, 4, "a folder/Everything.fk"),
     Fields([
-      Field("f", FunctionType([Named("Int"), TupleType([Named("String"), Parameter("A")])], Named("Unit"))),
+      Field(
+        "f",
+        FunctionType([Named("Int"), TupleType([Named("String"), Parameter("A")])], Named("Unit")),
+      ),
     ], privateConstructor = true),
     Internal,
     true,
@@ -118,19 +143,47 @@ record shop.User
       Argument("character", Character('\'')),
       Argument("text", Text("tab\tline\nslash\\ quote\" done")),
       Argument("type", TypeOf(Named("Result", [Inferred, Named("String")]))),
-      Argument("refs", Items([FunctionRef("shop.Routes.list"), ValueRef("shop.limit"), CaseRef("shop.Shape", "Point"), FieldRef("shop.User", "name"), ModuleRef("shop.Prices"), SpecRef("fckt.text.Format")])),
+      Argument(
+        "refs",
+        Items(
+          [
+            FunctionRef("shop.Routes.list"),
+            ValueRef("shop.limit"),
+            CaseRef("shop.Shape", "Point"),
+            FieldRef("shop.User", "name"),
+            ModuleRef("shop.Prices"),
+            SpecRef("fckt.text.Format"),
+          ],
+        ),
+      ),
       Argument("made", Made("shop.Point", [Argument("x", Whole(1)), Argument("y", Whole(2))])),
       Argument("nested", Nested(Annotation("shop.Named", [Argument("name", Text("n"))]))),
       Argument("tuple", TupleOf([Whole(1), Items([])])),
     ])],
   ),
-  TypeDeclaration("shop.Vowel", Location(1, 1, "v.fk"), Cases([Case("A", Location(1, 20, "v.fk"), declaredBy = Some("shop.Letter"))])),
+  TypeDeclaration(
+    "shop.Vowel",
+    Location(1, 1, "v.fk"),
+    Cases([Case("A", Location(1, 20, "v.fk"), declaredBy = Some("shop.Letter"))]),
+  ),
 ]))
 
 // What isn't the format, or is another version of it, says so.
 @Test whatIsntTheFormatSaysSo() = {
-  assertEquals(Error("these are fckt-symbols 2, not fckt-symbols 1, which is what this reads"), SymbolsText.read("fckt-symbols 2\n"))
-  assertEquals(Error("record shop.User says 'colour red', which a type doesn't have"), SymbolsText.read("fckt-symbols 1\nrecord shop.User\n  at 1 1 u.fk\n  colour red\n"))
-  assertEquals(Error("record shop.User should say once where it's at"), SymbolsText.read("fckt-symbols 1\nrecord shop.User\n"))
-  assertEquals(Error("'List<Int' ends too soon"), SymbolsText.read("fckt-symbols 1\nrecord shop.User\n  at 1 1 u.fk\n  field xs List<Int\n"))
+  assertEquals(
+    Error("these are fckt-symbols 2, not fckt-symbols 1, which is what this reads"),
+    SymbolsText.read("fckt-symbols 2\n"),
+  )
+  assertEquals(
+    Error("record shop.User says 'colour red', which a type doesn't have"),
+    SymbolsText.read("fckt-symbols 1\nrecord shop.User\n  at 1 1 u.fk\n  colour red\n"),
+  )
+  assertEquals(
+    Error("record shop.User should say once where it's at"),
+    SymbolsText.read("fckt-symbols 1\nrecord shop.User\n"),
+  )
+  assertEquals(
+    Error("'List<Int' ends too soon"),
+    SymbolsText.read("fckt-symbols 1\nrecord shop.User\n  at 1 1 u.fk\n  field xs List<Int\n"),
+  )
 }

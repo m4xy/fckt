@@ -54,12 +54,24 @@ module Loader {
   }
 
   @Reporting @Mutating private followImport(loading: Loading, file: LoadedFile, i: Import): Unit = when (packageOf(loading.tree, i.path)) {
-    None -> report(Diagnostic(file.source.path, i.at, "import ${shown(i)} names no package: a package is a folder, as geometry is for geometry/Shapes.fk"))
+    None -> report(
+      Diagnostic(
+        file.source.path,
+        i.at,
+        "import ${shown(i)} names no package: a package is a folder, as geometry is for geometry/Shapes.fk",
+      ),
+    )
     Some(pkg) -> {
       rest = i.path.drop(pkg.size)
       if (rest.isEmpty() && !i.wildcard) {
         dotted = i.path.joinToString(".")
-        report(Diagnostic(file.source.path, i.at, "$dotted is a package; import what's in it, as in import $dotted.*"))
+        report(
+          Diagnostic(
+            file.source.path,
+            i.at,
+            "$dotted is a package; import what's in it, as in import $dotted.*",
+          ),
+        )
       } else {
         loadPackage(loading, pkg)
         checkImported(loading, file, i, pkg, rest)
@@ -83,12 +95,20 @@ module Loader {
       when (inPackage.find { it.role == ModuleFile(first) }) {
         Some(moduleFile) -> when (members) {
           [member, *_] if moduleFile.source.project == CoreProject && !hasMember(moduleFile, first, member) ->
-            report(Diagnostic(importer.source.path, i.at, "${(pkg + [first]).joinToString(".")} has no '$member'"))
+            report(
+              Diagnostic(
+                importer.source.path,
+                i.at,
+                "${(pkg + [first]).joinToString(".")} has no '$member'",
+              ),
+            )
           else -> Unit
         }
         None ->
           if (inPackage.none { it.role == DeclarationsFile && it.declarations.any { d -> d.name == first } })
-            report(Diagnostic(importer.source.path, i.at, "${pkg.joinToString(".")} has no '$first'"))
+            report(
+              Diagnostic(importer.source.path, i.at, "${pkg.joinToString(".")} has no '$first'"),
+            )
           else Unit
       }
     }
@@ -117,7 +137,16 @@ module Loader {
       name = fileName(source)
       if (startsCapitalised(name)) {
         checkDeclaresOnly(source, name, file.declarations)
-        add(loading, LoadedFile(source, pkg, ModuleFile(name), file.imports + defaultImports, file.declarations))
+        add(
+          loading,
+          LoadedFile(
+            source,
+            pkg,
+            ModuleFile(name),
+            file.imports + defaultImports,
+            file.declarations,
+          ),
+        )
       } else if (file.declarations.any { isMain(it) }) {
         // A program of its own: what it declares is its own, not its package's.
         if (pkg.isEmpty()) {
@@ -125,7 +154,10 @@ module Loader {
             if (found.containsKey(d.name)) found else found.put(d.name, source.path.getOrElse("a file"))
           }
         }
-      } else add(loading, LoadedFile(source, pkg, DeclarationsFile, file.imports + defaultImports, file.declarations))
+      } else add(
+        loading,
+        LoadedFile(source, pkg, DeclarationsFile, file.imports + defaultImports, file.declarations),
+      )
     }
   }
 
@@ -143,7 +175,13 @@ module Loader {
   @Reporting private checkDeclaresOnly(source: SourceText, name: String, declarations: List<Declaration>): Unit = {
     main = declarations.find { d -> d.name == name && d.visibility != Private && !isExtension(d) }
     when (main) {
-      None -> report(Diagnostic(source.path, Position(1, 1), "$name.fk must declare $name, which it's named for: a module, type, spec or effect"))
+      None -> report(
+        Diagnostic(
+          source.path,
+          Position(1, 1),
+          "$name.fk must declare $name, which it's named for: a module, type, spec or effect",
+        ),
+      )
       Some(_) -> Unit
     }
     declarations.filter { d -> Some(d) != main && d.visibility != Private }.forEach { d ->

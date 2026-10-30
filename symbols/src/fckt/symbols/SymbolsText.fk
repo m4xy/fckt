@@ -119,10 +119,26 @@ module SymbolsText : Format {
     n.children.forEach { if (!words.contains(word(it))) fail("${n.text} says '${it.text}', which $what doesn't have") }
 
   @Fail private typeDeclaration(n: Node): TypeDeclaration = {
-    only(n, "a type", ["at", "internal", "opaque", "parameter", "annotation", "private-constructor", "field", "case"])
+    only(
+      n,
+      "a type",
+      [
+        "at",
+        "internal",
+        "opaque",
+        "parameter",
+        "annotation",
+        "private-constructor",
+        "field",
+        "case",
+      ],
+    )
     parameters = named(n.children, "parameter").map { rest(it) }
     body = when (word(n)) {
-      "record" -> Fields(named(n.children, "field").map { field(it, parameters) }, n.children.any { it.text == "private-constructor" })
+      "record" -> Fields(
+        named(n.children, "field").map { field(it, parameters) },
+        n.children.any { it.text == "private-constructor" },
+      )
       "cases" -> Cases(named(n.children, "case").map { case(it, parameters) })
       else -> fail("'${n.text}' should be a record or cases")
     }
@@ -164,7 +180,10 @@ module SymbolsText : Format {
     only(n, "an annotation", ["argument"])
     Annotation(rest(n), named(n.children, "argument").map { a ->
       fieldAndValue = rest(a)
-      Argument(fieldAndValue.substringBefore(" "), whole(fieldAndValue.substringAfter(" ")) { s, at -> valueAt(s, at, parameters) })
+      Argument(
+        fieldAndValue.substringBefore(" "),
+        whole(fieldAndValue.substringAfter(" ")) { s, at -> valueAt(s, at, parameters) },
+      )
     })
   }
 

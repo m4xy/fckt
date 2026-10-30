@@ -77,7 +77,10 @@ module Types {
   // The row with its rest followed, and each of its effects' arguments resolved fully.
   @Solving resolvedRowFully(row: Row): Row = {
     flat = flattened(row)
-    Row(flat.labels.map { EffectLabel(it.name, it.arguments.map { a -> resolvedFully(a) }) }, flat.rest)
+    Row(
+      flat.labels.map { EffectLabel(it.name, it.arguments.map { a -> resolvedFully(a) }) },
+      flat.rest,
+    )
   }
 
   // The row's effects, once each, with those its rest has been found to have, and the unknown for
@@ -146,7 +149,10 @@ module Types {
     Handler(_, arguments) -> arguments.fold(found) { acc, a -> variablesInto(a, acc) }
     TupleOf(elements) -> elements.fold(found) { acc, e -> variablesInto(e, acc) }
     FunctionOf(parameters, result, effects) ->
-      rowVariablesInto(effects, variablesInto(result, parameters.fold(found) { acc, p -> variablesInto(p, acc) }))
+      rowVariablesInto(
+        effects,
+        variablesInto(result, parameters.fold(found) { acc, p -> variablesInto(p, acc) }),
+      )
     Effects(row) -> rowVariablesInto(row, found)
   }
 
@@ -164,7 +170,10 @@ module Types {
   // The scheme's type with a new unknown for each of its variables, or the type given for one.
   @Solving instantiate(scheme: Scheme, given: Map<TypeVariable, Type> = emptyMap()): Type =
     if (scheme.variables.isEmpty()) scheme.template
-    else substitute(scheme.template, scheme.variables.map { v -> (v, given.getOrElse(v) { Variable(fresh()) }) }.toMap())
+    else substitute(
+      scheme.template,
+      scheme.variables.map { v -> (v, given.getOrElse(v) { Variable(fresh()) }) }.toMap(),
+    )
 
   // The type with each unknown the mapping has replaced by what it maps it to.
   @Solving substitute(t: Type, mapping: Map<TypeVariable, Type>): Type = when (resolved(t)) {
@@ -177,7 +186,11 @@ module Types {
     Handler(effect, arguments) -> Handler(effect, arguments.map { substitute(it, mapping) })
     TupleOf(elements) -> TupleOf(elements.map { substitute(it, mapping) })
     FunctionOf(parameters, result, effects) ->
-      FunctionOf(parameters.map { substitute(it, mapping) }, substitute(result, mapping), substituteRow(effects, mapping))
+      FunctionOf(
+        parameters.map { substitute(it, mapping) },
+        substitute(result, mapping),
+        substituteRow(effects, mapping),
+      )
     Effects(row) -> Effects(substituteRow(row, mapping))
   }
 

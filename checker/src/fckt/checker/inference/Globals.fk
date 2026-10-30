@@ -14,7 +14,15 @@ module Globals {
   // The function or value the name means from where the code is.
   find(name: String, context: Context, strictness: Strictness): Lookup<Symbol> = {
     functions = context.environment.functions
-    Names.find(name, functions, s -> Some(s), full -> functions.containsKey(full), context.place, context.environment.definitions.namespace, strictness)
+    Names.find(
+      name,
+      functions,
+      s -> Some(s),
+      full -> functions.containsKey(full),
+      context.place,
+      context.environment.definitions.namespace,
+      strictness,
+    )
   }
 
   // The function or value, if the name means one.
@@ -43,7 +51,9 @@ module Globals {
         Some(t) -> t
         None -> when (known.schemes.get(s.name)) {
           Some(scheme) -> instantiate(scheme)
-          None -> abandon(problem(context, at, "'${Symbols.simpleName(s)}' is used before it's checked"))
+          None -> abandon(
+            problem(context, at, "'${Symbols.simpleName(s)}' is used before it's checked"),
+          )
         }
       }
     }
@@ -51,20 +61,34 @@ module Globals {
 
   // The function's type for a call that may give types for the type parameters it declares, after
   // those of a method's receiver: emptyMap<String, Int>().
-  @Solving @Abandoning typeForCall(s: Symbol, typeArguments: List<TypeRef>, at: Position, context: Context): Type =
+  @Solving @Abandoning typeForCall(
+    s: Symbol,
+    typeArguments: List<TypeRef>,
+    at: Position,
+    context: Context,
+  ): Type =
     if (typeArguments.isEmpty()) typeOf(s, at, context)
     else {
       receiverNames = Signatures.receiverOf(s).map { namesIn(it) }.getOrElse([])
       declared = Signatures.typeParametersOf(s).filter { !it.startsWith("@") }.dropWhile { receiverNames.contains(it) }
       method = Signatures.methodName(s)
       if (declared.size != typeArguments.size) {
-        abandon(problem(context, at, "'$method' takes ${declared.size} type argument${if (declared.size == 1) "" else "s"}, not ${typeArguments.size}"))
+        abandon(
+          problem(
+            context,
+            at,
+            "'$method' takes ${declared.size} type argument${if (declared.size == 1) "" else "s"}, not ${typeArguments.size}",
+          ),
+        )
       } else Unit
       given = typeArguments.map { Conversion.typeOf(it, typeContext(context), context.environment.definitions) }
       known = context.environment.known
       when ((known.typeParameterVariables.get(s.name), outsideScheme(s, context).orElse { known.schemes.get(s.name) })) {
         (Some(variables), Some(scheme)) ->
-          instantiate(scheme, declared.zip(given).mapNotNull { name, t -> variables.get(name).map { v -> (v, t) } }.toMap())
+          instantiate(
+            scheme,
+            declared.zip(given).mapNotNull { name, t -> variables.get(name).map { v -> (v, t) } }.toMap(),
+          )
         else -> abandon(problem(context, at, "'$method' can't be given type arguments here"))
       }
     }
@@ -124,7 +148,11 @@ module Globals {
   @Solving @Abandoning receiverType(s: Symbol, context: Context): Type = when (Signatures.receiverOf(s)) {
     Some(receiver) -> {
       parameters = Signatures.typeParametersOf(s).map { p -> (p, Variable(fresh())) }.toMap()
-      Conversion.typeOf(receiver, TypeContext(Place(s.file, s.path), parameters), context.environment.definitions)
+      Conversion.typeOf(
+        receiver,
+        TypeContext(Place(s.file, s.path), parameters),
+        context.environment.definitions,
+      )
     }
     None -> Variable(fresh())
   }

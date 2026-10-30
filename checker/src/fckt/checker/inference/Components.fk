@@ -47,7 +47,9 @@ module Components {
       component = search.stack.take(count)
       search.stack = search.stack.drop(count)
       search.stacked = component.fold(search.stacked) { s, n -> s.remove(key(n)) }
-      search.components = search.components + [component.sortedBy { places.getOrDefault(key(it), -1) }]
+      search.components = search.components + [
+        component.sortedBy { places.getOrDefault(key(it), -1) },
+      ]
     }
   }
 

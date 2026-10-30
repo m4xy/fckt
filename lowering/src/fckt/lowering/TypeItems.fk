@@ -19,18 +19,33 @@ module TypeItems {
 
   @Lowering private definition(d: TypeDeclaration): TypeDefinition = when (d) {
     DeclaredRecord(record, parameters, fields) ->
-      TypeDefinition(OcamlTypes.ownName(record.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, RecordType(fields.map { field(it) }))
+      TypeDefinition(
+        OcamlTypes.ownName(record.name),
+        OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) },
+        RecordType(fields.map { field(it) }),
+      )
     DeclaredCases(caseType, parameters, cases) if isShared(caseType.name) ->
       TypeDefinition(OcamlTypes.ownName(caseType.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) },
         PolymorphicVariantType(cases.map { c -> Tag(Constructors.tagName(c.case), c.fields.map { OcamlTypes.typexpr(it.t) }) }))
     DeclaredCases(caseType, parameters, cases) ->
       TypeDefinition(OcamlTypes.ownName(caseType.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, VariantType(cases.map { c ->
-        ConstructorDeclaration(c.case.definition.name, if (c.fields.isEmpty()) Bare else InlineRecord(c.fields.map { field(it) }))
+        ConstructorDeclaration(
+          c.case.definition.name,
+          if (c.fields.isEmpty()) Bare else InlineRecord(c.fields.map { field(it) }),
+        )
       }))
     DeclaredAlias(alias, parameters, target) ->
-      TypeDefinition(OcamlTypes.ownName(alias.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, AliasType(OcamlTypes.typexpr(target)))
+      TypeDefinition(
+        OcamlTypes.ownName(alias.name),
+        OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) },
+        AliasType(OcamlTypes.typexpr(target)),
+      )
     DeclaredExternal(external, parameters, ocaml) ->
-      TypeDefinition(OcamlTypes.ownName(external.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, AliasType(TypeApplication("($ocaml)", [])))
+      TypeDefinition(
+        OcamlTypes.ownName(external.name),
+        OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) },
+        AliasType(TypeApplication("($ocaml)", [])),
+      )
   }
 
   @Lowering private field(f: DeclaredField): FieldDeclaration = FieldDeclaration(Naming.snake(f.name), OcamlTypes.typexpr(f.t), f.variable)
@@ -39,7 +54,13 @@ module TypeItems {
   // parameters.
   @Fail @Lowering private showBinding(d: TypeDeclaration): Option<Binding> = when (d) {
     DeclaredRecord(record, parameters, fields) ->
-      Some(showFunction(record.name, parameters, fieldsText(Naming.ownName(record), fields, Identifier("v"))))
+      Some(
+        showFunction(
+          record.name,
+          parameters,
+          fieldsText(Naming.ownName(record), fields, Identifier("v")),
+        ),
+      )
     // Tags carry their fields as a tuple; each is bound to show it.
     DeclaredCases(caseType, parameters, cases) if isShared(caseType.name) ->
       Some(showFunction(caseType.name, parameters, Match(Identifier("v"), cases.map { c ->
@@ -51,7 +72,10 @@ module TypeItems {
           _ -> Some(TuplePat(names.map { VariablePat(it) }))
         }
         shown = if (c.fields.isEmpty()) ConstantExpr(StringConstant(name)) else Shows.joined([ConstantExpr(StringConstant("$name("))] + c.fields.mapIndexed { i, f ->
-          [ConstantExpr(StringConstant((if (i > 0) ", " else "") + f.name + "=")), Application(Shows.show(f.t), [Identifier("x$i")])]
+          [
+            ConstantExpr(StringConstant((if (i > 0) ", " else "") + f.name + "=")),
+            Application(Shows.show(f.t), [Identifier("x$i")]),
+          ]
         }.flatMap { it } + [ConstantExpr(StringConstant(")"))])
         Case(ConstructorPat(Constructors.tag(c.case), payload), None, shown)
       })))
@@ -59,22 +83,44 @@ module TypeItems {
       Some(showFunction(caseType.name, parameters, Match(Identifier("v"), cases.map { c ->
         name = c.case.definition.name
         if (c.fields.isEmpty()) Case(ConstructorPat(name, None), None, ConstantExpr(StringConstant(name)))
-        else Case(ConstructorPat(name, Some(VariablePat("r"))), None, fieldsText(name, c.fields, Identifier("r")))
+        else Case(
+          ConstructorPat(name, Some(VariablePat("r"))),
+          None,
+          fieldsText(name, c.fields, Identifier("r")),
+        )
       })))
     DeclaredAlias(alias, parameters, target) -> Some(showFunction(alias.name, parameters, Application(Shows.show(target), [Identifier("v")])))
     DeclaredExternal(external, parameters, _) ->
-      Some(showFunction(external.name, parameters, ConstantExpr(StringConstant("<${Naming.ownName(external)}>"))))
+      Some(
+        showFunction(
+          external.name,
+          parameters,
+          ConstantExpr(StringConstant("<${Naming.ownName(external)}>")),
+        ),
+      )
   }
 
   private showFunction(full: String, parameters: List<String>, body: Expr): Binding = {
     own = OcamlTypes.ocamlParameters(parameters)
     t = TypeApplication(OcamlTypes.ownName(full), own.map { TypeVar(OcamlTypes.parameter(it)) })
-    Binding(VariablePat(Shows.showName(full)), own.map { VariablePat("show_" + it.lowercase()) } + [TypedPat(VariablePat("v"), t)], None, body)
+    Binding(
+      VariablePat(Shows.showName(full)),
+      own.map { VariablePat("show_" + it.lowercase()) } + [TypedPat(VariablePat("v"), t)],
+      None,
+      body,
+    )
   }
 
   // Name(a=..., b=...), each field shown as its type is.
-  @Fail @Lowering private fieldsText(label: String, fields: List<DeclaredField>, record: Expr): Expr =
+  @Fail @Lowering private fieldsText(
+    label: String,
+    fields: List<DeclaredField>,
+    record: Expr,
+  ): Expr =
     Shows.joined([ConstantExpr(StringConstant("$label("))] + fields.mapIndexed { i, f ->
-      [ConstantExpr(StringConstant((if (i > 0) ", " else "") + f.name + "=")), Application(Shows.show(f.t), [FieldAccess(record, Naming.snake(f.name))])]
+      [
+        ConstantExpr(StringConstant((if (i > 0) ", " else "") + f.name + "=")),
+        Application(Shows.show(f.t), [FieldAccess(record, Naming.snake(f.name))]),
+      ]
     }.flatMap { it } + [ConstantExpr(StringConstant(")"))])
 }

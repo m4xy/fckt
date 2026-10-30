@@ -48,7 +48,12 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
     callable = if (declared.isSome()) None else operationCalled(callee, scope, context)
     when (callable) {
       Some(operation) -> withoutTypeArguments(typeArguments, at, context, callOperation(at, operation, arguments, scope, context))
-      None -> withoutTypeArguments(typeArguments, at, context, callOther(at, callee, declared, arguments, typeArguments, expected, scope, context))
+      None -> withoutTypeArguments(
+        typeArguments,
+        at,
+        context,
+        callOther(at, callee, declared, arguments, typeArguments, expected, scope, context),
+      )
     }
   }
 }
@@ -69,17 +74,40 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
 }
 
 // A declared function, called with its parameters, by name or in order, and its defaults.
-@Inferring private callDeclared(at: Position, global: Symbol, arguments: List<CallArgument>, typeArguments: List<TypeRef>, scope: Scope, context: Context): Typed =
+@Inferring private callDeclared(
+  at: Position,
+  global: Symbol,
+  arguments: List<CallArgument>,
+  typeArguments: List<TypeRef>,
+  scope: Scope,
+  context: Context,
+): Typed =
   when (resolved(Globals.typeForCall(global, typeArguments, at, context))) {
     FunctionOf(parameterTypes, result, effects) -> {
       (parameters, owners) = parameterDefaults(global, context)
       given = withDefaults(at, arguments, parameters, global.name, true, owners)
-      order = argumentOrder(given, parameters.map { name, _ -> name }, at, "'${Symbols.simpleName(global)}'", context)
+      order = argumentOrder(
+        given,
+        parameters.map { name, _ -> name },
+        at,
+        "'${Symbols.simpleName(global)}'",
+        context,
+      )
       cores = checkArguments(given, order, parameterTypes, scope, context)
       perform(effects, at)
-      Typed(result, None, Cores.inWrittenOrder(cores, order) { args -> if (Signatures.isExternal(global)) ExternalApplied(global, args) else Applied(GlobalRead(global), args) })
+      Typed(
+        result,
+        None,
+        Cores.inWrittenOrder(cores, order) { args -> if (Signatures.isExternal(global)) ExternalApplied(global, args) else Applied(GlobalRead(global), args) },
+      )
     }
-    other -> abandon(Globals.problem(context, at, "'${Symbols.simpleName(global)}' is a ${TypeText.shown(other)}, not a function"))
+    other -> abandon(
+      Globals.problem(
+        context,
+        at,
+        "'${Symbols.simpleName(global)}' is a ${TypeText.shown(other)}, not a function",
+      ),
+    )
   }
 
 // What's left once what's called isn't a declared function or an operation: a handler made from an
@@ -140,10 +168,22 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
       unify(Variable(v), FunctionOf(ps, r, row))
       (ps, r, row)
     }
-    other -> abandon(Globals.problem(context, Positions.of(callee), "a ${TypeText.shown(other)} is not a function"))
+    other -> abandon(
+      Globals.problem(
+        context,
+        Positions.of(callee),
+        "a ${TypeText.shown(other)} is not a function",
+      ),
+    )
   }
   if (parameters.size != arguments.size) {
-    abandon(Globals.problem(context, at, "this function takes ${parameters.size} arguments, not ${arguments.size}"))
+    abandon(
+      Globals.problem(
+        context,
+        at,
+        "this function takes ${parameters.size} arguments, not ${arguments.size}",
+      ),
+    )
   } else Unit
   isBuiltin = (name: String) -> when (callee) {
     Name(_, called) if called == name -> Scopes.lookup(scope, name).isNone() && Lookups.found(Globals.find(name, context, Skipping)).isNone()
@@ -184,7 +224,11 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
     Unit
   }
   fields = checkArguments(given, order, shape.fieldTypes, scope, context)
-  Typed(shape.result, spelledCase(shape), Cores.inWrittenOrder(fields, order) { args -> Constructed(shape.constructor, args, shape.result) })
+  Typed(
+    shape.result,
+    spelledCase(shape),
+    Cores.inWrittenOrder(fields, order) { args -> Constructed(shape.constructor, args, shape.result) },
+  )
 }
 
 // A record's fields, as it declares them.
@@ -200,9 +244,20 @@ spelledCase(shape: ConstructorShape): Option<CaseSymbol> = when (shape.construct
 }
 
 // That a call gives no type arguments, as only a declared function can take them.
-@Abandoning private withoutTypeArguments(typeArguments: List<TypeRef>, at: Position, context: Context, typed: Typed): Typed =
+@Abandoning private withoutTypeArguments(
+  typeArguments: List<TypeRef>,
+  at: Position,
+  context: Context,
+  typed: Typed,
+): Typed =
   if (typeArguments.isEmpty()) typed
-  else abandon(Globals.problem(context, at, "only a declared function is given type arguments, as in emptyMap<String, Int>()"))
+  else abandon(
+    Globals.problem(
+      context,
+      at,
+      "only a declared function is given type arguments, as in emptyMap<String, Int>()",
+    ),
+  )
 
 // ---- Arguments ----
 
@@ -324,7 +379,10 @@ withDefaults(at: Position, arguments: List<CallArgument>, parameters: List<(Stri
   if (missing.isEmpty()) given
   else if (!named && rest.map { name, _ -> name } != missing) given
   else given + missing.map { name ->
-    CallArgument(if (named) Some(name) else None, DefaultValue(at, Defaults.nameOf(owners.getOrDefault(name, owner), name)))
+    CallArgument(
+      if (named) Some(name) else None,
+      DefaultValue(at, Defaults.nameOf(owners.getOrDefault(name, owner), name)),
+    )
   }
 }
 
@@ -340,7 +398,10 @@ private withTrailingLast(at: Position, arguments: List<CallArgument>, parameters
         trailing = TrailingBlock(blockAt, blockParameters, block)
         if (named) arguments.dropLast(1) + [CallArgument(parameters.lastOrNone().map { name, _ -> name }, trailing)]
         else arguments.dropLast(1) + skipped.map { name, _ ->
-          CallArgument(None, DefaultValue(at, Defaults.nameOf(owners.getOrDefault(name, owner), name)))
+          CallArgument(
+            None,
+            DefaultValue(at, Defaults.nameOf(owners.getOrDefault(name, owner), name)),
+          )
         } + [CallArgument(None, trailing)]
       }
     }
@@ -358,10 +419,22 @@ private withTrailingLast(at: Position, arguments: List<CallArgument>, parameters
       calleeTyped = infer(callee, None, scope, context)
       when (resolved(calleeTyped.t)) {
         FunctionOf(parameters, result, effects) if parameters.size == arguments.size + 1 -> {
-          given = checkArguments(arguments.map { written(it) }, arguments.mapIndexed { i, _ -> i }, parameters.dropLast(1), scope, context)
+          given = checkArguments(
+            arguments.map { written(it) },
+            arguments.mapIndexed { i, _ -> i },
+            parameters.dropLast(1),
+            scope,
+            context,
+          )
           assign(value, valueTyped, parameters.lastOrNone().getOrElse(Variable(fresh())), context)
           perform(effects, at)
-          Some(Typed(result, None, piped(valueTyped.core) { v -> Applied(calleeTyped.core, given + [v]) }))
+          Some(
+            Typed(
+              result,
+              None,
+              piped(valueTyped.core) { v -> Applied(calleeTyped.core, given + [v]) },
+            ),
+          )
         }
         else -> None
       }

@@ -14,7 +14,12 @@ module Specs {
         NamedType(_, name, _) -> when (Names.find(name, namespace.table.specs, s -> Some(s), full -> namespace.table.specs.containsKey(full), place, namespace, Skipping)) {
           // One it builds on already, through another, adds nothing, nor does one that builds on itself.
           Found(found) if !seen.contains(found.name) ->
-            ownTypesSeen(found.declaration, Place(found.file, found.path), namespace, seen + [found.name])
+            ownTypesSeen(
+              found.declaration,
+              Place(found.file, found.path),
+              namespace,
+              seen + [found.name],
+            )
           else -> []
         }
         else -> []

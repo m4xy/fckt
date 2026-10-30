@@ -170,7 +170,11 @@ module Parser {
           expect(s, LeftParen, "'(' or '{' after the type name")
           fields = fieldList(s, start, false)
           expect(s, RightParen, "')'")
-          Declaration(start, name, RecordDefinition(typeParameters, fields, privateConstructor, false, None))
+          Declaration(
+            start,
+            name,
+            RecordDefinition(typeParameters, fields, privateConstructor, false, None),
+          )
         }
       }
       // external type Array<A> = "'a array": a type OCaml implements.
@@ -180,7 +184,10 @@ module Parser {
         name = upperIdent(s, "a type name")
         typeParameters = typeParameterList(s)
         expect(s, Assign, "'=' and the OCaml type, in a string: \"'a array\"")
-        ocaml = stringLiteral(s, expect(s, StringLiteral, "the OCaml type, in a string: \"'a array\""))
+        ocaml = stringLiteral(
+          s,
+          expect(s, StringLiteral, "the OCaml type, in a string: \"'a array\""),
+        )
         text = when (ocaml) {
           StringTemplate(_, [TemplateText(text)]) -> text
           else -> reject(atOf(ocaml), "an external type is OCaml in a string, without templates")
@@ -200,10 +207,23 @@ module Parser {
     FunctionDefinition(typeParameters, receiver, parameters, result, body, external, _) -> {
       arity = if (d.name == "unaryMinus") 0
         else if (operators.contains(d.name)) 1
-        else reject(d.at, "there's no operator '${d.name}': an operator is one of ${(operators + ["unaryMinus"]).joinToString(", ")}")
+        else reject(
+          d.at,
+          "there's no operator '${d.name}': an operator is one of ${(operators + ["unaryMinus"]).joinToString(", ")}",
+        )
       if (receiver.isNone()) reject(d.at, "an operator is a type's, so it's an extension: operator Type.${d.name}(...)")
       if (parameters.map { it.size }.getOrElse(0) != arity) reject(d.at, "${d.name} takes ${if (arity == 0) "no parameters" else "one parameter, the right-hand side"}")
-      d.copy(definition = FunctionDefinition(typeParameters, receiver, parameters, result, body, external, true))
+      d.copy(
+        definition = FunctionDefinition(
+          typeParameters,
+          receiver,
+          parameters,
+          result,
+          body,
+          external,
+          true,
+        ),
+      )
     }
     else -> reject(at, "only a function can be an operator")
   }
@@ -221,7 +241,17 @@ module Parser {
         else -> reject(atOf(body), "an external's body is OCaml in a string: \"List.map f this\"")
       }
       if (result.isNone() || parameters.getOrElse([]).any { it.parameterType.isNone() }) reject(d.at, "an external needs the types of its parameters and result")
-      d.copy(definition = FunctionDefinition(typeParameters, receiver, parameters, result, body, Some(ocaml), operator))
+      d.copy(
+        definition = FunctionDefinition(
+          typeParameters,
+          receiver,
+          parameters,
+          result,
+          body,
+          Some(ocaml),
+          operator,
+        ),
+      )
     }
     else -> d
   }
@@ -241,7 +271,11 @@ module Parser {
     result = if (accepts(s, Colon)) Some(typeRef(s)) else None
     expect(s, Assign, "'='")
     skipNewlines(s)
-    Declaration(start, name, FunctionDefinition(typeParameters, receiver, parameters, result, expression(s), None, false))
+    Declaration(
+      start,
+      name,
+      FunctionDefinition(typeParameters, receiver, parameters, result, expression(s), None, false),
+    )
   }
 
   @Rejecting @Mutating private moduleDeclaration(s: Parsing, start: Position): Declaration = {
@@ -255,7 +289,17 @@ module Parser {
       // Functor(): every module its default.
       arguments = if (looking(s, RightParen)) [] else moduleArguments(s, [])
       expect(s, RightParen, "')'")
-      Declaration(start, name, ModuleDefinition([], None, [], Some(Application(NamedType(functorAt, functor, []), arguments)), []))
+      Declaration(
+        start,
+        name,
+        ModuleDefinition(
+          [],
+          None,
+          [],
+          Some(Application(NamedType(functorAt, functor, []), arguments)),
+          [],
+        ),
+      )
     } else {
       // module Name<E>: generic in E, as each of its declarations is
       if (looking(s, Less) && peekAt(s, 2).kind == Colon) reject(peek(s).at, "a functor takes its modules in parentheses: module $name(M: Spec)")
@@ -271,7 +315,11 @@ module Parser {
       expect(s, LeftBrace, "'{' after the module name")
       declarations = memberList(s) { declaration(s) }
       if (typeParameters.isNotEmpty() && parameters.isNotEmpty()) reject(start, "a functor can't take type parameters too yet")
-      Declaration(start, name, ModuleDefinition(declarations, spec, parameters, None, typeParameters))
+      Declaration(
+        start,
+        name,
+        ModuleDefinition(declarations, spec, parameters, None, typeParameters),
+      )
     }
   }
 
@@ -308,7 +356,20 @@ module Parser {
     if (accepts(s, Assign)) {
       if (typeParameters.isNotEmpty()) reject(peek(s).at, "a copy of an effect takes the type parameters of the one it copies: effect $name = ...")
       target = peek(s).at
-      annotated(Declaration(start, name, SpecDefinition([], [], [], Some(NamedType(target, moduleName(s, "the effect it's a copy of"), [])), [])), effect)
+      annotated(
+        Declaration(
+          start,
+          name,
+          SpecDefinition(
+            [],
+            [],
+            [],
+            Some(NamedType(target, moduleName(s, "the effect it's a copy of"), [])),
+            [],
+          ),
+        ),
+        effect,
+      )
     } else {
       if (looking(s, LeftParen)) reject(peek(s).at, "an effect has no fields: its operations go in braces, as in effect $name { op(x: Int): Unit }")
       if (accepts(s, LeftBrace)) annotated(specBody(s, start, name, typeParameters, []), effect)
@@ -427,7 +488,10 @@ module Parser {
       typeName = upperIdent(s, "a type name")
       typeParameters = typeParameterList(s)
       if (looking(s, Assign) || looking(s, LeftParen) || looking(s, LeftBrace)) {
-        reject(peek(s).at, "a spec's types are abstract: write just 'type $typeName', and define it in each module")
+        reject(
+          peek(s).at,
+          "a spec's types are abstract: write just 'type $typeName', and define it in each module",
+        )
       }
       TypeMember(SpecType(at, typeName, typeParameters))
     } else {
@@ -439,14 +503,20 @@ module Parser {
         Some(untyped) -> reject(untyped.at, "a spec's parameters need types: ${untyped.name}: Type")
         None -> Unit
       }
-      expect(s, Colon, if (parameters.isNone()) "':' and the value's type" else "':' and the result type")
+      expect(
+        s,
+        Colon,
+        if (parameters.isNone()) "':' and the value's type" else "':' and the result type",
+      )
       valueType = typeRef(s)
       // A default: what a module that doesn't define it has.
       default = if (accepts(s, Assign)) {
         skipNewlines(s)
         Some(expression(s))
       } else None
-      ValueMember(SpecValue(at, valueName, typeParameters, parameters, valueType, annotations, default))
+      ValueMember(
+        SpecValue(at, valueName, typeParameters, parameters, valueType, annotations, default),
+      )
     }
   }
 
@@ -466,7 +536,10 @@ module Parser {
     when {
       unnamed.isNotEmpty() -> when (fields) {
         [only] -> [only.copy(name = "value")]
-        else -> reject(unnamed.firstOrNone().map { it.at }.getOrElse(declarationAt), "only a type with a single field can leave it unnamed")
+        else -> reject(
+          unnamed.firstOrNone().map { it.at }.getOrElse(declarationAt),
+          "only a type with a single field can leave it unnamed",
+        )
       }
       fields.isEmpty() -> reject(declarationAt, "a type needs at least one field")
       else -> when (fields.dropLast(1).find { it.vararg }) {
@@ -534,12 +607,30 @@ module Parser {
   private withReceiverTypeParameters(declarations: List<Declaration>, types: List<String>): List<Declaration> = declarations.map { d ->
     when (d.definition) {
       ModuleDefinition(inside, spec, parameters, application, typeParameters) ->
-        d.copy(definition = ModuleDefinition(withReceiverTypeParameters(inside, types), spec, parameters, application, typeParameters))
+        d.copy(
+          definition = ModuleDefinition(
+            withReceiverTypeParameters(inside, types),
+            spec,
+            parameters,
+            application,
+            typeParameters,
+          ),
+        )
       FunctionDefinition(typeParameters, Some(receiver), parameters, result, body, external, operator) -> {
         named = bareNames(receiver).distinct().filter { name ->
           !types.contains(name) && !builtinTypes.contains(name) && !typeParameters.contains(name) && typeParameterName(name)
         }
-        d.copy(definition = FunctionDefinition(named + typeParameters, Some(receiver), parameters, result, body, external, operator))
+        d.copy(
+          definition = FunctionDefinition(
+            named + typeParameters,
+            Some(receiver),
+            parameters,
+            result,
+            body,
+            external,
+            operator,
+          ),
+        )
       }
       else -> d
     }
@@ -616,7 +707,10 @@ module Parser {
   @Rejecting @Mutating private annotationValue(s: Parsing): AnnotationValue = {
     at = peek(s).at
     if (looking(s, Tilde) || (looking(s, Identifier) && peekAt(s, 1).kind == Arrow) || (looking(s, LeftParen) && lambdaParameters(s))) {
-      reject(peek(s).at, "an annotation's arguments are constants and references, so not a lambda: name a function instead")
+      reject(
+        peek(s).at,
+        "an annotation's arguments are constants and references, so not a lambda: name a function instead",
+      )
     }
     when {
       [IntLiteral, FloatLiteral, CharLiteral, TrueKeyword, FalseKeyword].contains(peek(s).kind) -> Constant(primary(s))
@@ -652,9 +746,17 @@ module Parser {
           expect(s, Greater, "'>'")
           Some(read)
         } else None
-        Reference(at, name, typeArguments, if (looking(s, LeftParen)) Some(annotationArguments(s)) else None)
+        Reference(
+          at,
+          name,
+          typeArguments,
+          if (looking(s, LeftParen)) Some(annotationArguments(s)) else None,
+        )
       }
-      else -> reject(peek(s).at, "an annotation's argument is a constant or a reference, like 1, \"text\", a name or List<Type>, not ${describe(peek(s))}")
+      else -> reject(
+        peek(s).at,
+        "an annotation's argument is a constant or a reference, like 1, \"text\", a name or List<Type>, not ${describe(peek(s))}",
+      )
     }
   }
 
@@ -783,7 +885,12 @@ module Parser {
 
   @Rejecting @Mutating private binaryLevel(s: Parsing, kinds: List<Kind>, operand: () -> Expression): Expression = binaryRest(s, kinds, operand, operand())
 
-  @Rejecting @Mutating private binaryRest(s: Parsing, kinds: List<Kind>, operand: () -> Expression, left: Expression): Expression =
+  @Rejecting @Mutating private binaryRest(
+    s: Parsing,
+    kinds: List<Kind>,
+    operand: () -> Expression,
+    left: Expression,
+  ): Expression =
     if (kinds.contains(peek(s).kind)) {
       op = next(s)
       skipNewlines(s)
@@ -814,7 +921,11 @@ module Parser {
   // when (e) { is T -> yes; else -> no }, from check: for !is, the other way round.
   private decide(check: Check, at: Position, yes: Expression, no: Expression): Expression = {
     (onT, otherwise) = if (check.negated) (no, yes) else (yes, no)
-    When(at, Some(check.subject), [Branch(at, [check.pattern], None, onT, None), Branch(at, [], None, otherwise, None)])
+    When(
+      at,
+      Some(check.subject),
+      [Branch(at, [check.pattern], None, onT, None), Branch(at, [], None, otherwise, None)],
+    )
   }
 
   // The check e was read as, if it was one.
@@ -888,7 +999,16 @@ module Parser {
 
   // if (x is T && ...) then else otherwise, from operand on: each check a when that narrows what
   // it checks in the rest, and in then; otherwise is where any fails.
-  private ifChain(s: Parsing, at: Position, operand: Expression, more: List<Expression>, positions: List<Position>, then: Expression, otherwise: Expression, hasElse: Boolean): Expression =
+  private ifChain(
+    s: Parsing,
+    at: Position,
+    operand: Expression,
+    more: List<Expression>,
+    positions: List<Position>,
+    then: Expression,
+    otherwise: Expression,
+    hasElse: Boolean,
+  ): Expression =
     when (checkOf(s, operand)) {
       None -> If(at, chain(s, And, operand, more, positions), then, otherwise, hasElse)
       Some(check) -> {
@@ -1126,7 +1246,10 @@ module Parser {
         guard = guardOf(s)
         when (guard) {
           Some(g) if subject.isNone() ->
-            reject(atOf(g), "a 'when' without a subject has conditions already: make this one a branch of its own, without 'else if'")
+            reject(
+              atOf(g),
+              "a 'when' without a subject has conditions already: make this one a branch of its own, without 'else if'",
+            )
           else -> Unit
         }
         expect(s, Arrow, "'->'")

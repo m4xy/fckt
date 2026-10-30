@@ -23,7 +23,15 @@ module TypeDeclarations {
   @Solving toStrings(definitions: Definitions): Map<String, Symbol> =
     definitions.namespace.table.functions.toList().mapNotNull { _, s ->
       when (s.declaration.definition) {
-        FunctionDefinition(typeParameters, Some(receiver), Some(parameters), _, _, _, _) if s.declaration.name == "toString" ->
+        FunctionDefinition(
+          typeParameters,
+          Some(receiver),
+          Some(parameters),
+          _,
+          _,
+          _,
+          _,
+        ) if s.declaration.name == "toString" ->
           when (Diagnostics.attempting { Conversion.typeOf(receiver, TypeContext(Place(s.file, s.path), typeParameters.map { (it, TypeParameter(it)) }.toMap()), definitions) }) {
             Ok(Named(name, arguments, _)) if arguments.filter { it !is Effects }.size == parameters.size -> Some((name, s))
             else -> None
@@ -36,8 +44,19 @@ module TypeDeclarations {
     RecordDefinition(typeParameters, _, _, true, _) -> None
     RecordDefinition(typeParameters, _, _, _, Some(ocaml)) -> Some(DeclaredExternal(d, typeParameters, ocaml))
     RecordDefinition(typeParameters, fields, _, _, None) -> {
-      types = Conversion.recordFields(d, typeParameters.map { TypeParameter(it) }, None, definitions)
-      Some(DeclaredRecord(d, typeParameters, fields.zip(types).map { f, t -> DeclaredField(f.name, t, f.variable) }))
+      types = Conversion.recordFields(
+        d,
+        typeParameters.map { TypeParameter(it) },
+        None,
+        definitions,
+      )
+      Some(
+        DeclaredRecord(
+          d,
+          typeParameters,
+          fields.zip(types).map { f, t -> DeclaredField(f.name, t, f.variable) },
+        ),
+      )
     }
     CasesDefinition(typeParameters, _, _, _) -> {
       cases = Conversion.casesWithFields(d, typeParameters.map { TypeParameter(it) }, None, definitions).map { c, types ->
@@ -47,7 +66,20 @@ module TypeDeclarations {
       Some(DeclaredCases(d, typeParameters, cases))
     }
     AliasDefinition(typeParameters, target) ->
-      Some(DeclaredAlias(d, typeParameters, Conversion.typeOf(target, TypeContext(Place(d.file, d.path), typeParameters.map { (it, TypeParameter(it)) }.toMap()), definitions)))
+      Some(
+        DeclaredAlias(
+          d,
+          typeParameters,
+          Conversion.typeOf(
+            target,
+            TypeContext(
+              Place(d.file, d.path),
+              typeParameters.map { (it, TypeParameter(it)) }.toMap(),
+            ),
+            definitions,
+          ),
+        ),
+      )
     else -> None
   }
 }

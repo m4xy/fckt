@@ -66,7 +66,10 @@ module Channels {
     private external inputLine(input: InputHandle): Option<String> = "In_channel.input_line input"
     private external inputBytes(input: InputHandle, count: Int): Bytes =
       "(fun c n -> if n < 0 then In_channel.input_all c else match In_channel.really_input_string c n with Some s -> s | None -> In_channel.input_all c) input count"
-    private external outputBytes(output: OutputHandle, bytes: Bytes): Unit = "Out_channel.output_string output bytes"
+    private external outputBytes(
+      output: OutputHandle,
+      bytes: Bytes,
+    ): Unit = "Out_channel.output_string output bytes"
     private external closeIn(input: InputHandle): Unit = "In_channel.close input"
     private external closeOut(output: OutputHandle): Unit = "Out_channel.close output"
     readLineFrom(input: InputHandle): Option<String> = inputLine(input)

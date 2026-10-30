@@ -51,9 +51,21 @@ module MetaTypes {
               NamedType(argumentAt, specName, []) -> when (Lookups.spec(specName, context.place, definitions.namespace, Refusing)) {
                 Found(spec) -> spec
                 Refused(why) -> abandon(Diagnostic(context.place.file.source.path, argumentAt, why))
-                NotFound -> abandon(Diagnostic(context.place.file.source.path, Positions.ofType(argument), "Module<...> takes a spec, like Module<Ordered>"))
+                NotFound -> abandon(
+                  Diagnostic(
+                    context.place.file.source.path,
+                    Positions.ofType(argument),
+                    "Module<...> takes a spec, like Module<Ordered>",
+                  ),
+                )
               }
-              _ -> abandon(Diagnostic(context.place.file.source.path, Positions.ofType(argument), "Module<...> takes a spec, like Module<Ordered>"))
+              _ -> abandon(
+                Diagnostic(
+                  context.place.file.source.path,
+                  Positions.ofType(argument),
+                  "Module<...> takes a spec, like Module<Ordered>",
+                ),
+              )
             }
           })
         }
@@ -62,7 +74,13 @@ module MetaTypes {
           argument = arguments.firstOrNone().getOrElse(t)
           caseType = Conversion.typeOf(argument, context, definitions)
           if (!isCaseType(caseType, definitions)) {
-            abandon(Diagnostic(context.place.file.source.path, Positions.ofType(argument), "Case<...> takes a type with cases, not ${TypeText.shown(caseType)}"))
+            abandon(
+              Diagnostic(
+                context.place.file.source.path,
+                Positions.ofType(argument),
+                "Case<...> takes a type with cases, not ${TypeText.shown(caseType)}",
+              ),
+            )
           } else MetaCase(caseType)
         }
         "Field" -> {
