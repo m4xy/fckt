@@ -9,7 +9,7 @@ module Resolution {
   // declared twice or an import names nothing.
   @Abandoning namespace(workspace: Workspace, tree: SourceTree): Namespace = {
     table = Symbols.table(workspace)
-    Namespace(table, workspace.files.map { file -> (file.source.path, Imports.of(file, table)) }.toMap(), noModules, Hints(tree, workspace.apart))
+    Namespace(table, Imports.allOf(workspace.files, table).map { file, imports -> (file.source.path, imports) }.toMap(), noModules, Hints(tree, workspace.apart))
   }
 
   // What modules are before functors are: nothing more than what they declare.

@@ -10,12 +10,17 @@ import fckt.parser.*
 // comes before one brought in with something else, and a name two bring in means neither, until
 // it's imported by name.
 module Imports {
-  // What the file's imports bring in, or, giving up, why one names nothing.
-  @Abandoning of(file: LoadedFile, table: SymbolTable): FileImports = {
-    known = knownNames(table)
+  // What each file's imports bring in, or, giving up, why one names nothing: what can be imported
+  // is worked out once, for them all.
+  @Abandoning allOf(files: List<LoadedFile>, table: SymbolTable): List<(LoadedFile, FileImports)> = {
+    importable = importableIn(table)
+    files.map { file -> (file, of(file, importable, table)) }
+  }
+
+  @Abandoning private of(file: LoadedFile, importable: Importable, table: SymbolTable): FileImports = {
     (named, implied) = file.imports.fold((emptyMap(), emptyMap())) { acc, i ->
       (n, imp) = acc
-      bring(i, file, n, imp, known, table)
+      bring(i, file, n, imp, importable, table)
     }
     FileImports(
       implied.filter { _, targets -> targets.size == 1 }.toList().map { name, targets -> (name, targets.firstOrNone().getOrElse("")) }
@@ -32,7 +37,31 @@ module Imports {
     KnownFunction(symbol: Symbol),
   }
 
-  // Everything that can be imported, by its full name.
+  // Everything that can be imported, by its full name; and each module's or package's members, by
+  // its full name, as members gives them.
+  private type Importable(known: Map<String, Known>, members: Map<String, List<(String, String)>>)
+
+  private importableIn(table: SymbolTable): Importable = {
+    known = knownNames(table)
+    // Not one private to its file under a name of its own, which no import brings in.
+    inside = known.toList().filter { name, _ -> !name.contains("'") }.fold(emptyMap<String, List<(String, String)>>()) { m, entry ->
+      (name, _) = entry
+      parent = parentOf(name)
+      m.put(parent, m.getOrDefault(parent, []) + [(lastPart(name), name)])
+    }
+    cases = table.caseTypes.toList().fold(emptyMap<String, List<(String, String)>>()) { m, entry ->
+      (name, owner) = entry
+      parent = parentOf(name)
+      m.put(parent, m.getOrDefault(parent, []) + Symbols.casesOf(owner).map { c -> (c.name, "$name.${c.name}") })
+    }
+    parents = (inside.toList().map { p, _ -> p } + cases.toList().map { p, _ -> p }).distinct()
+    members = parents.map { p ->
+      own = inside.getOrDefault(p, [])
+      (p, own + cases.getOrDefault(p, []) + own.flatMap { _, full -> operationsOf(full, known) })
+    }.toMap()
+    Importable(known, members)
+  }
+
   private knownNames(table: SymbolTable): Map<String, Known> = {
     declared = [table.records, table.caseTypes, table.aliases, table.annotationTypes].flatMap { it.toList() }
       .map { name, symbol -> (name, KnownType(symbol)) }
@@ -48,13 +77,14 @@ module Imports {
     file: LoadedFile,
     named: Map<String, String>,
     implied: Map<String, List<String>>,
-    known: Map<String, Known>,
+    importable: Importable,
     table: SymbolTable,
   ): (Map<String, String>, Map<String, List<String>>) = {
+    known = importable.known
     full = i.path.joinToString(".")
     if (i.wildcard) {
       if (!table.modules.containsKey(full)) abandon(Diagnostic(file.source.path, i.at, "import $full.* names no package or module"))
-      else (named, implying(implied, members(full, known, table)))
+      else (named, implying(implied, importable.members.getOrDefault(full, [])))
     } else if (!known.containsKey(full) && !table.cases.containsKey(full) && isMethodOf(i.path, table)) {
       // A method, by its name: its module brings in its extensions, as importing the module would.
       (named, implied)
@@ -65,16 +95,17 @@ module Imports {
       when (named.get(name)) {
         Some(other) if other != full ->
           abandon(Diagnostic(file.source.path, i.at, "'$name' is imported already, as $other; import this one as another name, with as"))
-        else -> (named.put(name, full), implying(implied, alongside(full, known, table)))
+        else -> (named.put(name, full), implying(implied, alongside(full, importable, table)))
       }
     }
   }
 
   // What importing the declaration by name brings in with it: a module's types and their cases, an
   // effect's operations, a type's cases.
-  private alongside(full: String, known: Map<String, Known>, table: SymbolTable): List<(String, String)> = {
+  private alongside(full: String, importable: Importable, table: SymbolTable): List<(String, String)> = {
+    known = importable.known
     types = when (known.get(full)) {
-      Some(KnownModule) -> typesIn(full, known, table)
+      Some(KnownModule) -> typesIn(full, importable)
       else -> []
     }
     cases = when (table.caseTypes.get(full)) {
@@ -96,21 +127,10 @@ module Imports {
     else -> false
   }
 
-  // Each name in the module or package, with its full name: what's declared directly in it, the
-  // cases of its types, and the operations of its effects.
-  private members(of: String, known: Map<String, Known>, table: SymbolTable): List<(String, String)> = {
-    // Not one private to its file under a name of its own, which no import brings in.
-    inside = known.toList().filter { name, _ -> parentOf(name) == of && !name.contains("'") }.map { name, _ -> (lastPart(name), name) }
-    cases = table.caseTypes.toList().filter { name, _ -> parentOf(name) == of }.flatMap { name, owner ->
-      Symbols.casesOf(owner).map { c -> (c.name, "$name.${c.name}") }
-    }
-    inside + cases + inside.flatMap { _, full -> operationsOf(full, known) }
-  }
-
   // The members of a module that are types or specs, or the cases and operations that come with them.
-  private typesIn(of: String, known: Map<String, Known>, table: SymbolTable): List<(String, String)> =
-    members(of, known, table).filter { _, full ->
-      when (known.get(full)) {
+  private typesIn(of: String, importable: Importable): List<(String, String)> =
+    importable.members.getOrDefault(of, []).filter { _, full ->
+      when (importable.known.get(full)) {
         None -> true
         Some(KnownType(_)) -> true
         Some(KnownSpec(_)) -> true

@@ -1,53 +1,67 @@
 import fckt.collections.Maps.*
 
 // The strongly connected components of a graph, by Tarjan's algorithm: the groups of nodes that
-// can each reach every other in their group.
+// can each reach every other in their group. Nodes are told apart by their keys, which are cheap to
+// compare, as the nodes themselves may not be.
 module Components {
   // The graph's components, each after every component it has edges to, each keeping the order
   // the nodes are given in.
-  stronglyConnected<N>(nodes: List<N>, edges: (N) -> List<N>): List<List<N>> = {
-    search = Search(0, emptyMap(), emptyMap(), [], [])
-    nodes.forEach { node -> if (!search.indices.containsKey(node)) visit(search, node, nodes, edges) }
+  stronglyConnected<N>(nodes: List<N>, key: (N) -> String, edges: (N) -> List<N>): List<List<N>> = {
+    search = Search(0, emptyMap(), emptyMap(), [], emptyMap(), [])
+    places = nodes.mapIndexed { i, node -> (key(node), i) }.toMap()
+    nodes.forEach { node -> if (!search.indices.containsKey(key(node))) visit(search, node, places, key, edges) }
     search.components
   }
 
   // How far the search has got: the next index to give, each node's index and lowest reachable
-  // index, the nodes on the stack, the last pushed first, and the components found.
+  // index, by key; the nodes on the stack, the last pushed first, and their keys; and the
+  // components found.
   private type Search<N>(
     var next: Int,
-    var indices: Map<N, Int>,
-    var lowest: Map<N, Int>,
+    var indices: Map<String, Int>,
+    var lowest: Map<String, Int>,
     var stack: List<N>,
+    var stacked: Map<String, Boolean>,
     var components: List<List<N>>,
   )
 
-  @Mutating private visit<N>(search: Search<N>, v: N, nodes: List<N>, edges: (N) -> List<N>): Unit = {
-    search.indices = search.indices.put(v, search.next)
-    search.lowest = search.lowest.put(v, search.next)
+  @Mutating private visit<N>(search: Search<N>, v: N, places: Map<String, Int>, key: (N) -> String, edges: (N) -> List<N>): Unit = {
+    k = key(v)
+    search.indices = search.indices.put(k, search.next)
+    search.lowest = search.lowest.put(k, search.next)
     search.next = search.next + 1
     search.stack = [v, *search.stack]
+    search.stacked = search.stacked.put(k, true)
     edges(v).forEach { w ->
-      if (!search.indices.containsKey(w)) {
-        visit(search, w, nodes, edges)
-        lower(search, v, lowestOf(search, w))
-      } else if (search.stack.contains(w)) {
-        lower(search, v, indexOf(search, w))
+      kw = key(w)
+      if (!search.indices.containsKey(kw)) {
+        visit(search, w, places, key, edges)
+        lower(search, k, lowestOf(search, kw))
+      } else if (search.stacked.containsKey(kw)) {
+        lower(search, k, indexOf(search, kw))
       }
     }
-    if (lowestOf(search, v) == indexOf(search, v)) {
+    if (lowestOf(search, k) == indexOf(search, k)) {
       // v is its component's root: the component is what's on the stack down to it.
-      count = search.stack.indexOf(v) + 1
+      count = depthOf(search.stack, k, key, 1)
       component = search.stack.take(count)
       search.stack = search.stack.drop(count)
-      search.components = search.components + [component.sortedBy { nodes.indexOf(it) }]
+      search.stacked = component.fold(search.stacked) { s, n -> s.remove(key(n)) }
+      search.components = search.components + [component.sortedBy { places.getOrDefault(key(it), -1) }]
     }
   }
 
-  @Mutating private lower<N>(search: Search<N>, v: N, to: Int): Unit = {
-    search.lowest = search.lowest.put(v, min(lowestOf(search, v), to))
+  // How many nodes down the stack the one with the key is, counting it.
+  private depthOf<N>(stack: List<N>, k: String, key: (N) -> String, count: Int): Int = when (stack) {
+    [] -> count
+    [top, *rest] -> if (key(top) == k) count else depthOf(rest, k, key, count + 1)
   }
 
-  private indexOf<N>(search: Search<N>, v: N): Int = search.indices.getOrDefault(v, 0)
+  @Mutating private lower<N>(search: Search<N>, k: String, to: Int): Unit = {
+    search.lowest = search.lowest.put(k, min(lowestOf(search, k), to))
+  }
 
-  private lowestOf<N>(search: Search<N>, v: N): Int = search.lowest.getOrDefault(v, 0)
+  private indexOf<N>(search: Search<N>, k: String): Int = search.indices.getOrDefault(k, 0)
+
+  private lowestOf<N>(search: Search<N>, k: String): Int = search.lowest.getOrDefault(k, 0)
 }

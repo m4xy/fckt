@@ -114,7 +114,7 @@ module Names {
       next = () -> around(name, further, entries, symbolOf, place, namespace, strictness)
       full = canonical((place.path.take(depth) + [name]).joinToString("."), namespace)
       // The place's file's own, private to it, before any other file's.
-      own = place.file.source.path.flatMap { path -> entries.get(Symbols.filePrivateName(full, path)) }
+      own = if (!namespace.table.filePrivate) None else place.file.source.path.flatMap { path -> entries.get(Symbols.filePrivateName(full, path)) }
       when (own.orElse { entries.get(full) }) {
         None -> next()
         Some(entry) -> when (symbolOf(entry)) {

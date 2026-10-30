@@ -17,4 +17,6 @@ type SymbolTable(
   functions: Map<String, Symbol>,
   cases: Map<String, CaseSymbol>,
   declarations: List<Symbol>,
+  // Whether any declaration has a name of its own, private to its file, which lookups must try first.
+  filePrivate: Boolean = false,
 )

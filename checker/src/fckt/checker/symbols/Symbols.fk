@@ -30,7 +30,7 @@ module Symbols {
     specs = uniquely(declared.filter { isSpec(it) }) { s -> "spec '${simpleName(s)}' is declared twice" }
     types = typeTables(declared)
     functions = functionTable(declared)
-    SymbolTable(modules, types.records, types.caseTypes, types.aliases, types.annotationTypes, specs, functions, caseTable(types), declared)
+    SymbolTable(modules, types.records, types.caseTypes, types.aliases, types.annotationTypes, specs, functions, caseTable(types), declared, declared.any { it.name.contains("'") })
   }
 
   // Every declaration in the workspace's files, and each inside the modules among them, by its full
