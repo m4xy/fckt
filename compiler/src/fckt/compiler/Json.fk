@@ -1,0 +1,10 @@
+// JSON, as the language server reads and writes it. A number is kept as it's written, 42 or -1.5,
+// and read as an Int when it's asked for one.
+type Json {
+  JsonNull,
+  JsonBoolean(value: Boolean),
+  JsonNumber(text: String),
+  JsonString(value: String),
+  JsonArray(items: List<Json>),
+  JsonObject(fields: List<(String, Json)>),
+}

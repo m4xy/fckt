@@ -1,0 +1,183 @@
+import fckt.collections.Array
+import fckt.collections.Arrays.*
+
+// Reading JSON text as a Json, and writing a Json as text.
+module Jsons {
+  // The value the text is, or None if it isn't JSON.
+  parse(text: String): Option<Json> = {
+    chars = text.toList().toArray()
+    value(chars, 0).flatMap { parsed ->
+      (json, after) = parsed
+      if (spaces(chars, after) == chars.size) Some(json) else None
+    }
+  }
+
+  // The value as JSON text, on one line.
+  render(json: Json): String = when (json) {
+    JsonNull -> "null"
+    JsonBoolean(value) -> if (value) "true" else "false"
+    JsonNumber(text) -> text
+    JsonString(value) -> quoted(value)
+    JsonArray(items) -> "[" + items.map { render(it) }.joinToString(",") + "]"
+    JsonObject(fields) -> "{" + fields.map { name, value ->
+      quoted(name) + ":" + render(value)
+    }.joinToString(",") + "}"
+  }
+
+  Json.field(name: String): Option<Json> = when (this) {
+    JsonObject(fields) -> fields.find { n, _ -> n == name }.map { _, value -> value }
+    else -> None
+  }
+
+  Json.text: Option<String> = when (this) {
+    JsonString(value) -> Some(value)
+    else -> None
+  }
+
+  Json.int: Option<Int> = when (this) {
+    JsonNumber(text) -> text.toIntOrNone()
+    else -> None
+  }
+
+  Json.items: List<Json> = when (this) {
+    JsonArray(items) -> items
+    else -> []
+  }
+
+  number(n: Int): Json = JsonNumber(n.toString())
+
+  private value(cs: Array<Char>, at: Int): Option<(Json, Int)> = {
+    i = spaces(cs, at)
+    when (charAt(cs, i)) {
+      None -> None
+      Some(c) ->
+        if (c == '{') fields(cs, i + 1, [])
+        else if (c == '[') items(cs, i + 1, [])
+        else if (c == '"') string(cs, i + 1, []).map { s, after -> (JsonString(s), after) }
+        else if (c == 't') literal(cs, i, "true", JsonBoolean(true))
+        else if (c == 'f') literal(cs, i, "false", JsonBoolean(false))
+        else if (c == 'n') literal(cs, i, "null", JsonNull)
+        else if (c == '-' || c.isDigit()) {
+          end = numberEnd(cs, i)
+          Some((JsonNumber(slice(cs, i, end)), end))
+        }
+        else None
+    }
+  }
+
+  private fields(
+    cs: Array<Char>,
+    at: Int,
+    found: List<(String, Json)>,
+  ): Option<(Json, Int)> = {
+    i = spaces(cs, at)
+    if (found.isEmpty() && charAt(cs, i) == Some('}')) Some((JsonObject([]), i + 1))
+    else if (charAt(cs, i) != Some('"')) None
+    else string(cs, i + 1, []).flatMap { key ->
+      (name, afterName) = key
+      colon = spaces(cs, afterName)
+      if (charAt(cs, colon) != Some(':')) None
+      else value(cs, colon + 1).flatMap { parsed ->
+        (item, afterValue) = parsed
+        next = spaces(cs, afterValue)
+        all = found + [(name, item)]
+        when (charAt(cs, next)) {
+          Some(',') -> fields(cs, next + 1, all)
+          Some('}') -> Some((JsonObject(all), next + 1))
+          else -> None
+        }
+      }
+    }
+  }
+
+  private items(cs: Array<Char>, at: Int, found: List<Json>): Option<(Json, Int)> = {
+    i = spaces(cs, at)
+    if (found.isEmpty() && charAt(cs, i) == Some(']')) Some((JsonArray([]), i + 1))
+    else value(cs, i).flatMap { parsed ->
+      (item, afterValue) = parsed
+      next = spaces(cs, afterValue)
+      all = found + [item]
+      when (charAt(cs, next)) {
+        Some(',') -> items(cs, next + 1, all)
+        Some(']') -> Some((JsonArray(all), next + 1))
+        else -> None
+      }
+    }
+  }
+
+  // A string's characters, from after its opening quote, reversed as they're found.
+  private string(cs: Array<Char>, at: Int, found: List<Char>): Option<(String, Int)> =
+    when (charAt(cs, at)) {
+      None -> None
+      Some(c) ->
+        if (c == '"') Some((found.reversed().map { it.toString() }.joinToString(""), at + 1))
+        else if (c != '\\') string(cs, at + 1, [c] + found)
+        else when (charAt(cs, at + 1)) {
+          Some('u') -> hex(cs, at + 2).flatMap { code ->
+            if (code >= 55296 && code <= 56319 && charAt(cs, at + 6) == Some('\\') &&
+              charAt(cs, at + 7) == Some('u')) hex(cs, at + 8).flatMap { low ->
+              combined = 65536 + (code - 55296) * 1024 + (low - 56320)
+              string(cs, at + 12, [combined.toChar()] + found)
+            }
+            else if (code >= 55296 && code <= 57343) string(cs, at + 6, [65533.toChar()] + found)
+            else string(cs, at + 6, [code.toChar()] + found)
+          }
+          Some(e) -> escaped(e).flatMap { string(cs, at + 2, [it] + found) }
+          None -> None
+        }
+    }
+
+  private escaped(c: Char): Option<Char> =
+    if (c == '"' || c == '\\' || c == '/') Some(c)
+    else if (c == 'n') Some('\n')
+    else if (c == 't') Some('\t')
+    else if (c == 'r') Some('\r')
+    else if (c == 'b') Some(8.toChar())
+    else if (c == 'f') Some(12.toChar())
+    else None
+
+  // The four hex digits from at, as a number.
+  private hex(cs: Array<Char>, at: Int): Option<Int> = (0..<4).fold(Some(0)) { sum, k ->
+    sum.flatMap { n -> charAt(cs, at + k).flatMap { digit(it) }.map { n * 16 + it } }
+  }
+
+  private digit(c: Char): Option<Int> =
+    if (c.isDigit()) Some(c.code - 48)
+    else if (c >= 'a' && c <= 'f') Some(c.code - 87)
+    else if (c >= 'A' && c <= 'F') Some(c.code - 55)
+    else None
+
+  private literal(cs: Array<Char>, at: Int, word: String, json: Json): Option<(Json, Int)> =
+    if (slice(cs, at, at + word.length) == word) Some((json, at + word.length)) else None
+
+  private numberEnd(cs: Array<Char>, at: Int): Int = when (charAt(cs, at)) {
+    Some(c) if c.isDigit() || c == '-' || c == '+' || c == '.' || c == 'e' || c == 'E' ->
+      numberEnd(cs, at + 1)
+    else -> at
+  }
+
+  private spaces(cs: Array<Char>, at: Int): Int = when (charAt(cs, at)) {
+    Some(c) if c == ' ' || c == '\n' || c == '\r' || c == '\t' -> spaces(cs, at + 1)
+    else -> at
+  }
+
+  private charAt(cs: Array<Char>, at: Int): Option<Char> =
+    if (at >= 0 && at < cs.size) Some(cs.get(at)) else None
+
+  private slice(cs: Array<Char>, from: Int, to: Int): String =
+    (from..<min(to, cs.size)).map { cs.get(it).toString() }.joinToString("")
+
+  private quoted(text: String): String = "\"" + text.toList().map { c ->
+    if (c == '"') "\\\""
+    else if (c == '\\') "\\\\"
+    else if (c == '\n') "\\n"
+    else if (c == '\r') "\\r"
+    else if (c == '\t') "\\t"
+    else if (c.code < 32) "\\u" + hexOf(c.code).padStart(4, '0')
+    else c.toString()
+  }.joinToString("") + "\""
+
+  private hexOf(n: Int): String =
+    if (n < 16) "0123456789abcdef".getOrNone(n).map { it.toString() }.getOrElse("")
+    else hexOf(n / 16) + hexOf(n % 16)
+}

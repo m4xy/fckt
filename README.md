@@ -402,4 +402,38 @@ project. A line that's long for another reason, as a long string, is left as it 
 
 ## Editor support
 
-`editors/intellij` is an IntelliJ IDEA plugin: it colours each name by what it is, as IntelliJ does for Kotlin, shows every one of the compiler's errors as you type, goes to declarations and finds usages, shows on hover each name's inferred type and what a function does (`twice(f: (Int) -> Int, x: Int): Int`, does what f does) and the effects an annotation passes on, and formats code as ktlint formats Kotlin, with two-space indents. `editors/vscode` has a TextMate grammar for VS Code. See each one's README for how to install it.
+`fckt --language-server` is fckt's language server, which any editor that speaks the Language
+Server Protocol can run. It checks the project of each file that's opened, changed or saved, with
+what's open as it is in the editor, and says what's wrong with each of the project's files; and it
+lays a file out as `fckt --format` does. A project is the folder with `build.fk` above the file, with
+the folders and libraries kiln last wrote to `.kiln/paths`, so it's checked against its libraries'
+interfaces, as kiln compiles it; without kiln's, the file's folder is checked with the standard
+library. In Neovim:
+
+```lua
+vim.filetype.add({ extension = { fk = "fckt" } })
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "fckt",
+  callback = function()
+    vim.lsp.start({ name = "fckt", cmd = { "fckt", "--language-server" },
+      root_dir = vim.fs.root(0, { "build.fk" }) })
+  end,
+})
+```
+
+and in Helix, in `languages.toml`:
+
+```toml
+[language-server.fckt]
+command = "fckt"
+args = ["--language-server"]
+
+[[language]]
+name = "fckt"
+scope = "source.fckt"
+file-types = ["fk"]
+roots = ["build.fk"]
+language-servers = ["fckt"]
+```
+
+`editors/intellij` is an IntelliJ IDEA plugin: it colours each name by what it is, as IntelliJ does for Kotlin, shows every one of the compiler's errors as you type, goes to declarations and finds usages, shows on hover each name's inferred type and what a function does (`twice(f: (Int) -> Int, x: Int): Int`, does what f does) and the effects an annotation passes on, and formats code as ktlint formats Kotlin, with two-space indents. `editors/vscode` is a VS Code extension, with a TextMate grammar, which runs the language server. See each one's README for how to install it.

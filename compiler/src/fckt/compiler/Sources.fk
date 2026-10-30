@@ -1,0 +1,84 @@
+import fckt.collections.Maps.*
+import fckt.io.Paths.*
+import fckt.io.Files.*
+import fckt.io.FileSystem
+import fckt.io.Path
+import fckt.io.Process
+import fckt.checker.sources.*
+
+// Where a program's code comes from: the core and the standard library, beside the compiler or in
+// the fckt repository; a project's packages, from its folders; and a library's, from its interface.
+module Sources {
+  // Where the core and the standard library are read from: FCKT_HOME; or, installed, lib/fckt beside
+  // the bin it's in, with the core in core and the standard library in std/src; or the fckt
+  // repository it's run in.
+  @FileSystem @Process home(): Path = when (env("FCKT_HOME")) {
+    Some(given) -> path(given)
+    None -> {
+      installed = executable().canonical().parent.map { it.resolve("../lib/fckt") }
+      when (installed) {
+        Some(lib) if lib.resolve("core").isDirectory() -> lib
+        _ -> path(".")
+      }
+    }
+  }
+
+  @FileSystem core(home: Path): List<(List<String>, List<SourceText>)> = {
+    installed = home.resolve("core")
+    folder = if (installed.isDirectory()) installed else home.resolve("src/main/resources/std")
+    packagesIn(folder, [], CoreProject, "core:")
+  }
+
+  @FileSystem standard(home: Path): List<(List<String>, List<SourceText>)> = {
+    std = home.resolve("std/src")
+    packagesIn(std, [], OtherProject(std.canonical().value), "std/src/", Some("Fckt_std"))
+  }
+
+  // A library's interface, as fckt --library writes it to a folder: its packages' declarations, and
+  // the OCaml unit that has their code, in the folder's file unit.
+  @FileSystem interfacesIn(dir: Path): List<(List<String>, List<SourceText>)> = {
+    unit = dir.resolve("unit").readText().trim()
+    packagesIn(dir, [], OtherProject(dir.canonical().value), "${dir.value}/", Some(unit), true)
+  }
+
+  // Each package under the folder, its own path given, with its files, named as positions name them:
+  // the prefix, then the file's path under the folder; a library's interfaces, .fki, or its source.
+  @FileSystem packagesIn(
+    folder: Path,
+    pkg: List<String>,
+    project: Project,
+    prefix: String,
+    compiledIn: Option<String> = None,
+    interface: Boolean = false,
+  ): List<(List<String>, List<SourceText>)> = {
+    entries = folder.listFiles().sortedBy { it.name }
+    extension = if (interface) "fki" else "fk"
+    files = entries.filter { it.extension == extension && !it.isDirectory() }.map { f ->
+      SourceText(
+        Some(prefix + (pkg + [f.name]).joinToString("/")),
+        project,
+        f.readText(),
+        compiledIn,
+        interface,
+      )
+    }
+    inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d ->
+      packagesIn(d, pkg + [d.name], project, prefix, compiledIn, interface)
+    }
+    [(pkg, files), *inner]
+  }
+
+  // A folder named as a value is, which is a package: geometry, not Geometry or my-shapes.
+  isPackageName(name: String): Boolean = when (name.toList()) {
+    [first, *rest] ->
+      (first.isLowerCase() || first == '_') && rest.all { it.isLetterOrDigit() || it == '_' }
+    [] -> false
+  }
+
+  // The packages, those of the same path together, in order.
+  merged(packages: List<(List<String>, List<SourceText>)>): Map<List<String>, List<SourceText>> =
+    packages.fold(emptyMap()) { m, entry ->
+      (pkg, files) = entry
+      m.put(pkg, m.getOrDefault(pkg, []) + files)
+    }
+}

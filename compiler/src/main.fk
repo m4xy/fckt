@@ -23,6 +23,8 @@ import fckt.checker.types.Solutions
 import fckt.compiler.Layout
 import fckt.compiler.Tests
 import fckt.compiler.Tests.*
+import fckt.compiler.Sources.*
+import fckt.compiler.LanguageServer
 
 // fckt's compiler, written in fckt. It takes what fckt takes, as kiln gives it:
 //
@@ -42,6 +44,7 @@ import fckt.compiler.Tests.*
 //   --core -o <ml>                                     the core, on its own
 //   --format <path>... | --check-format <path>...      lays code out, or says what isn't
 //   --std-path | --version
+//   --language-server                                  serves an editor, as LanguageServer says
 //
 // The core, and the standard library unless it's given as a library, are read from the fckt
 // repository FCKT_HOME names, or the one it's run in. Its --version says it's self-hosted, with a
@@ -56,6 +59,7 @@ main(args: List<String>) = when (args) {
   ["--core", "-o", out] -> coreUnit(out)
   ["--format", *paths] -> laidOut(paths, false)
   ["--check-format", *paths] -> laidOut(paths, true)
+  ["--language-server"] -> LanguageServer.serve()
   ["--std-path"] -> println(home().resolve("std/src").canonical().value)
   ["--whole", file, out, *folders] -> compile(file, out, folders, true)
   [file, out, *folders] if !(args.any { it.startsWith("-") }) -> compile(file, out, folders, false)
@@ -123,7 +127,7 @@ version: String = "0.1.0-SNAPSHOT"
   println("       fckt --test <folder> -o <out.ml> --marker <name> --runner <name> [options]")
   println("       fckt --symbols <out> [options] [<package>...]")
   println("       fckt --core -o <out.ml> | --format <path>... | --check-format <path>...")
-  println("       fckt --std-path | --version")
+  println("       fckt --std-path | --version | --language-server")
   exit(2)
 }
 
@@ -213,20 +217,6 @@ version: String = "0.1.0-SNAPSHOT"
         }
       }
       _ -> failing(errors.map { shown(it, "the symbols") })
-    }
-  }
-}
-
-// Where the core and the standard library are read from: FCKT_HOME; or, installed, lib/fckt beside
-// the bin it's in, with the core in core and the standard library in std/src; or the fckt
-// repository it's run in.
-@FileSystem @Process home(): Path = when (env("FCKT_HOME")) {
-  Some(given) -> path(given)
-  None -> {
-    installed = executable().canonical().parent.map { it.resolve("../lib/fckt") }
-    when (installed) {
-      Some(lib) if lib.resolve("core").isDirectory() -> lib
-      _ -> path(".")
     }
   }
 }
@@ -401,61 +391,3 @@ private shown(e: Diagnostic, file: String): String =
   exit(1)
 }
 
-@FileSystem core(home: Path): List<(List<String>, List<SourceText>)> = {
-  installed = home.resolve("core")
-  folder = if (installed.isDirectory()) installed else home.resolve("src/main/resources/std")
-  packagesIn(folder, [], CoreProject, "core:")
-}
-
-@FileSystem standard(home: Path): List<(List<String>, List<SourceText>)> = {
-  std = home.resolve("std/src")
-  packagesIn(std, [], OtherProject(std.canonical().value), "std/src/", Some("Fckt_std"))
-}
-
-// A library's interface, as fckt --library writes it to a folder: its packages' declarations, and
-// the OCaml unit that has their code, in the folder's file unit.
-@FileSystem interfacesIn(dir: Path): List<(List<String>, List<SourceText>)> = {
-  unit = dir.resolve("unit").readText().trim()
-  packagesIn(dir, [], OtherProject(dir.canonical().value), "${dir.value}/", Some(unit), true)
-}
-
-// Each package under the folder, its own path given, with its files, named as positions name them:
-// the prefix, then the file's path under the folder; a library's interfaces, .fki, or its source.
-@FileSystem packagesIn(
-  folder: Path,
-  pkg: List<String>,
-  project: Project,
-  prefix: String,
-  compiledIn: Option<String> = None,
-  interface: Boolean = false,
-): List<(List<String>, List<SourceText>)> = {
-  entries = folder.listFiles().sortedBy { it.name }
-  extension = if (interface) "fki" else "fk"
-  files = entries.filter { it.extension == extension && !it.isDirectory() }.map { f ->
-    SourceText(
-      Some(prefix + (pkg + [f.name]).joinToString("/")),
-      project,
-      f.readText(),
-      compiledIn,
-      interface,
-    )
-  }
-  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d ->
-    packagesIn(d, pkg + [d.name], project, prefix, compiledIn, interface)
-  }
-  [(pkg, files), *inner]
-}
-
-// A folder named as a value is, which is a package: geometry, not Geometry or my-shapes.
-isPackageName(name: String): Boolean = when (name.toList()) {
-  [first, *rest] ->
-    (first.isLowerCase() || first == '_') && rest.all { it.isLetterOrDigit() || it == '_' }
-  [] -> false
-}
-
-// The packages, those of the same path together, in order.
-merged(packages: List<(List<String>, List<SourceText>)>): Map<List<String>, List<SourceText>> =
-  packages.fold(emptyMap()) { m, entry ->
-    (pkg, files) = entry
-    m.put(pkg, m.getOrDefault(pkg, []) + files)
-  }
