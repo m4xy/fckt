@@ -178,31 +178,42 @@ See `examples/stdlib.fk`.
 
 ## Using it
 
+fckt is built with OCaml 5.1 or newer, and nothing else:
+
 ```sh
-./gradlew installDist
-build/install/fckt/bin/fckt examples/orders.fk   # writes examples/orders.ml
+./bootstrap.sh                                 # build/boot/bin/fckt
+build/boot/bin/fckt examples/orders.fk         # writes examples/orders.ml
 ocaml examples/orders.ml
 ```
 
+`boot/fckt.ml` is the seed: the compiler written in fckt, `compiler/`, as the OCaml it compiled
+itself to. `bootstrap.sh` builds it with `ocamlopt`, then has it compile `compiler/`, so the `fckt`
+it builds is the source's as it is now, in `build/boot`: `bin/fckt`, with the core and the standard
+library it reads beside it, in `lib/fckt`. `./bootstrap.sh --check` then has that compile itself
+again, which must give the same OCaml; once the source needs a newer seed, as it uses something the
+seed can't compile, `./bootstrap.sh --refresh` makes that OCaml the seed.
+
 `-o out.ml` picks the output file, and `-o -` prints the OCaml instead. A program that needs one of
-OCaml's other libraries, as one using `fckt.io` needs `unix`, is run with it: `ocaml -I +unix unix.cma out.ml`. `-I dir` adds a directory whose folders are packages, as the program's own directory's are. The generated code needs
-OCaml 5.1 or newer. `./gradlew test` compiles each test program and runs the result with `ocaml`
-when it's installed. Among them is [conformance](conformance/README.md): programs, each with what
-it prints or the error it's refused with, which say what any implementation of fckt does.
+OCaml's other libraries, as one using `fckt.io` needs `unix`, is run with it: `ocaml -I +unix unix.cma out.ml`. `-I dir` adds a directory whose folders are packages, as the program's own directory's are.
 
-### The compiler written in fckt
-
-`compiler/` is fckt's compiler written in fckt, from `parser/`, `checker/` and `lowering/`. It takes
-the same options as the one above, and it's the `fckt` kiln uses once it's installed. Build it
-with kiln, using the compiler above the first time, then install it:
+With kiln, bootstrapped with this `fckt` on `PATH`, the compiler builds and installs itself:
 
 ```sh
 cd compiler
-FCKT=../build/install/fckt/bin/fckt kiln install   # ~/.kiln/bin/fckt, or KILN_HOME's
+kiln install   # ~/.kiln/bin/fckt, or KILN_HOME's
 ```
 
 That puts it in `~/.kiln/bin`, where kiln is, with the core and the standard library it reads in
 `~/.kiln/lib/fckt`. kiln uses whichever `fckt` comes first on `PATH`, unless `FCKT` names another.
+
+### The compiler written in Kotlin
+
+The first compiler, in `src/main/kotlin`, is still what `./gradlew test` tests against: it compiles
+each test program and runs the result with `ocaml` when it's installed. Among them is
+[conformance](conformance/README.md): programs, each with what it prints or the error it's refused
+with, which say what any implementation of fckt does.
+Nothing needs it to build fckt or kiln: `./gradlew installDist` builds it, as
+`build/install/fckt/bin/fckt`, for those tests and for comparing the two.
 
 ### Compiling separately
 

@@ -46,8 +46,7 @@ import fckt.compiler.Tests.*
 // The core, and the standard library unless it's given as a library, are read from the fckt
 // repository FCKT_HOME names, or the one it's run in. Its --version says it's self-hosted, with a
 // digest of its own executable, so kiln keeps what each compiles apart, and compiles again when it
-// changes. What it doesn't know, it has fckt's compiler written in Kotlin do: FCKT_KOTLIN, or fckt.
-// It also takes
+// changes. What it doesn't know, it says, with how it's used. It also takes
 //
 //   compiler [--whole] <file.fk> <out.ml> [<folder>...]
 //
@@ -66,9 +65,9 @@ main(args: List<String>) = when (args) {
       _ if o.symbols.isSome() -> symbols(o, o.symbols.getOrElse("-"), o.inputs)
       (Some(interface), packages) -> library(o, path(interface), packages)
       (None, [file]) -> program(o, file)
-      else -> delegated(args)
+      else -> unknown(args)
     }
-    None -> delegated(args)
+    None -> unknown(args)
   }
 }
 
@@ -116,9 +115,17 @@ version: String = "0.1.0-SNAPSHOT"
 // A digest of this compiler's executable, which changes with it.
 @FileSystem @Process build(): String = executable().readBytes().md5().take(12)
 
-@Process delegated(args: List<String>): Unit = exit(runAttached(kotlin(), args))
-
-@Process kotlin(): String = env("FCKT_KOTLIN").getOrElse("fckt")
+@Console @Process unknown(args: List<String>): Unit = {
+  println("fckt: can't tell what to do with ${args.joinToString(" ")}")
+  println("usage: fckt <file.fk> [-o <out.ml>] [-I <folder>]... [--other-project <folder>]...")
+  println("         [-L <interface>]... [--no-std] [--separate] [--import <name>]...")
+  println("       fckt --library <interface> -o <out.ml> [options] <package>...")
+  println("       fckt --test <folder> -o <out.ml> --marker <name> --runner <name> [options]")
+  println("       fckt --symbols <out> [options] [<package>...]")
+  println("       fckt --core -o <out.ml> | --format <path>... | --check-format <path>...")
+  println("       fckt --std-path | --version")
+  exit(2)
+}
 
 @FileSystem @Channel @Process @Console program(o: Options, file: String): Unit = {
   // The folder the file's in is the program's, as the folders it's given are.

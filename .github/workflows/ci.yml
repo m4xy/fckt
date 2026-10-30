@@ -6,6 +6,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  # fckt from its seed, with OCaml alone: the compiler written in fckt compiles itself, and must
+  # compile itself to the same OCaml again.
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: 5
+      - name: Bootstrap
+        run: opam exec -- ./bootstrap.sh --check
+      - name: Compile an example
+        run: |
+          build/boot/bin/fckt examples/orders.fk -o build/orders.ml
+          opam exec -- ocaml -I +unix unix.cma build/orders.ml
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 60
