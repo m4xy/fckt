@@ -78,7 +78,7 @@ module References {
     }
     Monadic(_, monad, block) -> {
       withMonad = when (dotted(monad)) {
-        Some(d) if !bound.contains(d.split(".").firstOrNone().getOrElse(d)) -> found + ["bind", "pure", "map", "product"].map { "$d.$it" }
+        Some(d) if !bound.contains(d.split(".").firstOrNone().getOrElse(d)) -> found + ["bind", "pure", "map", "product"].map { "$d.$it" } + [d]
         else -> found
       }
       into(block, bound, withMonad)

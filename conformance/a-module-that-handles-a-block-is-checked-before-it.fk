@@ -1,0 +1,19 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Store {
+  load(key: String): Int
+}
+
+counted(): Int = Fixed { load("a") + load("b") }
+
+module Fixed : Store {
+  load(key: String): Int = key.length * 10
+}
+
+main() = println("${counted()}")
+
+// prints: 20

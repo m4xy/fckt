@@ -124,7 +124,8 @@ module Structures {
     EffectPart(effect) -> effect.effect.name == s.name
     SpecPart(spec) -> spec.spec.name == s.name
     GroupPart(group) -> group.functions.any { it.name == s.name }
-    ModulePart(path) -> within(s.path, path)
+    // What's in the module, or the module itself, as a handler or a value.
+    ModulePart(path) -> within(s.path, path) || within(s.name.split("."), path)
   }
 
   private typeIsIn(name: String, part: Part): Boolean = when (part) {

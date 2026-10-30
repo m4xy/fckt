@@ -2656,6 +2656,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             is Expr.Monadic -> {
                 dotted(e.module, null)?.takeIf { it.substringBefore('.') !in bound }?.let { module ->
                     listOf("bind", "pure", "map", "product").forEach { into += "$module.$it" }
+                    // A module that follows a handled effect handles the block: its functions are used.
+                    into += module
                 }
                 go(e.block)
             }
