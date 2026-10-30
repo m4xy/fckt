@@ -1071,7 +1071,7 @@ module Parser {
     condition = expression(s)
     expect(s, RightParen, "')'")
     skipNewlines(s)
-    then = expression(s)
+    then = branchBody(s)
     before = s.index
     skipNewlines(s)
     // Without an else, it's done for what it does, and gives Unit.
@@ -1079,7 +1079,7 @@ module Parser {
     if (hasElse) skipNewlines(s) else {
       s.index = before
     }
-    otherwise = if (hasElse) expression(s) else Name(at, "Unit")
+    otherwise = if (hasElse) branchBody(s) else Name(at, "Unit")
     // On a check, a when on what it checks, narrowed in then.
     when (checkOf(s, condition)) {
       Some(check) -> decide(check, atOf(condition), then, otherwise)
@@ -1122,17 +1122,17 @@ module Parser {
           else -> Unit
         }
         expect(s, Arrow, "'->'")
-        Branch(at, [], None, expression(s), guard)
+        Branch(at, [], None, branchBody(s), guard)
       } else if (subject.isNone()) {
         // Not expression(): a bare flag -> ... is a condition here, not a lambda.
         condition = pipe(s)
         expect(s, Arrow, "'->'")
-        Branch(at, [], Some(condition), expression(s), None)
+        Branch(at, [], Some(condition), branchBody(s), None)
       } else {
         patterns = commaSeparated(s) { pattern(s) }
         guard = guardOf(s)
         expect(s, Arrow, "'->'")
-        Branch(at, patterns, None, expression(s), guard)
+        Branch(at, patterns, None, branchBody(s), guard)
       }
       if (!looking(s, RightBrace)) {
         if (!looking(s, Newline) && !looking(s, Semicolon)) reject(peek(s).at, "expected end of line after a 'when' branch but found ${describe(peek(s))}")
@@ -1306,9 +1306,12 @@ module Parser {
     }
   }
 
-  // e on its own, or what it changes: account.balance = 10, x += 1, or xs[i] = v, which calls
-  // xs.set(i, v).
-  @Rejecting @Mutating private evaluation(s: Parsing, at: Position, e: Expression): Statement =
+  // e on its own, or what it changes.
+  @Rejecting @Mutating private evaluation(s: Parsing, at: Position, e: Expression): Statement = Evaluation(at, assignment(s, e).getOrElse(e))
+
+  // What changes e, if an assignment follows it: account.balance = 10, x += 1, changing a var; or
+  // xs[i] = v, which calls xs.set(i, v).
+  @Rejecting @Mutating private assignment(s: Parsing, e: Expression): Option<Expression> =
     if (looking(s, Assign) || looking(s, OperatorAssign)) {
       index = indexed(s, e)
       if (e !is Name && e !is Member && index.isNone()) reject(peek(s).at, "only a var, a var field or an index can be assigned to")
@@ -1317,10 +1320,16 @@ module Parser {
       written = expression(s)
       value = if (op.kind == Assign) written else Binary(op.at, op.text.dropLast(1), e, written)
       when (index) {
-        Some((getAt, target, i)) -> Evaluation(at, Call(getAt, Member(getAt, target, "set"), [i, Argument(None, value)], []))
-        None -> Evaluation(at, Assign(op.at, e, value))
+        Some((getAt, target, i)) -> Some(Call(getAt, Member(getAt, target, "set"), [i, Argument(None, value)], []))
+        None -> Some(Assign(op.at, e, value))
       }
-    } else Evaluation(at, e)
+    } else None
+
+  // An if's or a when's branch: an expression, or, as in Kotlin, an assignment, if (c) x = 1.
+  @Rejecting @Mutating private branchBody(s: Parsing): Expression = {
+    e = expression(s)
+    assignment(s, e).getOrElse(e)
+  }
 
   // e, if it's an xs[i] read: where the get is, what's indexed, and the index.
   private indexed(s: Parsing, e: Expression): Option<(Position, Expression, Argument)> = when (e) {

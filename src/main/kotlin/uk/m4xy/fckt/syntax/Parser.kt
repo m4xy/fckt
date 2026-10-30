@@ -1002,13 +1002,13 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
         val condition = expr()
         expect(T.RPAREN, "')'")
         skipNewlines()
-        val then = expr()
+        val then = branch()
         val save = p
         skipNewlines()
         // Without an else, it's done for what it does, and gives Unit.
         val hasElse = accept(T.ELSE) != null
         if (!hasElse) p = save else skipNewlines()
-        val otherwise = if (hasElse) expr() else Expr.Name(pos, "Unit")
+        val otherwise = if (hasElse) branch() else Expr.Name(pos, "Unit")
         // On a check, a `when` on what it checks, narrowed in then.
         checks[condition]?.let { return decide(it, condition.pos, then, otherwise) }
         conjunctions[condition]?.let { (operands, positions) -> return ifChain(pos, operands, positions, 0, then, otherwise, hasElse, Copier({ name -> name })) }
@@ -1037,18 +1037,18 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
                 val guard = guard()
                 if (guard != null && subject == null) throw error("a 'when' without a subject has conditions already: make this one a branch of its own, without 'else if'", guard.pos)
                 expect(T.ARROW, "'->'")
-                branches += Branch(branchPos, emptyList(), null, expr(), guard)
+                branches += Branch(branchPos, emptyList(), null, branch(), guard)
             } else if (subject == null) {
                 // Not expr(): a bare `flag -> ...` is a condition here, not a lambda.
                 val condition = pipe()
                 expect(T.ARROW, "'->'")
-                branches += Branch(branchPos, emptyList(), condition, expr())
+                branches += Branch(branchPos, emptyList(), condition, branch())
             } else {
                 val patterns = mutableListOf(pattern())
                 while (accept(T.COMMA) != null) patterns += pattern()
                 val guard = guard()
                 expect(T.ARROW, "'->'")
-                branches += Branch(branchPos, patterns, null, expr(), guard)
+                branches += Branch(branchPos, patterns, null, branch(), guard)
             }
             if (!at(T.RBRACE)) {
                 if (!at(T.NEWLINE) && !at(T.SEMI)) throw error("expected end of line after a 'when' branch but found ${describe(peek)}")
@@ -1223,20 +1223,31 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
             return Statement.Binding(pos, name, params, returnType, expr())
         }
         val e = expr()
-        // `account.balance = 10`, `x += 1`: changing a var; `xs[i] = v` calls `xs.set(i, v)`.
-        if (at(T.ASSIGN) || at(T.OP_ASSIGN)) {
-            if (e !is Expr.Name && e !is Expr.Member && e !in indexes) throw error("only a var, a var field or an index can be assigned to")
-            val op = next()
-            skipNewlines()
-            val written = expr()
-            val value = if (op.kind == T.ASSIGN) written else Expr.Binary(op.pos, op.text.dropLast(1), e, written)
-            if (e is Expr.Call && e in indexes) {
-                val get = e.callee as Expr.Member
-                return Statement.Effect(pos, Expr.Call(get.pos, Expr.Member(get.pos, get.target, "set"), listOf(e.args.single(), Arg(null, value))))
-            }
-            return Statement.Effect(pos, Expr.Assign(op.pos, e, value))
+        return Statement.Effect(pos, assignment(e) ?: e)
+    }
+
+    /**
+     * What changes [e], if an assignment follows it: `account.balance = 10`, `x += 1`, changing a
+     * var; `xs[i] = v`, which calls `xs.set(i, v)`.
+     */
+    private fun assignment(e: Expr): Expr? {
+        if (!at(T.ASSIGN) && !at(T.OP_ASSIGN)) return null
+        if (e !is Expr.Name && e !is Expr.Member && e !in indexes) throw error("only a var, a var field or an index can be assigned to")
+        val op = next()
+        skipNewlines()
+        val written = expr()
+        val value = if (op.kind == T.ASSIGN) written else Expr.Binary(op.pos, op.text.dropLast(1), e, written)
+        if (e is Expr.Call && e in indexes) {
+            val get = e.callee as Expr.Member
+            return Expr.Call(get.pos, Expr.Member(get.pos, get.target, "set"), listOf(e.args.single(), Arg(null, value)))
         }
-        return Statement.Effect(pos, e)
+        return Expr.Assign(op.pos, e, value)
+    }
+
+    /** An `if`'s or a `when`'s branch: an expression, or, as in Kotlin, an assignment, `if (c) x = 1`. */
+    private fun branch(): Expr {
+        val e = expr()
+        return assignment(e) ?: e
     }
 
     /** `x by` at the start of a statement: parses the pattern and the `by`, or returns null having consumed nothing. */

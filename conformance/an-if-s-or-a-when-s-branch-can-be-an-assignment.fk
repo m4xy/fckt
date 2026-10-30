@@ -1,0 +1,23 @@
+import fckt.io.Console
+import fckt.values.Mutable
+
+type Counter(var count: Int)
+
+main() = {
+  c = Counter(0)
+  if (c.count == 0) c.count = 5
+  if (c.count > 9) c.count = 1 else c.count += 2
+  println(c.count.toString())
+  when (c.count) {
+    7 -> c.count = 70
+    else -> c.count = 0
+  }
+  println(c.count.toString())
+  total: Mutable<Int> = Mutable(0)
+  [1, 2, 3].forEach { n -> if (n != 2) total.value += n }
+  println(total.value.toString())
+}
+
+// prints: 7
+// prints: 70
+// prints: 4
