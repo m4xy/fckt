@@ -919,7 +919,21 @@ class CompilerTest {
     }
 
     @Test
-    fun `a lambda wanted to give Unit drops what its body gives`() {
+    fun `a file of another project's package that's not used has its imports left out`() {
+        // Importing lib.Wanted reads lib's lower-case files for what they declare, but nothing of
+        // helpers.fk is used, so what it imports isn't loaded, nor need be.
+        val root = kotlin.io.path.createTempDirectory("fckt-unused-file").toFile()
+        File(root, "other/dep").mkdirs()
+        File(root, "other/lib").mkdirs()
+        File(root, "other/dep/Thing.fk").writeText("type Thing(n: Int)\n")
+        File(root, "other/lib/helpers.fk").writeText("import dep.*\nhelper(t: Thing): Int = t.n\n")
+        File(root, "other/lib/Wanted.fk").writeText("type Wanted(n: Int)\n")
+        val ml = uk.m4xy.fckt.compile("import lib.Wanted\nmain() = assertEquals(1, Wanted(1).n)\n", others = listOf(File(root, "other"), STD))
+        assertEquals("", runOcaml(ml))
+    }
+
+    @Test
+        fun `a lambda wanted to give Unit drops what its body gives`() {
         val source = """
             import fckt.values.Mutable
             main() = {

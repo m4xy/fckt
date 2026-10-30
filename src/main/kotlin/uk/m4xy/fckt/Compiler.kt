@@ -834,8 +834,10 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
         if (linked.none { it.name == partial.name }) omitted += (partial.pkg + partial.name).joinToString(".")
         packageContents(partial.pkg) += linked
     }
-    // Imports of what was left out name nothing used, so they go too.
-    val linkedImports = imports.mapValues { (_, list) -> list.filter { i -> omitted.none { i.path.joinToString(".").let { p -> p == it || p.startsWith("$it.") } } } }
+    // Imports of what was left out name nothing used, so they go too; as do those of a package's
+    // files read for what they declare but none of whose declarations is used.
+    val linkedImports = imports.filterKeys { it == null || it in loaded }
+        .mapValues { (_, list) -> list.filter { i -> omitted.none { i.path.joinToString(".").let { p -> p == it || p.startsWith("$it.") } } } }
     // A package compiled already is all one library's, with what's in it: its module is that library's.
     fun compiledUnit(pkg: List<String>): String? {
         val unit = packages.unitOf(pkg) ?: return null
