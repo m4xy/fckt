@@ -61,7 +61,7 @@ module Channels {
     }
   }
 
-  // OCaml's channels, which main uses.
+  // The files and standard streams the program itself has open, which main uses.
   module Local : Channel {
     private external inputLine(input: InputHandle): Option<String> = "In_channel.input_line input"
     private external inputBytes(input: InputHandle, count: Int): Bytes =

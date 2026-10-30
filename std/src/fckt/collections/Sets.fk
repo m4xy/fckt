@@ -1,6 +1,6 @@
 import fckt.collections.Maps.*
 
-// Kotlin's sets: items, each once. Imported into every file. A set never changes: plus and minus
+// Sets: items, each once. A file uses them with import fckt.collections.Sets.*. A set never changes: plus and minus
 // make another. Its items are in order, smallest first, as a map's keys are, and two sets with the
 // same items are equal.
 module Sets {
@@ -32,9 +32,9 @@ module Sets {
   Set<A>.all(f: (A) -> Boolean): Boolean = this.items.all { a, _ -> f(a) }
   Set<A>.count(f: (A) -> Boolean): Int = this.items.count { a, _ -> f(a) }
   Set<A>.filter(f: (A) -> Boolean): Set<A> = Set(this.items.filterKeys(f))
-  // What f makes of each item, in order: a list, as Kotlin's is, as two items may make the same.
+  // What f makes of each item, in order: a list, as two items may make the same.
   Set<A>.map<B>(f: (A) -> B): List<B> = this.toList().map(f)
 
-  // As Kotlin shows a set: [a, b].
+  // Shown as [a, b].
   Set<A>.toString(showA: (A) -> String): String = "[" + this.toList().map(showA).joinToString(", ") + "]"
 }

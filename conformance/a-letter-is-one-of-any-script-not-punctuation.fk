@@ -1,0 +1,13 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+main() = {
+  println("${['a', 'Z', 'é', 'Ω', 'ж', '中', 'か'].map { it.isLetter() }}")
+  println("${['—', '×', '£', '“', '1', ' ', '!'].map { it.isLetter() }}")
+}
+
+// prints: [true, true, true, true, true, true, true]
+// prints: [false, false, false, false, false, false, false]

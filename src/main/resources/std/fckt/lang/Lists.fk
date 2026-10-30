@@ -1,4 +1,4 @@
-// Kotlin's methods on lists. Imported into every file.
+// What lists have: their methods. Imported into every file.
 module Lists {
   external List<A>.size: Int = "List.length this"
   external List<A>.isEmpty(): Boolean = "List.is_empty this"
@@ -83,7 +83,9 @@ module Lists {
     }.map { _, _, a -> a }
   }
 
-  // Smallest first, by OCaml's ordering of values: numbers, then strings, then fields in order.
+  // Smallest first, comparing values as they're built: numbers by size, text by its bytes, and
+  // tuples and records field by field, in order. Values of a type with cases are in an order of
+  // their own, which is the same each time, but isn't the order the cases are declared in.
   List<A>.sorted(): List<A> = this.sortedWith(compareValues)
   List<A>.sortedBy<K>(key: (A) -> K): List<A> = this.sortedWith { a, b -> compareValues(key(a), key(b)) }
   List<A>.sortedDescending(): List<A> = this.sorted().reversed()

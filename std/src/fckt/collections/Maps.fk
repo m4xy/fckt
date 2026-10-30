@@ -1,6 +1,6 @@
-// Kotlin's maps: keys, each with a value. Imported into every file. A map never changes: put and
-// remove make another, sharing what they can, as kotlinx.collections.immutable's do. Its keys are in
-// order, smallest first, by OCaml's ordering of values, the one sorted() uses.
+// Maps: keys, each with a value. A file uses them with import fckt.collections.Maps.*. A map never
+// changes: put and remove make another, sharing what they can with it. Its keys are in order,
+// smallest first, compared as sorted() compares values.
 module Maps {
   // A tree of the keys in order, each node's priority, the hash of its key, above its children's,
   // so the same entries make the same tree however they were put in: two maps with the same
@@ -196,7 +196,7 @@ module Maps {
   // What f makes of each entry, in the keys' order.
   Map<K, V>.map<R>(f: (K, V) -> R): List<R> = this.entries.map { k, v -> f(k, v) }
 
-  // As Kotlin shows a map: {a=1, b=2}.
+  // Shown as {a=1, b=2}.
   Map<K, V>.toString(showKey: (K) -> String, showValue: (V) -> String): String =
     "{" + this.map { k, v -> showKey(k) + "=" + showValue(v) }.joinToString(", ") + "}"
 
