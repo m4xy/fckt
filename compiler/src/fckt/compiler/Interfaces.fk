@@ -1,0 +1,248 @@
+import fckt.parser.*
+
+// A library's interface: what each of its files declares for others to use, as fckt without the
+// code, greet(name: String): Unit, which a program that uses the library is checked against. Its
+// public functions and values say their types, so nothing has to be inferred from code that isn't
+// there. What's private or internal isn't in it: no other project sees it.
+module Interfaces {
+  // The file's interface, with its imports, as its declarations' types name what they import. A
+  // spec is as the text has it, with its defaults' code, as a module that follows it has that code.
+  write(file: SourceFile, path: String, text: String): String = {
+    header = "// The interface of $path, which fckt --library wrote: its declarations, without their code.\n"
+    imports = file.imports.map { i -> importLine(i) }.joinToString("")
+    declarations = seen(file.declarations).map { d -> "\n" + declaration(d, "", text) }
+    header + (if (imports.isEmpty()) "" else "\n" + imports) + declarations.joinToString("")
+  }
+
+  // Whether the file declares anything other projects see.
+  seesAny(file: SourceFile): Boolean = seen(file.declarations).isNotEmpty()
+
+  // What's wrong with the file's declarations as a library's: each public function or value that
+  // doesn't say its type, which then would have to be worked out from its code, where it is.
+  untyped(declarations: List<Declaration>): List<(Position, String)> =
+    seen(declarations).flatMap { d -> untypedIn(d) }
+
+  private untypedIn(d: Declaration): List<(Position, String)> = when (d.definition) {
+    ModuleDefinition(inner, _, _, _, _) -> untyped(inner)
+    FunctionDefinition(_, receiver, parameters, result, _, _, _) -> {
+      lacking = parameters.getOrElse([]).filter { it.parameterType.isNone() }.map { it.name }
+      inInterface = "'${d.name}' is in a library's interface, which programs are checked against, so"
+      if (lacking.isNotEmpty()) [
+        (d.at, "$inInterface its parameters need types: ${lacking.joinToString(", ")}"),
+      ]
+      else if (result.isNone() && parameters.isNone() && receiver.isNone()) [
+        (d.at, "$inInterface it needs a type: ${d.name}: Type = ..."),
+      ]
+      else if (result.isNone()) [
+        (d.at, "$inInterface it needs a result type: ${d.name}(...): Type = ..."),
+      ]
+      else []
+    }
+    else -> []
+  }
+
+  private seen(declarations: List<Declaration>): List<Declaration> =
+    declarations.filter { it.visibility == Public }
+
+  private importLine(i: Import): String = {
+    alias = i.alias.map { " as $it" }.getOrElse("")
+    "import " + i.path.joinToString(".") + (if (i.wildcard) ".*" else "") + alias + "\n"
+  }
+
+  private declaration(d: Declaration, indent: String, text: String): String = when (d.definition) {
+    SpecDefinition(_, _, _, None, _) -> indent + verbatim(d, text) + "\n"
+    definition -> {
+      effect = isEffect(d)
+      kept = d.annotations.filter { a -> !(effect && a.name == "Effect") }
+      opaque = if (d.opaque) "opaque " else ""
+      indent + annotations(kept) + opaque + when (definition) {
+        ModuleDefinition(_, _, _, Some(application), typeParameters) ->
+          "module ${d.name}${typeParameterList(typeParameters)} = ${applied(application)}\n"
+        other -> definitionText(d.name, other, effect, indent, text) + "\n"
+      }
+    }
+  }
+
+  // An effect, as effect Console { ... } or effect Mutating declares one: a spec, or an annotation
+  // type without fields, marked as one.
+  private isEffect(d: Declaration): Boolean =
+    d.annotations.any { it.name == "Effect" } && when (d.definition) {
+      SpecDefinition(_, _, _, _, _) -> true
+      RecordDefinition(_, fields, _, true, _) -> fields.isEmpty()
+      else -> false
+    }
+
+  private definitionText(
+    name: String,
+    definition: Definition,
+    effect: Boolean,
+    indent: String,
+    text: String,
+  ): String = when (definition) {
+    RecordDefinition(_, _, _, _, _) if effect -> "effect $name"
+    RecordDefinition(_, fields, _, true, _) -> "annotation type $name" + (if (fields.isEmpty()) "" else fieldList(fields))
+    RecordDefinition(typeParameters, _, _, _, Some(external)) ->
+      "external type $name${typeParameterList(typeParameters)} = ${string(external)}"
+    RecordDefinition(typeParameters, fields, privateConstructor, _, None) ->
+      "type $name${typeParameterList(typeParameters)}" + (if (privateConstructor) " private" else "") + fieldList(
+        fields,
+      )
+    CasesDefinition(typeParameters, cases, caseRefs, includes) -> {
+      own = cases.map { c -> "$indent  ${annotations(c.annotations)}${c.name}${if (c.fields.isEmpty()) "" else fieldList(c.fields)},\n" }
+      referred = caseRefs.map { c -> "$indent  ${c.owner}.${c.caseName},\n" }
+      included = includes.map { t -> "$indent  *${typeText(t)},\n" }
+      "type $name${typeParameterList(typeParameters)} {\n" + (own + referred + included).joinToString(
+        "",
+      ) + "$indent}"
+    }
+    AliasDefinition(typeParameters, target) -> "type $name${typeParameterList(typeParameters)} = ${typeText(target)}"
+    FunctionDefinition(typeParameters, receiver, parameters, result, _, external, operator) -> {
+      own = when (receiver) {
+        Some(r) -> typeParameters.filter { !namesIn(r).contains(it) }
+        None -> typeParameters
+      }
+      (if (operator) "operator " else "") +
+        (if (external.isSome()) "external " else "") +
+        receiver.map { r -> receiverText(r) + "." }.getOrElse("") +
+        name + typeParameterList(own) +
+        parameters.map { ps -> "(" + ps.map { parameterText(it) }.joinToString(", ") + ")" }.getOrElse("") +
+        result.map { ": " + typeText(it) }.getOrElse("") +
+        external.map { " = " + string(it) }.getOrElse("")
+    }
+    ModuleDefinition(declarations, spec, parameters, _, typeParameters) -> {
+      given = if (parameters.isEmpty()) "" else "(" + parameters.map { p ->
+        "${p.name}: ${typeText(p.spec)}" + p.default.map { " = " + typeText(it) }.getOrElse("")
+      }.joinToString(", ") + ")"
+      inner = seen(declarations).map { declaration(it, "$indent  ", text) }.joinToString("")
+      "module $name${typeParameterList(typeParameters)}$given" + spec.map { " : " + typeText(it) }.getOrElse("") + " {\n" + inner + "$indent}"
+    }
+    SpecDefinition(_, _, _, copyOf, _) -> (if (effect) "effect " else "spec ") + name + copyOf.map { " = " + typeText(it) }.getOrElse("")
+  }
+
+  private applied(application: Application): String =
+    typeText(application.functor) + "(" + application.arguments.map { a ->
+      a.name.map { "$it = " }.getOrElse("") + typeText(a.value)
+    }.joinToString(", ") + ")"
+
+  // The declaration as the text has it: from its first annotation, or where it starts, to the
+  // brace that closes it.
+  private verbatim(d: Declaration, text: String): String = {
+    starts = [d.at, *d.annotations.map { it.at }]
+    start = starts.minByOrNone { offset(text, it) }.getOrElse(d.at)
+    tokens = when (Lexer.tokens(text)) {
+      Ok(all) -> all.dropWhile { t -> t.at.line < d.at.line || (t.at.line == d.at.line && t.at.column < d.at.column) }
+      Error(_) -> []
+    }
+    end = closing(tokens.dropWhile { it.kind != LeftBrace }, 0)
+    text.substring(offset(text, start), end.map { offset(text, it) + 1 }.getOrElse(text.length))
+  }
+
+  private closing(tokens: List<Token>, depth: Int): Option<Position> = when (tokens) {
+    [] -> None
+    [t, *rest] -> when (t.kind) {
+      LeftBrace -> closing(rest, depth + 1)
+      RightBrace -> if (depth == 1) Some(t.at) else closing(rest, depth - 1)
+      else -> closing(rest, depth)
+    }
+  }
+
+  // Where the position is in the text, counting from 0.
+  private offset(text: String, at: Position): Int =
+    text.lines().take(at.line - 1).sumOf { it.length + 1 } + at.column - 1
+
+  // The plain names in the type, which are a receiver's type parameters where they aren't types.
+  private namesIn(t: TypeRef): List<String> = when (t) {
+    NamedType(_, name, []) -> [name]
+    NamedType(_, _, arguments) -> arguments.flatMap { namesIn(it) }
+    TupleType(_, elements) -> elements.flatMap { namesIn(it) }
+    FunctionType(_, parameters, result, _) -> (parameters + [result]).flatMap { namesIn(it) }
+    EffectsType(_, _) -> []
+    GivenType(_, _, given) -> namesIn(given)
+  }
+
+  // An extension's receiver, which a function type or tuple is in parentheses for.
+  private receiverText(t: TypeRef): String = when (t) {
+    FunctionType(_, _, _, _) -> "(${typeText(t)})"
+    else -> typeText(t)
+  }
+
+  private fieldList(fields: List<Field>): String = "(" + fields.map { f ->
+    annotations(f.annotations) +
+      (if (f.variable) "var " else "") +
+      (if (f.vararg) "vararg " else "") +
+      "${f.name}: ${typeText(f.fieldType)}" +
+      (if (f.default.isSome()) " = compiled" else "")
+  }.joinToString(", ") + ")"
+
+  private parameterText(p: Parameter): String =
+    annotations(
+      p.annotations,
+    ) + p.name + p.parameterType.map { ": " + typeText(it) }.getOrElse("") +
+      (if (p.default.isSome()) " = compiled" else "")
+
+  private typeParameterList(names: List<String>): String =
+    if (names.isEmpty()) "" else "<" + names.joinToString(", ") + ">"
+
+  private typeText(t: TypeRef): String = when (t) {
+    NamedType(_, name, []) -> name
+    NamedType(_, name, arguments) -> name + "<" + arguments.map { typeText(it) }.joinToString(", ") + ">"
+    FunctionType(_, parameters, result, effects) ->
+      effects.map { effectText(it) + " " }.joinToString("") +
+        "(" + parameters.map { typeText(it) }.joinToString(", ") + ") -> " + typeText(result)
+    TupleType(_, elements) -> "(" + elements.map { typeText(it) }.joinToString(", ") + ")"
+    EffectsType(_, effects) -> effects.map { effectText(it) }.joinToString(" ")
+    GivenType(_, name, given) -> "$name = ${typeText(given)}"
+  }
+
+  private effectText(a: Annotation): String =
+    "@" + a.name + (if (a.typeArguments.isEmpty()) "" else "<" + a.typeArguments.map { typeText(it) }.joinToString(", ") + ">")
+
+  private annotations(annotations: List<Annotation>): String = annotations.map { a ->
+    effectText(
+      a,
+    ) + (if (a.arguments.isEmpty()) "" else "(" + a.arguments.map { argument(it) }.joinToString(", ") + ")") + " "
+  }.joinToString("")
+
+  private argument(
+    a: AnnotationArgument,
+  ): String = a.name.map { "$it = " }.getOrElse("") + value(a.value)
+
+  private value(v: AnnotationValue): String = when (v) {
+    Constant(e) -> constant(e)
+    Reference(_, name, typeArguments, arguments) ->
+      name +
+        typeArguments.map { ts -> "<" + ts.map { typeText(it) }.joinToString(", ") + ">" }.getOrElse("") +
+        arguments.map { args -> "(" + args.map { argument(it) }.joinToString(", ") + ")" }.getOrElse("")
+    ValueList(_, items) -> "[" + items.map { value(it) }.joinToString(", ") + "]"
+    ValueTuple(_, items) -> "(" + items.map { value(it) }.joinToString(", ") + ")"
+  }
+
+  private constant(e: Expression): String = when (e) {
+    IntConstant(_, n) -> n.toString()
+    FloatConstant(_, x) -> x.toString()
+    BooleanConstant(_, b) -> b.toString()
+    CharConstant(_, c) -> "'" + escaped(c.toString(), '\'') + "'"
+    StringTemplate(_, parts) -> string(parts.map { p ->
+      when (p) {
+        TemplateText(t) -> t
+        Interpolation(_) -> ""
+      }
+    }.joinToString(""))
+    Unary(_, operator, operand) -> operator + constant(operand)
+    else -> ""
+  }
+
+  // The text as a fckt string, with what would end it or start a template escaped.
+  private string(text: String): String = "\"" + escaped(text, '"') + "\""
+
+  private escaped(text: String, quote: Char): String = text.toList().map { c ->
+    when (c) {
+      '\\' -> "\\\\"
+      '$' -> "\\$"
+      '\n' -> "\\n"
+      '\t' -> "\\t"
+      '\r' -> "\\r"
+      else -> if (c == quote) "\\$c" else c.toString()
+    }
+  }.joinToString("")
+}

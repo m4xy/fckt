@@ -14,6 +14,9 @@ import fckt.checker.diagnostics.Diagnostic
 import fckt.checker.sources.*
 import fckt.lowering.Programs
 import fckt.ocaml.Printer
+import fckt.parser.*
+import fckt.lowering.Naming
+import fckt.compiler.Interfaces
 
 // fckt's compiler, written in fckt. It takes what fckt takes, as kiln gives it:
 //
@@ -34,23 +37,25 @@ main(args: List<String>) = when (args) {
   ["--version"] -> println("${run(kotlin(), ["--version"]).value.trim()}, self-hosted")
   ["--whole", file, out, *folders] -> compile(file, out, folders, true)
   [file, out, *folders] if !(args.any { it.startsWith("-") }) -> compile(file, out, folders, false)
-  else -> when (options(args, Options(None, None, [], [], [], false, true))) {
-    Some(o) -> when (o.input) {
-      Some(file) -> program(o, file)
-      None -> delegated(args)
+  else -> when (options(args, Options([], None, [], [], [], false, true, None))) {
+    Some(o) -> when ((o.library, o.inputs)) {
+      (Some(interface), packages) -> library(o, path(interface), packages)
+      (None, [file]) -> program(o, file)
+      else -> delegated(args)
     }
     None -> delegated(args)
   }
 }
 
 type Options(
-  input: Option<String>,
+  inputs: List<String>,
   output: Option<String>,
   own: List<String>,
   others: List<String>,
   libraries: List<String>,
   noStd: Boolean,
   separate: Boolean,
+  library: Option<String>,
 )
 
 options(args: List<String>, o: Options): Option<Options> = when (args) {
@@ -61,10 +66,8 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
   ["-L", dir, *rest] -> options(rest, o.copy(libraries = o.libraries + [dir]))
   ["--no-std", *rest] -> options(rest, o.copy(noStd = true))
   ["--separate", *rest] -> options(rest, o.copy(separate = true))
-  [arg, *rest] if !arg.startsWith("-") && o.input.isNone() -> options(
-    rest,
-    o.copy(input = Some(arg)),
-  )
+  ["--library", dir, *rest] -> options(rest, o.copy(library = Some(dir)))
+  [arg, *rest] if !arg.startsWith("-") -> options(rest, o.copy(inputs = o.inputs + [arg]))
   else -> None
 }
 
@@ -73,23 +76,32 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
 @Process kotlin(): String = env("FCKT_KOTLIN").getOrElse("fckt")
 
 @FileSystem @Channel @Process @Console program(o: Options, file: String): Unit = {
-  home = path(env("FCKT_HOME").getOrElse("."))
-  own = o.own.flatMap { dir -> packagesIn(path(dir), [], ProgramProject, "$dir/") }
-  others = o.others.flatMap { dir -> packagesIn(path(dir), [], OtherProject(path(dir).canonical().value), "$dir/") }
-  libraries = o.libraries.flatMap { dir -> interfacesIn(path(dir)) }
-  tree = SourceTree(
-    merged(core(home) + (if (o.noStd) [] else standard(home)) + own + others + libraries),
-  )
-  checked(file, tree, false) { ml ->
-    when (o.output) {
-      Some("-") -> print(ml)
-      Some(out) -> path(out).writeText(ml)
-      None -> path(file.removeSuffix(".fk") + ".ml").writeText(ml)
-    }
+  checked(
+    SourceText(None, ProgramProject, path(file).readText()),
+    file,
+    tree(o, ownPackages(o)),
+    false,
+  ) { ml ->
+    writeOutput(o.output.getOrElse(file.removeSuffix(".fk") + ".ml"), ml)
   }
 }
 
-@FileSystem @Channel @Process compile(
+@FileSystem @Console writeOutput(output: String, ml: String): Unit =
+  if (output == "-") print(ml) else path(output).writeText(ml)
+
+@FileSystem ownPackages(o: Options): List<(List<String>, List<SourceText>)> =
+  o.own.flatMap { dir -> packagesIn(path(dir), [], ProgramProject, "$dir/") }
+
+// What a program's checked with: the core, the standard library unless it's a library given, the
+// program's own packages, other projects' and the libraries'.
+@FileSystem @Process tree(o: Options, own: List<(List<String>, List<SourceText>)>): SourceTree = {
+  home = path(env("FCKT_HOME").getOrElse("."))
+  others = o.others.flatMap { dir -> packagesIn(path(dir), [], OtherProject(path(dir).canonical().value), "$dir/") }
+  libraries = o.libraries.flatMap { dir -> interfacesIn(path(dir)) }
+  SourceTree(merged(core(home) + (if (o.noStd) [] else standard(home)) + own + others + libraries))
+}
+
+@FileSystem @Channel @Process @Console compile(
   file: String,
   out: String,
   folders: List<String>,
@@ -97,18 +109,77 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
 ): Unit = {
   own = folders.flatMap { folder -> packagesIn(path(folder), [], ProgramProject, "$folder/") }
   tree = SourceTree(merged(core(path(".")) + standard(path(".")) + own))
-  checked(file, tree, whole) { ml -> path(out).writeText(ml) }
+  checked(
+    SourceText(None, ProgramProject, path(file).readText()),
+    file,
+    tree,
+    whole,
+  ) { ml -> path(out).writeText(ml) }
 }
+
+// The packages, compiled to the unit the output names, with each file's interface written to the
+// folder: what a program that uses them is checked against, and what has their code.
+@FileSystem @Channel @Process @Console library(
+  o: Options,
+  interface: Path,
+  packages: List<String>,
+): Unit = {
+  if (packages.isEmpty()) failing(["fckt: a library needs packages"])
+  own = ownPackages(o)
+  missing = packages.filter { pkg -> own.none { p, _ -> p == pkg.split(".") } }
+  if (missing.isNotEmpty()) failing(
+    missing.map { "fckt: $it isn't a package in ${o.own.joinToString(", ")}" },
+  )
+  entry = SourceText(None, ProgramProject, packages.map { "import $it.*\n" }.joinToString(""))
+  checked(entry, "the library", tree(o, own), false) { ml ->
+    files = own.filter { p, _ -> packages.contains(p.joinToString(".")) }.flatMap { pkg, sources ->
+      sources.mapNotNull { source ->
+        when (Parser.parse(source.text)) {
+          Ok(parsed) if !declaresMain(parsed) -> Some((pkg, source, parsed))
+          else -> None
+        }
+      }
+    }
+    untyped = files.flatMap { _, source, parsed ->
+      Interfaces.untyped(
+        parsed.declarations,
+      ).map { at, message -> "${source.path.getOrElse("")}:${at.line}:${at.column}: error: $message" }
+    }
+    if (untyped.isNotEmpty()) failing(untyped)
+    interface.delete()
+    files.filter { _, _, parsed -> Interfaces.seesAny(parsed) }.forEach { pkg, source, parsed ->
+      sourcePath = source.path.getOrElse("")
+      folder = interface.resolve(pkg.joinToString("/"))
+      folder.makeDirs()
+      folder.resolve(Loader.fileName(source) + ".fki").writeText(
+        Interfaces.write(parsed, sourcePath, source.text),
+      )
+    }
+    interface.makeDirs()
+    interface.resolve("unit").writeText(unitName(o.output.getOrElse("")) + "\n")
+    writeOutput(o.output.getOrElse("-"), ml)
+  }
+}
+
+private declaresMain(file: SourceFile): Boolean = file.declarations.any { d ->
+  d.name == "main" && when (d.definition) {
+    FunctionDefinition(_, _, _, _, _, _, _) -> true
+    else -> false
+  }
+}
+
+// The OCaml unit a file of OCaml is: its name, without its extension, starting with a capital.
+private unitName(file: String): String = Naming.moduleName(path(file).name.removeSuffix(".ml"))
 
 // The program in the file, checked with the packages in the tree, as OCaml, given to write; or
 // what's wrong with it, said, ending with exit code 1.
-@FileSystem @Channel @Process checked(
+@FileSystem @Channel @Process @Console checked(
+  entry: SourceText,
   file: String,
   tree: SourceTree,
   whole: Boolean,
-  write: @FileSystem @Channel (String) -> Unit,
+  write: @FileSystem @Channel @Process @Console (String) -> Unit,
 ): Unit = {
-  entry = SourceText(None, ProgramProject, path(file).readText())
   (program, errors) = Checker.check(entry, tree, true)
   when ((program, errors)) {
     (Some(p), []) -> when (attempt { Programs.ocaml(p, whole) }) {
