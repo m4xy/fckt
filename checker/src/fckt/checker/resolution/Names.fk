@@ -112,7 +112,10 @@ module Names {
     [depth, *further] -> {
       table = namespace.table
       next = () -> around(name, further, entries, symbolOf, place, namespace, strictness)
-      when (entries.get(canonical((place.path.take(depth) + [name]).joinToString("."), namespace))) {
+      full = canonical((place.path.take(depth) + [name]).joinToString("."), namespace)
+      // The place's file's own, private to it, before any other file's.
+      own = place.file.source.path.flatMap { path -> entries.get(Symbols.filePrivateName(full, path)) }
+      when (own.orElse { entries.get(full) }) {
         None -> next()
         Some(entry) -> when (symbolOf(entry)) {
           Some(symbol) if Visibility.isForeign(symbol, place) -> next()

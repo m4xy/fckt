@@ -153,13 +153,13 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     // ---- Handled effects ----
 
     /** An operation's OCaml effect constructor: `Console_println`. */
-    private fun effectName(spec: Decl.Spec, op: SpecValue) = "${spec.simpleName}_${op.name}"
+    private fun effectName(spec: Decl.Spec, op: SpecValue) = "${spec.ownName}_${op.name}"
 
     /** [local], declared next to [spec], as named from here. */
     private fun nextTo(spec: Decl.Spec, local: String) = ref((spec.path + local).joinToString("."), { it })
 
-    private fun handlerType(spec: Decl.Spec) = snake(spec.simpleName).removeSuffix("_") + "_handler"
-    private fun handleName(spec: Decl.Spec) = "handle_" + snake(spec.simpleName).removeSuffix("_")
+    private fun handlerType(spec: Decl.Spec) = snake(spec.ownName).removeSuffix("_") + "_handler"
+    private fun handleName(spec: Decl.Spec) = "handle_" + snake(spec.ownName).removeSuffix("_")
 
     /** The handler record's type, as named from here: `_ console_handler`, or `(_, _) yielding_handler`. */
     private fun handlerTypeText(spec: Decl.Spec): String =
@@ -291,9 +291,9 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             currentPath = path
             when (node) {
                 is Decl.Module -> listOf(StructureChild.ModuleDef(moduleDef(node, functionItems))) +
-                    if (node.name in hidden) listOf(StructureChild.ModuleDef(ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(outerAlias(node.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(moduleName(node.simpleName))))) else emptyList()
+                    if (node.name in hidden) listOf(StructureChild.ModuleDef(ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(outerAlias(node.ownName)), applies = uk.m4xy.kastor.Attribute.Value(moduleName(node.ownName))))) else emptyList()
                 is Decl.Spec -> StructureElement.build<Unit> {
-                    moduleType(node.simpleName) { specItems(node) }
+                    moduleType(node.ownName) { specItems(node) }
                     if (node in program.effects) handledEffect(node)
                 }.children
                 is uk.m4xy.fckt.types.FunctionGroup -> listOf(functionItems.getValue(node))
@@ -359,7 +359,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         }
         return uk.m4xy.fckt.types.stronglyConnected(nodes) { edges.getValue(it) }.map { component ->
             if (component.size > 1) {
-                val names = component.map { n -> if (n is Decl.Module) "module ${n.simpleName}" else "its functions" }
+                val names = component.map { n -> if (n is Decl.Module) "module ${n.ownName}" else "its functions" }
                 throw CompileError((component.first { it is Decl.Module } as Decl.Module).pos, "${names.joinToString(" and ")} use each other")
             }
             component.single()
@@ -369,11 +369,11 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     private fun moduleDef(m: Decl.Module, functionItems: Map<uk.m4xy.fckt.types.FunctionGroup, StructureChild<Unit>>): ModuleDefElement<Unit> {
         val path = m.name.split('.')
         // A package a library compiled: that library's module.
-        compiledModule(m)?.let { return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(moduleName(m.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(it)) }
+        compiledModule(m)?.let { return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(moduleName(m.ownName)), applies = uk.m4xy.kastor.Attribute.Value(it)) }
         program.applications[m.name]?.let { (functor, args) ->
             currentPath = path.dropLast(1)
             val applies = (listOf(ref(functor) { it }) + args.map { "(${ref(it) { name -> name }})" }).joinToString(" ")
-            return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(moduleName(m.simpleName)), applies = uk.m4xy.kastor.Attribute.Value(applies))
+            return ModuleDefElement(name = uk.m4xy.kastor.Attribute.Value(moduleName(m.ownName)), applies = uk.m4xy.kastor.Attribute.Value(applies))
         }
         currentPath = path.dropLast(1)
         val params = functorParams(m)
@@ -396,7 +396,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             emptyList()
         }
         return ModuleDefElement(
-            name = uk.m4xy.kastor.Attribute.Value(moduleName(m.simpleName)),
+            name = uk.m4xy.kastor.Attribute.Value(moduleName(m.ownName)),
             params = params?.let { uk.m4xy.kastor.Attribute.Value(it) },
             children = signature + items,
         )
@@ -540,7 +540,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
             currentPath = path
             when (node) {
                 is Decl.Spec -> {
-                    moduleType(node.simpleName) { specItems(node) }
+                    moduleType(node.ownName) { specItems(node) }
                     // A handled effect's operations, handlers and how to run one, for handling it outside.
                     if (isHandled(node)) {
                         effectDeclarations(node)
@@ -549,13 +549,13 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 }
                 is Decl.Module -> {
                     val alias = compiledModule(node)
-                    if (alias != null) sigModule(moduleName(node.simpleName)) { this.alias = alias }
-                    else sigModule(moduleName(node.simpleName)) {
+                    if (alias != null) sigModule(moduleName(node.ownName)) { this.alias = alias }
+                    else sigModule(moduleName(node.ownName)) {
                         functorParams(node)?.let { params = it }
                         signatureItems(node)
                     }
                     // Its alias, where one of its name further in hides it, as the structure has.
-                    if (node.name in hidden) sigModule(outerAlias(node.simpleName)) { this.alias = moduleName(node.simpleName) }
+                    if (node.name in hidden) sigModule(outerAlias(node.ownName)) { this.alias = moduleName(node.ownName) }
                 }
                 else -> {
                     @Suppress("UNCHECKED_CAST")
@@ -572,7 +572,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         }
         for (f in m.decls.filterIsInstance<Decl.Function>().filter { !it.isPrivate && it.external == null }) {
             val type = program.outsideTypes[f] ?: program.functionTypes.getValue(f)
-            sigValue(snake(f.simpleName), typeText(type, mutableMapOf()))
+            sigValue(snake(f.ownName), typeText(type, mutableMapOf()))
         }
     }
 
@@ -658,20 +658,20 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     private fun TypeGroupScope<Unit>.typeDefinitions(group: List<Decl>, forSignature: Boolean) {
         for (decl in group) {
             if (forSignature && decl.isOpaque) {
-                typeDef(snake(decl.simpleName)) { params = typeParamsOf(decl).map(::typeVar) }
+                typeDef(snake(decl.ownName)) { params = typeParamsOf(decl).map(::typeVar) }
                 continue
             }
             // Only the methods a program uses come from the standard library, which may not build its opaque types.
             val partly = !forSignature && decl.isOpaque && decl.pos.file?.startsWith(uk.m4xy.fckt.CORE_PATH) == true
             when (decl) {
-                is Decl.Record -> typeDef(snake(decl.simpleName)) {
+                is Decl.Record -> typeDef(snake(decl.ownName)) {
                     if (partly) partlyUsed = true
                     params = decl.typeParams.ocaml().map(::typeVar)
                     if (forSignature && decl.privateConstructor) isPrivate = true
                     for (field in decl.fields) fieldDecl(snake(field.name), typeText(field.type, decl.typeParams.ocaml())) { if (field.isVar) isMutable = true }
                 }
                 is Decl.Sealed -> if (decl.name in program.polymorphic) {
-                    typeDef(snake(decl.simpleName)) {
+                    typeDef(snake(decl.ownName)) {
                         params = decl.typeParams.ocaml().map(::typeVar)
                         polymorphic = true
                         for (case in program.cases.getValue(decl.name)) {
@@ -680,7 +680,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                             }
                         }
                     }
-                } else typeDef(snake(decl.simpleName)) {
+                } else typeDef(snake(decl.ownName)) {
                     if (partly) partlyUsed = true
                     params = decl.typeParams.ocaml().map(::typeVar)
                     for (variant in decl.variants) {
@@ -689,7 +689,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                         }
                     }
                 }
-                is Decl.Alias -> typeDef(snake(decl.simpleName)) {
+                is Decl.Alias -> typeDef(snake(decl.ownName)) {
                     params = typeParamsOf(decl).map(::typeVar)
                     alias = typeText(decl.target, typeParamsOf(decl))
                 }
@@ -782,7 +782,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
     // ---- Functions ----
 
     private fun LetGroupScope<Unit>.function(decl: Decl.Function) {
-        binding(snake(decl.simpleName)) {
+        binding(snake(decl.ownName)) {
             decl.params?.let { params = paramTexts(it, decl.typeParams) }
             decl.returnType?.let { returnType = typeText(it, decl.typeParams) }
             expr(decl.body)
@@ -1551,7 +1551,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         "List" -> Gen.App(Gen.Id(helper("fk_show_list")), args)
         "Option" -> Gen.App(Gen.Id(helper("fk_show_option")), args)
         "Result" -> Gen.App(Gen.Id(helper("fk_show_result")), args)
-        else -> records[name]?.takeIf { it.external != null }?.let { Gen.Fun(listOf("_"), Gen.Str("<${it.simpleName}>")) } ?: toStrings[name]?.let { f ->
+        else -> records[name]?.takeIf { it.external != null }?.let { Gen.Fun(listOf("_"), Gen.Str("<${it.ownName}>")) } ?: toStrings[name]?.let { f ->
             // Its module's toString, given how to show each of its type parameters.
             Gen.Fun(listOf("v"), Gen.App(Gen.Id(ref(f.name, ::snake)), listOf(Gen.Id("v")) + args))
         } ?: run {
@@ -1630,7 +1630,7 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
         records[name]?.let { r ->
             val params = r.typeParams.ocaml().map { "show_${it.lowercase()}" } +
                 "(v : ${applied(r.name, r.typeParams.ocaml().map { typeVar(it) to false })})"
-            return params to fieldsText(r.simpleName, r.fields, r.typeParams.ocaml(), v)
+            return params to fieldsText(r.ownName, r.fields, r.typeParams.ocaml(), v)
         }
         // An alias shows as what it stands for.
         aliases[name]?.let { a ->

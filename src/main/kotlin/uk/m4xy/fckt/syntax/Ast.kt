@@ -71,6 +71,14 @@ data class FieldDef(
 data class Param(val pos: Pos, val name: String, val type: TypeRef?, val annotations: List<Annotation> = emptyList(), val default: Expr? = null)
 
 /**
+ * The name of [name], declared private in the lower-case file [file], when another file of its
+ * package declares the name too: `shop.helper'taxes`. As in Kotlin, it's its file's own, and no
+ * other file's business; OCaml takes the `'` in a name, and fckt doesn't, so none written clashes.
+ */
+fun filePrivateName(name: String, file: String): String =
+    name + "'" + java.io.File(file).nameWithoutExtension.map { if (it.isLetterOrDigit() || it == '_') it else '_' }.joinToString("")
+
+/**
  * A declaration. The parser gives each its own [name]; the checker renames them to their full
  * name, so `make` in `module Ratios` becomes `Ratios.make`.
  */
@@ -95,7 +103,11 @@ sealed interface Decl {
 
     /** The modules around it, from its full name: `Ratios.make` is in `[Ratios]`. */
     val path: List<String> get() = name.split('.').dropLast(1)
-    val simpleName: String get() = name.substringAfterLast('.')
+    /** The last part of its name, which OCaml's is made from: `helper'taxes` for one private to its file. */
+    val ownName: String get() = name.substringAfterLast('.')
+
+    /** Its name as written: `helper`, for one private to its file named `helper'taxes`. */
+    val simpleName: String get() = name.substringAfterLast('.').substringBefore('\'')
 
     /**
      * `type Name<T>(a: A, b: B)`, or `type Name(A)`, whose one field is called `value`. With

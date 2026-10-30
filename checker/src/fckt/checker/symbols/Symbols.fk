@@ -36,7 +36,45 @@ module Symbols {
   // Every declaration in the workspace's files, and each inside the modules among them, by its full
   // name, in the order they're taken.
   declarations(workspace: Workspace): List<Symbol> =
-    ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file, workspace.borrowed) }
+    filePrivate(ordered(workspace).flatMap { file -> symbolsIn(file.declarations, prefixOf(file.package), file, workspace.borrowed) })
+
+  // The symbols, with each private function or type at the top of a lower-case file whose name
+  // another declaration has too given a name of its own, filePrivateName's: as in Kotlin, a private
+  // declaration of a file outside any module is that file's.
+  private filePrivate(symbols: List<Symbol>): List<Symbol> = {
+    counts = symbols.fold(emptyMap<String, Int>()) { m, s -> m.put(s.name, m.getOrDefault(s.name, 0) + 1) }
+    symbols.map { s ->
+      when (s.file.source.path) {
+        Some(path) if counts.getOrDefault(s.name, 0) > 1 && isFileOwn(s, path) -> s.copy(name = filePrivateName(s.name, path))
+        _ -> s
+      }
+    }
+  }
+
+  // Whether the symbol is a private function, not an extension, or type, at the top of a lower-case
+  // file.
+  private isFileOwn(s: Symbol, path: String): Boolean = {
+    lowerCaseFile = fileName(path).toList().firstOrNone().map { it.isLowerCase() }.getOrElse(false)
+    ownKind = when (s.declaration.definition) {
+      FunctionDefinition(_, None, _, _, _, _, _) -> true
+      RecordDefinition(_, _, _, _, _) -> true
+      CasesDefinition(_, _, _, _) -> true
+      AliasDefinition(_, _) -> true
+      _ -> false
+    }
+    s.declaration.visibility == Private && lowerCaseFile && ownKind && s.path == s.file.package
+  }
+
+  // The name of one declared private in the lower-case file at the path, when another file of its
+  // package declares the name too: shop.helper'taxes. It's its file's own, and no other file's
+  // business; OCaml takes the ' in a name, and fckt doesn't, so none written clashes.
+  filePrivateName(name: String, path: String): String = {
+    parts = fileName(path).split(".")
+    stem = (if (parts.size > 1) parts.dropLast(1) else parts).joinToString(".")
+    name + "'" + stem.toList().map { c -> if (c.isLetterOrDigit() || c == '_') c.toString() else "_" }.joinToString("")
+  }
+
+  private fileName(path: String): String = path.split("/").lastOrNone().getOrElse(path)
 
   // The files in the order their declarations are taken: each package's, then the program's own
   // file last, so that of two declarations of one name, it's the program's that's said to be the
@@ -81,7 +119,7 @@ module Symbols {
   pathOf(name: String): List<String> = name.split(".").dropLast(1)
 
   // What a declaration is called where it's written: area, for geometry.Shapes.area.
-  simpleName(symbol: Symbol): String = lastPart(symbol.name)
+  simpleName(symbol: Symbol): String = lastPart(symbol.name).split("'").firstOrNone().getOrElse("")
 
   private lastPart(name: String): String = name.split(".").lastOrNone().getOrElse(name)
 

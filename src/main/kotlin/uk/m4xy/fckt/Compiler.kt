@@ -7,6 +7,7 @@ import uk.m4xy.fckt.syntax.CompileErrors
 import uk.m4xy.fckt.syntax.Copier
 import uk.m4xy.fckt.syntax.Decl
 import uk.m4xy.fckt.syntax.Expr
+import uk.m4xy.fckt.syntax.filePrivateName
 import uk.m4xy.fckt.syntax.Import
 import uk.m4xy.fckt.syntax.Lexer
 import uk.m4xy.fckt.syntax.Parser
@@ -854,13 +855,30 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
         val children = contents.keys.filter { it.size == pkg.size + 1 && it.take(pkg.size) == pkg }.distinct()
             .filter { child -> contents.keys.any { it.take(child.size) == child && contents[it].orEmpty().isNotEmpty() } }
         val packageModules = children.map { child -> Decl.Module(Pos(1, 1, null), child.last(), tree(child), isPackage = true, compiled = compiledUnit(child)) }
-        val mine = contents[pkg].orEmpty()
+        val mine = filePrivate(contents[pkg].orEmpty())
         return packageModules + if (pkg.isEmpty()) mine.filter { it !in main.decls } else mine
     }
     // Every package on the way to one with contents has a module too.
     for (pkg in contents.keys.toList()) for (n in 1 until pkg.size) packageContents(pkg.take(n))
     val all = withSpecs(copyEffects(tree(emptyList()) + main.decls, linkedImports), linkedImports)
     return Linked(SourceFile(all, linkedImports, packages::projectOf, packages::importsFor, apart), all.takeLast(main.decls.size))
+}
+
+/**
+ * [decls], a package's, with each private function or type of a lower-case file whose name another
+ * file of the package declares too given a name of its own, [filePrivateName]: as in Kotlin, a
+ * private declaration of a file outside any module is that file's.
+ */
+private fun filePrivate(decls: List<Decl>): List<Decl> {
+    fun ofLowerCaseFile(d: Decl) = d.pos.file?.let { File(it).name.firstOrNull()?.isLowerCase() } == true
+    fun own(d: Decl) = d.isPrivate && ofLowerCaseFile(d) && (d is Decl.Function && !d.extension || d is Decl.Record || d is Decl.Sealed || d is Decl.Alias)
+    val shared = decls.groupBy { it.name }.filterValues { it.size > 1 }.keys
+    return decls.map { d ->
+        if (d.name in shared && own(d)) {
+            val name = filePrivateName(d.name, d.pos.file!!)
+            Copier({ if (it == d.name) name else it }).decl(d)
+        } else d
+    }
 }
 
 /**

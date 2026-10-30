@@ -1007,6 +1007,22 @@ class CompilerTest {
     }
 
     @Test
+    fun `a private declaration of a lower-case file is the file's own, whatever other files name`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
+        try {
+            write("shop/prices.fk", "price(n: Int): Int = helper(Step(n)) * 2\nprivate type Step(by: Int)\nprivate helper(s: Step): Int = s.by + 1\n")
+            write("shop/taxes.fk", "tax(n: Int): Int = helper(Step(n, 10)) * 3\nprivate type Step(by: Int, more: Int)\nprivate helper(s: Step): Int = s.by + s.more\n")
+            val main = File(dir, "main.fk")
+            fun compileMain(source: String) = main.writeText(source).let { compile(main, listOf(dir), others = listOf(STD)) }
+            assertEquals("", runOcaml(compileMain("import shop.*\nmain() = assertEquals((4, 33), (price(1), tax(1)))")))
+            assertContains(assertFailsWith<CompileError> { compileMain("import shop.*\nmain() = assertEquals(2, helper(1))") }.toString(), "unknown name 'helper'")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
         fun `folders are packages, and capitalised files are modules`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         val lib = File(dir.parentFile, dir.name + "-lib").apply { mkdir() }

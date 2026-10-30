@@ -99,7 +99,8 @@ module Imports {
   // Each name in the module or package, with its full name: what's declared directly in it, the
   // cases of its types, and the operations of its effects.
   private members(of: String, known: Map<String, Known>, table: SymbolTable): List<(String, String)> = {
-    inside = known.toList().filter { name, _ -> parentOf(name) == of }.map { name, _ -> (lastPart(name), name) }
+    // Not one private to its file under a name of its own, which no import brings in.
+    inside = known.toList().filter { name, _ -> parentOf(name) == of && !name.contains("'") }.map { name, _ -> (lastPart(name), name) }
     cases = table.caseTypes.toList().filter { name, _ -> parentOf(name) == of }.flatMap { name, owner ->
       Symbols.casesOf(owner).map { c -> (c.name, "$name.${c.name}") }
     }

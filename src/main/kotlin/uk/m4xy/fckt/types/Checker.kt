@@ -4,6 +4,7 @@ import uk.m4xy.fckt.ocaml.snake
 import uk.m4xy.fckt.syntax.Annotation
 import uk.m4xy.fckt.syntax.Application
 import uk.m4xy.fckt.syntax.Arg
+import uk.m4xy.fckt.syntax.filePrivateName
 import uk.m4xy.fckt.syntax.OPERATOR_METHODS
 import uk.m4xy.fckt.syntax.RANGE_METHODS
 import uk.m4xy.fckt.syntax.UNARY_MINUS
@@ -807,7 +808,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      */
     private fun <D : Decl> find(name: String, table: Map<String, D>, pos: Pos?): D? {
         for (n in reach(name)) {
-            val d = table[canonical((currentPath.take(n) + name).joinToString("."))] ?: continue
+            val full = canonical((currentPath.take(n) + name).joinToString("."))
+            // The current file's own, private to it, before any other file's.
+            val d = currentFile?.let { table[filePrivateName(full, it)] } ?: table[full] ?: continue
             if (foreign(d)) continue
             val hidden = whyHidden(d)
             if (hidden != null) {
@@ -891,7 +894,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             return spec.values.map { it.name to "$prefix${it.name}" }
         }
         fun members(of: String): List<Pair<String, String>> {
-            val inside = known.values.filter { it.name.substringBeforeLast('.', "") == of }.map { it.simpleName to it.name }
+            // Not one private to its file under a name of its own, which no import brings in.
+            val inside = known.values.filter { it.name.substringBeforeLast('.', "") == of && it.ownName == it.simpleName }.map { it.simpleName to it.name }
             val itsCases = decls.filterIsInstance<Decl.Sealed>().filter { it.name.substringBeforeLast('.', "") == of }
                 .flatMap { s -> s.variants.map { it.name to "${s.name}.${it.name}" } }
             return inside + itsCases + inside.flatMap { (_, full) -> operationsOf(full) }
