@@ -8,16 +8,16 @@ import fckt.ocaml.*
 // beside them, a function showing each as text, as toString does: Point(x=1, y=2), Circle(r=1.0).
 module TypeItems {
   // The type definitions, if there are any.
-  definitions(types: List<TypeDeclaration>): List<Item> =
+  @Lowering definitions(types: List<TypeDeclaration>): List<Item> =
     if (types.isEmpty()) [] else [TypeItem(types.map { definition(it) })]
 
   // The show functions, if there are any.
-  @Fail @Showing shows(types: List<TypeDeclaration>): List<Item> = {
+  @Fail @Lowering shows(types: List<TypeDeclaration>): List<Item> = {
     bindings = types.mapNotNull { showBinding(it) }
     if (bindings.isEmpty()) [] else [LetItem(true, bindings)]
   }
 
-  private definition(d: TypeDeclaration): TypeDefinition = when (d) {
+  @Lowering private definition(d: TypeDeclaration): TypeDefinition = when (d) {
     DeclaredRecord(record, parameters, fields) ->
       TypeDefinition(OcamlTypes.ownName(record.name), parameters.map { OcamlTypes.parameter(it) }, RecordType(fields.map { field(it) }))
     DeclaredCases(caseType, parameters, cases) ->
@@ -30,11 +30,11 @@ module TypeItems {
       TypeDefinition(OcamlTypes.ownName(external.name), parameters.map { OcamlTypes.parameter(it) }, AliasType(TypeApplication("($ocaml)", [])))
   }
 
-  private field(f: DeclaredField): FieldDeclaration = FieldDeclaration(Naming.snake(f.name), OcamlTypes.typexpr(f.t), f.variable)
+  @Lowering private field(f: DeclaredField): FieldDeclaration = FieldDeclaration(Naming.snake(f.name), OcamlTypes.typexpr(f.t), f.variable)
 
   // show_point show_a (v : 'a point): what the value is, as text, given how to show each of its type
   // parameters.
-  @Fail @Showing private showBinding(d: TypeDeclaration): Option<Binding> = when (d) {
+  @Fail @Lowering private showBinding(d: TypeDeclaration): Option<Binding> = when (d) {
     DeclaredRecord(record, parameters, fields) ->
       Some(showFunction(record.name, parameters, fieldsText(Naming.ownName(record), fields, Identifier("v"))))
     DeclaredCases(caseType, parameters, cases) ->
@@ -54,7 +54,7 @@ module TypeItems {
   }
 
   // Name(a=..., b=...), each field shown as its type is.
-  @Fail @Showing private fieldsText(label: String, fields: List<DeclaredField>, record: Expr): Expr =
+  @Fail @Lowering private fieldsText(label: String, fields: List<DeclaredField>, record: Expr): Expr =
     Shows.joined([ConstantExpr(StringConstant("$label("))] + fields.mapIndexed { i, f ->
       [ConstantExpr(StringConstant((if (i > 0) ", " else "") + f.name + "=")), Application(Shows.show(f.t), [FieldAccess(record, Naming.snake(f.name))])]
     }.flatMap { it } + [ConstantExpr(StringConstant(")"))])

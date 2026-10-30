@@ -5,42 +5,42 @@ import fckt.checker.core.*
 import fckt.checker.inference.*
 import fckt.checker.symbols.*
 import fckt.ocaml.*
+import fckt.parser.Declaration
+import fckt.parser.Definition
 
 // A checked program, as OCaml: its own code, to be linked with the core and the standard library as
 // fckt's compiler compiles them on their own, as fckt_core.ml and fckt_std.ml. What it can't lower
 // yet, it fails saying.
 module Programs {
-  @Fail ocaml(program: CheckedProgram): List<Item> = Showing(toStringOf = name -> program.toStrings.get(name)) { items(program) }
+  @Fail ocaml(program: CheckedProgram): List<Item> =
+    Lowering(toStringOf = name -> program.toStrings.get(name), inside = ~[]) { items(program) }
 
-  @Fail @Showing private items(program: CheckedProgram): List<Item> = {
-    bodies = program.functions.filter { f -> isOwn(f.function) }.mapNotNull { f -> f.body.map { b -> (f.function.name, b) } }
-    functions = program.groups.mapNotNull { g ->
-      bindings = g.functions.mapNotNull { f -> bodies.find { name, _ -> name == f.name }.map { _, body -> binding(f, body) } }
-      if (bindings.isEmpty()) None else Some(LetItem(g.recursive, bindings))
+  @Fail @Lowering private items(program: CheckedProgram): List<Item> = {
+    bodies = program.functions.filter { f -> isOwn(f.function) }.mapNotNull { f -> f.body.map { b -> (f.function, b) } }
+    groups = program.groups.mapNotNull { g ->
+      functions = g.functions.mapNotNull { f -> bodies.find { s, _ -> s.name == f.name } }
+      if (functions.isEmpty()) None else Some((g, functions))
     }
+    own = OwnCode(groups, program.types.filter { t -> isOwn(Structures.declaredAt(t)) }, modulesOf(program))
     main = program.functions.find { f -> isOwn(f.function) && f.function.path.isEmpty() && Naming.ownName(f.function) == "main" }.map { f ->
       takesArguments = Signatures.parametersOf(f.function).map { it.isNotEmpty() }.getOrElse(false)
       LetItem(false, [Binding(ConstantPat(UnitConstant), [], None, HandledEffects.runningMain(f.function, takesArguments, program.defaultHandlers))])
     }
-    // Those at the top of its file: a module's are its module's.
-    own = program.types.filter { t -> isOwn(declarationOf(t)) && declarationOf(t).path.isEmpty() }
-    [VerbatimItem(Helpers.items), aliases(program)] + TypeItems.definitions(own) + TypeItems.shows(own) + functions + main.toList()
-  }
-
-  private declarationOf(t: TypeDeclaration): Symbol = when (t) {
-    DeclaredRecord(s, _, _) -> s
-    DeclaredCases(s, _, _) -> s
-    DeclaredAlias(s, _, _) -> s
-    DeclaredExternal(s, _, _) -> s
+    [VerbatimItem(Helpers.items), aliases(program)] + Structures.items([], own) + main.toList()
   }
 
   // Whether the declaration is the program's own: in the file it was given, not one it uses.
-  private isOwn(function: Symbol): Boolean = function.file.source.path.isNone()
+  private isOwn(s: Symbol): Boolean = s.file.source.path.isNone()
 
-  // A function, with its parameters, or a value, as let binds it.
-  @Fail @Showing private binding(function: Symbol, body: CoreFunction): Binding = {
-    parameters = if (Signatures.isFunction(function)) Expressions.parametersOf(body.parameters.map { NameMatcher(it) }) else []
-    Binding(VariablePat(Naming.snake(Naming.ownName(function))), parameters, None, Expressions.expression(body.body))
+  // The path of each module the program's own file declares, those in it among them.
+  private modulesOf(program: CheckedProgram): List<List<String>> =
+    program.workspace.files.filter { f -> f.source.path.isNone() }.flatMap { f -> modulesIn(f.declarations, []) }
+
+  private modulesIn(declarations: List<Declaration>, path: List<String>): List<List<String>> = declarations.flatMap { d ->
+    when (d.definition) {
+      ModuleDefinition(inner, _, _, None, _) -> [path + [d.name]] + modulesIn(inner, path + [d.name])
+      else -> []
+    }
   }
 
   // The standard library's packages and the core, by the names the program's code writes them by:

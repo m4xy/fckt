@@ -7,7 +7,7 @@ import fckt.ocaml.*
 // right to left: where more than one runs code, each is bound first, in order, so what they do
 // happens in the order it's written.
 module Expressions {
-  @Fail @Showing expression(c: Core): Expr = when (c) {
+  @Fail @Lowering expression(c: Core): Expr = when (c) {
     Value(literal) -> ConstantExpr(constant(literal))
     LocalRead(name, isVar) -> if (isVar) Application(Identifier("!"), [Identifier(Naming.snake(name))]) else Identifier(Naming.snake(name))
     GlobalRead(function) -> Identifier(Naming.valueReference(function))
@@ -70,9 +70,9 @@ module Expressions {
   }
 
   // A function's parameters, as patterns; one of none takes Unit.
-  parametersOf(parameters: List<Matcher>): List<Pat> = if (parameters.isEmpty()) [ConstantPat(UnitConstant)] else parameters.map { pat(it) }
+  @Lowering parametersOf(parameters: List<Matcher>): List<Pat> = if (parameters.isEmpty()) [ConstantPat(UnitConstant)] else parameters.map { pat(it) }
 
-  pat(m: Matcher): Pat = when (m) {
+  @Lowering pat(m: Matcher): Pat = when (m) {
     AnyMatcher -> AnyPat
     NameMatcher(name) -> VariablePat(Naming.snake(name))
     TupleMatcher(parts) -> TuplePat(parts.map { pat(it) })
@@ -94,7 +94,7 @@ module Expressions {
   }
 
   // [a, *rest, b]: items consed on, and a spread list appended.
-  @Fail @Showing private listMade(items: List<ListItem>): Expr = {
+  @Fail @Lowering private listMade(items: List<ListItem>): Expr = {
     parts = items.map { item ->
       when (item) {
         OneItem(value) -> value
@@ -146,7 +146,7 @@ module Expressions {
 
   // What's built from parts, given them as OCaml: where two or more of them run code, each that does
   // is bound first, in order, and given by its name.
-  @Fail @Showing private inOrder(parts: List<Core>, build: (List<Expr>) -> Expr): Expr = {
+  @Fail @Lowering private inOrder(parts: List<Core>, build: (List<Expr>) -> Expr): Expr = {
     running = parts.filter { Cores.runs(it) }
     if (running.size < 2) build(parts.map { expression(it) })
     else {

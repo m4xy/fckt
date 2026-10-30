@@ -1,3 +1,5 @@
+import fckt.checker.symbols.Symbol
+
 // What can be told of core from what it is.
 module Cores {
   // Whether working out the core may run code, which could do something: anything but values,
@@ -42,4 +44,48 @@ module Cores {
         }
       }
     }
+
+  // The declarations the core uses, by name: functions, values, effects, and the types it builds or
+  // reads the fields of.
+  references(c: Core): List<Symbol> = when (c) {
+    Value(_) -> []
+    LocalRead(_, _) -> []
+    GlobalRead(f) -> [f]
+    ExternalRead(f) -> [f]
+    Applied(function, arguments) -> references(function) + all(arguments)
+    ExternalApplied(f, arguments) -> [f] + all(arguments)
+    Performed(effect, _, arguments) -> [effect] + all(arguments)
+    Operated(_, operands) -> all(operands)
+    Shown(value, _) -> references(value)
+    Constructed(constructor, fields, _) -> when (constructor) {
+      RecordConstructor(record) -> [record]
+      CaseConstructor(case) -> [case.owner]
+      BuiltinCase(_) -> []
+    } + all(fields)
+    FieldRead(record, owner, _) -> [owner] + references(record)
+    CaseName(value, cases) -> cases.map { it.owner } + references(value)
+    ListMade(items) -> items.flatMap { item ->
+      when (item) {
+        OneItem(value) -> references(value)
+        SpreadItems(list) -> references(list)
+      }
+    }
+    TupleMade(parts) -> all(parts)
+    Joined(list, separator, _) -> references(list) + references(separator)
+    Assertion(condition, _) -> references(condition)
+    EqualityAssertion(expected, actual, _, _) -> references(expected) + references(actual)
+    Matched(subject, branches) -> references(subject) + branches.flatMap { b -> b.guard.map { references(it) }.getOrElse([]) + references(b.body) }
+    NarrowedRead(_, _, _) -> []
+    Conditional(condition, then, otherwise) -> references(condition) + references(then) + references(otherwise)
+    Bound(_, value, body) -> references(value) + references(body)
+    VarBound(_, value, body) -> references(value) + references(body)
+    VarWritten(_, value) -> references(value)
+    FunctionBound(_, _, body, rest) -> references(body) + references(rest)
+    Sequenced(first, then) -> references(first) + references(then)
+    FunctionValue(_, body, _) -> references(body)
+    Absurd(call) -> references(call)
+    Pending(_) -> []
+  }
+
+  private all(cores: List<Core>): List<Symbol> = cores.flatMap { references(it) }
 }

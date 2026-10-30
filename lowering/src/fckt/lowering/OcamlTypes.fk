@@ -3,7 +3,7 @@ import fckt.ocaml.*
 
 // fckt's types as OCaml's: Int is int, List<A> 'a list, a type declared in geometry Geometry.shape.
 module OcamlTypes {
-  typexpr(t: Type): Typexpr = when (t) {
+  @Lowering typexpr(t: Type): Typexpr = when (t) {
     TypeParameter(name) -> TypeVar("'" + name.lowercase())
     Named(name, arguments, _) -> named(name, arguments)
     Abstract(name, arguments) -> named(name, arguments)
@@ -14,7 +14,7 @@ module OcamlTypes {
     _ -> TypeVar("_")
   }
 
-  private named(name: String, arguments: List<Type>): Typexpr = {
+  @Lowering private named(name: String, arguments: List<Type>): Typexpr = {
     given = arguments.filter { it !is Effects }.map { typexpr(it) }
     when (name) {
       "Int" -> TypeApplication("int", [])
@@ -33,10 +33,10 @@ module OcamlTypes {
     }
   }
 
-  // A declared type, by its full name, written from the top of the program: Geometry.shape.
-  typeReference(full: String): String = {
+  // A declared type, by its full name, written from the module it's used in: Geometry.shape.
+  @Lowering typeReference(full: String): String = {
     parts = full.split(".")
-    (parts.dropLast(1).map { Naming.moduleName(it) } + [Naming.snake(parts.lastOrNone().getOrElse(full))]).joinToString(".")
+    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [Naming.snake(parts.lastOrNone().getOrElse(full))]).joinToString(".")
   }
 
   // The OCaml name a declared type has where it's declared: shape.

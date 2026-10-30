@@ -5,7 +5,7 @@ import fckt.ocaml.*
 // How a value of each type is shown as text, as toString and a string template show it: an OCaml
 // function from the value to its text.
 module Shows {
-  @Fail @Showing show(t: Type): Expr = when (t) {
+  @Fail @Lowering show(t: Type): Expr = when (t) {
     Named("Int", [], _) -> Identifier("string_of_int")
     Named("Boolean", [], _) -> Identifier("string_of_bool")
     Named("Char", [], _) -> Identifier("fk_show_char")
@@ -42,10 +42,10 @@ module Shows {
   // A declared type's show function's name: show_shape.
   showName(full: String): String = "show_" + OcamlTypes.ownName(full).removeSuffix("_")
 
-  // A declared type's show function, written from the top of the program: Geometry.show_shape.
-  private showReference(full: String): String = {
+  // A declared type's show function, written from the module it's used in: Geometry.show_shape.
+  @Lowering private showReference(full: String): String = {
     parts = full.split(".")
-    (parts.dropLast(1).map { Naming.moduleName(it) } + [showName(full)]).joinToString(".")
+    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [showName(full)]).joinToString(".")
   }
 
   // The texts, joined, in order.

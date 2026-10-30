@@ -40,12 +40,20 @@ module Naming {
     [first, *rest] -> first.uppercase().toString() + rest.map { it.toString() }.joinToString("")
   }
 
-  // The declaration as written from the top of the program: its modules, then its own name, made
-  // OCaml's by own: Fckt.Lang.Lists.list_sorted for fckt.lang.Lists.List$sorted.
-  reference(s: Symbol, own: (String) -> String): String = (s.path.map { moduleName(it) } + [own(ownName(s))]).joinToString(".")
+  // The declaration as written from the module it's used in: the modules it's in, but those both are
+  // in, then its own name, made OCaml's by own: Fckt.Lang.Lists.list_sorted for
+  // fckt.lang.Lists.List$sorted, or make for Ratios.make inside Ratios.
+  @Lowering reference(s: Symbol, own: (String) -> String): String = (relative(s.path).map { moduleName(it) } + [own(ownName(s))]).joinToString(".")
 
-  // A function's or value's name, written from the top of the program.
-  valueReference(s: Symbol): String = reference(s) { snake(it) }
+  // A function's or value's name, written from the module it's used in.
+  @Lowering valueReference(s: Symbol): String = reference(s) { snake(it) }
+
+  // A path, without the start it shares with the module what's written is in.
+  @Lowering relative(path: List<String>): List<String> = {
+    here = inside()
+    common = path.zip(here).takeWhile { a, b -> a == b }.size
+    path.drop(common)
+  }
 
   // The declaration's own name, without the modules it's in: List$sorted.
   ownName(s: Symbol): String = if (s.path.isEmpty()) s.name else s.name.drop(s.path.joinToString(".").length + 1)

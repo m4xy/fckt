@@ -9,7 +9,7 @@ import fckt.parser.Definition
 // it's in.
 module Constructors {
   // What the constructor builds, given its fields, in the order it declares them.
-  built(constructor: Constructor, fields: List<Expr>): Expr = when (constructor) {
+  @Lowering built(constructor: Constructor, fields: List<Expr>): Expr = when (constructor) {
     RecordConstructor(record) -> RecordExpr(labelled(record, fieldNames(record), fields), None)
     CaseConstructor(c) ->
       if (c.definition.fields.isEmpty()) Construction(caseName(c), None)
@@ -19,7 +19,7 @@ module Constructors {
 
   // What the constructor matches, given what its fields must, or, for is Case, nothing of them; on a
   // local, the case's record is bound, for what's matched to read its fields.
-  pattern(constructor: Constructor, fields: Option<List<Pat>>, narrowed: Option<String>): Pat = when (constructor) {
+  @Lowering pattern(constructor: Constructor, fields: Option<List<Pat>>, narrowed: Option<String>): Pat = when (constructor) {
     RecordConstructor(record) -> when (fields) {
       Some(ps) -> RecordPat(fieldNames(record).zip(ps).mapIndexed { i, entry ->
         (name, p) = entry
@@ -37,11 +37,11 @@ module Constructors {
     BuiltinCase(name) -> ConstructorPat(name, Some(fields.flatMap { it.firstOrNone() }.getOrElse(AnyPat)))
   }
 
-  // A case, written from the top of the program: Circle, or Geometry.Circle.
-  caseName(c: CaseSymbol): String = (c.owner.path.map { Naming.moduleName(it) } + [c.definition.name]).joinToString(".")
+  // A case, written from the module it's used in: Circle, or Geometry.Circle.
+  @Lowering caseName(c: CaseSymbol): String = (Naming.relative(c.owner.path).map { Naming.moduleName(it) } + [c.definition.name]).joinToString(".")
 
-  // A record's field's label, written from the top of the program: x, or Geometry.x.
-  label(record: Symbol, field: String): String = (record.path.map { Naming.moduleName(it) } + [Naming.snake(field)]).joinToString(".")
+  // A record's field's label, written from the module it's used in: x, or Geometry.x.
+  @Lowering label(record: Symbol, field: String): String = (Naming.relative(record.path).map { Naming.moduleName(it) } + [Naming.snake(field)]).joinToString(".")
 
   // What a local found by is to be a case is called while it's so: its case's record.
   narrowedName(local: String, caseName: String): String = Naming.snake(local) + "_as_" + Naming.snake(caseName).removeSuffix("_")
@@ -52,7 +52,7 @@ module Constructors {
   }
 
   // The fields, by their labels, the first through the modules its record is in.
-  private labelled(record: Symbol, names: List<String>, values: List<Expr>): List<FieldValue> =
+  @Lowering private labelled(record: Symbol, names: List<String>, values: List<Expr>): List<FieldValue> =
     names.zip(values).mapIndexed { i, entry ->
       (name, value) = entry
       FieldValue(if (i == 0) label(record, name) else Naming.snake(name), value)

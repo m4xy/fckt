@@ -281,12 +281,14 @@ argumentPosition(value: ArgumentValue): Position = when (value) {
 @Inferring private defaultValue(at: Position, function: String, context: Context): Typed =
   when (context.environment.functions.get(function)) {
     None -> abandon(Globals.problem(context, at, "unknown name '$function'"))
+    // The default's function, called.
     Some(s) -> when (resolved(Globals.typeOf(s, at, context))) {
       FunctionOf(_, result, effects) -> {
         perform(effects, at)
-        if (isNamed(resolved(result), "Nothing")) Typed(Variable(fresh())) else Typed(result)
+        call = Applied(GlobalRead(s), [])
+        if (isNamed(resolved(result), "Nothing")) Typed(Variable(fresh()), None, Absurd(call)) else Typed(result, None, call)
       }
-      other -> Typed(other)
+      other -> Typed(other, None, GlobalRead(s))
     }
   }
 
