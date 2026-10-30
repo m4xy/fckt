@@ -1007,6 +1007,30 @@ class CompilerTest {
     }
 
     @Test
+    fun `a spec's default names what it names where the spec is, whatever the module's program declares`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
+        fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)
+        try {
+            write("shapes/Shape.fk", "type Shape { Square, UnknownShape }\n")
+            write("shapes/Drawing.fk", "spec Drawing {\n  name(): String\n  shape(): Shape = UnknownShape\n}\n")
+            val main = File(dir, "main.fk")
+            main.writeText(
+                """
+                import shapes.Drawing
+                type Shape { Circle }
+                module Doodle : Drawing {
+                  name(): String = "doodle"
+                }
+                main() = assertEquals("doodle UnknownShape", "${'$'}{Doodle.name()} ${'$'}{Doodle.shape()}")
+                """.trimIndent(),
+            )
+            assertEquals("", runOcaml(compile(main, listOf(dir), others = listOf(STD))))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a private declaration of a lower-case file is the file's own, whatever other files name`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)

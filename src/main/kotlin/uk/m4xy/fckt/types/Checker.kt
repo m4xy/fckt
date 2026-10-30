@@ -812,8 +812,9 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
      * or `x`, innermost first, and `C.x` could be `A.B.C.x`, `A.C.x` or `C.x`. Reports a private
      * declaration at [pos], or, without [pos], skips it.
      */
-    private fun <D : Decl> find(name: String, table: Map<String, D>, pos: Pos?): D? {
-        for (n in reach(name)) {
+    /** The first of the full names [depths] reach from the current module that's in [table], and can be seen. */
+    private fun <D : Decl> around(name: String, table: Map<String, D>, pos: Pos?, depths: List<Int>): D? {
+        for (n in depths) {
             val full = canonical((currentPath.take(n) + name).joinToString("."))
             // The current file's own, private to it, before any other file's.
             val d = currentFile?.let { table[filePrivateName(full, it)] } ?: table[full] ?: continue
@@ -825,6 +826,24 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             }
             return d
         }
+        return null
+    }
+
+    private fun <D : Decl> find(name: String, table: Map<String, D>, pos: Pos?): D? {
+        // A spec's default, in a module that follows it, names its module's own members, and then
+        // what it names where the spec is, before anything around the module: a program's own Shape
+        // isn't the Shape a library's default means.
+        copiedFrom()?.let { spec ->
+            around(name, table, pos, listOf(currentPath.size))?.let { return it }
+            val saved = currentPath
+            currentPath = spec.path
+            try {
+                find(name, table, pos)?.let { return it }
+            } finally {
+                currentPath = saved
+            }
+        }
+        around(name, table, pos, reach(name))?.let { return it }
         // In a module a functor made, what the functor's body names is what it names where the
         // functor is: Testing, beside it in its package, wherever it's applied. Not its modules,
         // which the made module has as what it was given.

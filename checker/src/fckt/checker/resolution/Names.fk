@@ -18,6 +18,30 @@ module Names {
     place: Place,
     namespace: Namespace,
     strictness: Strictness,
+  ): Lookup<A> = when (specPlace(place, namespace)) {
+    // A spec's default, in a module that follows it, names its module's own members, and then what
+    // it names where the spec is, before anything around the module: a program's own Shape isn't
+    // the Shape a library's default means.
+    Some(at) -> when (around(name, [place.path.size], entries, symbolOf, place, namespace, strictness)) {
+      NotFound -> when (find(name, entries, symbolOf, alike, at, namespace, strictness)) {
+        NotFound -> anywhere(name, entries, symbolOf, alike, place, namespace, strictness)
+        other -> other
+      }
+      other -> other
+    }
+    None -> anywhere(name, entries, symbolOf, alike, place, namespace, strictness)
+  }
+
+  // What the name means looked up from the place, out to its package, then where a functor or a
+  // spec is, then through the file's imports.
+  private anywhere<A>(
+    name: String,
+    entries: Map<String, A>,
+    symbolOf: (A) -> Option<Symbol>,
+    alike: (String) -> Boolean,
+    place: Place,
+    namespace: Namespace,
+    strictness: Strictness,
   ): Lookup<A> = when (around(name, reach(name, place, namespace.table), entries, symbolOf, place, namespace, strictness)) {
     NotFound -> when (whereFunctorIs(name, entries, symbolOf, alike, place, namespace, strictness)) {
       NotFound -> when (whereSpecIs(name, entries, symbolOf, alike, place, namespace, strictness)) {
@@ -81,20 +105,21 @@ module Names {
     place: Place,
     namespace: Namespace,
     strictness: Strictness,
-  ): Lookup<A> = when (namespace.table.modules.get(place.path.joinToString("."))) {
+  ): Lookup<A> = when (specPlace(place, namespace)) {
+    Some(at) -> find(name, entries, symbolOf, alike, at, namespace, strictness)
+    None -> NotFound
+  }
+
+  // Where the spec is whose default is written at the place, if one is: in a module that follows
+  // it, written in another file, the spec's, as the default is written there.
+  private specPlace(place: Place, namespace: Namespace): Option<Place> = when (namespace.table.modules.get(place.path.joinToString("."))) {
     Some(DeclaredModule(m)) if m.file.source.path != place.file.source.path && enclosingApplication(place.path, namespace).isNone() ->
-      when (namespace.modules.specs.get(m.name)) {
-        None -> NotFound
-        Some(followed) -> {
-          spec = if (followed.file.source.path == place.file.source.path) Some(followed)
-            else namespace.table.specs.toList().map { _, s -> s }.find { s -> s.file.source.path == place.file.source.path }
-          when (spec) {
-            Some(s) -> find(name, entries, symbolOf, alike, Place(place.file, s.path), namespace, strictness)
-            None -> NotFound
-          }
-        }
+      namespace.modules.specs.get(m.name).flatMap { followed ->
+        spec = if (followed.file.source.path == place.file.source.path) Some(followed)
+          else namespace.table.specs.toList().map { _, s -> s }.find { s -> s.file.source.path == place.file.source.path }
+        spec.map { s -> Place(place.file, s.path) }
       }
-    _ -> NotFound
+    _ -> None
   }
 
   // The first of the full names the reach gives that's an entry that can be seen; with Refusing,
