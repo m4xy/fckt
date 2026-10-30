@@ -29,7 +29,7 @@ tour of the core language, translated section by section.
 
 | fckt | OCaml | Notes |
 | --- | --- | --- |
-| `type R(a: A, b: B)` | `type r = { a : a; b : b }` | `R(x, y)` or `R(a = x, b = y)` constructs it, and `r.a` reads a field. |
+| `type R(a: A, b: B)` | `type r = { a : a; b : b }` | `R(x, y)` or `R(a = x, b = y)` constructs it, and `r.a` reads a field. `type` and `module` are keywords only before a declaration's name, which starts with a capital, so a field, parameter or value can be called `type`. |
 | `type R(A)` | `type r = { value : a }` | The same as `type R(value: A)`. |
 | `type S { V(x: X), W }` | `type s = V of { x : x } \| W` | A type with cases, which a value is exactly one of (a sealed sum type). Parentheses make a record, braces make cases. |
 | `Level.values`, `level.name` | `[Debug; Info]`, `match level with Debug -> "Debug" \| ...` | A type whose cases carry nothing, `type Level { Debug, Info }`, is an enumeration: `Level.values` is every case, in the order they're declared, and `.name` the case's name. Anything else a case needs is a function of it, written as a `when`, which has to cover every case. |

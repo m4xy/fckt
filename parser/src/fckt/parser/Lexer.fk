@@ -105,8 +105,22 @@ module Lexer {
     from = s.index
     skipWhile(s) { it.isLetterOrDigit() || it == '_' }
     word = text(s, from, s.index)
-    add(s, Token(if (word == "_") Underscore else keyword(word).getOrElse(Identifier), word, start))
+    add(s, Token(kindOfWord(s, word), word, start))
   }
+
+  private kindOfWord(s: Scan, word: String): Kind =
+    if (word == "_") Underscore
+    else if (declaring.contains(word) && !nameFollows(s.chars, s.index)) Identifier
+    else keyword(word).getOrElse(Identifier)
+
+  // Keywords only where they declare something, before its name, as in type Money(...) and
+  // module Shapes { ... }: anywhere else they're names, as a field called type is.
+  private declaring: List<String> = ["type", "module"]
+
+  // Whether what's next on the line, past spaces, is a declaration's name, which starts with A to Z.
+  private nameFollows(chars: Array<Char>, at: Int): Boolean =
+    if (at < chars.size && (chars[at] == ' ' || chars[at] == '\t')) nameFollows(chars, at + 1)
+    else at < chars.size && chars[at] >= 'A' && chars[at] <= 'Z'
 
   private keyword(word: String): Option<Kind> = when (word) {
     "type" -> Some(TypeKeyword)

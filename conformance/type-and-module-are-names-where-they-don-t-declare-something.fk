@@ -1,0 +1,23 @@
+import fckt.io.Console
+
+// A field, a parameter, a local and a named argument called type or module.
+type Event(type: String, module: String)
+
+describe(type: String, module: String = "core"): String = "$type in $module"
+
+module Events {
+  type Kind { Click, Key }
+  kindOf(e: Event): Kind = if (e.type == "click") Click else Key
+}
+
+main() = {
+  e = Event(type = "click", module = "ui")
+  type = e.type
+  println(describe(type, module = e.module))
+  println(describe("key"))
+  println(Events.kindOf(e).toString())
+}
+
+// prints: click in ui
+// prints: key in core
+// prints: Click

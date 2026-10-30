@@ -16,6 +16,12 @@ sealed interface RawPart {
 
 data class Token(val kind: T, val text: String, val pos: Pos, val parts: List<RawPart> = emptyList())
 
+/**
+ * Keywords only where they declare something, before its name, as in `type Money(...)` and
+ * `module Shapes { ... }`: anywhere else they're names, as a field called type is.
+ */
+private val DECLARING = setOf("type", "module")
+
 private val KEYWORDS = mapOf(
     "type" to T.TYPE, "when" to T.WHEN, "if" to T.IF, "else" to T.ELSE,
     "is" to T.IS, "true" to T.TRUE, "false" to T.FALSE, "module" to T.MODULE, "private" to T.PRIVATE,
@@ -106,8 +112,19 @@ class Lexer(private val src: String, private val origin: Pos = Pos(1, 1)) {
         val start = i
         while (i < src.length && (src[i].isLetterOrDigit() || src[i] == '_')) advance()
         val text = src.substring(start, i)
-        val kind = if (text == "_") T.UNDERSCORE else KEYWORDS[text] ?: T.IDENT
+        val kind = when {
+            text == "_" -> T.UNDERSCORE
+            text in DECLARING && !nameFollows(i) -> T.IDENT
+            else -> KEYWORDS[text] ?: T.IDENT
+        }
         add(Token(kind, text, pos))
+    }
+
+    /** Whether what's next on the line, past spaces, is a declaration's name, which starts with A to Z. */
+    private fun nameFollows(from: Int): Boolean {
+        var j = from
+        while (j < src.length && (src[j] == ' ' || src[j] == '\t')) j++
+        return j < src.length && src[j] in 'A'..'Z'
     }
 
     private fun number(pos: Pos) {
