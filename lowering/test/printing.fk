@@ -57,7 +57,7 @@ letX(value: Expr, body: Expr): Expr = LetIn(false, [Binding(VariablePat("x"), []
   string = TypeApplication("string", [])
   assertEquals("int list list", typexpr(TypeApplication("list", [TypeApplication("list", [int])]), 0))
   assertEquals("(int, string) result", typexpr(TypeApplication("result", [int, string]), 0))
-  assertEquals("(int -> int) -> int * string -> 'a", typexpr(Arrow(Arrow(int, int), Arrow(Product([int, string]), TypeVariable("'a"))), 0))
+  assertEquals("(int -> int) -> int * string -> 'a", typexpr(Arrow(Arrow(int, int), Arrow(Product([int, string]), TypeVar("'a"))), 0))
   assertEquals("(int * int) list", typexpr(TypeApplication("list", [Product([int, int])]), 0))
 }
 
