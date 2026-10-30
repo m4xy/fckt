@@ -1,5 +1,6 @@
 package uk.m4xy.fckt
 
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
@@ -13,6 +14,8 @@ import kotlin.test.assertEquals
  * the same declaration, by its full name. It's held to it over each conformance case, and over each
  * package of the standard library and of the fckt libraries here, its own among them.
  */
+// One instance for every test, so what's worked out once, lazily, is shared by each factory's.
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NamesTest {
     private val std = File("std/src")
 

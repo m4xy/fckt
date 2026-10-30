@@ -1,5 +1,6 @@
 package uk.m4xy.fckt
 
+import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
@@ -12,6 +13,8 @@ import kotlin.test.assertEquals
  * compiler's does: linked with the core and the standard library as this compiler compiles them on
  * their own, it prints what the case says it prints. A case it can't lower yet is skipped, saying why.
  */
+// One instance for every test, so what's worked out once, lazily, is shared by each factory's.
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class LoweringTest {
     /** The cases that run and say what they print. */
     private val cases = File("conformance").listFiles { f -> f.extension == "fk" }!!.sortedBy { it.name }.filter { printed(it.readText()) != null }
