@@ -93,6 +93,7 @@ module Printer {
   // The type, in parentheses if it binds more loosely than minimum.
   typexpr(t: Typexpr, minimum: Int): String = {
     level = when (t) {
+      Polymorphic(_, _) -> 0
       Arrow(_, _) -> arrowLevel
       Product(_) -> productLevel
       _ -> applied
@@ -104,6 +105,7 @@ module Printer {
       TypeApplication(name, arguments) -> "(" + arguments.map { typexpr(it, 0) }.joinToString(", ") + ") " + name
       Arrow(parameter, result) -> typexpr(parameter, arrowParameter) + " -> " + typexpr(result, arrowLevel)
       Product(parts) -> parts.map { typexpr(it, productPart) }.joinToString(" * ")
+      Polymorphic(variables, body) -> variables.joinToString(" ") + ". " + typexpr(body, 0)
     }
     if (level < minimum) "($text)" else text
   }

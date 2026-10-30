@@ -211,7 +211,7 @@ declaredSpecs(environment: Environment): List<DeclaredSpec> =
     own = (every + value.typeParameters).map { (it, TypeParameter(it)) }.toMap()
     typeContext = TypeContext(Place(spec.file, spec.path), own)
     typeOf = (t: TypeRef) -> Conversion.typeOf(t, typeContext, environment.definitions)
-    DeclaredOperation(value.name, value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } }, typeOf(value.valueType))
+    DeclaredOperation(value.name, value.typeParameters.filter { !it.startsWith("@") }, value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } }, typeOf(value.valueType))
   }
   DeclaredEffect(spec, typeParameters, operations)
 }

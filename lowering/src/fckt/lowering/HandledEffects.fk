@@ -32,10 +32,14 @@ module HandledEffects {
     }
     record = TypeDefinition(own + "_handler", OcamlTypes.ocamlParameters(d.typeParameters).map { OcamlTypes.parameter(it) } + [answer], RecordType(d.operations.map { op ->
       result = OcamlTypes.typexpr(op.result)
-      FieldDeclaration(Naming.snake(op.name), when (op.parameters) {
+      answers = when (op.parameters) {
         None -> result
         Some(ps) -> (ps.map { OcamlTypes.typexpr(it) } + [Arrow(result, answering)]).reversed().fold(answering) { r, p -> Arrow(p, r) }
-      }, false)
+      }
+      // An operation's own type parameters, atomically<A>'s, are its field's: a handler answers it
+      // whatever they are where it's performed.
+      own = OcamlTypes.ocamlParameters(op.typeParameters).map { OcamlTypes.parameter(it) }
+      FieldDeclaration(Naming.snake(op.name), if (own.isEmpty()) answers else Polymorphic(own, answers), false)
     }))
     // A generic effect's values are what the checker made sure they are, but OCaml can't see that.
     known = (e: Expr) -> if (generic) Application(Identifier("Obj.magic"), [e]) else e

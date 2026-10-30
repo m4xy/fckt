@@ -1,0 +1,39 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Store {
+  put(n: Int): Unit
+}
+
+// atomically<A> answers each A it's performed with: a String here, an Int there.
+effect UnitOfWork {
+  atomically<A>(work: @Store () -> A): A
+}
+
+@UnitOfWork @Store saved(): String = atomically {
+  put(1)
+  "saved"
+}
+
+main() = {
+  var log: List<String> = []
+  Store(put = n -> { log = log + ["put $n"] }) {
+    UnitOfWork(atomically = work -> {
+      log = log + ["begin"]
+      done = work()
+      log = log + ["commit"]
+      done
+    }) {
+      println(saved())
+      println("${atomically { 3 }}")
+    }
+  }
+  println(log.joinToString(", "))
+}
+
+// prints: saved
+// prints: 3
+// prints: begin, put 1, commit, begin, commit

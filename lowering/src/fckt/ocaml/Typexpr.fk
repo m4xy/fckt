@@ -5,4 +5,6 @@ type Typexpr {
   TypeApplication(name: String, arguments: List<Typexpr>),
   Arrow(parameter: Typexpr, result: Typexpr),
   Product(parts: List<Typexpr>),
+  // A type for any types the variables stand for, as a record's field may be: 'a. (unit -> 'a) -> 'a.
+  Polymorphic(variables: List<String>, body: Typexpr),
 }

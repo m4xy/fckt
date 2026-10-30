@@ -221,7 +221,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                 for (op in spec.values) {
                     val result = operationResult(spec, op)
                     val type = if (op.params == null) result else (operationParams(spec, op) + ("$result -> $ANSWER" to true)).joinToString(" -> ") { (text, paren) -> if (paren) "($text)" else text } + " -> $ANSWER"
-                    fieldDecl(snake(op.name), type)
+                    // An operation's own type parameters, atomically<A>'s, are its field's: any handler's
+                    // answers each, whatever it is where it's performed.
+                    val own = op.typeParams.ocaml().map(::typeVar)
+                    fieldDecl(snake(op.name), if (own.isEmpty()) type else own.joinToString(" ") + ". " + type)
                 }
             }
         }
