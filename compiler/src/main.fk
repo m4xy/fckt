@@ -8,7 +8,7 @@ import fckt.io.Files.*
 import fckt.io.FileSystem
 import fckt.io.Path
 import fckt.io.Process
-import fckt.io.Processes.run
+import fckt.text.Digests.*
 import fckt.checker.*
 import fckt.checker.diagnostics.Diagnostic
 import fckt.checker.sources.*
@@ -17,28 +17,53 @@ import fckt.ocaml.Printer
 import fckt.parser.*
 import fckt.lowering.Naming
 import fckt.compiler.Interfaces
+import fckt.compiler.Symbols
+import fckt.checker.diagnostics.*
+import fckt.checker.types.Solutions
+import fckt.compiler.Layout
+import fckt.compiler.Tests
+import fckt.compiler.Tests.*
 
 // fckt's compiler, written in fckt. It takes what fckt takes, as kiln gives it:
 //
-//   compiler <file.fk> -o <out.ml> [--separate] [--no-std] [-I <dir>]... [--other-project <dir>]... [-L <interface>]...
+//   compiler <file.fk> -o <out.ml> [--separate] [--no-std] [-I <dir>]... [--other-project <dir>]...
+//     [-L <interface>]... [--import <name>]...
 //
-// compiles the program in the file, with the packages in each -I folder as its own, those in each
-// --other-project folder as other projects', and each -L folder's library, as its interface says
-// it is, to OCaml, linked with the core, the standard library and the libraries, each compiled on
-// its own. What it can't do yet, it has fckt's compiler written in Kotlin do: FCKT_KOTLIN, or fckt.
-// Its --version is that compiler's, said to be self-hosted, so kiln keeps what each compiles apart.
+// compiles the program in the file, with the packages in its folder and each -I folder as its own,
+// those in each --other-project folder as other projects', and each -L folder's library, as its
+// interface says it is, to OCaml: with --separate or libraries, to be linked with the core, the
+// standard library and the libraries, each compiled on its own; otherwise a program on its own.
+// Each --import is imported into each of the program's own files, as kiln.* is into a build script.
+//
+//   --library <interface> -o <unit.ml> <package>...   a library, with its interface written
+//   --test <folder> --marker <name> --runner <name> [--fixtures <name>] [--runner-tests] -o <ml>
+//                                                      the folder's tests, as a program
+//   --symbols <out> [<package>...]                     what the packages declare, for processors
+//   --core -o <ml>                                     the core, on its own
+//   --format <path>... | --check-format <path>...      lays code out, or says what isn't
+//   --std-path | --version
+//
 // The core, and the standard library unless it's given as a library, are read from the fckt
-// repository FCKT_HOME names, or the one it's run in. It also takes
+// repository FCKT_HOME names, or the one it's run in. Its --version says it's self-hosted, with a
+// digest of its own executable, so kiln keeps what each compiles apart, and compiles again when it
+// changes. What it doesn't know, it has fckt's compiler written in Kotlin do: FCKT_KOTLIN, or fckt.
+// It also takes
 //
 //   compiler [--whole] <file.fk> <out.ml> [<folder>...]
 //
 // as fckt's own tests and bootstrap do: --whole compiles the core and the standard library in too.
 main(args: List<String>) = when (args) {
-  ["--version"] -> println("${run(kotlin(), ["--version"]).value.trim()}, self-hosted")
+  ["--version"] -> println("fckt $version (self-hosted, build ${build()})")
+  ["--core", "-o", out] -> coreUnit(out)
+  ["--format", *paths] -> laidOut(paths, false)
+  ["--check-format", *paths] -> laidOut(paths, true)
+  ["--std-path"] -> println(home().resolve("std/src").canonical().value)
   ["--whole", file, out, *folders] -> compile(file, out, folders, true)
   [file, out, *folders] if !(args.any { it.startsWith("-") }) -> compile(file, out, folders, false)
-  else -> when (options(args, Options([], None, [], [], [], false, true, None))) {
+  else -> when (options(args, Options([], None, [], [], [], false, false, None))) {
     Some(o) -> when ((o.library, o.inputs)) {
+      _ if o.test.isSome() -> tests(o, o.test.getOrElse("."))
+      _ if o.symbols.isSome() -> symbols(o, o.symbols.getOrElse("-"), o.inputs)
       (Some(interface), packages) -> library(o, path(interface), packages)
       (None, [file]) -> program(o, file)
       else -> delegated(args)
@@ -56,6 +81,13 @@ type Options(
   noStd: Boolean,
   separate: Boolean,
   library: Option<String>,
+  test: Option<String> = None,
+  marker: Option<String> = None,
+  runner: Option<String> = None,
+  fixtures: Option<String> = None,
+  runnerTests: Boolean = false,
+  imports: List<String> = [],
+  symbols: Option<String> = None,
 )
 
 options(args: List<String>, o: Options): Option<Options> = when (args) {
@@ -67,24 +99,119 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
   ["--no-std", *rest] -> options(rest, o.copy(noStd = true))
   ["--separate", *rest] -> options(rest, o.copy(separate = true))
   ["--library", dir, *rest] -> options(rest, o.copy(library = Some(dir)))
+  ["--symbols", out, *rest] -> options(rest, o.copy(symbols = Some(out)))
+  ["--import", name, *rest] -> options(rest, o.copy(imports = o.imports + [name]))
+  ["--test", dir, *rest] -> options(rest, o.copy(test = Some(dir)))
+  ["--marker", name, *rest] -> options(rest, o.copy(marker = Some(name)))
+  ["--runner", name, *rest] -> options(rest, o.copy(runner = Some(name)))
+  ["--fixtures", name, *rest] -> options(rest, o.copy(fixtures = Some(name)))
+  ["--runner-tests", *rest] -> options(rest, o.copy(runnerTests = true))
   [arg, *rest] if !arg.startsWith("-") -> options(rest, o.copy(inputs = o.inputs + [arg]))
   else -> None
 }
+
+// The version of fckt this compiles.
+version: String = "0.1.0-SNAPSHOT"
+
+// A digest of this compiler's executable, which changes with it.
+@FileSystem @Process build(): String = executable().readBytes().md5().take(12)
 
 @Process delegated(args: List<String>): Unit = exit(runAttached(kotlin(), args))
 
 @Process kotlin(): String = env("FCKT_KOTLIN").getOrElse("fckt")
 
 @FileSystem @Channel @Process @Console program(o: Options, file: String): Unit = {
-  checked(
-    SourceText(None, ProgramProject, path(file).readText()),
-    file,
-    tree(o, ownPackages(o)),
-    false,
-  ) { ml ->
+  // The folder the file's in is the program's, as the folders it's given are.
+  folder = path(file).parent.map { it.value }.getOrElse(".")
+  given = o.own.map { path(it).canonical().value }
+  withFolder = if (given.contains(path(folder).canonical().value)) o
+  else o.copy(own = [folder] + o.own)
+  whole = !o.separate && o.libraries.isEmpty()
+  entry = SourceText(None, ProgramProject, path(file).readText())
+  checked(entry, file, tree(withFolder, ownPackages(withFolder)), whole) { ml ->
     writeOutput(o.output.getOrElse(file.removeSuffix(".fk") + ".ml"), ml)
   }
 }
+
+// The core, compiled on its own, the unit every program is linked with.
+@FileSystem @Channel @Process @Console coreUnit(out: String): Unit = {
+  entry = SourceText(None, ProgramProject, "")
+  checked(entry, "the core", SourceTree(merged(core(home()))), true) { ml -> writeOutput(out, ml) }
+}
+
+// Lays out each file the paths name, and those in each folder they name, but its build folders;
+// or, checking, says which lines aren't, ending with exit code 1 if any.
+@FileSystem @Channel @Process laidOut(paths: List<String>, checking: Boolean): Unit = {
+  files = paths.flatMap { p -> sourcesIn(path(p), true) }.sortedBy { it.value }
+  unformatted = files.flatMap { file ->
+    source = file.readText()
+    if (checking) Layout.unformatted(source).map { line ->
+      "${file.value}:$line: wider than ${Layout.width} columns: " +
+        "put each item of the list on a line of its own, or run fckt --format"
+    }
+    else {
+      laid = Layout.formatted(source)
+      if (laid != source) file.writeText(laid)
+      []
+    }
+  }
+  if (unformatted.isNotEmpty()) failing(unformatted)
+}
+
+@FileSystem sourcesIn(p: Path, top: Boolean): List<Path> =
+  if (!p.isDirectory()) (if (top || p.extension == "fk") [p] else [])
+  else if (!top && p.name == "build") []
+  else p.listFiles().flatMap { sourcesIn(it, false) }
+
+// What the packages declare, or, without packages, each in the folders given that has a file of
+// code, checked, as the format processors read has it: only what they declare is checked, as code
+// written from these symbols isn't there yet, so a function that says its type is taken to have
+// it.
+@FileSystem @Channel @Process @Console symbols(
+  o: Options,
+  out: String,
+  packages: List<String>,
+): Unit = {
+  given = ownPackages(o)
+  withCode = given.filter { p, sources -> p.isNotEmpty() && sources.isNotEmpty() }
+  named = if (packages.isEmpty()) withCode.map { p, _ -> p }.distinct()
+  else packages.map { it.split(".") }
+  missing = named.filter { p -> given.none { q, _ -> q == p } }
+  folders = o.own.joinToString(", ")
+  if (missing.isNotEmpty()) failing(
+    missing.map { "error: ${it.joinToString(".")} isn't a package in $folders" },
+  )
+  // A program's file, with a main, is a program apart, as a library's is.
+  ofCode = (source: SourceText) -> when (Parser.parse(source.text)) {
+    Ok(parsed) -> !declaresMain(parsed)
+    Error(_) -> true
+  }
+  own = given.map { p, sources ->
+    (p, sources.map { s -> if (named.contains(p) && ofCode(s)) s.copy(trusted = true) else s })
+  }
+  paths = own.flatMap { _, sources -> sources.filter { it.trusted }.mapNotNull { it.path } }
+  if (paths.isEmpty()) writeOutput(out, Symbols.empty)
+  else {
+    imports = named.map { "import ${it.joinToString(".")}.*\n" }.joinToString("")
+    entry = SourceText(None, ProgramProject, imports)
+    (program, errors) = Checker.check(entry, tree(o, own), false)
+    when ((program, errors)) {
+      (Some(p), []) -> {
+        (written, problems) = Diagnostics.collecting {
+          Solutions.solving { Diagnostics.recovering { Symbols.write(p, paths) } }
+        }
+        when ((written, problems)) {
+          (Some(text), []) -> writeOutput(out, text)
+          _ -> failing(problems.map { shown(it, "the symbols") })
+        }
+      }
+      _ -> failing(errors.map { shown(it, "the symbols") })
+    }
+  }
+}
+
+// The fckt repository the core and the standard library are read from.
+@Process home(): Path = path(env("FCKT_HOME").getOrElse("."))
 
 @FileSystem @Console writeOutput(output: String, ml: String): Unit =
   if (output == "-") print(ml) else path(output).writeText(ml)
@@ -95,10 +222,15 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
 // What a program's checked with: the core, the standard library unless it's a library given, the
 // program's own packages, other projects' and the libraries'.
 @FileSystem @Process tree(o: Options, own: List<(List<String>, List<SourceText>)>): SourceTree = {
-  home = path(env("FCKT_HOME").getOrElse("."))
-  others = o.others.flatMap { dir -> packagesIn(path(dir), [], OtherProject(path(dir).canonical().value), "$dir/") }
+  home = home()
+  others = o.others.flatMap { dir ->
+    packagesIn(path(dir), [], OtherProject(path(dir).canonical().value), "$dir/")
+  }
   libraries = o.libraries.flatMap { dir -> interfacesIn(path(dir)) }
-  SourceTree(merged(core(home) + (if (o.noStd) [] else standard(home)) + own + others + libraries))
+  SourceTree(
+    merged(core(home) + (if (o.noStd) [] else standard(home)) + own + others + libraries),
+    o.imports,
+  )
 }
 
 @FileSystem @Channel @Process @Console compile(
@@ -109,12 +241,8 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
 ): Unit = {
   own = folders.flatMap { folder -> packagesIn(path(folder), [], ProgramProject, "$folder/") }
   tree = SourceTree(merged(core(path(".")) + standard(path(".")) + own))
-  checked(
-    SourceText(None, ProgramProject, path(file).readText()),
-    file,
-    tree,
-    whole,
-  ) { ml -> path(out).writeText(ml) }
+  entry = SourceText(None, ProgramProject, path(file).readText())
+  checked(entry, file, tree, whole) { ml -> path(out).writeText(ml) }
 }
 
 // The packages, compiled to the unit the output names, with each file's interface written to the
@@ -141,9 +269,9 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
       }
     }
     untyped = files.flatMap { _, source, parsed ->
-      Interfaces.untyped(
-        parsed.declarations,
-      ).map { at, message -> "${source.path.getOrElse("")}:${at.line}:${at.column}: error: $message" }
+      Interfaces.untyped(parsed.declarations).map { at, message ->
+        "${source.path.getOrElse("")}:${at.line}:${at.column}: error: $message"
+      }
     }
     if (untyped.isNotEmpty()) failing(untyped)
     interface.delete()
@@ -151,9 +279,8 @@ options(args: List<String>, o: Options): Option<Options> = when (args) {
       sourcePath = source.path.getOrElse("")
       folder = interface.resolve(pkg.joinToString("/"))
       folder.makeDirs()
-      folder.resolve(Loader.fileName(source) + ".fki").writeText(
-        Interfaces.write(parsed, sourcePath, source.text),
-      )
+      written = Interfaces.write(parsed, sourcePath, source.text)
+      folder.resolve(Loader.fileName(source) + ".fki").writeText(written)
     }
     interface.makeDirs()
     interface.resolve("unit").writeText(unitName(o.output.getOrElse("")) + "\n")
@@ -179,16 +306,75 @@ private unitName(file: String): String = Naming.moduleName(path(file).name.remov
   tree: SourceTree,
   whole: Boolean,
   write: @FileSystem @Channel @Process @Console (String) -> Unit,
+): Unit = checkedProgram(entry, file, tree) { p ->
+  when (attempt { Programs.ocaml(p, whole) }) {
+    Ok(items) -> write(Printer.file(items))
+    Error(why) -> failing(["can't lower $why"])
+  }
+}
+
+// The program in the file, checked with the packages in the tree, given to use; or what's wrong
+// with it, said, ending with exit code 1.
+@FileSystem @Channel @Process @Console checkedProgram(
+  entry: SourceText,
+  file: String,
+  tree: SourceTree,
+  use: @FileSystem @Channel @Process @Console (CheckedProgram) -> Unit,
 ): Unit = {
   (program, errors) = Checker.check(entry, tree, true)
   when ((program, errors)) {
-    (Some(p), []) -> when (attempt { Programs.ocaml(p, whole) }) {
-      Ok(items) -> write(Printer.file(items))
-      Error(why) -> failing(["can't lower $why"])
+    (Some(p), []) -> use(p)
+    _ -> failing(errors.map { shown(it, file) })
+  }
+}
+
+private shown(e: Diagnostic, file: String): String =
+  "${e.file.getOrElse(file)}:${e.at.line}:${e.at.column}: error: ${e.message}"
+
+// The tests in the folder, as a program that gives them to the runner: what marks a test, the
+// runner and what lists a test's fixtures as the options name them.
+@FileSystem @Channel @Process @Console tests(o: Options, dir: String): Unit = {
+  named = (option: Option<String>, what: String, example: String) -> option.map { name ->
+    when (Tests.splitName(name, what, example)) {
+      Ok(_) -> name
+      Error(why) -> {
+        failing(["error: $why"])
+        name
+      }
     }
-    _ -> failing(
-      errors.map { e -> "${e.file.getOrElse(file)}:${e.at.line}:${e.at.column}: error: ${e.message}" },
-    )
+  }
+  marks = Marks(
+    named(o.marker, "what marks a test", "uk.m4xy.fktests.api.Test").getOrElse(""),
+    named(o.runner, "a test runner", "uk.m4xy.fktests.runner.Runner").getOrElse(""),
+    named(o.fixtures, "what lists a test's fixtures", "uk.m4xy.fktests.api.Fixtures"),
+    o.runnerTests,
+  )
+  if (o.marker.isNone() || o.runner.isNone()) failing(["fckt: --test needs --marker and --runner"])
+  given = ownPackages(o)
+  own = if (o.own.contains(dir)) given
+  else given + packagesIn(path(dir), [], ProgramProject, "$dir/")
+  outermost = own.filter { p, _ -> p.isEmpty() }.flatMap { _, sources -> sources }
+  files = outermost.mapNotNull { source ->
+    name = source.path.getOrElse("").removePrefix("$dir/")
+    lowerCase = name.getOrNone(0).map { it.isLowerCase() }.getOrElse(false)
+    if (source.path.getOrElse("").startsWith("$dir/") && !name.contains("/") && lowerCase)
+      when (Parser.parse(source.text)) {
+        Ok(parsed) -> Some(TestFile(source, name, parsed))
+        Error(_) -> None
+      }
+    else None
+  }.sortedBy { it.name }
+  tree = tree(o, own)
+  (names, problems) = Tests.written(files, marks)
+  stub = SourceText(None, ProgramProject, Tests.stub(marks, names))
+  checkedProgram(stub, dir, tree) { stubbed ->
+    when (Tests.plan(stubbed, files, marks)) {
+      Ok(main) -> if (problems.isNotEmpty()) failing(problems.map { shown(it, dir) })
+      else checked(SourceText(None, ProgramProject, main), dir, tree, false) { ml ->
+        writeOutput(o.output.getOrElse("$dir/tests.ml"), ml)
+      }
+      Error(found) -> failing((problems + found).map { shown(it, dir) })
+    }
   }
 }
 
@@ -233,13 +419,16 @@ private unitName(file: String): String = Naming.moduleName(path(file).name.remov
       interface,
     )
   }
-  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d -> packagesIn(d, pkg + [d.name], project, prefix, compiledIn, interface) }
+  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d ->
+    packagesIn(d, pkg + [d.name], project, prefix, compiledIn, interface)
+  }
   [(pkg, files), *inner]
 }
 
 // A folder named as a value is, which is a package: geometry, not Geometry or my-shapes.
 isPackageName(name: String): Boolean = when (name.toList()) {
-  [first, *rest] -> (first.isLowerCase() || first == '_') && rest.all { it.isLetterOrDigit() || it == '_' }
+  [first, *rest] ->
+    (first.isLowerCase() || first == '_') && rest.all { it.isLetterOrDigit() || it == '_' }
   [] -> false
 }
 

@@ -8,7 +8,8 @@ module Interfaces {
   // The file's interface, with its imports, as its declarations' types name what they import. A
   // spec is as the text has it, with its defaults' code, as a module that follows it has that code.
   write(file: SourceFile, path: String, text: String): String = {
-    header = "// The interface of $path, which fckt --library wrote: its declarations, without their code.\n"
+    header = "// The interface of $path, which fckt --library wrote: " +
+      "its declarations, without their code.\n"
     imports = file.imports.map { i -> importLine(i) }.joinToString("")
     declarations = seen(file.declarations).map { d -> "\n" + declaration(d, "", text) }
     header + (if (imports.isEmpty()) "" else "\n" + imports) + declarations.joinToString("")
@@ -26,7 +27,8 @@ module Interfaces {
     ModuleDefinition(inner, _, _, _, _) -> untyped(inner)
     FunctionDefinition(_, receiver, parameters, result, _, _, _) -> {
       lacking = parameters.getOrElse([]).filter { it.parameterType.isNone() }.map { it.name }
-      inInterface = "'${d.name}' is in a library's interface, which programs are checked against, so"
+      inInterface =
+        "'${d.name}' is in a library's interface, which programs are checked against, so"
       if (lacking.isNotEmpty()) [
         (d.at, "$inInterface its parameters need types: ${lacking.joinToString(", ")}"),
       ]
@@ -80,22 +82,26 @@ module Interfaces {
     text: String,
   ): String = when (definition) {
     RecordDefinition(_, _, _, _, _) if effect -> "effect $name"
-    RecordDefinition(_, fields, _, true, _) -> "annotation type $name" + (if (fields.isEmpty()) "" else fieldList(fields))
+    RecordDefinition(_, fields, _, true, _) ->
+      "annotation type $name" + (if (fields.isEmpty()) "" else fieldList(fields))
     RecordDefinition(typeParameters, _, _, _, Some(external)) ->
       "external type $name${typeParameterList(typeParameters)} = ${string(external)}"
     RecordDefinition(typeParameters, fields, privateConstructor, _, None) ->
-      "type $name${typeParameterList(typeParameters)}" + (if (privateConstructor) " private" else "") + fieldList(
-        fields,
-      )
+      "type $name${typeParameterList(typeParameters)}" +
+        (if (privateConstructor) " private" else "") +
+        fieldList(fields)
     CasesDefinition(typeParameters, cases, caseRefs, includes) -> {
-      own = cases.map { c -> "$indent  ${annotations(c.annotations)}${c.name}${if (c.fields.isEmpty()) "" else fieldList(c.fields)},\n" }
+      own = cases.map { c ->
+        fields = if (c.fields.isEmpty()) "" else fieldList(c.fields)
+        "$indent  ${annotations(c.annotations)}${c.name}$fields,\n"
+      }
       referred = caseRefs.map { c -> "$indent  ${c.owner}.${c.caseName},\n" }
       included = includes.map { t -> "$indent  *${typeText(t)},\n" }
-      "type $name${typeParameterList(typeParameters)} {\n" + (own + referred + included).joinToString(
-        "",
-      ) + "$indent}"
+      items = (own + referred + included).joinToString("")
+      "type $name${typeParameterList(typeParameters)} {\n" + items + "$indent}"
     }
-    AliasDefinition(typeParameters, target) -> "type $name${typeParameterList(typeParameters)} = ${typeText(target)}"
+    AliasDefinition(typeParameters, target) ->
+      "type $name${typeParameterList(typeParameters)} = ${typeText(target)}"
     FunctionDefinition(typeParameters, receiver, parameters, result, _, external, operator) -> {
       own = when (receiver) {
         Some(r) -> typeParameters.filter { !namesIn(r).contains(it) }
@@ -105,7 +111,7 @@ module Interfaces {
         (if (external.isSome()) "external " else "") +
         receiver.map { r -> receiverText(r) + "." }.getOrElse("") +
         name + typeParameterList(own) +
-        parameters.map { ps -> "(" + ps.map { parameterText(it) }.joinToString(", ") + ")" }.getOrElse("") +
+        parameters.map { ps -> bracketed("(", ps.map { parameterText(it) }, ")") }.getOrElse("") +
         result.map { ": " + typeText(it) }.getOrElse("") +
         external.map { " = " + string(it) }.getOrElse("")
     }
@@ -114,9 +120,13 @@ module Interfaces {
         "${p.name}: ${typeText(p.spec)}" + p.default.map { " = " + typeText(it) }.getOrElse("")
       }.joinToString(", ") + ")"
       inner = seen(declarations).map { declaration(it, "$indent  ", text) }.joinToString("")
-      "module $name${typeParameterList(typeParameters)}$given" + spec.map { " : " + typeText(it) }.getOrElse("") + " {\n" + inner + "$indent}"
+      follows = spec.map { " : " + typeText(it) }.getOrElse("")
+      "module $name${typeParameterList(typeParameters)}$given$follows {\n" + inner + "$indent}"
     }
-    SpecDefinition(_, _, _, copyOf, _) -> (if (effect) "effect " else "spec ") + name + copyOf.map { " = " + typeText(it) }.getOrElse("")
+    SpecDefinition(_, _, _, copyOf, _) -> {
+      copied = copyOf.map { " = " + typeText(it) }.getOrElse("")
+      (if (effect) "effect " else "spec ") + name + copied
+    }
   }
 
   private applied(application: Application): String =
@@ -130,7 +140,9 @@ module Interfaces {
     starts = [d.at, *d.annotations.map { it.at }]
     start = starts.minByOrNone { offset(text, it) }.getOrElse(d.at)
     tokens = when (Lexer.tokens(text)) {
-      Ok(all) -> all.dropWhile { t -> t.at.line < d.at.line || (t.at.line == d.at.line && t.at.column < d.at.column) }
+      Ok(all) -> all.dropWhile { t ->
+        t.at.line < d.at.line || (t.at.line == d.at.line && t.at.column < d.at.column)
+      }
       Error(_) -> []
     }
     end = closing(tokens.dropWhile { it.kind != LeftBrace }, 0)
@@ -175,46 +187,48 @@ module Interfaces {
   }.joinToString(", ") + ")"
 
   private parameterText(p: Parameter): String =
-    annotations(
-      p.annotations,
-    ) + p.name + p.parameterType.map { ": " + typeText(it) }.getOrElse("") +
+    annotations(p.annotations) + p.name +
+      p.parameterType.map { ": " + typeText(it) }.getOrElse("") +
       (if (p.default.isSome()) " = compiled" else "")
+
+  private bracketed(open: String, items: List<String>, close: String): String =
+    open + items.joinToString(", ") + close
 
   private typeParameterList(names: List<String>): String =
     if (names.isEmpty()) "" else "<" + names.joinToString(", ") + ">"
 
   private typeText(t: TypeRef): String = when (t) {
     NamedType(_, name, []) -> name
-    NamedType(_, name, arguments) -> name + "<" + arguments.map { typeText(it) }.joinToString(", ") + ">"
+    NamedType(_, name, arguments) -> name + bracketed("<", arguments.map { typeText(it) }, ">")
     FunctionType(_, parameters, result, effects) ->
       effects.map { effectText(it) + " " }.joinToString("") +
-        "(" + parameters.map { typeText(it) }.joinToString(", ") + ") -> " + typeText(result)
-    TupleType(_, elements) -> "(" + elements.map { typeText(it) }.joinToString(", ") + ")"
+        bracketed("(", parameters.map { typeText(it) }, ")") + " -> " + typeText(result)
+    TupleType(_, elements) -> bracketed("(", elements.map { typeText(it) }, ")")
     EffectsType(_, effects) -> effects.map { effectText(it) }.joinToString(" ")
     GivenType(_, name, given) -> "$name = ${typeText(given)}"
   }
 
-  private effectText(a: Annotation): String =
-    "@" + a.name + (if (a.typeArguments.isEmpty()) "" else "<" + a.typeArguments.map { typeText(it) }.joinToString(", ") + ">")
+  private effectText(a: Annotation): String = {
+    arguments = a.typeArguments.map { typeText(it) }
+    "@" + a.name + (if (arguments.isEmpty()) "" else bracketed("<", arguments, ">"))
+  }
 
   private annotations(annotations: List<Annotation>): String = annotations.map { a ->
-    effectText(
-      a,
-    ) + (if (a.arguments.isEmpty()) "" else "(" + a.arguments.map { argument(it) }.joinToString(", ") + ")") + " "
+    given = if (a.arguments.isEmpty()) "" else bracketed("(", a.arguments.map { argument(it) }, ")")
+    effectText(a) + given + " "
   }.joinToString("")
 
-  private argument(
-    a: AnnotationArgument,
-  ): String = a.name.map { "$it = " }.getOrElse("") + value(a.value)
+  private argument(a: AnnotationArgument): String =
+    a.name.map { "$it = " }.getOrElse("") + value(a.value)
 
   private value(v: AnnotationValue): String = when (v) {
     Constant(e) -> constant(e)
     Reference(_, name, typeArguments, arguments) ->
       name +
-        typeArguments.map { ts -> "<" + ts.map { typeText(it) }.joinToString(", ") + ">" }.getOrElse("") +
-        arguments.map { args -> "(" + args.map { argument(it) }.joinToString(", ") + ")" }.getOrElse("")
-    ValueList(_, items) -> "[" + items.map { value(it) }.joinToString(", ") + "]"
-    ValueTuple(_, items) -> "(" + items.map { value(it) }.joinToString(", ") + ")"
+        typeArguments.map { ts -> bracketed("<", ts.map { typeText(it) }, ">") }.getOrElse("") +
+        arguments.map { args -> bracketed("(", args.map { argument(it) }, ")") }.getOrElse("")
+    ValueList(_, items) -> bracketed("[", items.map { value(it) }, "]")
+    ValueTuple(_, items) -> bracketed("(", items.map { value(it) }, ")")
   }
 
   private constant(e: Expression): String = when (e) {

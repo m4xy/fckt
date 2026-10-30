@@ -51,19 +51,23 @@ module Expressions {
         else -> fail("joining")
       }
     }
-    Assertion(condition, where) ->
-      IfThenElse(
-        expression(condition),
-        ConstantExpr(UnitConstant),
-        Application(
-          Identifier("failwith"),
-          [ConstantExpr(StringConstant("$where: assertion failed"))],
-        ),
-      )
-    EqualityAssertion(expected, actual, t, where) -> inOrder([expected, actual]) { given ->
+    Assertion(condition, summary, facts) -> IfThenElse(
+      expression(condition),
+      ConstantExpr(UnitConstant),
+      Application(
+        Identifier("fk_assertion_failed"),
+        [
+          ConstantExpr(StringConstant(summary)),
+          ListExpr(
+            facts.map { key, fact -> TupleExpr([ConstantExpr(StringConstant(key)), expression(fact)]) },
+          ),
+        ],
+      ),
+    )
+    EqualityAssertion(expected, actual, t, where, source) -> inOrder([expected, actual]) { given ->
       Application(
         Identifier("fk_assert_equals"),
-        [Shows.show(t), ConstantExpr(StringConstant(where)), *given],
+        [Shows.show(t), ConstantExpr(StringConstant(where)), ConstantExpr(StringConstant(source)), *given],
       )
     }
     Conditional(condition, then, otherwise) -> IfThenElse(

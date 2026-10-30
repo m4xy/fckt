@@ -1,6 +1,7 @@
 // What lowered code uses that fckt's compiler writes beside a program rather than having in its
 // core: the type with no values, Nothing's, and functions showing floats, characters, lists, options
-// and results, and assertEquals's.
+// and results, and assertions', which say what failed and, for a test runner to say more, a line
+// fckt-assertion 1, the format's version, and a line for each fact, its key, a space and its value.
 module Helpers {
   items: String = """type fk_nothing = |
 
@@ -30,8 +31,18 @@ let fk_show_float f =
 
 let fk_show_char c = let b = Buffer.create 4 in Buffer.add_utf_8_uchar b (Uchar.of_int c); Buffer.contents b
 
-let fk_assert_equals show where expected actual =
-  if expected = actual then () else failwith (where ^ ": expected:<" ^ show expected ^ "> but was:<" ^ show actual ^ ">")
+let fk_assertion_facts facts =
+  let escape v = let b = Buffer.create (String.length v) in String.iter (function '\\' -> Buffer.add_string b "\\\\" | '\n' -> Buffer.add_string b "\\n" | c -> Buffer.add_char b c) v; Buffer.contents b in
+  "\nfckt-assertion 1" ^ String.concat "" (List.map (fun (k, v) -> "\n" ^ k ^ " " ^ escape v) facts)
+
+let fk_assertion_failed summary facts = failwith (summary ^ fk_assertion_facts facts)
+
+let fk_assert_equals show where source expected actual =
+  if expected = actual then () else
+    let e = show expected and a = show actual in
+    let source = if source = "" then [] else [("source", source)] in
+    failwith (where ^ ": expected:<" ^ e ^ "> but was:<" ^ a ^ ">"
+      ^ fk_assertion_facts ([("assertion", "assertEquals"); ("where", where)] @ source @ [("expected", e); ("actual", a)]))
 
 let fk_show_list show l = "[" ^ String.concat ", " (List.map show l) ^ "]"
 

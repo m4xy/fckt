@@ -1,0 +1,23 @@
+import fckt.io.Console
+
+spec Named {
+  name(): String
+}
+
+spec Config {
+  greeting(): String
+}
+
+module Standard : Config {
+  greeting(): String = "hello"
+}
+
+module Greeter(C: Config = Standard) : Named {
+  name(): String = C.greeting()
+}
+
+plugins: List<Named> = [Greeter()]
+
+main() = println(plugins.map { it.name() }.joinToString(","))
+
+// prints: hello

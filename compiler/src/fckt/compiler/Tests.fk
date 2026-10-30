@@ -1,0 +1,399 @@
+import fckt.collections.Maps.*
+import fckt.checker.CheckedProgram
+import fckt.checker.annotations.Annotations
+import fckt.checker.diagnostics.Diagnostic
+import fckt.checker.inference.*
+import fckt.checker.resolution.*
+import fckt.checker.sources.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.parser.*
+import fckt.lowering.Naming
+
+// A folder's tests, as a program: each lower-case file's functions marked as tests, in the
+// sections, modules, it has them in, which a main gives the runner, a module like
+// uk.m4xy.fktests.runner.Runner, as a plan of suites, a file's tests each:
+//
+//   main(args: List<String>) = Runner.main(args, Runner.plan([Runner.suite("money.fk", [...])]))
+//
+// A test is a function of no parameters, run as name(); one that gives anything but Unit gives its
+// cases, each run on its own. With what lists fixtures, an annotation whose one field lists
+// functions, as uk.m4xy.fktests.api.Fixtures, a test runs inside each it lists, the first
+// outermost: those of its sections, where the annotation's @Propagates, then its own. A fixture
+// takes what it runs, as withDatabase<A>(test: @Database () -> A): A, which can handle what the
+// test does.
+module Tests {
+  // The names a test plan is made with, each a declaration's full name, as
+  // uk.m4xy.fktests.api.Test.
+  type Marks(marker: String, runner: String, fixtures: Option<String>, runnerTests: Boolean)
+
+  // A file of the folder's, as read.
+  type TestFile(source: SourceText, name: String, parsed: SourceFile)
+
+  // The full name split at its last dot, its package and its own name, which starts with a
+  // capital, or why it can't be: what it's for, and an example.
+  splitName(name: String, what: String, example: String): Result<(String, String), String> = {
+    own = name.substringAfterLast(".")
+    if (!name.contains(".") || !own.getOrNone(0).map { it.isUpperCase() }.getOrElse(false))
+      Error("$what is named with its package: $example")
+    else Ok((name.substringBeforeLast("."), own))
+  }
+
+  // Each test, through its sections, as a main calls it, and what's wrong with what's written,
+  // which can be seen before anything's checked.
+  written(files: List<TestFile>, marks: Marks): (List<String>, List<Diagnostic>) = {
+    markerPackage = marks.marker.substringBeforeLast(".")
+    markerName = marks.marker.substringAfterLast(".")
+    runnerPackage = marks.runner.substringBeforeLast(".")
+    each = files.filter { !declaresMain(it.parsed) }.map { f ->
+      at = (p: Position, message: String) -> Diagnostic(f.source.path, p, message)
+      importing = f.parsed.imports.filter { i ->
+        path = i.path.joinToString(".")
+        !marks.runnerTests && (path == runnerPackage || path.startsWith("$runnerPackage."))
+      }.map { i ->
+        at(
+          i.at,
+          "$runnerPackage runs the tests, so they can't use it: " +
+            "a test uses what it's written with, as ${marks.marker}",
+        )
+      }
+      imported = f.parsed.imports.any { i ->
+        named = if (i.wildcard) markerPackage else marks.marker
+        i.alias.isNone() && i.path.joinToString(".") == named
+      }
+      (named, problems) = walked(f.parsed.declarations, [], markerName, marks.marker, imported, at)
+      (named, importing + problems)
+    }
+    (each.flatMap { named, _ -> named }, each.flatMap { _, problems -> problems })
+  }
+
+  private walked(
+    declarations: List<Declaration>,
+    sections: List<String>,
+    markerName: String,
+    marker: String,
+    imported: Boolean,
+    at: (Position, String) -> Diagnostic,
+  ): (List<String>, List<Diagnostic>) = {
+    each = declarations.map { d ->
+      marked = d.annotations.any { it.name == markerName }
+      when (d.definition) {
+        ModuleDefinition(inner, _, _, _, _) -> {
+          (named, problems) = walked(inner, sections + [d.name], markerName, marker, imported, at)
+          hidden = if (d.visibility == Private && hasTests(inner, markerName))
+            [at(d.at, "a section is run from outside its file, so it can't be private")]
+          else []
+          (named, hidden + problems)
+        }
+        FunctionDefinition(typeParameters, receiver, parameters, _, _, _, _) if marked -> {
+          problem = if (!imported) Some("a test is marked with $marker: import $marker")
+          else when (parameters) {
+            None -> Some("a test is a function, run as ${d.name}(): write ${d.name}() = ...")
+            Some(ps) -> if (receiver.isSome() || ps.isNotEmpty() || typeParameters.isNotEmpty())
+              Some("a test takes no parameters, as it's run as ${d.name}()")
+            else if (d.visibility == Private)
+              Some("a test is run from outside its file, so it can't be private")
+            else None
+          }
+          ([(sections + [d.name]).joinToString(".")], problem.map { at(d.at, it) }.toList())
+        }
+        else -> ([], [])
+      }
+    }
+    (each.flatMap { named, _ -> named }, each.flatMap { _, problems -> problems })
+  }
+
+  private hasTests(declarations: List<Declaration>, marker: String): Boolean =
+    declarations.any { d ->
+      when (d.definition) {
+        FunctionDefinition(_, _, _, _, _, _, _) -> d.annotations.any { it.name == marker }
+        ModuleDefinition(inner, _, _, _, _) -> hasTests(inner, marker)
+        else -> false
+      }
+    }
+
+  declaresMain(file: SourceFile): Boolean = file.declarations.any { d ->
+    d.name == "main" && when (d.definition) {
+      FunctionDefinition(_, _, _, _, _, _, _) -> true
+      else -> false
+    }
+  }
+
+  // A main that names each test, so their files are brought in, as the one that runs them does,
+  // and the runner's test, for what it handles around a test, but runs nothing: what's checked to
+  // find what marks a test, and what its fixtures are, as the names mean where they're written.
+  stub(marks: Marks, named: List<String>): String = {
+    module = marks.runner.substringAfterLast(".")
+    calls = named.map { "    $it()\n" }.joinToString("")
+    "import ${marks.runner}\n\nmain(args: List<String>) = {\n  named = () -> {\n$calls  }\n" +
+      "  runs = $module.test\n  Unit\n}\n"
+  }
+
+  // A test found once checked: the sections it's in, its function, and the fixtures it runs in,
+  // each with where it's named.
+  private type Found(sections: List<String>, test: Symbol, fixtures: List<(Position, Symbol)>)
+
+  // The main that runs the tests in the files, checked with the stub, or what's wrong with them.
+  plan(
+    program: CheckedProgram,
+    files: List<TestFile>,
+    marks: Marks,
+  ): Result<String, List<Diagnostic>> =
+    when (program.environment) {
+      None -> Error([])
+      Some(environment) -> {
+        paths = files.map { it.source.path }
+        testFiles = program.workspace.files.filter { f -> paths.contains(f.source.path) }
+        each = testFiles.map { f ->
+          foundIn(f, f.declarations, [], [], program, environment, marks)
+        }
+        problems = each.flatMap { _, problems -> problems }
+        found = testFiles.zip(each).map { f, entry ->
+          (tests, _) = entry
+          (Loader.fileName(f.source) + ".fk", tests)
+        }
+        if (problems.isNotEmpty()) Error(problems)
+        else {
+          unhandled = found.flatMap { _, tests ->
+            tests.flatMap { t -> unhandledBy(program, marks, t) }
+          }
+          if (unhandled.isNotEmpty()) Error(unhandled) else Ok(planned(program, marks, found))
+        }
+      }
+    }
+
+  private foundIn(
+    file: LoadedFile,
+    declarations: List<Declaration>,
+    enclosing: List<Declaration>,
+    sections: List<String>,
+    program: CheckedProgram,
+    environment: Environment,
+    marks: Marks,
+  ): (List<Found>, List<Diagnostic>) = {
+    namespace = environment.definitions.namespace
+    each = declarations.map { d ->
+      when (d.definition) {
+        ModuleDefinition(inner, _, _, _, _) ->
+          foundIn(file, inner, enclosing + [d], sections + [d.name], program, environment, marks)
+        FunctionDefinition(_, _, _, _, _, _, _) -> {
+          place = Place(file, file.package + sections)
+          marked = effective(enclosing, d, file, sections, namespace)
+          test = program.functions.find { f ->
+            f.function.file.source.path == file.source.path && f.function.declaration.at == d.at
+          }
+          when (test) {
+            Some(t) if marked.any { _, s -> s.map { it.name } == Some(marks.marker) } -> {
+              (fixtures, problems) = fixturesOf(marked, place, environment, marks)
+              ([Found(sections, t.function, fixtures)], problems)
+            }
+            else -> ([], [])
+          }
+        }
+        else -> ([], [])
+      }
+    }
+    (each.flatMap { found, _ -> found }, each.flatMap { _, problems -> problems })
+  }
+
+  // The declaration's annotations, with those of its sections that @Propagates, the outermost
+  // first, each with the annotation type it names: a nearer one replacing a farther one of its
+  // type, unless that's @Repeatable.
+  private effective(
+    enclosing: List<Declaration>,
+    d: Declaration,
+    file: LoadedFile,
+    sections: List<String>,
+    namespace: Namespace,
+  ): List<(Annotation, Option<Symbol>)> = {
+    resolvedAt = (annotations: List<Annotation>, place: Place) ->
+      annotations.map { a -> (a, Annotations.declarationOf(a, place, namespace)) }
+    levels = enclosing.mapIndexed { i, m ->
+      resolvedAt(m.annotations, Place(file, file.package + sections.take(i))).filter { _, s ->
+        s.map { Annotations.isMarked(it, "fckt.lang.Propagates", namespace) }.getOrElse(false)
+      }
+    } + [resolvedAt(d.annotations, Place(file, file.package + sections))]
+    none: List<(Annotation, Option<Symbol>)> = []
+    levels.fold(none) { result, level ->
+      level.fold(result) { kept, entry ->
+        (_, s) = entry
+        replaced = when (s) {
+          Some(t) if !Annotations.isMarked(t, Annotations.repeatable, namespace) ->
+            kept.filter { _, other -> other.map { it.name } != Some(t.name) }
+          else -> kept
+        }
+        replaced + [entry]
+      }
+    }
+  }
+
+  // The functions the annotations list as fixtures, each with where it's named, and what's wrong
+  // with them.
+  private fixturesOf(
+    annotations: List<(Annotation, Option<Symbol>)>,
+    place: Place,
+    environment: Environment,
+    marks: Marks,
+  ): (List<(Position, Symbol)>, List<Diagnostic>) = {
+    path = place.file.source.path
+    listing = annotations.filter { _, s ->
+      marks.fixtures.isSome() && s.map { it.name } == marks.fixtures
+    }
+    values = listing.flatMap { a, _ ->
+      a.arguments.flatMap { argument ->
+        when (argument.value) {
+          ValueList(_, items) -> items
+          other -> [other]
+        }
+      }
+    }
+    each = values.map { v ->
+      when (v) {
+        Reference(at, name, _, _) -> when (
+          Lookups.found(Globals.find(name, Context(environment, place, emptyMap()), Skipping))
+        ) {
+          Some(f) -> {
+            own = Naming.ownName(f)
+            problem = if (f.declaration.visibility == Private)
+              Some("$own runs a test from outside its file, so it can't be private")
+            else if (
+              Signatures.isExtension(f) ||
+                Signatures.writtenParametersOf(f).map { it.size } != Some(1)
+            )
+              Some("a fixture takes what it runs, as its one parameter: $own<A>(test: () -> A): A")
+            else None
+            ([(at, f)], problem.map { Diagnostic(path, at, it) }.toList())
+          }
+          None -> ([], [Diagnostic(path, at, "a fixture is a function, by name")])
+        }
+        _ -> ([], [Diagnostic(path, valueAt(v), "a fixture is a function, by name")])
+      }
+    }
+    (each.flatMap { found, _ -> found }, each.flatMap { _, problems -> problems })
+  }
+
+  private valueAt(v: AnnotationValue): Position = when (v) {
+    Constant(e) -> Positions.of(e)
+    Reference(at, _, _, _) -> at
+    ValueList(at, _) -> at
+    ValueTuple(at, _) -> at
+  }
+
+  // What the test and its fixtures do that nothing around them handles: each fixture runs inside
+  // the runner's test, which handles what its body may do, and the fixtures before it, which each
+  // handle what they give what they run; then the test runs inside them all. What has a default
+  // handler, as @Console, is handled anyway; only an effect with operations needs handling.
+  private unhandledBy(program: CheckedProgram, marks: Marks, t: Found): List<Diagnostic> = {
+    needs = program.effects.filter { it.operations.isNotEmpty() }.map { it.effect.name }
+    runs = typeOf(program, marks.runner + ".test")
+    defaults = program.defaultHandlers.map { it.effect.name }
+    start = defaults + runs.map { lastParameterEffects(it) }.getOrElse([])
+    (handled, fixtureProblems) = t.fixtures.fold((start, [])) { state, fixture ->
+      (handledSoFar, problems) = state
+      (at, f) = fixture
+      fixtureType = typeOf(program, f.name)
+      missing = fixtureType.map { effectsOf(it) }.getOrElse([])
+        .filter { needs.contains(it) && !handledSoFar.contains(it) }
+        .distinct()
+      problem = if (missing.isEmpty()) [] else [
+        Diagnostic(
+          t.test.file.source.path,
+          at,
+          "the fixture ${Naming.ownName(f)} does ${shown(missing)}, which nothing it runs in " +
+            "handles: list a fixture that does before it",
+        ),
+      ]
+      given = fixtureType.map { firstParameterEffects(it) }.getOrElse([])
+      (handledSoFar + given, problems + problem)
+    }
+    missing = typeOf(program, t.test.name).map { effectsOf(it) }.getOrElse([])
+      .filter { needs.contains(it) && !handled.contains(it) }
+      .distinct()
+    fixtureNames = t.fixtures.map { _, f -> Naming.ownName(f) }.joinToString(", ")
+    by = if (t.fixtures.isEmpty()) "nothing it runs in handles"
+    else "neither the runner nor its fixtures, $fixtureNames, handle"
+    testProblem = if (missing.isEmpty()) [] else [
+      Diagnostic(
+        t.test.file.source.path,
+        t.test.declaration.at,
+        "'${Naming.ownName(t.test)}' does ${shown(missing)}, which $by: " +
+          "list a fixture that does, as @Fixtures(...)",
+      ),
+    ]
+    fixtureProblems + testProblem
+  }
+
+  private shown(names: List<String>): String =
+    names.sorted().map { "@" + it.substringAfterLast(".") }.joinToString(" ")
+
+  private typeOf(program: CheckedProgram, name: String): Option<Type> =
+    program.functions.find { it.function.name == name }.map { it.scheme.template }
+
+  // What a function does: its effects' full names.
+  private effectsOf(t: Type): List<String> = when (t) {
+    FunctionOf(_, _, row) -> row.labels.map { it.name }
+    else -> []
+  }
+
+  private firstParameterEffects(t: Type): List<String> = when (t) {
+    FunctionOf([first, *_], _, _) -> effectsOf(first)
+    else -> []
+  }
+
+  private lastParameterEffects(t: Type): List<String> = when (t) {
+    FunctionOf(parameters, _, _) -> parameters.lastOrNone().map { effectsOf(it) }.getOrElse([])
+    else -> []
+  }
+
+  // The full names of the effects the type does, and those of the functions in what it takes and
+  // gives: a test's, and its cases'.
+  private effectsIn(t: Type): List<String> = when (t) {
+    FunctionOf(parameters, result, row) ->
+      row.labels.map { it.name }.filter { !it.contains(" ") } +
+        parameters.flatMap { effectsIn(it) } +
+        effectsIn(result)
+    Named(_, arguments, _) -> arguments.flatMap { effectsIn(it) }
+    Abstract(_, arguments) -> arguments.flatMap { effectsIn(it) }
+    TupleOf(elements) -> elements.flatMap { effectsIn(it) }
+    else -> []
+  }
+
+  // The main that gives the runner the plan: each file's suite, its tests in the order they're
+  // written, each inside its fixtures.
+  private planned(
+    program: CheckedProgram,
+    marks: Marks,
+    found: List<(String, List<Found>)>,
+  ): String = {
+    module = marks.runner.substringAfterLast(".")
+    files = found.filter { _, tests -> tests.isNotEmpty() }.sortedBy { file, _ -> file }
+    suites = files.map { file, tests ->
+      lines = tests.sortedBy { it.test.declaration.at.line }.map { t ->
+        inFixtures = (inner: String) -> t.fixtures.reversed().fold(inner) { rest, fixture ->
+          (_, f) = fixture
+          "${f.name}(() -> $rest)"
+        }
+        t0 = typeOf(program, t.test.name)
+        effects = t0.map { effectsIn(it) }.getOrElse([]).distinct().sorted().map { string(it) }
+        sections = t.sections.map { string(it) }.joinToString(", ")
+        own = string(Naming.ownName(t.test))
+        id = "${string(file)}, [$sections], $own, ${t.test.declaration.at.line}, " +
+          "[${effects.joinToString(", ")}]"
+        call = t.test.name
+        givesUnit = when (t0) {
+          Some(FunctionOf(_, result, _)) -> result == Types.unit
+          _ -> true
+        }
+        if (givesUnit) "    $module.test($id, () -> ${inFixtures("$call()")}),\n"
+        else "    $module.cases($id, () -> $call(), check -> ${inFixtures("check()")}),\n"
+      }
+      "  $module.suite(${string(file)}, [\n" + lines.joinToString("") + "  ]),\n"
+    }
+    "import ${marks.runner}\n\nmain(args: List<String>) = $module.main(args, $module.plan([\n" +
+      suites.joinToString("") +
+      "]))\n"
+  }
+
+  private string(text: String): String =
+    "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$") + "\""
+}

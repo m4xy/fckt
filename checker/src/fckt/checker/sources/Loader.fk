@@ -14,7 +14,13 @@ module Loader {
     loading = Loading(tree, entry, [], [], emptyMap())
     when (parsed(entry)) {
       Some(file) -> {
-        own = LoadedFile(entry, [], EntryFile, file.imports + defaultImports, file.declarations)
+        own = LoadedFile(
+          entry,
+          [],
+          EntryFile,
+          file.imports + importedInto(entry, tree),
+          file.declarations,
+        )
         loading.files = [own]
         before = loading.files.size
         loadPackage(loading, [])
@@ -32,7 +38,15 @@ module Loader {
     "fckt.lang.Mutating", "fckt.lang.Repeatable", "fckt.lang.Meta", "fckt.lang.Monad", "fckt.lang.Applicative",
     "fckt.lang.Functions.*", "fckt.lang.Lists.*", "fckt.lang.Strings.*", "fckt.lang.Maths.*", "fckt.lang.Options.*",
     "fckt.lang.Results.*", "fckt.lang.Lazies.*",
-  ].map { written -> Import(Position(1, 1), written.removeSuffix(".*").split("."), written.endsWith(".*"), None) }
+  ].map { written -> asImport(written) }
+
+  // What the file imports besides what it says: what every file does, and, for the program's own,
+  // what the tree says they do.
+  private importedInto(source: SourceText, tree: SourceTree): List<Import> =
+    defaultImports + (if (source.project == ProgramProject) tree.imports.map { written -> asImport(written) } else [])
+
+  private asImport(written: String): Import =
+    Import(Position(1, 1), written.removeSuffix(".*").split("."), written.endsWith(".*"), None)
 
   // How far loading has got: the files read so far, the packages whose files they are, and what
   // the files beside the program's own that are programs of their own declare.
@@ -54,6 +68,50 @@ module Loader {
       followImport(loading, file, i)
       follow(loading, loading.files.drop(before))
     }
+    namedInFull(loading.tree, file.source.text).forEach { pkg ->
+      before = loading.files.size
+      loadPackage(loading, pkg)
+      follow(loading, loading.files.drop(before))
+    }
+  }
+
+  // The packages the text names in full, as geometry is in geometry.Shapes.area: each run of names
+  // joined by dots that starts with an outermost package, the most of it that's one.
+  private namedInFull(
+    tree: SourceTree,
+    text: String,
+  ): List<List<String>> = when (Lexer.tokens(text)) {
+    Error(_) -> []
+    Ok(tokens) -> dottedRuns(
+      tokens,
+      [],
+    ).filter { run -> run.size > 1 && tree.packages.containsKey(run.take(1)) }.mapNotNull { run ->
+      packageOf(tree, run)
+    }.distinct()
+  }
+
+  // Each run of names joined by dots, Identifier (. Identifier)*, in the tokens.
+  private dottedRuns(
+    tokens: List<Token>,
+    runs: List<List<String>>,
+  ): List<List<String>> = when (tokens) {
+    [] -> runs
+    [t, *rest] if t.kind == Identifier -> {
+      (run, after) = dotted(rest, [t.text])
+      dottedRuns(after, if (run.size > 1) runs + [run] else runs)
+    }
+    [_, *rest] -> dottedRuns(rest, runs)
+  }
+
+  private dotted(
+    tokens: List<Token>,
+    run: List<String>,
+  ): (List<String>, List<Token>) = when (tokens) {
+    [dot, name, *rest] if dot.kind == Dot && name.kind == Identifier -> dotted(
+      rest,
+      run + [name.text],
+    )
+    else -> (run, tokens)
   }
 
   @Reporting @Mutating private followImport(
@@ -164,7 +222,7 @@ module Loader {
             source,
             pkg,
             ModuleFile(name),
-            file.imports + defaultImports,
+            file.imports + importedInto(source, loading.tree),
             file.declarations,
           ),
         )
@@ -180,7 +238,13 @@ module Loader {
         }
       } else add(
         loading,
-        LoadedFile(source, pkg, DeclarationsFile, file.imports + defaultImports, file.declarations),
+        LoadedFile(
+          source,
+          pkg,
+          DeclarationsFile,
+          file.imports + importedInto(source, loading.tree),
+          file.declarations,
+        ),
       )
     }
   }
@@ -229,11 +293,42 @@ module Loader {
   @Reporting private parsed(
     source: SourceText,
   ): Option<SourceFile> = when (if (source.interface) Parser.parseInterface(source.text) else Parser.parse(source.text)) {
-    Ok(file) -> Some(file)
+    Ok(file) -> Some(
+      if (source.trusted) file.copy(
+        declarations = file.declarations.map { trusting(it) },
+      ) else file,
+    )
     Error(errors) -> {
       errors.forEach { report(Diagnostic(source.path, it.at, it.message)) }
       None
     }
+  }
+
+  // The declaration, with each function that says its type taken to have it, its code compiled.
+  private trusting(d: Declaration): Declaration = when (d.definition) {
+    FunctionDefinition(typeParameters, receiver, parameters, Some(result), _, None, operator) ->
+      d.copy(
+        definition = FunctionDefinition(
+          typeParameters,
+          receiver,
+          parameters,
+          Some(result),
+          Compiled(d.at),
+          None,
+          operator,
+        ),
+      )
+    ModuleDefinition(inner, spec, parameters, application, typeParameters) ->
+      d.copy(
+        definition = ModuleDefinition(
+          inner.map { trusting(it) },
+          spec,
+          parameters,
+          application,
+          typeParameters,
+        ),
+      )
+    else -> d
   }
 
   // The file's name, without its folder or extension: Shapes, for geometry/Shapes.fk.

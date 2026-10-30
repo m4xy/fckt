@@ -480,7 +480,8 @@ module AnnotationChecks {
   }
 
   // The argument as an expression.
-  @Abandoning private expressionOf(v: AnnotationValue, context: Context): Expression = when (v) {
+  // The argument, as the expression it's checked as.
+  @Abandoning expressionOf(v: AnnotationValue, context: Context): Expression = when (v) {
     Constant(e) -> e
     ValueList(at, items) -> ListOf(at, items.map { expressionOf(it, context) })
     ValueTuple(at, items) -> Tuple(at, items.map { expressionOf(it, context) })

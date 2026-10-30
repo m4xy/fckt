@@ -66,12 +66,17 @@ import fckt.checker.types.Types.*
     settledCore(separator),
     resolvedFully(element),
   )
-  Assertion(condition, where) -> Assertion(settledCore(condition), where)
-  EqualityAssertion(expected, actual, t, where) -> EqualityAssertion(
+  Assertion(condition, summary, facts) -> Assertion(
+    settledCore(condition),
+    summary,
+    facts.map { key, fact -> (key, settledCore(fact)) },
+  )
+  EqualityAssertion(expected, actual, t, where, source) -> EqualityAssertion(
     settledCore(expected),
     settledCore(actual),
     resolvedFully(t),
     where,
+    source,
   )
   Conditional(condition, then, otherwise) -> Conditional(
     settledCore(condition),

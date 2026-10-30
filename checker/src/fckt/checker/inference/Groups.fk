@@ -65,8 +65,9 @@ module Groups {
     names = Signatures.bodyOf(f).map { body -> References.of(body, bound) }.getOrElse([])
     each = names.map { name -> uses(name, context) }
     named = each.flatMap { it.named }.map { it.name }
+    lifted = Signatures.bodyOf(f).map { body -> liftedUses(body, f, environment) }.getOrElse([])
     Uses(
-      each.flatMap { it.functions }.distinctBy { it.name },
+      (each.flatMap { it.functions } + lifted).distinctBy { it.name },
       each.flatMap { it.guessed }.map { it.name }.filter { !named.contains(it) },
     )
   }
@@ -97,6 +98,13 @@ module Groups {
         defaultsUsed(name, context)
       NameUses(found, [], found)
     }
+
+  // The functions of each module made for a functor applied in the body, as Greeter() makes one.
+  private liftedUses(body: Expression, f: Symbol, environment: Environment): List<Symbol> = {
+    lifted = environment.definitions.namespace.modules.lifted
+    made = Calls.of(body).mapNotNull { call -> lifted.get(CallSite(f.file.source.path, call.at)) }
+    environment.functions.toList().map { _, g -> g }.filter { g -> made.contains(g.path.joinToString(".")) }
+  }
 
   private isOnlyPackageMates(
     f: Symbol,

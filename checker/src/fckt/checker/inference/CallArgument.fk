@@ -1,2 +1,7 @@
 // An argument as a call is checked with it: given by name or in order.
-type CallArgument(name: Option<String>, value: ArgumentValue)
+type CallArgument(
+  name: Option<String>,
+  value: ArgumentValue,
+  text: Option<String> = None,
+  operands: Option<(String, String)> = None,
+)

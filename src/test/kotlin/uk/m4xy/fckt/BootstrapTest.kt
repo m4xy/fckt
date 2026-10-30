@@ -17,7 +17,7 @@ class BootstrapTest {
         assumeTrue(Ocaml.path != null, "ocaml isn't installed")
         val dir = kotlin.io.path.createTempDirectory("fckt-bootstrap").toFile()
         try {
-            val folders = listOf("parser/src", "checker/src", "lowering/src")
+            val folders = listOf("parser/src", "checker/src", "lowering/src", "compiler/src")
             // Built by this compiler.
             val first = File(dir, "first.ml").apply { writeText(compile(File("compiler/src/main.fk"), folders.map(::File), others = listOf(File("std/src")))) }
             build(dir, first.name, "first")

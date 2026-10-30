@@ -1,11 +1,14 @@
 // A file of source code: where it is, as positions name it, None for the program's own text; the
 // project it's in; and what it says. One compiledIn an OCaml unit of its own, as the standard
 // library's and other libraries' are, is linked with the program, not written into it; a library's
-// interface, as fckt --library writes it, says only its declarations, without their code.
+// interface, as fckt --library writes it, says only its declarations, without their code. In a
+// trusted one, each function that says its type is taken to have it, its code unchecked, as fckt
+// --symbols checks only what a project declares.
 type SourceText(
   path: Option<String>,
   project: Project,
   text: String,
   compiledIn: Option<String> = None,
   interface: Boolean = false,
+  trusted: Boolean = false,
 )

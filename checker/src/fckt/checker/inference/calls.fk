@@ -268,17 +268,100 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   perform(effects, at)
   cores = checked.sortedBy { i, _ -> i }.map { _, core -> core }
   where = context.place.file.source.path.map { p -> p.split("/").lastOrNone().getOrElse(p) + " " }.getOrElse("") + "line ${at.line}"
+  texts = arguments.map { it.text }
+  source = if (texts.all { it.isSome() }) Some(
+    texts.map { it.getOrElse("") }.joinToString(", "),
+  ) else None
   core = when (cores) {
-    [condition] if isBuiltin("assert") -> Assertion(condition, where)
+    [condition] if isBuiltin("assert") ->
+      assertion(condition, arguments, where, source.map { "assert($it)" }, scope, context)
     [wanted, actual] if isAssertEquals -> EqualityAssertion(
       wanted,
       actual,
       parameters.getOrNone(1).getOrElse(unit),
       where,
+      source.map { "assertEquals($it)" }.getOrElse(""),
     )
     else -> Applied(calleeTyped.core, cores)
   }
   Typed(result, None, core)
+}
+
+// assert(condition), failing with what it checked, where, and what's written, if it's known. Of a
+// comparison, xs.size == 3, each side is computed once, the left first, and each, but a constant,
+// which says what it is, is shown, as written and its value.
+@Inferring private assertion(
+  condition: Core,
+  arguments: List<CallArgument>,
+  where: String,
+  source: Option<String>,
+  scope: Scope,
+  context: Context,
+): Core = {
+  written = arguments.firstOrNone().flatMap { it.text }
+  summary = "$where: assertion failed" + written.map { ": $it" }.getOrElse("")
+  text = (value: String) -> Value(StringLiteral(value))
+  facts = [
+    ("assertion", text("assert")),
+    ("where", text(where)),
+  ] + source.map { ("source", text(it)) }.toList()
+  when (arguments.map { a -> (a.value, a.operands) }) {
+    [
+      (WrittenValue(Binary(at, operator, left, right)), Some((leftText, rightText))),
+    ] if comparisons.contains(operator) -> {
+      leftTyped = infer(left, None, scope, context)
+      rightTyped = infer(right, None, scope, context)
+      sides = Scopes.bind(
+        Scopes.bind(scope, "fk_left", Local(leftTyped.t)),
+        "fk_right",
+        Local(rightTyped.t),
+      )
+      compared = check(
+        Binary(at, operator, Name(at, "fk_left"), Name(at, "fk_right")),
+        boolean,
+        sides,
+        context,
+      )
+      shown = [
+        (left, leftText, "fk_left", leftTyped.t),
+        (right, rightText, "fk_right", rightTyped.t),
+      ].filter { e, _, _, _ ->
+        !isConstant(e)
+      }.flatMap { _, written, local, t ->
+        [("operand", text(written)), ("value", Shown(LocalRead(local, false), t))]
+      }
+      Bound(
+        NameMatcher("fk_left"),
+        leftTyped.core,
+        Bound(
+          NameMatcher("fk_right"),
+          rightTyped.core,
+          Assertion(compared, summary, facts + shown),
+        ),
+      )
+    }
+    _ -> Assertion(condition, summary, facts)
+  }
+}
+
+// The operators an asserted comparison is one of, whose sides a failed assertion shows.
+private comparisons: List<String> = ["==", "!=", "<", "<=", ">", ">="]
+
+// Whether the expression is a constant, which says what its value is: 3, "three", -1.
+private isConstant(e: Expression): Boolean = when (e) {
+  IntConstant(_, _) -> true
+  FloatConstant(_, _) -> true
+  BooleanConstant(_, _) -> true
+  CharConstant(_, _) -> true
+  StringTemplate(_, parts) -> parts.none { p ->
+    when (p) {
+      Interpolation(_) -> true
+      TemplateText(_) -> false
+    }
+  }
+  Unary(_, "-", IntConstant(_, _)) -> true
+  Unary(_, "-", FloatConstant(_, _)) -> true
+  _ -> false
 }
 
 // A constructor, called with its fields, by name or in order, and their defaults.
@@ -551,7 +634,7 @@ private withTrailingLast(
 ): List<CallArgument> =
   when (arguments.lastOrNone()) {
     Some(
-      CallArgument(None, TrailingBlock(blockAt, blockParameters, block)),
+      CallArgument(None, TrailingBlock(blockAt, blockParameters, block), _, _),
     ) if arguments.size < parameters.size -> {
       skipped = parameters.drop(arguments.size - 1).dropLast(1)
       if (skipped.any { _, hasDefault -> !hasDefault }) arguments

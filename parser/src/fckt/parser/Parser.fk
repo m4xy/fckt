@@ -19,7 +19,7 @@ module Parser {
   ): Result<SourceFile, List<SyntaxError>> = when (Lexer.tokens(source)) {
     Error(error) -> Error([error])
     Ok(tokens) -> {
-      s = Parsing(tokens.toArray(), 0, [], [], [], interface)
+      s = Parsing(tokens.toArray(), 0, [], [], [], interface, source.split("\n"))
       Rejecting(reject = (at, message, _) -> Error([SyntaxError(at, message)])) {
         skipNewlines(s)
         imports = importList(s)
@@ -43,6 +43,7 @@ module Parser {
     var checks: List<(Expression, Check)>,
     var conjunctions: List<(Expression, List<Expression>, List<Position>)>,
     interface: Boolean = false,
+    lines: List<String> = [],
   )
 
   // e is T, or e !is T, as read: what's checked, the check, and whether it's !is.
@@ -1393,12 +1394,41 @@ module Parser {
         next(s)
         Some(named)
       } else None
-      Argument(name, expression(s))
+      start = peek(s).at
+      value = expression(s)
+      end = peek(s).at
+      // An operator's operands, as written either side of it: what an assertion of a comparison shows.
+      operands = when (value) {
+        Binary(at, operator, _, _) -> when ((written(s, start, at), written(s, Position(at.line, at.column + operator.length), end))) {
+          (Some(left), Some(right)) -> Some((left, right))
+          _ -> None
+        }
+        else -> None
+      }
+      Argument(name, value, written(s, start, end), operands)
     }
     // As in Kotlin, those passed in order come first; the checker says if one follows a named one.
     expect(s, RightParen, "')'")
     read
   }
+
+  // What's written from one position up to another, on one line however many it's on, or None
+  // where the source isn't known: what an assertion says it checked.
+  private written(s: Parsing, from: Position, to: Position): Option<String> =
+    if (s.lines.isEmpty() || from.line > to.line || to.line > s.lines.size) None
+    else {
+      first = s.lines.getOrNone(from.line - 1).getOrElse("")
+      last = s.lines.getOrNone(to.line - 1).getOrElse("")
+      text = if (from.line == to.line) {
+        if (from.column - 1 > first.length || to.column - 1 > first.length) None
+        else Some(first.substring(from.column - 1, to.column - 1))
+      } else if (from.column - 1 > first.length || to.column - 1 > last.length) None
+      else Some(
+        ([first.substring(from.column - 1, first.length)] + s.lines.drop(from.line).take(to.line - from.line - 1) +
+          [last.substring(0, to.column - 1)]).map { it.trim() }.joinToString(" "),
+      )
+      text.map { it.trim().removeSuffix(",").trim() }
+    }
 
   @Rejecting @Mutating private primary(s: Parsing): Expression = {
     token = peek(s)

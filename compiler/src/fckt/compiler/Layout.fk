@@ -1,0 +1,282 @@
+import fckt.collections.Array
+import fckt.collections.Arrays.*
+import fckt.parser.*
+
+// How code is laid out: a line no wider than width columns, where it can be. A call's arguments, a
+// declaration's parameters or a list's items that don't fit on the line they start on go one to a
+// line, each with a comma after it, and the bracket that closes them on a line of its own: what
+// fckt --format does, and fckt --check-format checks.
+module Layout {
+  width: Int = 100
+
+  // The source, laid out.
+  formatted(source: String): String = formattedFrom(source, 1000)
+
+  private formattedFrom(source: String, tries: Int): String =
+    if (tries == 0) source
+    else when (splitOnce(source)) {
+      Some(next) -> formattedFrom(next, tries - 1)
+      None -> source
+    }
+
+  // The lines of the source that formatted would change, by number.
+  unformatted(source: String): List<Int> = when (tokensOf(source)) {
+    None -> []
+    Some(tokens) -> {
+      lines = source.split("\n")
+      depths = depthsOf(tokens)
+      lines.mapIndexed { i, line -> (i, line) }.filter { i, line ->
+        apart = annotationsApart(tokens, i + 1, line, indentOf(line))
+        line.length > width &&
+          (splittable(tokens, depths, i + 1).isSome() || apart.map { fits(it) }.getOrElse(false))
+      }.map { i, _ -> i + 1 }
+    }
+  }
+
+  // The tokens of a list to split: where it opens, where it closes, and the commas that are its
+  // own.
+  private type Splittable(open: Token, close: Token, commas: List<Token>)
+
+  // The source with its first line too wide that has a list in it split, or None if none has.
+  private splitOnce(source: String): Option<String> = tokensOf(source).flatMap { tokens ->
+    lines = source.split("\n")
+    depths = depthsOf(tokens)
+    firstSplit(lines, tokens, depths, 0)
+  }
+
+  private firstSplit(
+    lines: List<String>,
+    tokens: Array<Token>,
+    depths: Array<Int>,
+    i: Int,
+  ): Option<String> =
+    if (i >= lines.size) None
+    else when (splitAt(lines, tokens, depths, i)) {
+      Some(split) -> Some(split)
+      None -> firstSplit(lines, tokens, depths, i + 1)
+    }
+
+  // The lines with the i-th split, if it's too wide and can be.
+  private splitAt(
+    lines: List<String>,
+    tokens: Array<Token>,
+    depths: Array<Int>,
+    i: Int,
+  ): Option<String> = {
+    line = lines.getOrNone(i).getOrElse("")
+    if (line.length <= width) None
+    else {
+      indent = indentOf(line)
+      replaced = when (splittable(tokens, depths, i + 1)) {
+        Some(Splittable(open, close, commas)) -> {
+          cuts = [open.at.column] + commas.map { it.at.column } + [close.at.column]
+          items = cuts.zip(cuts.drop(1))
+            .map { from, to -> line.substring(from, to - 1).trim() }
+            .filter { it.isNotEmpty() }
+          Some(
+            annotatedApart(tokens, i + 1, line.substring(0, open.at.column).trimEnd(), indent) +
+              items.map { "$indent  $it," } +
+              [indent + line.substring(close.at.column - 1, line.length)],
+          )
+        }
+        None -> annotationsApart(tokens, i + 1, line, indent).filter { fits(it) }
+      }
+      replaced.map { r -> (lines.take(i) + r + lines.drop(i + 1)).joinToString("\n") }
+    }
+  }
+
+  private fits(lines: List<String>): Boolean =
+    lines.lastOrNone().map { it.length <= width }.getOrElse(true)
+
+  private indentOf(line: String): String =
+    line.toList().takeWhile { it == ' ' }.map { it.toString() }.joinToString("")
+
+  // A declaration's first line, its annotations kept on it, as a function's effects are part of
+  // what it is: unless they make it too wide, when each goes on a line of its own above.
+  private annotatedApart(
+    tokens: Array<Token>,
+    line: Int,
+    first: String,
+    indent: String,
+  ): List<String> =
+    if (first.length <= width) [first]
+    else annotationsApart(tokens, line, first, indent).getOrElse([first])
+
+  // The line's annotations, at its start, each on a line of its own, and what follows them; None if
+  // it starts with none.
+  private annotationsApart(
+    tokens: Array<Token>,
+    line: Int,
+    first: String,
+    indent: String,
+  ): Option<List<String>> = {
+    onLine = tokens.toList().filter { it.at.line == line }.toArray()
+    when (annotationEnds(onLine, 0, [])) {
+      Some(ends) if ends.isNotEmpty() && first.substring(0, indent.length).isBlank() -> {
+        starts = [indent.length] + ends.dropLast(1)
+        last = ends.lastOrNone().getOrElse(0)
+        Some(
+          starts.zip(ends).map { from, to -> indent + first.substring(from, to).trim() } +
+            [indent + first.substring(last, first.length).trim()],
+        )
+      }
+      _ -> None
+    }
+  }
+
+  // Where each annotation from the i-th token on ends, as a column from 0; None if the line ends
+  // with one.
+  private annotationEnds(onLine: Array<Token>, i: Int, ends: List<Int>): Option<List<Int>> =
+    if (i >= onLine.size || onLine.get(i).kind != At) Some(ends)
+    else {
+      named = if (i + 1 < onLine.size && onLine.get(i + 1).kind == Identifier) i + 2 else i + 1
+      dotted = afterDots(onLine, named)
+      called = dotted > 0 && dotted < onLine.size && onLine.get(dotted).kind == LeftParen &&
+        adjacent(onLine.get(dotted - 1), onLine.get(dotted))
+      next = if (called) afterParentheses(onLine, dotted, 0) else dotted
+      if (next < onLine.size) annotationEnds(onLine, next, ends + [onLine.get(next).at.column - 1])
+      else None
+    }
+
+  private afterDots(onLine: Array<Token>, i: Int): Int =
+    if (i + 1 < onLine.size && onLine.get(i).kind == Dot && onLine.get(i + 1).kind == Identifier)
+      afterDots(onLine, i + 2)
+    else i
+
+  private afterParentheses(onLine: Array<Token>, i: Int, depth: Int): Int =
+    if (i >= onLine.size) i + 1 else {
+      t = onLine.get(i)
+      inner = if (t.kind == LeftParen) depth + 1 else if (t.kind == RightParen) depth - 1 else depth
+      if (t.kind == RightParen && inner == 0) i + 1 else afterParentheses(onLine, i + 1, inner)
+    }
+
+  private adjacent(before: Token, after: Token): Boolean =
+    before.at.line == after.at.line && before.at.column + before.text.length == after.at.column
+
+  // The list to split on the line: a call's arguments, a declaration's parameters or a list's
+  // items, between brackets, ( or [, opened and closed on it, at the outermost level of brackets
+  // the line reaches: a declaration's parameters before anything in its body, and otherwise the
+  // last, as a chain of calls ends with what's long. Not a condition, a lambda's or a function
+  // type's parameters, or a list that ends with what's spread into it.
+  private splittable(tokens: Array<Token>, depths: Array<Int>, line: Int): Option<Splittable> = {
+    onLine = (0..tokens.size - 1).filter { tokens.get(it).at.line == line }
+    if (onLine.isEmpty()) None
+    else {
+      outermost = onLine.map { depths.get(it) }.minOrNone().getOrElse(0)
+      found = candidates(tokens, depths, line, outermost, onLine, [])
+      when (found) {
+        [] -> None
+        [(open, close, commas), *_] -> {
+          after = if (close + 1 < tokens.size) Some(tokens.get(close + 1).kind) else None
+          declaring = after == Some(Colon) || after == Some(Kind.Assign)
+          declares = tokens.get(open).kind == LeftParen && declaring
+          first = (open, close, commas)
+          (o, c, cs) = if (declares) first else found.lastOrNone().getOrElse(first)
+          Some(Splittable(tokens.get(o), tokens.get(c), cs.map { tokens.get(it) }))
+        }
+      }
+    }
+  }
+
+  private candidates(
+    tokens: Array<Token>,
+    depths: Array<Int>,
+    line: Int,
+    outermost: Int,
+    left: List<Int>,
+    found: List<(Int, Int, List<Int>)>,
+  ): List<(Int, Int, List<Int>)> = when (left) {
+    [] -> found
+    [index, *rest] -> {
+      open = tokens.get(index)
+      skip = () -> candidates(tokens, depths, line, outermost, rest, found)
+      if (depths.get(index) != outermost || !opens(tokens, index) || open.kind == Less) skip()
+      else if (open.kind != LeftParen && open.kind != LeftBracket) found
+      else when (
+        (index + 1..tokens.size - 1).find { depths.get(it) == outermost && closes(tokens, it) }
+      ) {
+        None -> found
+        Some(close) -> if (tokens.get(close).at.line != line) found else {
+          before = if (index > 0) Some(tokens.get(index - 1)) else None
+          beforeKind = before.map { it.kind }
+          beforeText = before.map { it.text }.getOrElse("")
+          lambda = close + 1 < tokens.size && tokens.get(close + 1).kind == Arrow
+          condition = beforeKind == Some(IfKeyword) || beforeKind == Some(WhenKeyword) ||
+            beforeText == "while" || beforeText == "for"
+          notCall = open.kind == LeftParen &&
+            beforeKind != Some(Identifier) && beforeKind != Some(Greater)
+          commas = (index + 1..close - 1).filter { j ->
+            tokens.get(j).kind == Comma && depths.get(j) == outermost + 1
+          }
+          spreads = tokens.get(commas.lastOrNone().map { it + 1 }.getOrElse(index + 1)).kind == Star
+          if (close == index + 1 || lambda || condition || notCall || spreads) skip()
+          else candidates(tokens, depths, line, outermost, rest, found + [(index, close, commas)])
+        }
+      }
+    }
+  }
+
+  // Each token's depth: how many brackets are open before it, a generic's <...> among them.
+  private depthsOf(tokens: Array<Token>): Array<Int> = {
+    depths = arrayOf(tokens.size, 0)
+    (0..tokens.size - 1).fold(0) { depth, i ->
+      here = if (closes(tokens, i)) depth - 1 else depth
+      depths.set(i, here)
+      if (opens(tokens, i)) here + 1 else here
+    }
+    depths
+  }
+
+  private opens(tokens: Array<Token>, i: Int): Boolean = when (tokens.get(i).kind) {
+    LeftParen -> true
+    LeftBracket -> true
+    LeftBrace -> true
+    Less -> typeArguments(tokens, i)
+    else -> false
+  }
+
+  private closes(tokens: Array<Token>, i: Int): Boolean = when (tokens.get(i).kind) {
+    RightParen -> true
+    RightBracket -> true
+    RightBrace -> true
+    Greater -> matchingLess(tokens, i - 1, 0).isSome()
+    else -> false
+  }
+
+  // Whether the < at i starts type arguments, List<A>: right after a name, with no space.
+  private typeArguments(tokens: Array<Token>, i: Int): Boolean =
+    i > 0 && tokens.get(i - 1).kind == Identifier && adjacent(tokens.get(i - 1), tokens.get(i)) &&
+      matchingGreater(tokens, i + 1, 0).isSome()
+
+  private matchingGreater(tokens: Array<Token>, j: Int, depth: Int): Option<Int> =
+    if (j >= tokens.size) None else when (tokens.get(j).kind) {
+      Less -> matchingGreater(tokens, j + 1, depth + 1)
+      Greater -> if (depth == 0) Some(j) else matchingGreater(tokens, j + 1, depth - 1)
+      LeftBrace -> None
+      RightBrace -> None
+      Newline -> None
+      Kind.Assign -> None
+      Semicolon -> None
+      else -> matchingGreater(tokens, j + 1, depth)
+    }
+
+  private matchingLess(tokens: Array<Token>, j: Int, depth: Int): Option<Int> =
+    if (j < 0) None else when (tokens.get(j).kind) {
+      Greater -> matchingLess(tokens, j - 1, depth + 1)
+      Less ->
+        if (depth != 0) matchingLess(tokens, j - 1, depth - 1)
+        else if (typeArguments(tokens, j)) Some(j)
+        else None
+      LeftBrace -> None
+      RightBrace -> None
+      Newline -> None
+      Kind.Assign -> None
+      Semicolon -> None
+      else -> matchingLess(tokens, j - 1, depth)
+    }
+
+  private tokensOf(source: String): Option<Array<Token>> = when (Lexer.tokens(source)) {
+    Ok(tokens) -> Some(tokens.toArray())
+    Error(_) -> None
+  }
+}

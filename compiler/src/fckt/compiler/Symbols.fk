@@ -1,0 +1,442 @@
+import fckt.collections.Maps.*
+import fckt.checker.CheckedProgram
+import fckt.checker.annotations.Annotations
+import fckt.checker.core.*
+import fckt.checker.definitions.*
+import fckt.checker.diagnostics.*
+import fckt.checker.inference.*
+import fckt.checker.metadata.AnnotationChecks
+import fckt.checker.resolution.*
+import fckt.checker.sources.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.resolved
+import fckt.parser.*
+
+// What a project declares, for programs that read it, as a processor that writes code from a
+// project's types does: fckt --symbols writes it, in a format of lines that fckt's README sets out,
+// which a version on the first line names. Each type is there by its full name, with its fields and
+// cases, their types by the full names of what they refer to, and the annotations on each, with
+// what their arguments resolved to. What's private isn't: nothing outside its module sees it.
+module Symbols {
+  // The format's version, which changes when what's written does, so a reader never misreads one.
+  version: Int = 1
+
+  empty: String = "fckt-symbols $version\n"
+
+  // What's known while writing: the program's environment, what each written type's name means,
+  // by where it's written, and each annotation type's fields' kinds.
+  private type Writing(
+    environment: Environment,
+    names: Map<String, String>,
+    metas: Map<String, List<MetaType>>,
+  )
+
+  // The types the program declares in the files at the paths, each of the project's own, as the
+  // format has them; or why one can't be written.
+  @Solving @Abandoning @Reporting write(program: CheckedProgram, paths: List<String>): String =
+    when (program.environment) {
+      None -> empty
+      Some(environment) -> {
+        namespace = environment.definitions.namespace
+        files = program.workspace.files.filter { f ->
+          f.source.path.map { paths.contains(it) }.getOrElse(false)
+        }
+        names = files.flatMap { f ->
+          Resolution.resolvedTypes(f, namespace, program.workspace.borrowed).mapNotNull { r ->
+            key = positionKey(f, r.written.at)
+            when (r.meaning) {
+              DeclaredType(s) -> Some((key, s.name))
+              SpecModuleType(spec) -> Some((key, "module ${spec.name}"))
+              else -> None
+            }
+          }
+        }.toMap()
+        writing = Writing(environment, names, MetaTypes.all(environment.definitions))
+        declared = program.types.mapNotNull { t ->
+          when (t) {
+            DeclaredRecord(s, _, _) -> when (s.declaration.definition) {
+              RecordDefinition(_, _, _, false, None) -> Some(s)
+              else -> None
+            }
+            DeclaredCases(s, _, _) -> Some(s)
+            else -> None
+          }
+        }.filter { s ->
+          files.any { it.source.path == s.file.source.path } && s.declaration.visibility != Private
+        }
+        sorted = declared.sortedBy { s ->
+          (s.file.source.path.getOrElse(""), s.declaration.at.line, s.declaration.at.column)
+        }
+        empty + sorted.map { s -> typeLines(s, program, writing) }.joinToString("")
+      }
+    }
+
+  private positionKey(f: LoadedFile, at: Position): String =
+    "${f.source.path.getOrElse("")}:${at.line}:${at.column}"
+
+  @Solving @Abandoning private typeLines(
+    s: Symbol,
+    program: CheckedProgram,
+    writing: Writing,
+  ): String = {
+    place = Place(s.file, s.path)
+    when (s.declaration.definition) {
+      RecordDefinition(typeParameters, fields, privateConstructor, _, _) ->
+        line(0, "record ${s.name}") +
+          header(s, typeParameters, place, writing) +
+          (if (privateConstructor) line(1, "private-constructor") else "") +
+          fields.map { field(1, it, s.file, typeParameters, place, writing) }.joinToString("")
+      CasesDefinition(typeParameters, _, _, _) -> {
+        cases = program.types.find { t ->
+          when (t) {
+            DeclaredCases(c, _, _) -> c.name == s.name
+            else -> false
+          }
+        }.map { t ->
+          when (t) {
+            DeclaredCases(_, _, cs) -> cs
+            else -> []
+          }
+        }.getOrElse([])
+        line(0, "cases ${s.name}") +
+          header(s, typeParameters, place, writing) +
+          cases.map { c -> caseLines(c.case, s, typeParameters, writing) }.joinToString("")
+      }
+      else -> ""
+    }
+  }
+
+  @Solving @Abandoning private caseLines(
+    c: CaseSymbol,
+    owner: Symbol,
+    typeParameters: List<String>,
+    writing: Writing,
+  ): String = {
+    origin = c.owner
+    place = Place(origin.file, origin.path)
+    originParameters = when (origin.declaration.definition) {
+      CasesDefinition(ps, _, _, _) -> ps
+      _ -> []
+    }
+    line(1, "case ${c.definition.name}") +
+      at(2, c.definition.at, origin.file) +
+      (if (origin.name != owner.name) line(2, "from ${origin.name}") else "") +
+      c.definition.annotations.map { annotation(2, it, place, writing) }.joinToString("") +
+      c.definition.fields.map { f ->
+        field(2, f, origin.file, typeParameters + originParameters, place, writing)
+      }.joinToString("")
+  }
+
+  @Solving @Abandoning private header(
+    s: Symbol,
+    typeParameters: List<String>,
+    place: Place,
+    writing: Writing,
+  ): String =
+    at(1, s.declaration.at, s.file) +
+      (if (s.declaration.visibility == Internal) line(1, "internal") else "") +
+      (if (s.declaration.opaque) line(1, "opaque") else "") +
+      typeParameters.map { line(1, "parameter $it") }.joinToString("") +
+      s.declaration.annotations.map { annotation(1, it, place, writing) }.joinToString("")
+
+  private at(depth: Int, p: Position, file: LoadedFile): String =
+    line(depth, "at ${p.line} ${p.column} ${file.source.path.getOrElse("")}")
+
+  @Solving @Abandoning private field(
+    depth: Int,
+    f: Field,
+    file: LoadedFile,
+    typeParameters: List<String>,
+    place: Place,
+    writing: Writing,
+  ): String =
+    line(depth, "field ${f.name} ${written(f.fieldType, file, typeParameters, writing)}") +
+      (if (f.variable) line(depth + 1, "var") else "") +
+      (if (f.default.isSome()) line(depth + 1, "default") else "") +
+      f.annotations.map { annotation(depth + 1, it, place, writing) }.joinToString("")
+
+  @Solving @Abandoning private annotation(
+    depth: Int,
+    a: Annotation,
+    place: Place,
+    writing: Writing,
+  ): String =
+    when (Annotations.declarationOf(a, place, writing.environment.definitions.namespace)) {
+      None -> ""
+      Some(declaration) -> {
+        given = arguments(a, declaration, place, writing)
+        line(depth, "annotation ${declaration.name}") +
+          given.map { name, v -> line(depth + 1, "argument $name $v") }.joinToString("")
+      }
+    }
+
+  // The annotation's arguments, each by the field it's for, in the order the annotation type
+  // declares them, as the format writes them.
+  @Solving @Abandoning private arguments(
+    a: Annotation,
+    declaration: Symbol,
+    place: Place,
+    writing: Writing,
+  ): List<(String, String)> = when (declaration.declaration.definition) {
+    RecordDefinition(_, fields, _, _, _) -> {
+      metas = writing.metas.getOrDefault(declaration.name, [])
+      names = fields.map { it.name }
+      vararg = fields.lastOrNone().filter { it.vararg }
+      byName = a.arguments.filter { it.name.isSome() }.map { arg ->
+        (arg.name.getOrElse(""), arg.value)
+      }
+      inOrder = a.arguments.takeWhile { it.name.isNone() }.map { it.value }
+      positional = inOrder.zip(names).map { v, name -> (name, v) }
+      spread = vararg.filter { v -> byName.none { n, _ -> n == v.name } }.map { v ->
+        [(v.name, ValueList(a.at, inOrder.drop(names.size - 1)))]
+      }.getOrElse([])
+      unspread = positional.filter { n, _ -> spread.none { m, _ -> m == n } }
+      given = (unspread + spread + byName).toMap()
+      names.zip(metas).mapNotNull { name, meta ->
+        given.get(name).map { v -> (name, value(v, meta, place, writing)) }
+      }
+    }
+    else -> []
+  }
+
+  // An argument, as the format writes it: a constant, a reference by its kind and full name, or a
+  // list or tuple of them.
+  @Solving @Abandoning private value(
+    v: AnnotationValue,
+    meta: MetaType,
+    place: Place,
+    writing: Writing,
+  ): String = {
+    context = Context(writing.environment, place, emptyMap())
+    namespace = writing.environment.definitions.namespace
+    name = when (v) {
+      Reference(_, n, _, _) -> n
+      _ -> ""
+    }
+    when (meta) {
+      MetaList(item) -> when (v) {
+        ValueList(_, items) -> bracketed("[", items.map { value(it, item, place, writing) }, "]")
+        _ -> expression(AnnotationChecks.expressionOf(v, context), context)
+      }
+      MetaTuple(itemTypes) -> when (v) {
+        ValueTuple(_, items) -> {
+          values = items.zip(itemTypes).map { item, t -> value(item, t, place, writing) }
+          bracketed("(", values, ")")
+        }
+        _ -> expression(AnnotationChecks.expressionOf(v, context), context)
+      }
+      MetaValue(_) -> expression(AnnotationChecks.expressionOf(v, context), context)
+      MetaTypeReference -> when (typeRefOf(v)) {
+        Some(ref) -> {
+          t = Conversion.typeOf(ref, Globals.typeContext(context), writing.environment.definitions)
+          "type " + typeText(t)
+        }
+        None -> unwritable(v, context)
+      }
+      MetaSpec -> when (Lookups.found(Lookups.spec(name, place, namespace, Skipping))) {
+        Some(spec) -> "spec ${spec.name}"
+        None -> unwritable(v, context)
+      }
+      MetaFunction -> when (Lookups.found(Globals.find(name, context, Skipping))) {
+        Some(f) -> "function ${f.name}"
+        None -> unwritable(v, context)
+      }
+      MetaModule(_) -> when (Lookups.found(Lookups.moduleNamed(name, place, namespace, Skipping))) {
+        Some(DeclaredModule(m)) -> "module ${m.name}"
+        _ -> unwritable(v, context)
+      }
+      MetaCase(caseType) -> when (resolved(caseType)) {
+        Named(n, _, _) -> "case $n.${name.split(".").lastOrNone().getOrElse(name)}"
+        _ -> unwritable(v, context)
+      }
+      MetaField(record, _) -> when (resolved(record)) {
+        Named(n, _, _) -> "field $n.${name.split(".").lastOrNone().getOrElse(name)}"
+        _ -> "field ${name}"
+      }
+      MetaAnnotation(_) -> when (v) {
+        Reference(at, n, _, given) -> {
+          inner = Annotation(at, n, given.getOrElse([]), [])
+          when (Annotations.declarationOf(inner, place, namespace)) {
+            Some(d) -> {
+              given = arguments(inner, d, place, writing).map { an, av -> "$an = $av" }
+              "@${d.name}" + bracketed("(", given, ")")
+            }
+            None -> unwritable(v, context)
+          }
+        }
+        _ -> unwritable(v, context)
+      }
+    }
+  }
+
+  @Abandoning private unwritable(v: AnnotationValue, context: Context): Nothing = {
+    at = when (v) {
+      Constant(e) -> Positions.of(e)
+      Reference(p, _, _, _) -> p
+      ValueList(p, _) -> p
+      ValueTuple(p, _) -> p
+    }
+    abandon(Globals.problem(context, at, "this can't be written as a symbol"))
+  }
+
+  // A type, as Type is given in @Of(List<User>): the reference, as a written type.
+  private typeRefOf(v: AnnotationValue): Option<TypeRef> = when (v) {
+    Reference(at, name, typeArguments, None) ->
+      Some(NamedType(at, name, typeArguments.getOrElse([])))
+    ValueTuple(at, items) -> {
+      refs = items.mapNotNull { typeRefOf(it) }
+      if (refs.size == items.size) Some(TupleType(at, refs)) else None
+    }
+    _ -> None
+  }
+
+  // A constant, or a reference, an annotation's argument checked as an ordinary value.
+  @Abandoning private expression(e: Expression, context: Context): String = when (e) {
+    IntConstant(_, n) -> n.toString()
+    FloatConstant(_, x) -> x.toString()
+    BooleanConstant(_, b) -> b.toString()
+    CharConstant(_, c) -> "'" + escaped(c.toString(), '\'') + "'"
+    StringTemplate(_, parts) -> "\"" + escaped(parts.map { p ->
+      when (p) {
+        TemplateText(t) -> t
+        Interpolation(_) -> ""
+      }
+    }.joinToString(""), '"') + "\""
+    Unary(_, operator, operand) -> operator + expression(operand, context)
+    ListOf(_, items) -> bracketed("[", items.map { expression(it, context) }, "]")
+    Tuple(_, elements) -> bracketed("(", elements.map { expression(it, context) }, ")")
+    Name(at, _) -> reference(e, at, context)
+    Member(at, _, _) -> reference(e, at, context)
+    Call(at, callee, arguments, _) -> when (constructorOf(callee, context)) {
+      Some(found) -> {
+        (name, fields) = found
+        written: List<Field> = fields
+        positional = arguments.takeWhile { it.name.isNone() }
+        given = written.mapIndexed { i, f ->
+          arguments.find { it.name == Some(f.name) }.orElse { positional.getOrNone(i) }.map { a ->
+            "${f.name} = ${expression(a.value, context)}"
+          }
+        }
+        "make $name" + bracketed("(", given.mapNotNull { it }, ")")
+      }
+      None -> {
+        why = "only a record or case made of constants can be written as a symbol"
+        abandon(Globals.problem(context, at, why))
+      }
+    }
+    else -> abandon(Globals.problem(context, Positions.of(e), "this can't be written as a symbol"))
+  }
+
+  // A name, as what it refers to: a function or value, a record's constructor or a case.
+  @Abandoning private reference(e: Expression, at: Position, context: Context): String = {
+    name = dotted(e).getOrElse("")
+    namespace = context.environment.definitions.namespace
+    when (Lookups.found(Globals.find(name, context, Skipping))) {
+      Some(f) -> (if (Signatures.isFunction(f)) "function " else "value ") + f.name
+      None -> when (Lookups.found(Lookups.record(name, context.place, namespace, Skipping))) {
+        Some(r) -> "make ${r.name}()"
+        None -> when (caseNamed(name, context)) {
+          Some(found) -> {
+            (owner, c) = found
+            "case ${owner.name}.${c.name}"
+          }
+          None -> abandon(Globals.problem(context, at, "this can't be written as a symbol"))
+        }
+      }
+    }
+  }
+
+  // A record's or case's constructor, by its full name, with its fields.
+  private constructorOf(callee: Expression, context: Context): Option<(String, List<Field>)> = {
+    name = dotted(callee).getOrElse("")
+    namespace = context.environment.definitions.namespace
+    when (Lookups.found(Lookups.record(name, context.place, namespace, Skipping))) {
+      Some(r) -> when (r.declaration.definition) {
+        RecordDefinition(_, fields, _, _, _) -> Some((r.name, fields))
+        _ -> None
+      }
+      None -> caseNamed(name, context).map { found ->
+        (owner, c) = found
+        ("${owner.name}.${c.name}", c.fields)
+      }
+    }
+  }
+
+  // The case the name means, Circle, or Shape.Circle: the type that declares it, and how.
+  private caseNamed(name: String, context: Context): Option<(Symbol, CaseDefinition)> = {
+    parts = name.split(".")
+    own = parts.lastOrNone().getOrElse(name)
+    found: List<(Symbol, CaseDefinition)> = if (parts.size > 1) {
+      owner = parts.dropLast(1).joinToString(".")
+      namespace = context.environment.definitions.namespace
+      Lookups.found(Lookups.caseType(owner, context.place, namespace, Skipping)).map { t ->
+        context.environment.definitions.cases.getOrDefault(t.name, [])
+          .filter { c -> c.definition.name == own }
+          .map { c -> (c.origin, c.definition) }
+      }.getOrElse([])
+    } else {
+      context.environment.casesByName.getOrDefault(own, []).map { c -> (c.owner, c.definition) }
+    }
+    when (found) {
+      [only] -> Some(only)
+      _ -> None
+    }
+  }
+
+  private dotted(e: Expression): Option<String> = when (e) {
+    Name(_, n) -> Some(n)
+    Member(_, target, n) -> dotted(target).map { "$it.$n" }
+    _ -> None
+  }
+
+  // A written type, each name by the full name of what it refers to; a type parameter by its own.
+  @Abandoning private written(
+    t: TypeRef,
+    file: LoadedFile,
+    typeParameters: List<String>,
+    writing: Writing,
+  ): String = {
+    each = (ts: List<TypeRef>) -> ts.map { written(it, file, typeParameters, writing) }
+    when (t) {
+      NamedType(at, name, arguments) -> {
+        asWritten = if (name == "Double") "Float" else name
+        full = if (typeParameters.contains(name)) name
+        else writing.names.get(positionKey(file, at)).getOrElse(asWritten)
+        full + (if (arguments.isEmpty()) "" else bracketed("<", each(arguments), ">"))
+      }
+      TupleType(_, elements) -> bracketed("(", each(elements), ")")
+      FunctionType(_, parameters, result, _) ->
+        bracketed("(", each(parameters), ")") + " -> " + each([result]).joinToString("")
+      EffectsType(at, _) ->
+        abandon(Diagnostic(file.source.path, at, "effects can't be written as a symbol's type"))
+      GivenType(_, name, given) -> "$name = ${written(given, file, typeParameters, writing)}"
+    }
+  }
+
+  // A type the checker resolved, as List<User> is in @Of(List<User>).
+  @Solving private typeText(t: Type): String = when (resolved(t)) {
+    Variable(_) -> "_"
+    TupleOf(elements) -> bracketed("(", elements.map { typeText(it) }, ")")
+    Named(name, arguments, _) ->
+      name + (if (arguments.isEmpty()) "" else bracketed("<", arguments.map { typeText(it) }, ">"))
+    FunctionOf(parameters, result, _) ->
+      bracketed("(", parameters.map { typeText(it) }, ")") + " -> " + typeText(result)
+    other -> TypeText.shown(other)
+  }
+
+  private escaped(text: String, quote: Char): String = text.toList().map { c ->
+    when (c) {
+      '\\' -> "\\\\"
+      '\n' -> "\\n"
+      '\t' -> "\\t"
+      '\r' -> "\\r"
+      else -> if (c == quote) "\\$c" else c.toString()
+    }
+  }.joinToString("")
+
+  private bracketed(open: String, items: List<String>, close: String): String =
+    open + items.joinToString(", ") + close
+
+  private line(depth: Int, text: String): String = "  ".repeat(depth) + text + "\n"
+}

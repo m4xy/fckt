@@ -56,7 +56,12 @@ module Checker {
         errors.forEach { report(it) }
         if (errors.isEmpty()) Inference.checkMain(inferred.environment, inferred.known) else Unit
         CheckedProgram(workspace, inferred.functions, defaultHandlers(inferred.environment, inferred.known), inferred.groups, TypeDeclarations.all(definitions),
-          TypeDeclarations.toStrings(definitions), declaredEffects(inferred.environment), declaredSpecs(inferred.environment))
+          TypeDeclarations.toStrings(definitions), declaredEffects(
+            inferred.environment,
+          ), declaredSpecs(
+            inferred.environment,
+          ),
+          Some(inferred.environment))
       }
     }
   }

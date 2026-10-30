@@ -502,4 +502,4 @@ constructorValue(shape: ConstructorShape): Core =
 mutating(region: Type): Row = Row([EffectLabel(Types.mutating, [region])], None)
 
 // An argument as written in a call.
-written(a: Argument): CallArgument = CallArgument(a.name, WrittenValue(a.value))
+written(a: Argument): CallArgument = CallArgument(a.name, WrittenValue(a.value), a.text, a.operands)

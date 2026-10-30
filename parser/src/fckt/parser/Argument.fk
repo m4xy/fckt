@@ -1,2 +1,8 @@
-// A call's argument, by position, or by name.
-type Argument(name: Option<String>, value: Expression)
+// A call's argument, by position, or by name; and, where the source is known, what's written for
+// its value, and, for an operator's, what's written either side of it.
+type Argument(
+  name: Option<String>,
+  value: Expression,
+  text: Option<String> = None,
+  operands: Option<(String, String)> = None,
+)

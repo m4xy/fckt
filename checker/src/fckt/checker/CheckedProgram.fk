@@ -7,12 +7,14 @@ import fckt.checker.sources.Workspace
 import fckt.checker.inference.CheckedFunction
 import fckt.checker.inference.DefaultHandler
 import fckt.checker.inference.FunctionGroup
+import fckt.checker.inference.Environment
 
 // A program, checked: the files it's checked with; the type of each of its functions and values,
 // and its code, in the order they're written; each handled effect's default handler, which main is
 // run in; the functions' groups, each after those it uses, as their code must be; the types it
 // declares; the extension that's each type's own toString, where it has one, by its full name; and
-// the handled effects it declares, with their operations; and the specs, with their values' types.
+// the handled effects it declares, with their operations; the specs, with their values' types; and
+// what's declared, as names written in the program are looked up in.
 type CheckedProgram(
   workspace: Workspace,
   functions: List<CheckedFunction>,
@@ -22,4 +24,5 @@ type CheckedProgram(
   toStrings: Map<String, Symbol> = emptyMap(),
   effects: List<DeclaredEffect> = [],
   specs: List<DeclaredSpec> = [],
+  environment: Option<Environment> = None,
 )

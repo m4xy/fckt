@@ -45,10 +45,12 @@ type Core {
   // A list's items as text, each shown as toString shows it, with the separator between them: of
   // element type, element.
   Joined(list: Core, separator: Core, element: Type),
-  // assert(condition): failing, saying where, if it doesn't hold.
-  Assertion(condition: Core, where: String),
-  // assertEquals(expected, actual): failing, saying where and showing both, if they differ; of type t.
-  EqualityAssertion(expected: Core, actual: Core, t: Type, where: String),
+  // assert(condition): failing, with the summary, where it is and what it checked, if it doesn't
+  // hold; then, for a test runner to say more, the facts, each a key and its value, a string.
+  Assertion(condition: Core, summary: String, facts: List<(String, Core)>),
+  // assertEquals(expected, actual): failing, saying where and showing both, if they differ, and the
+  // call as written, where it's known; of type t.
+  EqualityAssertion(expected: Core, actual: Core, t: Type, where: String, source: String),
   // when (subject) { ... }: the first branch whose patterns it matches, and whose guard holds.
   Matched(subject: Core, branches: List<MatchBranch>),
   // A field of the case is found a local to be, read where it's found so: the case by its name, of
