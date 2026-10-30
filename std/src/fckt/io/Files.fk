@@ -109,7 +109,7 @@ module Files {
     private external list(path: String): Result<List<String>, String> =
       "(fun p -> try Ok (List.sort compare (Array.to_list (Sys.readdir p))) with Sys_error e -> Error e) path"
     private external mkdirs(path: String): Result<Unit, String> =
-      "(let rec mk p = if not (Sys.file_exists p) then (let d = Filename.dirname p in if d <> p then mk d; Sys.mkdir p 0o755) in fun p -> try Ok (mk p) with Sys_error e -> Error e) path"
+      "(let rec mk p = if not (Sys.file_exists p) then (let d = Filename.dirname p in if d <> p then mk d; (try Sys.mkdir p 0o755 with Sys_error _ when Sys.is_directory p -> ())) in fun p -> try Ok (mk p) with Sys_error e -> Error e) path"
     private external remove(path: String): Result<Unit, String> =
       "(let rec rm p = if Sys.is_directory p then (Array.iter (fun n -> rm (Filename.concat p n)) (Sys.readdir p); Sys.rmdir p) else Sys.remove p in fun p -> try Ok (if Sys.file_exists p then rm p) with Sys_error e -> Error e) path"
     private external openIn(path: String): Result<InputHandle, String> =
