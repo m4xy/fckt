@@ -42,7 +42,7 @@ object Layout {
             val indent = line.takeWhile { it == ' ' }
             val cuts = listOf(open.pos.col) + commas.map { it.pos.col } + listOf(close.pos.col)
             val items = cuts.zipWithNext { from, to -> line.substring(from, to - 1).trim() }.filter { it.isNotEmpty() }
-            val replaced = listOf(line.substring(0, open.pos.col).trimEnd()) +
+            val replaced = annotatedApart(tokens, i + 1, line.substring(0, open.pos.col).trimEnd(), indent) +
                 items.map { "$indent  $it," } +
                 listOf(indent + line.substring(close.pos.col - 1))
             lines.removeAt(i)
@@ -50,6 +50,38 @@ object Layout {
             return lines.joinToString("\n")
         }
         return null
+    }
+
+    /**
+     * A declaration's first line, [first], its annotations kept on it, as a function's effects are
+     * part of what it is: unless they make it too wide, when they go on a line of their own above,
+     * or, if that's too wide too, each on a line of its own.
+     */
+    private fun annotatedApart(tokens: List<Token>, line: Int, first: String, indent: String): List<String> {
+        if (first.length <= WIDTH) return listOf(first)
+        val onLine = tokens.filter { it.pos.line == line }
+        val ends = mutableListOf<Int>()
+        var i = 0
+        while (i < onLine.size && onLine[i].kind == T.AT) {
+            i++
+            while (i < onLine.size && (onLine[i].kind == T.IDENT || onLine[i].kind == T.DOT)) i++
+            if (i < onLine.size && onLine[i].kind == T.LPAREN && onLine[i].pos.col == onLine[i - 1].pos.col + onLine[i - 1].text.length) {
+                var depth = 0
+                while (i < onLine.size) {
+                    if (onLine[i].kind == T.LPAREN) depth++
+                    if (onLine[i].kind == T.RPAREN && --depth == 0) break
+                    i++
+                }
+                i++
+            }
+            ends += (onLine.getOrNull(i)?.pos?.col ?: return listOf(first)) - 1
+        }
+        if (ends.isEmpty()) return listOf(first)
+        val starts = listOf(indent.length) + ends.dropLast(1)
+        val annotations = starts.zip(ends).map { (from, to) -> first.substring(from, to).trim() }
+        val rest = indent + first.substring(ends.last()).trim()
+        val together = indent + annotations.joinToString(" ")
+        return (if (together.length <= WIDTH) listOf(together) else annotations.map { indent + it }) + rest
     }
 
     /**
@@ -77,7 +109,7 @@ object Layout {
             val commas = (index + 1 until close).filter { tokens[it].kind == T.COMMA && depths[it] == outermost + 1 }
             val lastItem = commas.lastOrNull()?.let { it + 1 } ?: (index + 1)
             if (tokens[lastItem].kind == T.STAR) return null
-            if (onLine.any { it > close && depths[it] == outermost && opens(tokens, it) }) return null
+            if (onLine.any { it > close && depths[it] == outermost && tokens[it].kind in setOf(T.LPAREN, T.LBRACKET) }) return null
             return Triple(open, tokens[close], commas.map { tokens[it] })
         }
         return null

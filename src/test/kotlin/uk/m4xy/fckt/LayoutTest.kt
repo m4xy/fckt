@@ -70,4 +70,35 @@ class LayoutTest {
             Layout.formatted(source),
         )
     }
+
+    @Test
+    fun `a declaration whose result has type arguments is split too, its annotations kept on its first line`() {
+        val source = "  @Abandoning private mapIn(declarations: List<Declaration>, prefix: String, file: LoadedFile, f: @Abandoning (Symbol) -> Declaration): List<Declaration> ="
+        assertEquals(
+            listOf(
+                "  @Abandoning private mapIn(",
+                "    declarations: List<Declaration>,",
+                "    prefix: String,",
+                "    file: LoadedFile,",
+                "    f: @Abandoning (Symbol) -> Declaration,",
+                "  ): List<Declaration> =",
+            ).joinToString("\n"),
+            Layout.formatted(source),
+        )
+    }
+
+    @Test
+    fun `annotations that make a declaration's first line too wide go on a line of their own`() {
+        val source = "  @Console @Network @Clock @FileSystem @Process @Abandoning @Reporting private describedEverythingThatHappened(first: String, second: String): Unit = Unit"
+        assertEquals(
+            listOf(
+                "  @Console @Network @Clock @FileSystem @Process @Abandoning @Reporting",
+                "  private describedEverythingThatHappened(",
+                "    first: String,",
+                "    second: String,",
+                "  ): Unit = Unit",
+            ).joinToString("\n"),
+            Layout.formatted(source),
+        )
+    }
 }
