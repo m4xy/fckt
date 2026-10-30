@@ -919,7 +919,29 @@ class CompilerTest {
     }
 
     @Test
-    fun `a function called by name doesn't use extensions of the same name`() {
+    fun `a lambda wanted to give Unit drops what its body gives`() {
+        val source = """
+            import fckt.values.Mutable
+            main() = {
+              seen: Mutable<List<Int>> = Mutable([])
+              add = (n: Int) -> {
+                seen.value = seen.value + [n]
+                n * 2
+              }
+              [1, 2, 3].forEach { add(it) }
+              [4].forEach { n -> (m: Int) -> m + n }
+              [5].forEach { n -> add(n) }
+              nothing: () -> Unit = () -> 6
+              nothing()
+              assertEquals([1, 2, 3, 5], seen.value)
+              assertEquals([2, 4], [1, 2].map { it * 2 })
+            }
+        """.trimIndent()
+        assertEquals("", run(source))
+    }
+
+    @Test
+        fun `a function called by name doesn't use extensions of the same name`() {
         // Parsing's group is a function of its own; Api's Match.group, which calls parse, isn't it, so
         // the modules don't use each other.
         val source = """

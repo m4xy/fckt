@@ -979,7 +979,10 @@ class Lowering(private val program: Program, private val showsAll: Boolean = fal
                     expr(e.operand)
                 }
             }
-            is Expr.Lambda -> lambda(e.paramNames.ifEmpty { listOf("()") }) { expr(e.body) }
+            is Expr.Lambda -> lambda(e.paramNames.ifEmpty { listOf("()") }) {
+                // A body whose value is dropped, as Unit is wanted: OCaml's ignore drops it.
+                if (e.dropsResult) apply { ident("ignore"); expr(e.body) } else expr(e.body)
+            }
             is Expr.Assign -> when (val target = e.target) {
                 is Expr.Name -> infix(":=") {
                     ident((target.resolved as NameRef.Local).ocamlName)

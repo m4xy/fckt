@@ -1,0 +1,5 @@
+// Only a lambda drops its result: a function declared to give Unit gives Unit.
+answer(): Unit = 42
+main() = answer()
+
+// error: 2:18: error: type mismatch: expected Unit but found Int

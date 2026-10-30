@@ -3824,6 +3824,18 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return Type.BOOLEAN
     }
 
+    // A lambda's body, against the result it's wanted to give back. Where that's Unit, as forEach's
+    // is, what the body gives is dropped, whatever it is, so `xs.forEach { log.add(it) }` needn't end
+    // with Unit; anything else must be what the body gives.
+    private fun checkLambdaBody(e: Expr.Lambda, result: Type, scope: Scope) {
+        if (result.prune() != Type.UNIT) return check(e.body, result, scope)
+        when (val given = infer(e.body, null, scope).prune()) {
+            is Type.Var -> expect(given, Type.UNIT, e.body.pos)
+            Type.UNIT, Type.NOTHING -> {}
+            else -> e.dropsResult = true
+        }
+    }
+
     private fun inferLambda(e: Expr.Lambda, expected: Type?, scope: Scope): Type {
         val expectedFn = expected?.prune() as? Type.Fn
         // What its body does is what calling it does, not what the code around it does.
@@ -3832,7 +3844,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             val params = expectedFn?.params ?: emptyList()
             e.paramNames = params.map { "_" }
             val result = expectedFn?.result ?: u.fresh()
-            doing(row) { check(e.body, result, scope) }
+            doing(row) { checkLambdaBody(e, result, scope) }
             return Type.Fn(params, result, row)
         }
         // A block given as a function's last argument: what it's written with must be what's wanted,
@@ -3850,7 +3862,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 val type = expectedFn.params[0]
                 inner.vars["it"] = Local(type, "it", hides = scope.lookup("it") != null)
                 e.paramNames = listOf("it")
-                doing(row) { check(e.body, expectedFn.result, inner) }
+                doing(row) { checkLambdaBody(e, expectedFn.result, inner) }
                 return Type.Fn(listOf(type), expectedFn.result, row)
             }
         }
@@ -3870,7 +3882,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
                 inner.vars[p.name] = Local(parts[i], snake(p.name))
             }
             e.paramNames = listOf(e.params.joinToString(", ", "(", ")") { snake(it.name) })
-            doing(row) { check(e.body, expectedFn.result, inner) }
+            doing(row) { checkLambdaBody(e, expectedFn.result, inner) }
             return Type.Fn(listOf(tuple), expectedFn.result, row)
         }
         val hint = expectedFn?.takeIf { it.params.size == e.params.size }
@@ -3884,7 +3896,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         }
         e.paramNames = e.params.map { snake(it.name) }
         val result = hint?.result ?: u.fresh()
-        doing(row) { check(e.body, result, inner) }
+        doing(row) { checkLambdaBody(e, result, inner) }
         return Type.Fn(params, result, row)
     }
 

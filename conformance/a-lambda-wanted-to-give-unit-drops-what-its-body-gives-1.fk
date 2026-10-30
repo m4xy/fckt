@@ -1,0 +1,18 @@
+import fckt.io.Console
+import fckt.values.Mutable
+
+@Mutating remember(seen: Mutable<List<Int>>, n: Int): Int = {
+  seen.value = seen.value + [n]
+  n * 2
+}
+
+main() = {
+  seen: Mutable<List<Int>> = Mutable([])
+  [1, 2, 3].forEach { remember(seen, it) }
+  [4].forEach { n -> remember(seen, n) }
+  quiet: () -> Unit = () -> 5
+  quiet()
+  println(seen.value.toString())
+}
+
+// prints: [1, 2, 3, 4]

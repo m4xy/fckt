@@ -1,6 +1,7 @@
 import fckt.collections.Maps.*
 import fckt.checker.definitions.*
 import fckt.checker.diagnostics.*
+import fckt.checker.symbols.Positions
 import fckt.checker.types.*
 import fckt.checker.types.Types.*
 import fckt.parser.*
@@ -36,7 +37,7 @@ import fckt.parser.*
       // A block given one parameter calls it it.
       t = wanted.getOrNone(0).getOrElse(Variable(fresh()))
       inner = Scopes.bind(Scopes.inside(scope), "it", Local(t, None, None, Scopes.lookup(scope, "it").isSome()))
-      doingIn(row, context) { check(body, result, inner, context) }
+      doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
       FunctionOf([t], result, row)
     }
     (true, Some(FunctionOf(wanted, _, _))) if written.isNotEmpty() && wanted.isEmpty() -> abandon(Globals.problem(context, at,
@@ -59,7 +60,7 @@ import fckt.parser.*
     Some(FunctionOf(ps, r, _)) -> (ps, r)
     else -> ([], Variable(fresh()))
   }
-  doingIn(row, context) { check(body, result, scope, context) }
+  doingIn(row, context) { checkLambdaBody(body, result, scope, context) }
   FunctionOf(parameters, result, row)
 }
 
@@ -81,7 +82,7 @@ import fckt.parser.*
     p.parameterType.forEach { declared -> expect(part, parameterType(declared, row, context), p.at, context) }
     Scopes.bind(s, p.name, Local(part))
   }
-  doingIn(row, context) { check(body, result, inner, context) }
+  doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
   FunctionOf([tuple], result, row)
 }
 
@@ -109,7 +110,7 @@ import fckt.parser.*
     Scopes.bind(s, p.name, Local(t))
   }
   result = hintedResult.getOrElse(Variable(fresh()))
-  doingIn(row, context) { check(body, result, inner, context) }
+  doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
   FunctionOf(types, result, row)
 }
 
@@ -119,3 +120,13 @@ import fckt.parser.*
 
 // What block gives, checked as code that does the row.
 @Solving @Abandoning doingIn<A>(row: Row, context: Context, block: @Doing () -> A): A = Doings.doing(row, context.place.file.source.path, block)
+
+// A lambda's body, against the result it's wanted to give back. Where that's Unit, as forEach's is,
+// what the body gives is dropped, whatever it is, so xs.forEach { log.add(it) } needn't end with
+// Unit; anything else must be what the body gives.
+@Inferring private checkLambdaBody(body: Expression, result: Type, scope: Scope, context: Context): Unit =
+  if (resolved(result) != unit) check(body, result, scope, context)
+  else when (resolved(infer(body, None, scope, context).t)) {
+    Variable(v) -> expect(Variable(v), unit, Positions.of(body), context)
+    _ -> Unit
+  }

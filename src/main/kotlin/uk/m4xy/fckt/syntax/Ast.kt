@@ -430,6 +430,9 @@ sealed class Expr {
 
         /** A function's last argument written as a block, which says its parameters as `{ x -> ... }`, or `it`. */
         var trailing = false
+
+        /** It's wanted to give back `Unit`, and its body gives something else, which is dropped, as in `xs.forEach { log.add(it) }`. */
+        var dropsResult = false
     }
 
     class Pipe(override val pos: Pos, val value: Expr, val function: Expr) : Expr() {
