@@ -1,4 +1,4 @@
-// Kotlin's methods on strings and characters. Imported into every file. A String is UTF-8, and its
+// What strings and characters have: their methods. Imported into every file. A String is UTF-8, and its
 // length, indices and characters count characters, Unicode code points, not bytes: "ü".length is 1.
 // Counting them reads the string from the start, so s[i] takes longer the further in i is.
 module Strings {
@@ -87,9 +87,11 @@ module Strings {
   Char.isDigit(): Boolean = this >= '0' && this <= '9'
   // The characters from this to last, by code point, last among them: 'a'..'e' is [a, b, c, d, e].
   operator Char.rangeTo(last: Char): List<Char> = (this.code..last.code).map { it.toChar() }
-  // Whether it's a letter: A to Z, a to z, or any character past U+007F that isn't a space or
-  // punctuation of Latin-1.
-  Char.isLetter(): Boolean = (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z') || (this.code > 191 && this.code != 215 && this.code != 247)
+  // Whether it's a letter: A to Z, a to z, or a letter of another alphabet or script, Latin's
+  // accented ones, Greek, Cyrillic, Hebrew, Arabic, Devanagari, Thai, Georgian, Hangul, kana and CJK
+  // among them. Not punctuation, symbols, digits or spaces, such as an em dash or a currency sign.
+  Char.isLetter(): Boolean =
+    (this >= 'a' && this <= 'z') || (this >= 'A' && this <= 'Z') || (this.code > 127 && letters.any { from, to -> this.code >= from && this.code <= to })
   Char.isLetterOrDigit(): Boolean = this.isLetter() || this.isDigit()
   Char.isWhitespace(): Boolean = this == ' ' || this == '\t' || this == '\n' || this == '\r' || this.code == 160 || this.code == 8232 || this.code == 8233
   // Upper or lower case, of the letters A to Z.
@@ -98,4 +100,19 @@ module Strings {
   // Whether it's one of the letters A to Z, or a to z.
   Char.isUpperCase(): Boolean = this >= 'A' && this <= 'Z'
   Char.isLowerCase(): Boolean = this >= 'a' && this <= 'z'
+
+  // The letters past U+007F, as ranges of code points, first and last.
+  private letters: List<(Int, Int)> = [
+    (170, 170), (181, 181), (186, 186), (192, 214), (216, 246), (248, 705), (710, 721), (736, 740),
+    (748, 748), (750, 750), (880, 884), (886, 887), (890, 893), (895, 895), (902, 902), (904, 906),
+    (908, 908), (910, 929), (931, 1013), (1015, 1153), (1162, 1327), (1329, 1366), (1376, 1416), (1488, 1514),
+    (1519, 1522), (1568, 1610), (1646, 1647), (1649, 1747), (1749, 1749), (1765, 1766), (1774, 1775), (1786, 1788),
+    (1791, 1791), (2308, 2361), (2365, 2365), (2384, 2384), (2392, 2401), (2417, 2432), (3585, 3632), (3634, 3635),
+    (3648, 3654), (4256, 4293), (4304, 4346), (4348, 4351), (4352, 4607), (7680, 7957), (7960, 7965), (7968, 8005),
+    (8008, 8013), (8016, 8023), (8025, 8025), (8027, 8027), (8029, 8029), (8031, 8061), (8064, 8116), (8118, 8124),
+    (8126, 8126), (8130, 8132), (8134, 8140), (8144, 8147), (8150, 8155), (8160, 8172), (8178, 8180), (8182, 8188),
+    (8305, 8305), (8319, 8319), (8336, 8348), (11264, 11492), (12353, 12438), (12445, 12447), (12449, 12538), (12540, 12543),
+    (12549, 12591), (12593, 12686), (13312, 19903), (19968, 40959), (40960, 42124), (44032, 55203), (63744, 64255), (64256, 64262),
+    (65313, 65338), (65345, 65370), (65382, 65500), (131072, 195103),
+  ]
 }

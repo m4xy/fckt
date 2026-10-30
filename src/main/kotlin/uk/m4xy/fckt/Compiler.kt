@@ -417,6 +417,9 @@ val CORE_MODULES = CORE_FILES.map { it.removeSuffix(".fk") }
  * What every file imports: the core, what the language relies on and the methods on its built-in
  * types. Anything else, the standard library's included, a file imports itself.
  */
+/** A file that declares main at the start of a line, after any annotations: a program of its own. */
+private val DECLARES_MAIN = Regex("^(@[\\w.]+(\\([^)]*\\))?\\s+)*main\\s*\\(", RegexOption.MULTILINE)
+
 val DEFAULT_IMPORTS = listOf(
     "lang.Effect", "lang.HandledBy", "lang.Pure", "lang.Propagates", "lang.Encapsulates", "lang.Mutating", "lang.Repeatable", "lang.Meta",
     "lang.Monad", "lang.Applicative",
@@ -661,7 +664,12 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
     fun declsOf(pkg: List<String>) = packageDecls.getOrPut(pkg) {
         packages.declarationFiles(pkg).flatMap { source ->
             val code = source.read()
-            val parsed = source.parse(code)
+            // A program apart that doesn't parse is its own business, as what it declares is.
+            val parsed = try {
+                source.parse(code)
+            } catch (e: CompileError) {
+                if (DECLARES_MAIN.containsMatchIn(code)) return@flatMap emptyList() else throw e
+            }
             if (parsed.decls.any { it is Decl.Function && it.name == "main" }) {
                 if (pkg.isEmpty()) parsed.decls.forEach { apart.putIfAbsent(it.name, source.path ?: "a file") }
                 return@flatMap emptyList()

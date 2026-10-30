@@ -1031,6 +1031,23 @@ class CompilerTest {
     }
 
     @Test
+    fun `a program beside another that doesn't compile compiles, as the other's its own`() {
+        val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
+        try {
+            File(dir, "other.fk").writeText("type Point(y: Int)\n@Console main() = println(\n")
+            val main = File(dir, "main.fk")
+            main.writeText("type Point(x: Int)\nmain() = assertEquals(1, Point(1).x)\n")
+            assertEquals("", runOcaml(compile(main, listOf(dir), others = listOf(STD))))
+            // A file of the program's package is the program's, so what's wrong with it is too.
+            File(dir, "broken.fk").writeText("helper(): Int =\n")
+            main.writeText("main() = assertEquals(1, helper())\n")
+            assertContains(assertFailsWith<CompileError> { compile(main, listOf(dir), others = listOf(STD)) }.toString(), "expected an expression but found end of file")
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `a private declaration of a lower-case file is the file's own, whatever other files name`() {
         val dir = kotlin.io.path.createTempDirectory("fckt").toFile()
         fun write(path: String, text: String) = File(dir, path).apply { parentFile.mkdirs() }.writeText(text)

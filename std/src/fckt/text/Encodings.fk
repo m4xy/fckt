@@ -12,8 +12,7 @@ module Encodings {
   // The text as UTF-8, as fckt's strings are.
   external String.encodeToBytes(): Bytes = "Fun.id this"
 
-  // The text the bytes are as UTF-8, with any that aren't replaced by U+FFFD, as Kotlin's
-  // decodeToString does.
+  // The text the bytes are as UTF-8, with any that aren't replaced by U+FFFD.
   external Bytes.decodeToString(): String =
     "(fun s -> let b = Buffer.create (String.length s) in let rec go i = if i < String.length s then (let d = String.get_utf_8_uchar s i in Buffer.add_utf_8_uchar b (Uchar.utf_decode_uchar d); go (i + Uchar.utf_decode_length d)) in go 0; Buffer.contents b) this"
 
