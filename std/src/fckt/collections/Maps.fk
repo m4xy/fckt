@@ -12,8 +12,9 @@ module Maps {
 
   private external hashOf<K>(key: K): Int = "Hashtbl.hash key"
 
-  private node<K, V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>): Map<K, V> =
-    MapNode(left, key, value, right, left.size + 1 + right.size, hashOf(key))
+  // A node keeps its key's priority when it's rebuilt, so a key is hashed once, when it's put in.
+  private node<K, V>(left: Map<K, V>, key: K, value: V, right: Map<K, V>, priority: Int): Map<K, V> =
+    MapNode(left, key, value, right, left.size + 1 + right.size, priority)
 
   // Whether a node with key a and priority p goes above one with key b and priority q: the higher
   // priority does, or of two the same, the smaller key.
@@ -52,22 +53,22 @@ module Maps {
 
   // It with key's value value, in place of any it had.
   Map<K, V>.put(key: K, value: V): Map<K, V> = when (this) {
-    MapTip -> node(MapTip, key, value, MapTip)
+    MapTip -> node(MapTip, key, value, MapTip, hashOf(key))
     MapNode(l, k, v, r, _, p) -> {
       c = compareValues(key, k)
       if (c == 0) {
-        node(l, k, value, r)
+        node(l, k, value, r, p)
       } else if (c < 0) {
         // The new node rises above this one if it should: a right rotation, or a left one.
         put = l.put(key, value)
         when (put) {
-          MapNode(ll, lk, lv, lr, _, lp) -> if (above(lp, lk, p, k)) node(ll, lk, lv, node(lr, k, v, r)) else node(put, k, v, r)
+          MapNode(ll, lk, lv, lr, _, lp) -> if (above(lp, lk, p, k)) node(ll, lk, lv, node(lr, k, v, r, p), lp) else node(put, k, v, r, p)
           MapTip -> this
         }
       } else {
         put = r.put(key, value)
         when (put) {
-          MapNode(rl, rk, rv, rr, _, rp) -> if (above(rp, rk, p, k)) node(node(l, k, v, rl), rk, rv, rr) else node(l, k, v, put)
+          MapNode(rl, rk, rv, rr, _, rp) -> if (above(rp, rk, p, k)) node(node(l, k, v, rl, p), rk, rv, rr, rp) else node(l, k, v, put, p)
           MapTip -> this
         }
       }
@@ -82,21 +83,21 @@ module Maps {
     (MapNode(l, k, v, r, _, p), MapNode(ol, ok, ov, orr, _, op)) ->
       if (above(p, k, op, ok)) {
         (below, found, beyond) = other.split(k)
-        node(l.putAll(below), k, found.getOrElse(v), r.putAll(beyond))
+        node(l.putAll(below), k, found.getOrElse(v), r.putAll(beyond), p)
       } else {
         (below, _, beyond) = this.split(ok)
-        node(below.putAll(ol), ok, ov, beyond.putAll(orr))
+        node(below.putAll(ol), ok, ov, beyond.putAll(orr), op)
       }
   }
   // Its entries whose keys other has, or doesn't, whatever other's values are.
   Map<K, V>.intersectKeys<W>(other: Map<K, W>): Map<K, V> = when (this, other) {
     (MapTip, _) -> MapTip
     (_, MapTip) -> MapTip
-    (MapNode(l, k, v, r, _, _), _) -> {
+    (MapNode(l, k, v, r, _, p), _) -> {
       (below, found, beyond) = other.split(k)
       left = l.intersectKeys(below)
       right = r.intersectKeys(beyond)
-      if (found.isSome()) node(left, k, v, right) else joined(left, right)
+      if (found.isSome()) node(left, k, v, right, p) else joined(left, right)
     }
   }
   Map<K, V>.subtractKeys<W>(other: Map<K, W>): Map<K, V> = when (this, other) {
@@ -111,25 +112,25 @@ module Maps {
   // The entries below key, its value if it has one, and the entries above it.
   private Map<K, V>.split(key: K): (Map<K, V>, Option<V>, Map<K, V>) = when (this) {
     MapTip -> (MapTip, None, MapTip)
-    MapNode(l, k, v, r, _, _) -> {
+    MapNode(l, k, v, r, _, p) -> {
       c = compareValues(key, k)
       if (c == 0) {
         (l, Some(v), r)
       } else if (c < 0) {
         (below, found, beyond) = l.split(key)
-        (below, found, node(beyond, k, v, r))
+        (below, found, node(beyond, k, v, r, p))
       } else {
         (below, found, beyond) = r.split(key)
-        (node(l, k, v, below), found, beyond)
+        (node(l, k, v, below, p), found, beyond)
       }
     }
   }
   // It without key, and its value.
   Map<K, V>.remove(key: K): Map<K, V> = when (this) {
     MapTip -> this
-    MapNode(l, k, v, r, _, _) -> {
+    MapNode(l, k, v, r, _, p) -> {
       c = compareValues(key, k)
-      if (c < 0) node(l.remove(key), k, v, r) else if (c > 0) node(l, k, v, r.remove(key)) else joined(l, r)
+      if (c < 0) node(l.remove(key), k, v, r, p) else if (c > 0) node(l, k, v, r.remove(key), p) else joined(l, r)
     }
   }
 
@@ -138,7 +139,7 @@ module Maps {
     (MapTip, _) -> right
     (_, MapTip) -> left
     (MapNode(ll, lk, lv, lr, _, lp), MapNode(rl, rk, rv, rr, _, rp)) ->
-      if (above(lp, lk, rp, rk)) node(ll, lk, lv, joined(lr, right)) else node(joined(left, rl), rk, rv, rr)
+      if (above(lp, lk, rp, rk)) node(ll, lk, lv, joined(lr, right), lp) else node(joined(left, rl), rk, rv, rr, rp)
   }
 
   // Its entries, keys and values, in the keys' order.
@@ -177,11 +178,11 @@ module Maps {
   // The entries that pass: those kept keep their places, and where one isn't, its sides are joined.
   Map<K, V>.filter(f: (K, V) -> Boolean): Map<K, V> = when (this) {
     MapTip -> MapTip
-    MapNode(l, k, v, r, _, _) -> {
+    MapNode(l, k, v, r, _, p) -> {
       left = l.filter(f)
       keep = f(k, v)
       right = r.filter(f)
-      if (keep) node(left, k, v, right) else joined(left, right)
+      if (keep) node(left, k, v, right, p) else joined(left, right)
     }
   }
   Map<K, V>.filterKeys(f: (K) -> Boolean): Map<K, V> = this.filter { k, _ -> f(k) }
