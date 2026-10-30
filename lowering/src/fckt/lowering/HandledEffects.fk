@@ -1,50 +1,108 @@
+import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.inference.DefaultHandler
 import fckt.checker.symbols.*
 import fckt.ocaml.*
 import fckt.parser.Definition
 import fckt.parser.SpecValue
 
-// Handled effects, as OCaml 5's: each operation is an effect constructor, performed for whatever
-// handles it to answer, as fckt's compiler declares them beside the effect; and main is run in each
-// effect's default handler, a record of its module's functions, each resumed with what it gives.
+// Handled effects, as OCaml 5's, as fckt's compiler declares them: each operation an effect
+// constructor, performed for whatever handles it to answer; a record type of answers, a function
+// for each operation, given its arguments and then resume, which continues what performed it; and
+// handle_<effect>, which runs a block with a record of answers handling the effect. A handler that
+// doesn't take resume in fckt is resumed with what it gives.
 module HandledEffects {
-  // An operation's effect constructor, written from the top of the program: Fckt.Io.Console_println.
+  // What an effect's handler gives: what the block it handles does, or what an answer that doesn't
+  // resume gives instead.
+  private answer: String = "'fk_answer"
+
+  // An operation's effect constructor, written from the module it's used in: Fckt.Io.Console_println.
   @Lowering operationConstructor(effect: Symbol, operation: String): String =
     Naming.reference(effect) { "${it}_$operation" }
+
+  // The effect's declarations: its operations' constructors, its record of answers' type, and its
+  // handle function.
+  @Lowering declarations(d: DeclaredEffect): List<Item> = {
+    own = simpleSnake(d.effect)
+    generic = d.typeParameters.isNotEmpty()
+    variables = OcamlTypes.ocamlParameters(d.typeParameters).map { TypeVar(OcamlTypes.parameter(it)) }
+    answering = TypeVar(answer)
+    constructors = d.operations.map { op ->
+      EffectOperation(Naming.ownName(d.effect) + "_" + op.name, op.parameters.getOrElse([]).map { OcamlTypes.typexpr(it) }, OcamlTypes.typexpr(op.result))
+    }
+    record = TypeDefinition(own + "_handler", OcamlTypes.ocamlParameters(d.typeParameters).map { OcamlTypes.parameter(it) } + [answer], RecordType(d.operations.map { op ->
+      result = OcamlTypes.typexpr(op.result)
+      FieldDeclaration(Naming.snake(op.name), when (op.parameters) {
+        None -> result
+        Some(ps) -> (ps.map { OcamlTypes.typexpr(it) } + [Arrow(result, answering)]).reversed().fold(answering) { r, p -> Arrow(p, r) }
+      }, false)
+    }))
+    // A generic effect's values are what the checker made sure they are, but OCaml can't see that.
+    known = (e: Expr) -> if (generic) Application(Identifier("Obj.magic"), [e]) else e
+    cases = d.operations.map { op ->
+      names = op.parameters.getOrElse([]).mapIndexed { i, _ -> "x$i" }
+      carried = when (names) {
+        [] -> ConstantPat(UnitConstant)
+        [one] -> VariablePat(one)
+        _ -> TuplePat(names.map { VariablePat(it) })
+      }
+      field = FieldAccess(Identifier("h"), Naming.snake(op.name))
+      answered = when (op.parameters) {
+        None -> Application(Identifier("Effect.Deep.continue"), [Identifier("k"), known(field)])
+        Some(_) -> Application(field, names.map { known(Identifier(it)) } + [Fun([VariablePat("v")], Application(Identifier("Effect.Deep.continue"), [Identifier("k"), known(Identifier("v"))]))])
+      }
+      Case(EffectPat(ConstructorPat(Naming.ownName(d.effect) + "_" + op.name, Some(carried)), "k"), None, answered)
+    }
+    handlerType = TypeApplication(own + "_handler", variables + [answering])
+    handle = Binding(VariablePat("handle_$own"),
+      [TypedPat(VariablePat("h"), handlerType), TypedPat(VariablePat("f"), Arrow(TypeApplication("unit", []), answering))],
+      Some(answering),
+      Match(Application(Identifier("f"), [ConstantExpr(UnitConstant)]), [Case(VariablePat("v"), None, Identifier("v"))] + cases))
+    [EffectItem(constructors), TypeItem([record]), LetItem(false, [handle])]
+  }
 
   // main, given the command line's arguments if it takes them, run in each default handler, the
   // first innermost.
   @Lowering runningMain(main: Symbol, takesArguments: Boolean, defaults: List<DefaultHandler>): Expr = {
     arguments = if (takesArguments) Application(Identifier("List.tl"), [Application(Identifier("Array.to_list"), [Identifier("Sys.argv")])]) else ConstantExpr(UnitConstant)
-    defaults.fold(Application(Identifier(Naming.valueReference(main)), [arguments])) { inner, d ->
-      Application(Identifier(nextTo(d.effect, "handle_" + simpleSnake(d.effect))), [handlerRecord(d), Fun([ConstantPat(UnitConstant)], inner)])
-    }
+    defaults.fold(Application(Identifier(Naming.valueReference(main)), [arguments])) { inner, d -> handled(d.effect, moduleHandler(d.handler, d.effect), inner) }
   }
 
-  // The default handler, as the effect's record of answers: each operation's, the module's function
-  // of its name, resumed with what it gives; a value as it is.
-  @Lowering private handlerRecord(d: DefaultHandler): Expr = {
-    record = RecordExpr(operationsOf(d.effect).map { op ->
-      answer = Identifier(modulePath(d.handler) + "." + Naming.snake(op.name))
-      FieldValue(Naming.snake(op.name), when (op.parameters) {
-        None -> answer
-        Some(parameters) -> {
+  // The block, run with the handler handling the effect.
+  @Lowering handled(effect: Symbol, handler: Expr, block: Expr): Expr =
+    Application(Identifier(nextTo(effect, "handle_" + simpleSnake(effect))), [handler, Fun([ConstantPat(UnitConstant)], block)])
+
+  // A module that follows the effect's spec, as its record of answers: each operation's, the
+  // module's function of its name, resumed with what it gives; a value as it is.
+  @Lowering moduleHandler(module: Symbol, effect: Symbol): Expr =
+    answers(effect, operationsOf(effect).map { op -> (op.name, Identifier(modulePath(module) + "." + Naming.snake(op.name)), false) })
+
+  // A handler made from an answer to each operation.
+  @Lowering madeHandler(effect: Symbol, given: List<(String, Expr, Boolean)>): Expr = answers(effect, given)
+
+  // The record of answers, of the effect's handler type, each answer as given if it takes resume, or
+  // is a value's, and otherwise a function of the operation's arguments that resumes with what it
+  // gives.
+  @Lowering private answers(effect: Symbol, given: List<(String, Expr, Boolean)>): Expr = {
+    operations = operationsOf(effect)
+    record = RecordExpr(given.map { name, a, resumes ->
+      op = operations.find { it.name == name }
+      FieldValue(Naming.snake(name), when (op.flatMap { it.parameters }) {
+        Some(parameters) if !resumes -> {
           names = parameters.mapIndexed { i, _ -> "x$i" }
-          given = Application(answer, if (names.isEmpty()) [ConstantExpr(UnitConstant)] else names.map { Identifier(it) })
-          Fun(names.map { VariablePat(it) } + [VariablePat("k")], Application(Identifier("k"), [given]))
+          Fun(names.map { VariablePat(it) } + [VariablePat("k")], Application(Identifier("k"), [Application(a, if (names.isEmpty()) [ConstantExpr(UnitConstant)] else names.map { Identifier(it) })]))
         }
+        _ -> a
       })
     }, None)
-    typeParameters = typeParametersOf(d.effect)
-    handlerType = TypeApplication(nextTo(d.effect, simpleSnake(d.effect) + "_handler"), (typeParameters + ["answer"]).map { TypeVar("_") })
-    Annotated(record, handlerType)
+    Annotated(record, TypeApplication(nextTo(effect, simpleSnake(effect) + "_handler"), (typeParametersOf(effect) + ["answer"]).map { TypeVar("_") }))
   }
-
-  // A module, written from the module it's used in: Fckt.Io.Terminal.
-  @Lowering private modulePath(m: Symbol): String = Naming.relative(m.path + [Naming.ownName(m)]).map { Naming.moduleName(it) }.joinToString(".")
 
   // [local], declared next to the effect, written from the module it's used in.
   @Lowering private nextTo(effect: Symbol, local: String): String = (Naming.relative(effect.path).map { Naming.moduleName(it) } + [local]).joinToString(".")
+
+  // A module, written from the module it's used in: Fckt.Io.Terminal.
+  @Lowering private modulePath(m: Symbol): String = Naming.relative(m.path + [Naming.ownName(m)]).map { Naming.moduleName(it) }.joinToString(".")
 
   private simpleSnake(effect: Symbol): String = Naming.snake(Naming.ownName(effect)).removeSuffix("_")
 

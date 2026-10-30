@@ -11,12 +11,13 @@ that compiles itself. It's meant to be read, as the checker is.
 ## Where it's got to
 
 It lowers a program's own file, to be linked with the core and the standard library as fckt's own
-compiler compiles them on their own. It lowers what `fckt.checker` makes core of: constants, names,
-calls of functions, externals, extensions and operations, the language's own operators and
-methods, string templates, lists, tuples, lambdas, if, when and its patterns, blocks, vars,
-assertions, and the records and types with cases the file declares at its top, with a show function
-for each. What it can't lower yet, such as the file's own modules and effects, handlers, and fields
-that change, it fails on, saying what.
+compiler compiles them on their own: its types, with a show function for each; its handled
+effects; its modules; and its functions, with constants, names, calls, externals, extensions,
+operations, handlers, operators, string templates, lists, tuples, lambdas, if, when and its
+patterns, blocks, vars, changing fields, pipes and assertions. 40 of the 44 conformance cases that
+print print what they should. What it can't lower yet, it fails on, saying what: functors and
+specs' modules used as values, and cases shared between types, which OCaml has as polymorphic
+variants.
 
 ## Tests
 

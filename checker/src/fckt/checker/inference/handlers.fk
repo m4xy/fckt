@@ -90,30 +90,37 @@ private startsLowerCase(name: String): Boolean = name.getOrNone(0).map { it.isLo
   }
   when (asLast) {
     Some(typed) -> typed
-    None -> when (resolved(infer(handler, None, scope, context).t)) {
-      FunctionOf([_], _, _) -> inferCall(at, handler, [blockArgument], [], expected, scope, context)
-      Handler(effect, arguments) -> {
-        if (parameters.isSome()) abandon(Globals.problem(context, Positions.of(block), "a handler's block runs with the effect handled, so it takes no parameters")) else Unit
-        n = arguments.size
-        Typed(handling(effect, arguments.take(n - 2), arguments.getOrNone(n - 2).getOrElse(Variable(fresh())),
-          arguments.getOrNone(n - 1).getOrElse(Variable(fresh())), block, expected, scope, at, context))
-      }
+    None -> {
+      handlerTyped = infer(handler, None, scope, context)
+      when (resolved(handlerTyped.t)) {
+        FunctionOf([_], _, _) -> inferCall(at, handler, [blockArgument], [], expected, scope, context)
+        Handler(effect, arguments) -> {
+          if (parameters.isSome()) abandon(Globals.problem(context, Positions.of(block), "a handler's block runs with the effect handled, so it takes no parameters")) else Unit
+          n = arguments.size
+          handled = handling(effect, arguments.take(n - 2), arguments.getOrNone(n - 2).getOrElse(Variable(fresh())),
+            arguments.getOrNone(n - 1).getOrElse(Variable(fresh())), block, expected, scope, at, context)
+          Typed(handled.t, None, effectNamed(effect, context).map { e -> Handled(e, handlerTyped.core, handled.core) }.getOrElse(Pending("a handler of an unknown effect")))
+        }
       else -> abandon(Globals.problem(context, Positions.of(handler),
         "this isn't a handler: make one from a handled effect, as Console(println = ...), or use a module that follows one"))
+      }
     }
   }
 }
 
+// The handled effect of the full name.
+effectNamed(name: String, context: Context): Option<Symbol> = context.environment.definitions.namespace.table.specs.get(name)
+
 // The block, run with the effect, with these type arguments, handled: inside, it may do the effect;
 // outside, what's left of what it does is done here, as is what the handler's answers do. The block
 // gives the handler's answer, as does every handler that doesn't resume.
-@Inferring handling(effect: String, arguments: List<Type>, answer: Type, answers: Type, block: Expression, expected: Option<Type>, scope: Scope, at: Position, context: Context): Type = {
+@Inferring handling(effect: String, arguments: List<Type>, answer: Type, answers: Type, block: Expression, expected: Option<Type>, scope: Scope, at: Position, context: Context): Typed = {
   rest = fresh()
   typed = doingIn(Row([EffectLabel(effect, arguments)], Some(rest)), context) { infer(block, expected.orElse { known(Some(answer)) }, scope, context) }
   assign(block, typed, answer, context)
   perform(Row([], Some(rest)), at)
   perform(asRow(answers), at)
-  typed.t
+  typed
 }
 
 // ---- Operations ----
@@ -205,7 +212,7 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
 // of the handled block, which it calls with the operation's result, later, or never. What the block
 // gives, and so what resume does, is the handler's answer; its answers run where it handles, so what
 // they do is its last argument.
-@Inferring makeHandler(at: Position, spec: Symbol, arguments: List<CallArgument>, scope: Scope, context: Context): Type = {
+@Inferring makeHandler(at: Position, spec: Symbol, arguments: List<CallArgument>, scope: Scope, context: Context): Typed = {
   types = context.environment.specTypes.getOrDefault(spec.name, SpecTypes(emptyMap(), []))
   given = types.parameters.map { Variable(fresh()) }
   answer = Variable(fresh())
@@ -213,21 +220,22 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
   answers = Row([], Some(answersRest))
   values = specValues(spec)
   order = argumentOrder(arguments, values.map { it.name }, at, Symbols.simpleName(spec), context)
-  values.zip(order).forEach { value, index ->
+  answerCores = values.zip(order).mapNotNull { value, index ->
     when ((types.values.get(value.name), arguments.getOrNone(index))) {
       (Some(scheme), Some(argument)) -> {
         mapping = (scheme.variables.map { v -> (v, Variable(fresh())) } + types.parameters.zip(given)).toMap()
-        answering(value, substitute(scheme.template, mapping), argument.value, answer, answers, scope, context)
+        (core, resumes) = answering(value, substitute(scheme.template, mapping), argument.value, answer, answers, scope, context)
+        Some(Answer(value.name, core, resumes))
       }
-      else -> Unit
+      else -> None
     }
   }
-  Handler(spec.name, given + [answer, Variable(answersRest)])
+  Typed(Handler(spec.name, given + [answer, Variable(answersRest)]), None, HandlerMade(spec, answerCores))
 }
 
 // That the argument answers the operation: a value, for a value; for a function, a function of its
 // parameters, or of them and resume.
-@Inferring private answering(value: SpecValue, t: Type, argument: ArgumentValue, answer: Type, answers: Row, scope: Scope, context: Context): Unit = when (t) {
+@Inferring private answering(value: SpecValue, t: Type, argument: ArgumentValue, answer: Type, answers: Row, scope: Scope, context: Context): (Core, Boolean) = when (t) {
   FunctionOf(parameters, result, _) -> {
     // A function with one more parameter than the operation takes resume. A lambda says by how many
     // it's written with; anything else, by its type.
@@ -235,10 +243,11 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
       WrittenValue(Lambda(_, ps, _, ignores)) -> Some((ps, ignores))
       else -> None
     }
-    given = when (lambda) {
+    givenTyped = when (lambda) {
       Some(_) -> None
-      None -> Some(resolved(argumentTyped(argument, scope, context).t))
+      None -> Some(argumentTyped(argument, scope, context))
     }
+    given = givenTyped.map { resolved(it.t) }
     resuming = when ((lambda, given)) {
       (Some((ps, ignores)), _) -> !ignores && ps.size == parameters.size + 1
       (_, Some(FunctionOf(ps, _, _))) -> ps.size == parameters.size + 1
@@ -246,16 +255,16 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
     }
     field = if (resuming) FunctionOf(parameters + [FunctionOf([result], answer, answers)], answer, answers) else FunctionOf(parameters, result, answers)
     attempt = Diagnostics.attempting {
-      when (given) {
-        Some(g) -> assign(argumentExpression(argument), Typed(g), field, context)
-        None -> {
-          checkArgument(argument, field, scope, context)
-          Unit
+      when ((given, givenTyped)) {
+        (Some(g), Some(typed)) -> {
+          assign(argumentExpression(argument), Typed(g), field, context)
+          typed.core
         }
+        else -> checkArgument(argument, field, scope, context)
       }
     }
     when (attempt) {
-      Ok(_) -> Unit
+      Ok(core) -> (core, resuming)
       Error(d) ->
         if (resuming || !isNamed(resolved(result), "Nothing")) abandon(d)
         else abandon(Globals.problem(context, argumentPosition(argument),
@@ -263,10 +272,7 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
             "as ${value.name} = (${(value.parameters.getOrElse([]).map { it.name } + ["resume"]).joinToString(", ")}) -> ..."))
     }
   }
-  else -> {
-    checkArgument(argument, t, scope, context)
-    Unit
-  }
+  else -> (checkArgument(argument, t, scope, context), false)
 }
 
 // What an argument was found to be, worked out on its own.

@@ -1,0 +1,5 @@
+import fckt.checker.types.Type
+
+// One of a handled effect's operations: its name, its parameters' types, if it's a function rather
+// than a value, and the type of what it gives.
+type DeclaredOperation(name: String, parameters: Option<List<Type>>, result: Type)

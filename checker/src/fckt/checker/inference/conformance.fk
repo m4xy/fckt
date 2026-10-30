@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.annotations.*
 import fckt.checker.definitions.*
 import fckt.checker.diagnostics.*
@@ -173,6 +174,30 @@ needsHandler(name: String, environment: Environment): Boolean =
   environment.definitions.namespace.table.specs.get(name).map { spec ->
     Annotations.isEffect(spec, environment.definitions.namespace) && specValues(spec).isNotEmpty()
   }.getOrElse(false)
+
+// Each handled effect with operations, with their types worked out, as lowering declares them: each
+// that can be worked out, as checking has said why of any that can't.
+@Solving declaredEffects(environment: Environment): List<DeclaredEffect> =
+  environment.definitions.namespace.table.specs.toList().filter { name, _ -> needsHandler(name, environment) }.mapNotNull { _, spec ->
+    when (Diagnostics.attempting { declaredEffect(spec, environment) }) {
+      Ok(effect) -> Some(effect)
+      Error(_) -> None
+    }
+  }
+
+@Solving @Abandoning private declaredEffect(spec: Symbol, environment: Environment): DeclaredEffect = {
+  typeParameters = when (spec.declaration.definition) {
+    SpecDefinition(_, _, ps, _, _) -> ps.filter { !it.startsWith("@") }
+    else -> []
+  }
+  operations = specValues(spec).map { value ->
+    own = (typeParameters + value.typeParameters).map { (it, TypeParameter(it)) }.toMap()
+    typeContext = TypeContext(Place(spec.file, spec.path), own)
+    typeOf = (t: TypeRef) -> Conversion.typeOf(t, typeContext, environment.definitions)
+    DeclaredOperation(value.name, value.parameters.map { ps -> ps.map { p -> p.parameterType.map { typeOf(it) }.getOrElse(Variable(fresh())) } }, typeOf(value.valueType))
+  }
+  DeclaredEffect(spec, typeParameters, operations)
+}
 
 // Each handled effect that has a default, with its default: what main is run in, by the effect's
 // name.

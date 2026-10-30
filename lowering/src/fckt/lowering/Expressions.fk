@@ -51,9 +51,20 @@ module Expressions {
     Sequenced(first, then) -> Sequence(expression(first), expression(then))
     FunctionValue(parameters, body, dropsResult) ->
       Fun(parametersOf(parameters), if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(body))
-    Constructed(constructor, fields, _) -> inOrder(fields) { given -> Constructors.built(constructor, given) }
+    // A declared record or case, with its type, so that OCaml can tell which it is where another type
+    // has a case or a field of the same name; Some, None, Ok and Error are OCaml's.
+    Constructed(BuiltinCase(name), fields, _) -> inOrder(fields) { given -> Constructors.built(BuiltinCase(name), given) }
+    Constructed(constructor, fields, t) -> inOrder(fields) { given -> Annotated(Constructors.built(constructor, given), OcamlTypes.typexpr(t)) }
     FieldRead(record, owner, field) -> FieldAccess(expression(record), Constructors.label(owner, field))
     NarrowedRead(local, caseName, field) -> FieldAccess(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field))
+    FieldWritten(record, owner, field, value) -> inOrder([record, value]) { given ->
+      when (given) {
+        [r, v] -> FieldUpdate(r, Constructors.label(owner, field), v)
+        else -> fail("changing a field")
+      }
+    }
+    NarrowedWritten(local, caseName, field, value) ->
+      FieldUpdate(Identifier(Constructors.narrowedName(local, caseName)), Naming.snake(field), expression(value))
     CaseName(value, cases) -> Match(expression(value), cases.map { c ->
       Case(ConstructorPat(Constructors.caseName(c), None), None, ConstantExpr(StringConstant(c.definition.name)))
     })
@@ -64,6 +75,9 @@ module Expressions {
       }
       Case(pattern, b.guard.map { expression(it) }, expression(b.body))
     })
+    HandlerMade(effect, answers) -> HandledEffects.madeHandler(effect, answers.map { a -> (a.operation, expression(a.answer), a.resumes) })
+    ModuleHandler(module, effect) -> HandledEffects.moduleHandler(module, effect)
+    Handled(effect, handler, block) -> HandledEffects.handled(effect, expression(handler), expression(block))
     // OCaml's told it gives whatever's wanted.
     Absurd(call) -> Match(expression(call), [Case(AnyPat, None, Verbatim("assert false"))])
     Pending(what) -> fail(what)

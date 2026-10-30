@@ -1,7 +1,10 @@
-// The OCaml functions lowered code calls that fckt's compiler writes beside a program rather than
-// having in its core: showing floats, characters, lists, options and results, and assertEquals.
+// What lowered code uses that fckt's compiler writes beside a program rather than having in its
+// core: the type with no values, Nothing's, and functions showing floats, characters, lists, options
+// and results, and assertEquals's.
 module Helpers {
-  items: String = """let fk_show_float f =
+  items: String = """type fk_nothing = |
+
+let fk_show_float f =
   if Float.is_nan f then "NaN"
   else if f = Float.infinity then "Infinity"
   else if f = Float.neg_infinity then "-Infinity"

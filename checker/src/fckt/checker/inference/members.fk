@@ -18,7 +18,7 @@ import fckt.parser.*
     Some(global) -> Typed(Globals.typeOf(global, at, context), None, if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global))
     None -> when (qualifiedCase(target, scope, context)) {
       Some(qualifier) -> when (caseValues(at, name, qualifier, context)) {
-        Some(t) -> Typed(t, None, Pending("a type's values"))
+        Some(t) -> Typed(t, None, valuesCore(qualifier, t, context))
         None -> when (constructorShape(name, expected, at, true, Some(qualifier), true, scope, context)) {
           Some(shape) -> Typed(
             if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(shape.fieldTypes, shape.result, Row([], Some(fresh()))),
@@ -41,7 +41,7 @@ import fckt.parser.*
     else -> None
   }
   when (operation) {
-    Some(op) -> Typed(operationValue(op, at, context), None, Pending("an operation, as a value"))
+    Some(op) -> Typed(operationValue(op, at, context), None, operationCore(op))
     None -> {
       member = Member(at, target, name)
       asModule = moduleNamedBy(member, scope, context).filter { m -> !isEffectModule(m, context) }
@@ -114,6 +114,20 @@ fieldType(field: FieldReference): Type = when (field) {
         Some(listOf(Named(caseType.name, Cases.typeParametersOf(caseType).map { Variable(fresh()) }, None)))
       }
   }
+
+// Level.values, as core: a list of each case, in the order the type declares them.
+private valuesCore(qualifier: String, t: Type, context: Context): Core = {
+  element = when (t) {
+    Named("List", [e], _) -> e
+    _ -> t
+  }
+  when (Lookups.found(Lookups.caseType(qualifier, context.place, context.environment.definitions.namespace, Skipping))) {
+    Some(caseType) -> ListMade(context.environment.definitions.cases.getOrDefault(caseType.name, []).map { c ->
+      OneItem(Constructed(CaseConstructor(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition)), [], element))
+    })
+    None -> Pending("a type's values")
+  }
+}
 
 // That the type's cases carry nothing, as values and name need them to.
 @Abandoning private bareCases(caseType: Symbol, at: Position, context: Context): Unit =

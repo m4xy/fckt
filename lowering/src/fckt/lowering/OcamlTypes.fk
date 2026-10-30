@@ -15,7 +15,7 @@ module OcamlTypes {
   }
 
   @Lowering private named(name: String, arguments: List<Type>): Typexpr = {
-    given = arguments.filter { it !is Effects }.map { typexpr(it) }
+    given = ocamlArguments(name, arguments).map { typexpr(it) }
     when (name) {
       "Int" -> TypeApplication("int", [])
       "Float" -> TypeApplication("float", [])
@@ -23,6 +23,7 @@ module OcamlTypes {
       "String" -> TypeApplication("string", [])
       "Boolean" -> TypeApplication("bool", [])
       "Unit" -> TypeApplication("unit", [])
+      "Nothing" -> TypeApplication("fk_nothing", [])
       "Char" -> TypeApplication("int", [])
       "Byte" -> TypeApplication("char", [])
       "List" -> TypeApplication("list", given)
@@ -42,6 +43,15 @@ module OcamlTypes {
   // The OCaml name a declared type has where it's declared: shape.
   ownName(full: String): String = Naming.snake(full.split(".").lastOrNone().getOrElse(full))
 
+  // A type's arguments that OCaml has: not those for its effect parameters, nor effects.
+  @Lowering ocamlArguments(name: String, arguments: List<Type>): List<Type> = when (typeParametersOf(name)) {
+    Some(parameters) if parameters.size == arguments.size -> parameters.zip(arguments).filter { p, _ -> !p.startsWith("@") }.map { _, a -> a }
+    _ -> arguments.filter { it !is Effects }
+  }
+
   // A type parameter, as OCaml writes it: 'a for A.
   parameter(name: String): String = "'" + name.lowercase()
+
+  // A type's type parameters that OCaml has: not those that stand for effects, as @E does.
+  ocamlParameters(names: List<String>): List<String> = names.filter { !it.startsWith("@") }
 }

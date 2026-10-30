@@ -240,7 +240,7 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 
 // Options { ... }: the block, with by going through the module's bind, and what it gives through its
 // pure; or, for a module that follows a handled effect's spec, the block with the effect handled.
-@Inferring inferMonadic(at: Position, monad: Expression, block: Expression, scope: Scope, context: Context): Type = {
+@Inferring inferMonadic(at: Position, monad: Expression, block: Expression, scope: Scope, context: Context): Typed = {
   monadAt = Positions.of(monad)
   name = dottedUnbound(monad, scope)
   shown = name.getOrElse("this")
@@ -255,14 +255,17 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
       }
       when (effect) {
         Some((s, spec)) -> when (moduleHandler(s, spec, at, context)) {
-          Handler(effectName, [answer, answers]) -> handling(effectName, [], answer, answers, block, None, scope, at, context)
-          other -> other
+          Handler(effectName, [answer, answers]) -> {
+            handled = handling(effectName, [], answer, answers, block, None, scope, at, context)
+            Typed(handled.t, None, Handled(spec, ModuleHandler(s, spec), handled.core))
+          }
+          other -> Typed(other, None, Pending("a module's handler"))
         }
         None -> {
           functions = monadFunctions(m, shown, monadAt, context)
           when (block) {
-            Block(blockAt, statements, result, endsInBinding) -> inferBlock(blockAt, statements, result, endsInBinding, None, scope, Some(functions), context).t
-            other -> infer(other, None, scope, context).t
+            Block(blockAt, statements, result, endsInBinding) -> inferBlock(blockAt, statements, result, endsInBinding, None, scope, Some(functions), context)
+            other -> infer(other, None, scope, context)
           }
         }
       }

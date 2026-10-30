@@ -30,7 +30,7 @@ module Shows {
     // A declared type's own toString, or else its show function, beside it, given how to show its
     // type parameters.
     Named(name, arguments, _) -> {
-      shown = arguments.filter { it !is Effects }.map { show(it) }
+      shown = OcamlTypes.ocamlArguments(name, arguments).map { show(it) }
       when (toStringOf(name)) {
         Some(f) -> Fun([VariablePat("v")], Application(Identifier(Naming.valueReference(f)), [Identifier("v"), *shown]))
         None -> if (shown.isEmpty()) Identifier(showReference(name)) else Application(Identifier(showReference(name)), shown)

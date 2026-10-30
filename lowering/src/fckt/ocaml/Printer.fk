@@ -25,8 +25,14 @@ module Printer {
     ModulePath(path) -> path
   }
 
-  private effectOperation(o: EffectOperation): String =
-    o.name + " : " + (o.parameters.map { typexpr(it, arrowParameter) + " -> " }.joinToString("")) + typexpr(o.result, applied) + " Effect.t"
+  private effectOperation(o: EffectOperation): String = {
+    carried = when (o.parameters) {
+      [] -> TypeApplication("unit", [])
+      [one] -> one
+      _ -> Product(o.parameters)
+    }
+    o.name + " : " + typexpr(carried, arrowParameter) + " -> " + typexpr(o.result, applied) + " Effect.t"
+  }
 
   private bindingGroup(keyword: String, bindings: List<Binding>, indent: String): String =
     bindings.mapIndexed { n, b -> (if (n == 0) "$keyword " else "${indent}and ") + binding(b, indent) }.joinToString("\n")
@@ -120,6 +126,7 @@ module Printer {
       AliasPat(pattern, name) -> pat(pattern, orPattern) + " as " + name
       TypedPat(pattern, t) -> "(" + pat(pattern, aliasPattern) + " : " + typexpr(t, 0) + ")"
       OrPat(left, right) -> pat(left, orPattern) + " | " + pat(right, consPattern)
+      EffectPat(operation, k) -> "effect " + pat(operation, atomicPattern) + ", " + k
     }
     if (level < minimum) "($text)" else text
   }

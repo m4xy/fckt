@@ -1,3 +1,4 @@
 // One of an effect's operations, as an extension of OCaml's Effect.t: Console_println : string ->
-// unit Effect.t. Its parameters' types, and the type it gives back.
+// unit Effect.t. What it carries, its parameters' types, as a tuple, or unit if it has none; and the
+// type it gives back.
 type EffectOperation(name: String, parameters: List<Typexpr>, result: Typexpr)

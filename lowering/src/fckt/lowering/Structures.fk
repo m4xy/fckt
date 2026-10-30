@@ -2,34 +2,47 @@ import fckt.effects.Fail
 import fckt.checker.core.*
 import fckt.checker.inference.FunctionGroup
 import fckt.checker.symbols.*
+import fckt.checker.types.*
 import fckt.ocaml.*
 
 // The program's own code, a module at a time: at each path, the types declared there, with their
-// show functions, then its function groups and the modules in it, each after what it uses, as OCaml
-// must have them. fckt has no module and package functions that use each other, so there's always
-// such an order.
+// show functions, and its handled effects, then its function groups and the modules in it, each
+// after what it uses, as OCaml must have them. fckt has no module and package functions that use
+// each other, so there's always such an order.
 module Structures {
   @Fail @Lowering items(path: List<String>, own: OwnCode): List<Item> = {
     types = own.types.filter { declaredAt(it).path == path }
-    TypeItems.definitions(types) + TypeItems.shows(types) + ordered(partsAt(path, own), own).flatMap { partItems(it, own) }
+    effects = own.effects.filter { it.effect.path == path }.flatMap { HandledEffects.declarations(it) }
+    TypeItems.definitions(types) + TypeItems.shows(types) + effects + ordered(partsAt(path, own), own).flatMap { partItems(it, own) }
   }
 
   @Fail @Lowering private partItems(part: Part, own: OwnCode): List<Item> = when (part) {
     GroupPart(group) -> {
-      bindings = own.groups.find { g, _ -> g == group }.map { _, functions -> functions.map { f, body -> binding(f, body) } }.getOrElse([])
+      bindings = own.groups.find { g, _ -> g == group }.map { _, functions -> functions.map { f, t, body -> binding(f, t, body) } }.getOrElse([])
       if (bindings.isEmpty()) [] else [LetItem(group.recursive, bindings)]
     }
     ModulePart(path) -> {
       name = path.lastOrNone().getOrElse("")
-      inner = Lowering(toStringOf = typeName -> toStringOf(typeName), inside = ~path) { items(path, own) }
+      inner = Lowering(toStringOf = typeName -> toStringOf(typeName), typeParametersOf = typeName -> typeParametersOf(typeName), inside = ~path) {
+        items(path, own)
+      }
       [ModuleItem(Naming.moduleName(name), Structure(inner))]
     }
   }
 
-  // A function, with its parameters, or a value, as let binds it.
-  @Fail @Lowering private binding(function: Symbol, body: CoreFunction): Binding = {
-    parameters = if (Signatures.isFunction(function)) Expressions.parametersOf(body.parameters.map { NameMatcher(it) }) else []
-    Binding(VariablePat(Naming.snake(Naming.ownName(function))), parameters, None, Expressions.expression(body.body))
+  // A function, with its parameters, each annotated with its type, and its result's, or a value, as
+  // let binds it.
+  @Fail @Lowering private binding(function: Symbol, t: Type, body: CoreFunction): Binding = {
+    name = VariablePat(Naming.snake(Naming.ownName(function)))
+    value = Expressions.expression(body.body)
+    when (t) {
+      FunctionOf(parameterTypes, result, _) if Signatures.isFunction(function) -> {
+        parameters = if (body.parameters.isEmpty()) [ConstantPat(UnitConstant)]
+          else body.parameters.zip(parameterTypes).map { p, pt -> TypedPat(VariablePat(Naming.snake(p)), OcamlTypes.typexpr(pt)) }
+        Binding(name, parameters, Some(OcamlTypes.typexpr(result)), value)
+      }
+      _ -> Binding(name, [], None, value)
+    }
   }
 
   // What's at the path besides its types: its groups, and the modules in it, each where its first
@@ -64,11 +77,19 @@ module Structures {
       GroupPart(group) -> g == group
       ModulePart(path) -> g.functions.any { f -> f.path.size >= path.size && f.path.take(path.size) == path }
     }
-  }.flatMap { _, functions -> functions.flatMap { _, body -> Cores.references(body.body) } }
+  }.flatMap { _, functions -> functions.flatMap { _, _, body -> Cores.references(body.body) } }
 
   private isIn(s: Symbol, part: Part): Boolean = when (part) {
     GroupPart(group) -> group.functions.any { it.name == s.name }
     ModulePart(path) -> s.path.size >= path.size && s.path.take(path.size) == path
+  }
+
+  // A type declaration's type parameters.
+  declaredParameters(t: TypeDeclaration): List<String> = when (t) {
+    DeclaredRecord(_, ps, _) -> ps
+    DeclaredCases(_, ps, _) -> ps
+    DeclaredAlias(_, ps, _) -> ps
+    DeclaredExternal(_, ps, _) -> ps
   }
 
   // The declaration a type declaration is of.

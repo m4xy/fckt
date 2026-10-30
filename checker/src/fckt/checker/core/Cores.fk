@@ -63,6 +63,8 @@ module Cores {
       BuiltinCase(_) -> []
     } + all(fields)
     FieldRead(record, owner, _) -> [owner] + references(record)
+    FieldWritten(record, owner, _, value) -> [owner] + references(record) + references(value)
+    NarrowedWritten(_, _, _, value) -> references(value)
     CaseName(value, cases) -> cases.map { it.owner } + references(value)
     ListMade(items) -> items.flatMap { item ->
       when (item) {
@@ -84,6 +86,9 @@ module Cores {
     Sequenced(first, then) -> references(first) + references(then)
     FunctionValue(_, body, _) -> references(body)
     Absurd(call) -> references(call)
+    HandlerMade(effect, answers) -> [effect] + all(answers.map { it.answer })
+    ModuleHandler(module, effect) -> [module, effect]
+    Handled(effect, handler, block) -> [effect] + references(handler) + references(block)
     Pending(_) -> []
   }
 

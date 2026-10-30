@@ -19,15 +19,15 @@ module TypeItems {
 
   @Lowering private definition(d: TypeDeclaration): TypeDefinition = when (d) {
     DeclaredRecord(record, parameters, fields) ->
-      TypeDefinition(OcamlTypes.ownName(record.name), parameters.map { OcamlTypes.parameter(it) }, RecordType(fields.map { field(it) }))
+      TypeDefinition(OcamlTypes.ownName(record.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, RecordType(fields.map { field(it) }))
     DeclaredCases(caseType, parameters, cases) ->
-      TypeDefinition(OcamlTypes.ownName(caseType.name), parameters.map { OcamlTypes.parameter(it) }, VariantType(cases.map { c ->
+      TypeDefinition(OcamlTypes.ownName(caseType.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, VariantType(cases.map { c ->
         ConstructorDeclaration(c.case.definition.name, if (c.fields.isEmpty()) Bare else InlineRecord(c.fields.map { field(it) }))
       }))
     DeclaredAlias(alias, parameters, target) ->
-      TypeDefinition(OcamlTypes.ownName(alias.name), parameters.map { OcamlTypes.parameter(it) }, AliasType(OcamlTypes.typexpr(target)))
+      TypeDefinition(OcamlTypes.ownName(alias.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, AliasType(OcamlTypes.typexpr(target)))
     DeclaredExternal(external, parameters, ocaml) ->
-      TypeDefinition(OcamlTypes.ownName(external.name), parameters.map { OcamlTypes.parameter(it) }, AliasType(TypeApplication("($ocaml)", [])))
+      TypeDefinition(OcamlTypes.ownName(external.name), OcamlTypes.ocamlParameters(parameters).map { OcamlTypes.parameter(it) }, AliasType(TypeApplication("($ocaml)", [])))
   }
 
   @Lowering private field(f: DeclaredField): FieldDeclaration = FieldDeclaration(Naming.snake(f.name), OcamlTypes.typexpr(f.t), f.variable)
@@ -49,8 +49,9 @@ module TypeItems {
   }
 
   private showFunction(full: String, parameters: List<String>, body: Expr): Binding = {
-    t = TypeApplication(OcamlTypes.ownName(full), parameters.map { TypeVar(OcamlTypes.parameter(it)) })
-    Binding(VariablePat(Shows.showName(full)), parameters.map { VariablePat("show_" + it.lowercase()) } + [TypedPat(VariablePat("v"), t)], None, body)
+    own = OcamlTypes.ocamlParameters(parameters)
+    t = TypeApplication(OcamlTypes.ownName(full), own.map { TypeVar(OcamlTypes.parameter(it)) })
+    Binding(VariablePat(Shows.showName(full)), own.map { VariablePat("show_" + it.lowercase()) } + [TypedPat(VariablePat("v"), t)], None, body)
   }
 
   // Name(a=..., b=...), each field shown as its type is.

@@ -13,15 +13,19 @@ import fckt.parser.Definition
 // yet, it fails saying.
 module Programs {
   @Fail ocaml(program: CheckedProgram): List<Item> =
-    Lowering(toStringOf = name -> program.toStrings.get(name), inside = ~[]) { items(program) }
+    Lowering(
+      toStringOf = name -> program.toStrings.get(name),
+      typeParametersOf = name -> program.types.find { Structures.declaredAt(it).name == name }.map { Structures.declaredParameters(it) },
+      inside = ~[],
+    ) { items(program) }
 
   @Fail @Lowering private items(program: CheckedProgram): List<Item> = {
-    bodies = program.functions.filter { f -> isOwn(f.function) }.mapNotNull { f -> f.body.map { b -> (f.function, b) } }
+    bodies = program.functions.filter { f -> isOwn(f.function) }.mapNotNull { f -> f.body.map { b -> (f.function, f.scheme.template, b) } }
     groups = program.groups.mapNotNull { g ->
-      functions = g.functions.mapNotNull { f -> bodies.find { s, _ -> s.name == f.name } }
+      functions = g.functions.mapNotNull { f -> bodies.find { s, _, _ -> s.name == f.name } }
       if (functions.isEmpty()) None else Some((g, functions))
     }
-    own = OwnCode(groups, program.types.filter { t -> isOwn(Structures.declaredAt(t)) }, modulesOf(program))
+    own = OwnCode(groups, program.types.filter { t -> isOwn(Structures.declaredAt(t)) }, program.effects.filter { e -> isOwn(e.effect) }, modulesOf(program))
     main = program.functions.find { f -> isOwn(f.function) && f.function.path.isEmpty() && Naming.ownName(f.function) == "main" }.map { f ->
       takesArguments = Signatures.parametersOf(f.function).map { it.isNotEmpty() }.getOrElse(false)
       LetItem(false, [Binding(ConstantPat(UnitConstant), [], None, HandledEffects.runningMain(f.function, takesArguments, program.defaultHandlers))])

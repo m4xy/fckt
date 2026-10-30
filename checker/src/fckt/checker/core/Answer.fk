@@ -1,0 +1,3 @@
+// A handler's answer to one of its effect's operations: what it gives, and whether it takes resume,
+// the rest of the handled block, to call with the operation's result, as it chooses.
+type Answer(operation: String, answer: Core, resumes: Boolean)

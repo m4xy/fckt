@@ -19,4 +19,7 @@ type Pat {
   TypedPat(pattern: Pat, typexpr: Typexpr),
   // p | q
   OrPat(left: Pat, right: Pat),
+  // effect p, k: an effect performed, as a match's case catches one, with the rest of what performed
+  // it as k.
+  EffectPat(operation: Pat, continuation: String),
 }

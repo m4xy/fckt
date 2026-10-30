@@ -1,9 +1,11 @@
 import fckt.checker.symbols.Symbol
 
 // What's known while writing a program's OCaml: the extension that's a type's own toString, given
-// how to show each of its type parameters, if it has one; and the module what's written is in, by
-// its path, from which a name is written: Ratios.make outside Ratios, make inside it.
+// how to show each of its type parameters, if it has one; a declared type's type parameters, those
+// for effects among them, which OCaml's has none of; and the module what's written is in, by its
+// path, from which a name is written: Ratios.make outside Ratios, make inside it.
 effect Lowering {
   toStringOf(typeName: String): Option<Symbol>
+  typeParametersOf(typeName: String): Option<List<String>>
   inside(): List<String>
 }

@@ -88,11 +88,11 @@ private kindOf(e: Expression): String = when (e) {
   Unary(at, "!", operand) -> Typed(boolean, None, Operated(Not, [check(operand, boolean, scope, context)]))
   Unary(at, operator, operand) -> inferNegation(at, operator, operand, expected, scope, context)
   Lambda(at, parameters, body, ignoresArguments) -> inferLambda(at, Some(parameters), body, ignoresArguments, false, expected, scope, context)
-  Pipe(at, value, function) -> Typed(inferPipe(at, value, function, scope, context))
+  Pipe(at, value, function) -> inferPipe(at, value, function, scope, context)
   If(at, condition, then, otherwise, hasElse) -> inferIf(at, condition, then, otherwise, hasElse, expected, scope, context)
   When(at, subject, branches) -> inferWhen(at, subject, branches, expected, scope, context)
   Block(at, statements, result, endsInBinding) -> inferBlock(at, statements, result, endsInBinding, expected, scope, None, context)
-  Monadic(at, monad, block) -> Typed(inferMonadic(at, monad, block, scope, context))
+  Monadic(at, monad, block) -> inferMonadic(at, monad, block, scope, context)
 }
 
 @Inferring private inferTuple(elements: List<Expression>, expected: Option<Type>, scope: Scope, context: Context): Typed = {
@@ -147,6 +147,15 @@ private inOrder(items: List<Expression>, elements: List<Core>, spreads: List<Cor
 private isSpread(e: Expression): Boolean = when (e) {
   Spread(_, _) -> true
   else -> false
+}
+
+// An operation used as a value: a function that performs it, or, for one that's a value, performing it.
+operationCore(operation: Operation): Core = when (operation.value.parameters) {
+  None -> Performed(operation.effect, operation.value.name, [])
+  Some(ps) -> {
+    names = ps.mapIndexed { i, _ -> "fk_given${i + 1}" }
+    FunctionValue(names.map { NameMatcher(it) }, Performed(operation.effect, operation.value.name, names.map { LocalRead(it, false) }), false)
+  }
 }
 
 // A template's parts, joined: the text, if it's all text.
@@ -225,7 +234,7 @@ private joined(parts: List<Core>): Core = when (parts) {
     None -> when (Globals.findOrRefuse(name, at, context)) {
       Some(global) -> Typed(Globals.typeOf(global, at, context), None, if (Signatures.isExternal(global)) ExternalRead(global) else GlobalRead(global))
       None -> when (operationNamed(name, at, context)) {
-        Some(operation) -> Typed(operationValue(operation, at, context))
+        Some(operation) -> Typed(operationValue(operation, at, context), None, operationCore(operation))
         None -> when (constructorShape(name, expected, at, true, None, true, scope, context)) {
           Some(shape) -> Typed(
             if (shape.fieldTypes.isEmpty()) shape.result else FunctionOf(shape.fieldTypes, shape.result, Row([], Some(fresh()))),
@@ -269,17 +278,19 @@ constructorValue(shape: ConstructorShape): Core =
 
 // x = value, or r.field = value: changes a var, so it's @Mutating on where the var lives.
 @Inferring private inferAssign(at: Position, target: Expression, value: Expression, scope: Scope, context: Context): Typed = {
-  (region, targetType) = when (target) {
+  // Where what's changed lives, what it holds, and the change, as core, given the new value's.
+  (region, targetType, change) = when (target) {
     Name(nameAt, name) -> when (Scopes.lookup(scope, name)) {
       None -> abandon(Globals.problem(context, nameAt,
         if (Lookups.found(Globals.find(name, context, Skipping)).isSome()) "'$name' is a top-level value, which can't be changed" else "unknown name '$name'"))
       Some(local) -> when (local.region) {
         None -> abandon(Globals.problem(context, nameAt, "'$name' can't be changed; declare it with var $name = ..."))
-        Some(r) -> (r, infer(target, None, scope, context).t)
+        Some(r) -> (r, infer(target, None, scope, context).t, (v: Core) -> VarWritten(name, v))
       }
     }
     Member(memberAt, receiverExpression, name) -> {
-      receiver = resolved(infer(receiverExpression, None, scope, context).t)
+      receiverTyped = infer(receiverExpression, None, scope, context)
+      receiver = resolved(receiverTyped.t)
       field = fieldOf(memberAt, receiverExpression, name, receiver, scope, context)
       (owner, fields) = when (field) {
         Some(NarrowedField(narrowing, _)) ->
@@ -294,19 +305,21 @@ constructorValue(shape: ConstructorShape): Core =
         abandon(Globals.problem(context, memberAt, "$owner's $name can't be changed; declare it with var $name: ..."))
       } else Unit
       fieldType = infer(target, None, scope, context).t
+      writing = (v: Core) -> when ((field, receiverExpression)) {
+        (Some(RecordField(record, _)), _) -> FieldWritten(receiverTyped.core, record, name, v)
+        (Some(NarrowedField(narrowing, _)), Name(_, local)) -> NarrowedWritten(local, narrowing.caseName, name, v)
+        else -> Pending("changing a field")
+      }
       when (receiver) {
-        Named(_, _, Some(r)) -> (r, fieldType)
-        else -> (Variable(fresh()), fieldType)
+        Named(_, _, Some(r)) -> (r, fieldType, writing)
+        else -> (Variable(fresh()), fieldType, writing)
       }
     }
     else -> abandon(Globals.problem(context, at, "only a var or a var field can be assigned to"))
   }
   valueCore = check(value, targetType, scope, context)
   perform(mutating(region), at)
-  Typed(unit, None, when (target) {
-    Name(_, name) -> VarWritten(name, valueCore)
-    else -> Pending("changing a field")
-  })
+  Typed(unit, None, change(valueCore))
 }
 
 // Changing what's in the region.

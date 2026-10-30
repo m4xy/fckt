@@ -31,6 +31,10 @@ type Core {
   FieldRead(record: Core, owner: Symbol, field: String),
   // Which case the value is, as its name, for a type whose cases carry nothing.
   CaseName(value: Core, cases: List<CaseSymbol>),
+  // A record's var field, changed to hold the value.
+  FieldWritten(record: Core, owner: Symbol, field: String, value: Core),
+  // A var field of the case is found a local to be, changed where it's found so.
+  NarrowedWritten(local: String, caseName: String, field: String, value: Core),
   // [a, *rest, b]: a list of the items, in order.
   ListMade(items: List<ListItem>),
   // (a, b): a tuple of the parts.
@@ -61,6 +65,13 @@ type Core {
   // A function of the parameters, each a pattern what it's given matches: what its body gives, or, if
   // it drops what its body gives, as one wanted to give back Unit does, Unit.
   FunctionValue(parameters: List<Matcher>, body: Core, dropsResult: Boolean),
+  // A handler for the effect, made from an answer to each of its operations, in the order it
+  // declares them.
+  HandlerMade(effect: Symbol, answers: List<Answer>),
+  // A module that follows the effect's spec, as a handler: each answer its function of that name.
+  ModuleHandler(module: Symbol, effect: Symbol),
+  // The block, run with the handler handling the effect.
+  Handled(effect: Symbol, handler: Core, block: Core),
   // A call that never returns, as one giving Nothing doesn't: it fits wherever it is.
   Absurd(call: Core),
   // An expression whose core fckt.checker doesn't make yet: what it is.
