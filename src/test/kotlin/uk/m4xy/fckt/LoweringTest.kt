@@ -16,9 +16,12 @@ class LoweringTest {
     /** The cases that run and say what they print. */
     private val cases = File("conformance").listFiles { f -> f.extension == "fk" }!!.sortedBy { it.name }.filter { printed(it.readText()) != null }
 
-    /** What fckt.lowering makes of each case, by its path. */
+    /** The examples, each a program of its own. */
+    private val examples = File("examples").listFiles { f -> f.extension == "fk" }!!.sortedBy { it.name }
+
+    /** What fckt.lowering makes of each case and example, by its path. */
     private val lowered: Map<String, String> by lazy {
-        SelfHosted.written("lowered.fk", cases.map { it.path }, listOf(File("parser/src"), File("checker/src"), File("lowering/src")))
+        SelfHosted.written("lowered.fk", (cases + examples).map { it.path }, listOf(File("parser/src"), File("checker/src"), File("lowering/src")))
     }
 
     /** A folder with the core and the standard library in it, each compiled on its own, as OCaml's compiled units. */
@@ -40,6 +43,15 @@ class LoweringTest {
             val ml = lowered[file.path] ?: error("nothing was written for ${file.path}")
             assumeTrue(!ml.startsWith("! "), ml.lineSequence().first())
             assertEquals(printed(file.readText())!!.joinToString("") { "$it\n" }, run(ml))
+        }
+    }
+
+    @TestFactory
+    fun `each example, lowered by fckt's lowering, prints what this compiler's does`() = examples.map { file ->
+        DynamicTest.dynamicTest(file.path) {
+            val ml = lowered[file.path] ?: error("nothing was written for ${file.path}")
+            assumeTrue(!ml.startsWith("! "), ml.lineSequence().first())
+            assertEquals(Ocaml.run(compile(file.readText(), others = listOf(File("std/src")))), run(ml))
         }
     }
 

@@ -43,15 +43,15 @@ import fckt.parser.*
       if (independent && done.steps.isNotEmpty()) {
         inner = bindSteps(done.pending, done.scope, context)
         (resultType, blockType) = combine(m, done.steps, at, context)
-        check(result, resultType, inner, context)
-        Typed(blockType, None, Pending("a module's block"))
+        resultCore = check(result, resultType, inner, context)
+        Typed(blockType, None, aroundMonadic(done.lines, resultCore, m))
       } else when (pureOf(m)) {
         None -> abandon(Globals.problem(context, positionOfMonad(m), "${nameOf(m)} has no pure, so its block needs a 'by' line"))
         Some(pure) -> when (resolved(Globals.typeOf(pure, positionOfMonad(m), context))) {
           FunctionOf([value], pureResult, _) -> {
             expect(pureResult, done.rest, Positions.of(result), context)
-            check(result, value, done.scope, context)
-            Typed(whole, None, Pending("a module's block"))
+            resultCore = check(result, value, done.scope, context)
+            Typed(whole, None, aroundMonadic(done.lines, Applied(GlobalRead(pure), [resultCore]), m))
           }
           else -> abandon(Globals.problem(context, positionOfMonad(m), "${pure.name} should take one value, as Monad's pure does"))
         }
@@ -66,6 +66,43 @@ private around(lines: List<BlockStep>, result: Core): Core = lines.reversed().fo
     BindStep(pattern, value) -> Bound(pattern, value, rest)
     VarStep(name, value) -> VarBound(name, value, rest)
     FunctionStep(name, parameters, body) -> FunctionBound(name, parameters, body, rest)
+    ByStep(_, _) -> Pending("'by' outside a module's block")
+  }
+}
+
+// A module's block's core: with a bind, each by line binds what its value holds through it, as
+// bind(value, pattern -> rest); without one, its by lines, which come together, are paired up with
+// its product, as product(product(a, b), c), and the rest of the block is a function of the pairs,
+// given to its map.
+private aroundMonadic(lines: List<BlockStep>, result: Core, monad: MonadFunctions): Core = when (monad) {
+  Binding(_, _, bind, _) -> lines.reversed().fold(result) { rest, step ->
+    when (step) {
+      ByStep(pattern, value) -> Applied(GlobalRead(bind), [value, FunctionValue([pattern], rest, false)])
+      other -> around([other], rest)
+    }
+  }
+  Mapping(_, _, map, product, _) -> {
+    before = lines.takeWhile { it !is ByStep }
+    steps = lines.drop(before.size).takeWhile { it is ByStep }
+    after = lines.drop(before.size + steps.size)
+    paired = steps.mapNotNull { s ->
+      when (s) {
+        ByStep(pattern, value) -> Some((value, pattern))
+        else -> None
+      }
+    }
+    mapped = when (paired) {
+      [] -> around(after, result)
+      [(firstValue, firstPattern), *others] -> {
+        (values, pattern) = others.fold((firstValue, firstPattern)) { acc, next ->
+          (vs, ps) = acc
+          (value, p) = next
+          (Applied(GlobalRead(product), [vs, value]), TupleMatcher([ps, p]))
+        }
+        Applied(GlobalRead(map), [values, FunctionValue([pattern], around(after, result), false)])
+      }
+    }
+    around(before, mapped)
   }
 }
 
@@ -171,8 +208,9 @@ private isBind(s: Statement): Boolean = when (s) {
         soFar.pending.flatMap { _, p, _ -> References.namesIn(p) }.find { refs.contains(it) }.forEach { used ->
           abandon(Globals.problem(context, Positions.of(value), "${nameOf(m)} has no bind, so a step can't use $used from an earlier step"))
         }
-        (valueType, held) = step(m, value, soFar.scope, context)
-        BlockSoFar(soFar.scope, soFar.rest, soFar.steps + [(valueType, held)], soFar.pending + [(at, pattern, held)], soFar.after, false, soFar.lines)
+        (valueType, held, core) = step(m, value, soFar.scope, context)
+        BlockSoFar(soFar.scope, soFar.rest, soFar.steps + [(valueType, held)], soFar.pending + [(at, pattern, held)], soFar.after, false,
+          soFar.lines + [ByStep(irrefutableMatcher(pattern), core)])
       } else {
         (valueType, next, result) = bindType(m, context)
         expect(result, soFar.rest, at, context)
@@ -185,7 +223,8 @@ private isBind(s: Statement): Boolean = when (s) {
           FunctionOf([p], r, _) -> (p, r)
           _ -> (Variable(fresh()), Variable(fresh()))
         }
-        BlockSoFar(bindPattern(at, pattern, nextValue, soFar.scope, true, context), nextResult, soFar.steps, soFar.pending, soFar.after, false, soFar.lines)
+        BlockSoFar(bindPattern(at, pattern, nextValue, soFar.scope, true, context), nextResult, soFar.steps, soFar.pending, soFar.after, false,
+          soFar.lines + [ByStep(irrefutableMatcher(pattern), actual.core)])
       }
   }
 
@@ -312,16 +351,16 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
 }
 
 // That a step's value is one of the module's, giving its type and the type of what it holds.
-@Inferring private step(monad: MonadFunctions, value: Expression, scope: Scope, context: Context): (Type, Type) = when (monad) {
+@Inferring private step(monad: MonadFunctions, value: Expression, scope: Scope, context: Context): (Type, Type, Core) = when (monad) {
   Mapping(name, _, map, _, _) -> {
     (mapped, _, held, _) = mapType(monad, map, context)
     wanted = genericText(mapped)
     actual = infer(value, Some(mapped), scope, context)
     if (!isSubtype(actual.t, mapped, context)) {
       abandon(Globals.problem(context, Positions.of(value), "$name maps $wanted, but this is ${TypeText.shown(actual.t)}"))
-    } else (mapped, held)
+    } else (mapped, held, actual.core)
   }
-  Binding(_, _, _, _) -> (Variable(fresh()), Variable(fresh()))
+  Binding(_, _, _, _) -> (Variable(fresh()), Variable(fresh()), Pending("a step"))
 }
 
 // Without a bind, the steps are paired up with product, as ((a, b), c), and the rest of the block is

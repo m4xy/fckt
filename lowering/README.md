@@ -16,13 +16,14 @@ cases shared between types as polymorphic variants; its handled effects; its spe
 its modules, and each module a functor makes, as a copy of the functor's with the modules given;
 modules as values of their specs; and its functions, with constants, names, calls, externals,
 extensions, operations, handlers, operators, string templates, lists, tuples, lambdas, if, when and
-its patterns, blocks, vars, changing fields, copies, pipes and assertions. Every conformance case
-that prints prints what it should, and it compiles itself: see `fckt.compiler`. What it can't lower
-yet, it fails on, saying what, as a module's block, Options { ... }.
+its patterns, blocks, a module's blocks, Options { ... }, vars, changing fields, copies, pipes and
+assertions. Every conformance case that prints, and every example, prints what it should, and it
+compiles itself: see `fckt.compiler`. What it can't lower, it fails on, saying what.
 
 ## Tests
 
 `test/` holds unit tests of the printer, which `kiln build` runs. fckt's `LoweringTest` holds it to
 the compiler: each conformance case that prints is lowered by `src/test/fckt/lowered.fk`, compiled
 with the core and the standard library this compiler compiles on its own, and run, and must print
-what the case says; a case it can't lower yet is skipped, saying why.
+what the case says, and each example as what this compiler makes of it prints; one it can't lower
+yet is skipped, saying why.

@@ -9,6 +9,9 @@ type BlockStep {
   BindStep(pattern: Matcher, value: Core),
   // var name = value
   VarStep(name: String, value: Core),
+  // x by value, in a module's block: what the value holds, taken apart by the pattern, through the
+  // module's bind, or, without one, paired with the other steps by its product.
+  ByStep(pattern: Matcher, value: Core),
   // A function of the block's own.
   FunctionStep(name: String, parameters: List<Matcher>, body: Core),
 }
