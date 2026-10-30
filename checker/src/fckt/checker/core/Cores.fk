@@ -22,6 +22,7 @@ module Cores {
     Conditional(condition, then, otherwise) -> runs(condition) || runs(then) || runs(otherwise)
     Constructed(_, fields, _) -> fields.any { runs(it) }
     FieldRead(record, _, _) -> runs(record)
+    Copied(record, _, changes) -> runs(record) || changes.any { _, c -> runs(c) }
     NarrowedRead(_, _, _, _) -> false
     Widened(value, _) -> runs(value)
     else -> true
@@ -64,6 +65,7 @@ module Cores {
       BuiltinCase(_) -> []
     } + all(fields)
     FieldRead(record, owner, _) -> [owner] + references(record)
+    Copied(record, owner, changes) -> [owner] + references(record) + all(changes.map { _, c -> c })
     FieldWritten(record, owner, _, value) -> [owner] + references(record) + references(value)
     NarrowedWritten(_, _, _, _, value) -> references(value)
     CaseName(value, cases) -> cases.map { it.owner } + references(value)

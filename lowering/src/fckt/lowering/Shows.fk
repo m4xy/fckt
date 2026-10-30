@@ -1,4 +1,5 @@
 import fckt.effects.Fail
+import fckt.checker.core.*
 import fckt.checker.types.*
 import fckt.ocaml.*
 
@@ -29,6 +30,9 @@ module Shows {
     TypeParameter(name) -> Identifier("show_" + name.lowercase())
     // A declared type's own toString, or else its show function, beside it, given how to show its
     // type parameters.
+    // OCaml's own type: its name, as it can't be seen into.
+    Named(name, _, _) if declarationOf(name).map { it is DeclaredExternal }.getOrElse(false) ->
+      Fun([AnyPat], ConstantExpr(StringConstant("<" + name.split(".").lastOrNone().getOrElse(name) + ">")))
     Named(name, arguments, _) -> {
       shown = OcamlTypes.ocamlArguments(name, arguments).map { show(it) }
       when (toStringOf(name)) {

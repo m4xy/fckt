@@ -5,18 +5,20 @@ import fckt.checker.symbols.*
 import fckt.checker.types.*
 import fckt.ocaml.*
 
-// The program's own code, a module at a time: at each path, the types declared there, with their
-// show functions, and its handled effects, then its function groups and the modules in it, each
-// after what it uses, as OCaml must have them. fckt has no module and package functions that use
-// each other, so there's always such an order.
+// The program's own code, a module at a time: at each path, what's declared there, its types, which
+// OCaml defines together where they name each other, with their show functions, its handled effects,
+// its function groups and the modules in it, each after what it uses, as OCaml must have them. fckt
+// has no modules, packages or types that use each other, but for types in one module, so there's
+// always such an order.
 module Structures {
   @Fail @Lowering items(path: List<String>, own: OwnCode): List<Item> = {
-    types = own.types.filter { declaredAt(it).path == path }
-    effects = own.effects.filter { it.effect.path == path }.flatMap { HandledEffects.declarations(it) }
-    TypeItems.definitions(types) + TypeItems.shows(types) + effects + ordered(partsAt(path, own), own).flatMap { partItems(it, own) }
+    besides = own.besides.filter { p, _ -> p == path }.map { _, item -> item }
+    besides + ordered(partsAt(path, own), own).flatMap { partItems(it, own) }
   }
 
   @Fail @Lowering private partItems(part: Part, own: OwnCode): List<Item> = when (part) {
+    TypesPart(types) -> TypeItems.definitions(types) + TypeItems.shows(types)
+    EffectPart(effect) -> HandledEffects.declarations(effect)
     GroupPart(group) -> {
       bindings = own.groups.find { g, _ -> g == group }.map { _, functions -> functions.map { f, t, body -> binding(f, t, body) } }.getOrElse([])
       if (bindings.isEmpty()) [] else [LetItem(group.recursive, bindings)]
@@ -25,7 +27,7 @@ module Structures {
       name = path.lastOrNone().getOrElse("")
       inner = Lowering(
         toStringOf = typeName -> toStringOf(typeName),
-        typeParametersOf = typeName -> typeParametersOf(typeName),
+        declarationOf = typeName -> declarationOf(typeName),
         isShared = typeName -> isShared(typeName),
         inside = ~path,
       ) {
@@ -50,9 +52,14 @@ module Structures {
     }
   }
 
-  // What's at the path besides its types: its groups, and the modules in it, each where its first
-  // function's group is, then any with no functions.
+  // ---- What's at a path ----
+
+  // The types at the path, those that name each other together, in the order they're declared; its
+  // effects; then its groups, and the modules in it, each where its first function's group is, then
+  // any with no functions.
   private partsAt(path: List<String>, own: OwnCode): List<Part> = {
+    types = own.types.filter { Declarations.declaredAt(it).path == path }
+    effects = own.effects.filter { it.effect.path == path }.map { EffectPart(it) }
     fromGroups = own.groups.mapNotNull { g, _ ->
       groupPath = g.functions.firstOrNone().map { it.path }.getOrElse([])
       if (groupPath == path) Some(GroupPart(g))
@@ -60,48 +67,107 @@ module Structures {
       else None
     }.distinct()
     others = own.modules.filter { m -> m.size == path.size + 1 && m.take(path.size) == path }.map { ModulePart(it) }
-    fromGroups + others.filter { !fromGroups.contains(it) }
+    typeGroups(types).map { TypesPart(it) } + effects + fromGroups + others.filter { !fromGroups.contains(it) }
   }
+
+  // The types, each with those it names that name it back, in the order they're declared.
+  private typeGroups(types: List<TypeDeclaration>): List<List<TypeDeclaration>> = {
+    names = types.map { Declarations.declaredAt(it).name }
+    // The types each names directly, by their places.
+    named = types.map { t -> declaredTypeNames(t).map { n -> names.indexOf(n) }.filter { it >= 0 } }
+    reaching = (0..<types.size).map { i -> reachable([i], [], named) }
+    reaches = (from: Int, to: Int) -> reaching.getOrNone(from).map { it.contains(to) }.getOrElse(false)
+    (groups, _) = (0..<types.size).fold(([], [])) { acc, i ->
+      (found, placed) = acc
+      if (placed.contains(i)) acc
+      else {
+        group = (0..<types.size).filter { j -> j == i || (reaches(i, j) && reaches(j, i)) }
+        (found + [group], placed + group)
+      }
+    }
+    groups.map { group -> group.mapNotNull { types.getOrNone(it) } }
+  }
+
+  // Every index reachable from those to visit, through what each names.
+  private reachable(toVisit: List<Int>, seen: List<Int>, named: List<List<Int>>): List<Int> = when (toVisit) {
+    [] -> seen
+    [i, *rest] -> if (seen.contains(i)) reachable(rest, seen, named) else reachable(rest + named.getOrNone(i).getOrElse([]), seen + [i], named)
+  }
+
+  // ---- Ordering ----
 
   // The parts, each after those it uses, otherwise in the order they're given.
-  private ordered(parts: List<Part>, own: OwnCode): List<Part> = placing(parts, [], own)
+  private ordered(parts: List<Part>, own: OwnCode): List<Part> =
+    placing(parts.map { p -> Using(p, referencesOf(p, own), typeNamesOf(p, own).distinct()) }, [])
 
-  private placing(left: List<Part>, placed: List<Part>, own: OwnCode): List<Part> = when (left) {
+  // A part, with the declarations it uses, and the full names of the types it names.
+  private type Using(part: Part, references: List<Symbol>, typeNames: List<String>)
+
+  private placing(left: List<Using>, placed: List<Part>): List<Part> = when (left) {
     [] -> placed
-    _ -> {
-      ready = left.find { p -> left.none { other -> other != p && uses(p, other, own) } }.getOrElse(left.firstOrNone().getOrElse(ModulePart([])))
-      placing(left.filter { it != ready }, placed + [ready], own)
+    [first, *_] -> {
+      ready = left.find { u -> left.none { other -> other.part != u.part && uses(u, other.part) } }.getOrElse(first)
+      placing(left.filter { it.part != ready.part }, placed + [ready.part])
     }
   }
 
-  // Whether the part uses the other.
-  private uses(part: Part, other: Part, own: OwnCode): Boolean = referencesOf(part, own).any { s -> isIn(s, other) }
-
-  private referencesOf(part: Part, own: OwnCode): List<Symbol> = own.groups.filter { g, _ ->
-    when (part) {
-      GroupPart(group) -> g == group
-      ModulePart(path) -> g.functions.any { f -> f.path.size >= path.size && f.path.take(path.size) == path }
-    }
-  }.flatMap { _, functions -> functions.flatMap { _, _, body -> Cores.references(body.body) } }
+  // Whether the part uses the other: a function, an effect or a type in it.
+  private uses(u: Using, other: Part): Boolean =
+    u.references.any { s -> isIn(s, other) } || u.typeNames.any { name -> typeIsIn(name, other) }
 
   private isIn(s: Symbol, part: Part): Boolean = when (part) {
+    TypesPart(types) -> types.any { Declarations.declaredAt(it).name == s.name }
+    EffectPart(effect) -> effect.effect.name == s.name
     GroupPart(group) -> group.functions.any { it.name == s.name }
-    ModulePart(path) -> s.path.size >= path.size && s.path.take(path.size) == path
+    ModulePart(path) -> within(s.path, path)
   }
 
-  // A type declaration's type parameters.
-  declaredParameters(t: TypeDeclaration): List<String> = when (t) {
-    DeclaredRecord(_, ps, _) -> ps
-    DeclaredCases(_, ps, _) -> ps
-    DeclaredAlias(_, ps, _) -> ps
-    DeclaredExternal(_, ps, _) -> ps
+  private typeIsIn(name: String, part: Part): Boolean = when (part) {
+    TypesPart(types) -> types.any { Declarations.declaredAt(it).name == name }
+    ModulePart(path) -> within(name.split(".").dropLast(1), path)
+    else -> false
   }
 
-  // The declaration a type declaration is of.
-  declaredAt(t: TypeDeclaration): Symbol = when (t) {
-    DeclaredRecord(s, _, _) -> s
-    DeclaredCases(s, _, _) -> s
-    DeclaredAlias(s, _, _) -> s
-    DeclaredExternal(s, _, _) -> s
+  // The declarations the part's code uses.
+  private referencesOf(part: Part, own: OwnCode): List<Symbol> = functionsOf(part, own).flatMap { _, _, body -> Cores.references(body.body) }
+
+  // The types the part names: its functions' types, its types' fields', and its effects' operations'.
+  private typeNamesOf(part: Part, own: OwnCode): List<String> =
+    functionsOf(part, own).flatMap { _, t, _ -> typeNames(t) } + when (part) {
+      TypesPart(types) -> types.flatMap { declaredTypeNames(it) }
+      EffectPart(effect) -> effectTypeNames(effect)
+      GroupPart(_) -> []
+      ModulePart(path) -> own.types.filter { t -> within(Declarations.declaredAt(t).path, path) }.flatMap { declaredTypeNames(it) } +
+        own.effects.filter { e -> within(e.effect.path, path) }.flatMap { effectTypeNames(it) }
+    }
+
+  // The functions in the part, with their types and code.
+  private functionsOf(part: Part, own: OwnCode): List<(Symbol, Type, CoreFunction)> = own.groups.filter { g, _ ->
+    when (part) {
+      GroupPart(group) -> g == group
+      ModulePart(path) -> g.functions.any { f -> within(f.path, path) }
+      else -> false
+    }
+  }.flatMap { _, functions -> functions }
+
+  private within(inner: List<String>, outer: List<String>): Boolean = inner.size >= outer.size && inner.take(outer.size) == outer
+
+  // The full names of the declared types a type names.
+  private typeNames(t: Type): List<String> = when (t) {
+    Named(name, arguments, _) -> [name] + arguments.flatMap { typeNames(it) }
+    Abstract(name, arguments) -> [name] + arguments.flatMap { typeNames(it) }
+    TupleOf(parts) -> parts.flatMap { typeNames(it) }
+    FunctionOf(parameters, result, _) -> parameters.flatMap { typeNames(it) } + typeNames(result)
+    _ -> []
   }
+
+  private declaredTypeNames(t: TypeDeclaration): List<String> = when (t) {
+    DeclaredRecord(_, _, fields) -> fields.flatMap { typeNames(it.t) }
+    DeclaredCases(_, _, cases) -> cases.flatMap { c -> [c.case.owner.name] + c.fields.flatMap { typeNames(it.t) } }
+    DeclaredAlias(_, _, target) -> typeNames(target)
+    DeclaredExternal(_, _, _) -> []
+  }
+
+  private effectTypeNames(e: DeclaredEffect): List<String> =
+    e.operations.flatMap { op -> op.parameters.getOrElse([]).flatMap { typeNames(it) } + typeNames(op.result) }
 }

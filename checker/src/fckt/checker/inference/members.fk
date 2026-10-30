@@ -257,7 +257,10 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
     else -> None
   }
   when (record) {
-    Some(r) -> Typed(copied(at, memberAt, r, receiver, arguments, scope, context), None, Pending("a record's copy"))
+    Some(r) -> {
+      changes = copied(at, memberAt, r, receiver, arguments, scope, context)
+      Typed(receiver, None, Copied(targetCore, r, changes))
+    }
     None -> {
       if (arguments.any { it.name.isSome() }) abandon(Globals.problem(context, at, "named arguments aren't supported in method calls")) else Unit
       // toString() is every value's; a type's own toString takes how to show its type parameters,
@@ -367,8 +370,8 @@ called(function: Symbol, arguments: List<Core>): Core =
   }
 }
 
-// record.copy(field = value): the record, with the fields named changed.
-@Inferring private copied(at: Position, memberAt: Position, record: Symbol, receiver: Type, arguments: List<CallArgument>, scope: Scope, context: Context): Type = {
+// record.copy(field = value): the record, with the fields named changed; each change, as core.
+@Inferring private copied(at: Position, memberAt: Position, record: Symbol, receiver: Type, arguments: List<CallArgument>, scope: Scope, context: Context): List<(String, Core)> = {
   own = Symbols.simpleName(record)
   if (Conversion.isAbstractHere(record, context.place, context.environment.definitions)) abandon(opaque(record, memberAt, context)) else Unit
   privateConstructor = when (record.declaration.definition) {
@@ -385,18 +388,14 @@ called(function: Symbol, arguments: List<Core>): Core =
   }
   types = Conversion.recordFields(record, recordArguments, region, context.environment.definitions, Some(context.place))
   fields = recordFieldsOf(record)
-  arguments.fold([]) { seen, argument ->
+  arguments.fold([]) { changes, argument ->
     fieldName = argument.name.getOrElse("")
     argumentAt = argumentPosition(argument.value)
     index = fields.indexOfFirst { it.name == fieldName }
     if (index < 0) abandon(Globals.problem(context, argumentAt, "${record.name} has no field '$fieldName'"))
-    else if (seen.contains(fieldName)) abandon(Globals.problem(context, argumentAt, "'$fieldName' is passed twice"))
-    else {
-      types.getOrNone(index).forEach { t -> checkArgument(argument.value, t, scope, context) }
-      seen + [fieldName]
-    }
+    else if (changes.any { name, _ -> name == fieldName }) abandon(Globals.problem(context, argumentAt, "'$fieldName' is passed twice"))
+    else changes + types.getOrNone(index).map { t -> (fieldName, checkArgument(argument.value, t, scope, context)) }.toList()
   }
-  receiver
 }
 
 // A type with its unknowns written A, B, ...: Option<A>, as a spec would write it.

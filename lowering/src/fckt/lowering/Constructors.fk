@@ -27,10 +27,10 @@ module Constructors {
   // local, the case's record is bound, for what's matched to read its fields.
   @Lowering pattern(constructor: Constructor, fields: Option<List<Pat>>, narrowed: Option<String>): Pat = when (constructor) {
     RecordConstructor(record) -> when (fields) {
-      Some(ps) -> RecordPat(fieldNames(record).zip(ps).mapIndexed { i, entry ->
+      Some(ps) -> TypedPat(RecordPat(fieldNames(record).zip(ps).mapIndexed { i, entry ->
         (name, p) = entry
         FieldPat(if (i == 0) label(record, name) else Naming.snake(name), p)
-      }, false)
+      }, false), recordType(record))
       None -> AnyPat
     }
     CaseConstructor(c) if isShared(c.owner.name) -> {
@@ -50,6 +50,15 @@ module Constructors {
       }))
     BuiltinCase("None") -> ConstructorPat("None", None)
     BuiltinCase(name) -> ConstructorPat(name, Some(fields.flatMap { it.firstOrNone() }.getOrElse(AnyPat)))
+  }
+
+  // A record, annotated with its type, its type arguments whatever they are, so OCaml can tell its
+  // labels from another record's of the same name.
+  @Lowering annotatedRecord(record: Expr, owner: Symbol): Expr = Annotated(record, recordType(owner))
+
+  @Lowering private recordType(owner: Symbol): Typexpr = {
+    parameters = OcamlTypes.ocamlParameters(declarationOf(owner.name).map { Declarations.parameters(it) }.getOrElse([]))
+    TypeApplication(OcamlTypes.typeReference(owner.name), parameters.map { TypeVar("_") })
   }
 
   // A case, written from the module it's used in: Circle, or Geometry.Circle; or, if its type shares

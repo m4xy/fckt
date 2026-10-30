@@ -1,0 +1,1 @@
+settings = Settings(uses = [library("uk.m4xy:fk-tests-kiln:0.1.0")])

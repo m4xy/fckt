@@ -11,9 +11,9 @@ module TypeItems {
   @Lowering definitions(types: List<TypeDeclaration>): List<Item> =
     if (types.isEmpty()) [] else [TypeItem(types.map { definition(it) })]
 
-  // The show functions, if there are any.
+  // The show functions, if there are any: not for a type with its own toString, which shows it.
   @Fail @Lowering shows(types: List<TypeDeclaration>): List<Item> = {
-    bindings = types.mapNotNull { showBinding(it) }
+    bindings = types.filter { t -> toStringOf(Declarations.declaredAt(t).name).isNone() }.mapNotNull { showBinding(it) }
     if (bindings.isEmpty()) [] else [LetItem(true, bindings)]
   }
 

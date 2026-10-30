@@ -2,13 +2,16 @@ import fckt.checker.core.*
 import fckt.checker.inference.FunctionGroup
 import fckt.checker.symbols.Symbol
 import fckt.checker.types.Type
+import fckt.ocaml.Item
 
 // The program's own code, to lower: its function groups, each after those it uses, with each
-// function's type and code; the types and handled effects it declares; and the path of each module it
-// declares.
+// function's type and code; the types and handled effects it declares; the path of each module and
+// package it declares; and what's at a path besides, by it: the standard library's packages, by the
+// names its code writes them by, in fckt's.
 type OwnCode(
   groups: List<(FunctionGroup, List<(Symbol, Type, CoreFunction)>)>,
   types: List<TypeDeclaration>,
   effects: List<DeclaredEffect>,
   modules: List<List<String>>,
+  besides: List<(List<String>, Item)>,
 )

@@ -1,3 +1,4 @@
+import fckt.checker.core.*
 import fckt.checker.types.*
 import fckt.ocaml.*
 
@@ -16,6 +17,20 @@ module OcamlTypes {
 
   @Lowering private named(name: String, arguments: List<Type>): Typexpr = {
     given = ocamlArguments(name, arguments).map { typexpr(it) }
+    when (declarationOf(name)) {
+      // OCaml's own type, as its OCaml is written, each type parameter P, written 'p, replaced.
+      Some(DeclaredExternal(_, parameters, ocaml)) -> TypeApplication("(" + externalText(ocaml, parameters, given) + ")", [])
+      _ -> builtinOrDeclared(name, given)
+    }
+  }
+
+  private externalText(ocaml: String, parameters: List<String>, given: List<Typexpr>): String =
+    parameters.zip(given).fold(ocaml) { text, entry ->
+      (p, t) = entry
+      text.replace(parameter(p), "(" + Printer.typexpr(t, 0) + ")")
+    }
+
+  @Lowering private builtinOrDeclared(name: String, given: List<Typexpr>): Typexpr = {
     when (name) {
       "Int" -> TypeApplication("int", [])
       "Float" -> TypeApplication("float", [])
@@ -44,7 +59,7 @@ module OcamlTypes {
   ownName(full: String): String = Naming.snake(full.split(".").lastOrNone().getOrElse(full))
 
   // A type's arguments that OCaml has: not those for its effect parameters, nor effects.
-  @Lowering ocamlArguments(name: String, arguments: List<Type>): List<Type> = when (typeParametersOf(name)) {
+  @Lowering ocamlArguments(name: String, arguments: List<Type>): List<Type> = when (declarationOf(name).map { Declarations.parameters(it) }) {
     Some(parameters) if parameters.size == arguments.size -> parameters.zip(arguments).filter { p, _ -> !p.startsWith("@") }.map { _, a -> a }
     _ -> arguments.filter { it !is Effects }
   }

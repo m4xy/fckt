@@ -9,26 +9,36 @@ import fckt.checker.sources.*
 import fckt.lowering.Programs
 import fckt.ocaml.Printer
 
-// Writes to the first argument the OCaml fckt.lowering makes of each conformance case after it, as a
-// program of its own, with the core and the standard library beside it, after "# file": its text;
-// or, where it can't make it, "! " and why: that the case doesn't check, or what it can't lower yet.
+// Writes to the first argument the OCaml fckt.lowering makes of what each argument after it says,
+// with the core and the standard library beside it, after "# file": its text; or, where it can't
+// make it, "! " and why: that it doesn't check, or what it can't lower yet. Each is
+//
+//   <file>                         a conformance case, a program of its own
+//   program <file> <roots>         the file, with the packages in the folders, separated by commas,
+//                                  as its own
 main(args: List<String>) = when (args) {
-  [out, *files] -> {
-    beside = SourceTree(merged(core() + standard()))
-    path(out).writeText(files.map { file -> "# $file\n" + lowered(file, beside) }.joinToString(""))
-  }
+  [out, *commands] -> path(out).writeText(written(commands, merged(core() + standard())))
   else -> Unit
 }
 
-@FileSystem lowered(file: String, beside: SourceTree): String = {
+@FileSystem written(commands: List<String>, beside: Map<List<String>, List<SourceText>>): String = when (commands) {
+  [] -> ""
+  ["program", file, roots, *rest] -> {
+    own = roots.split(",").flatMap { root -> packagesIn(path(root), [], ProgramProject, "$root/") }
+    "# $file\n" + lowered(file, SourceTree(merged(beside.toList() + own))) + written(rest, beside)
+  }
+  [file, *rest] -> "# $file\n" + lowered(file, SourceTree(beside)) + written(rest, beside)
+}
+
+@FileSystem lowered(file: String, tree: SourceTree): String = {
   entry = SourceText(None, ProgramProject, path(file).readText())
-  (program, errors) = Checker.check(entry, beside, true)
+  (program, errors) = Checker.check(entry, tree, true)
   when ((program, errors)) {
     (Some(p), []) -> when (attempt { Programs.ocaml(p) }) {
       Ok(items) -> Printer.file(items)
       Error(why) -> "! can't lower $why\n"
     }
-    else -> "! doesn't check\n"
+    else -> "! doesn't check: " + errors.map { e -> "${e.file.getOrElse("-")} ${e.at.line}:${e.at.column} ${e.message}" }.joinToString("; ") + "\n"
   }
 }
 

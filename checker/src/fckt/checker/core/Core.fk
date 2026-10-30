@@ -27,6 +27,9 @@ type Core {
   Shown(value: Core, t: Type),
   // A record or a case built, its fields in the order it declares them: a value of type t.
   Constructed(constructor: Constructor, fields: List<Core>, t: Type),
+  // record.copy(field = value): the record, with the fields named holding the values given; by its
+  // declaration.
+  Copied(record: Core, owner: Symbol, changes: List<(String, Core)>),
   // A record's field, by its record's declaration and its name.
   FieldRead(record: Core, owner: Symbol, field: String),
   // Which case the value is, as its name, for a type whose cases carry nothing.

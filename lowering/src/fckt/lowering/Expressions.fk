@@ -55,7 +55,21 @@ module Expressions {
     // has a case or a field of the same name; Some, None, Ok and Error are OCaml's.
     Constructed(BuiltinCase(name), fields, _) -> inOrder(fields) { given -> Constructors.built(BuiltinCase(name), given) }
     Constructed(constructor, fields, t) -> inOrder(fields) { given -> Annotated(Constructors.built(constructor, given), OcamlTypes.typexpr(t)) }
-    FieldRead(record, owner, field) -> FieldAccess(expression(record), Constructors.label(owner, field))
+    // The record annotated with its type, so OCaml knows the label wherever another record has it.
+    FieldRead(record, owner, field) -> FieldAccess(Constructors.annotatedRecord(expression(record), owner), Constructors.label(owner, field))
+    // { record with field = value }, the record annotated with its type, so OCaml knows the labels.
+    Copied(record, owner, changes) -> inOrder([record] + changes.map { _, c -> c }) { given ->
+      when (given) {
+        [r, *values] -> {
+          base = Constructors.annotatedRecord(r, owner)
+          RecordExpr(changes.zip(values).mapIndexed { i, entry ->
+            ((name, _), value) = entry
+            FieldValue(if (i == 0) Constructors.label(owner, name) else Naming.snake(name), value)
+          }, Some(base))
+        }
+        else -> fail("copying a record")
+      }
+    }
     // A shared case's fields are bound each to its own name; another's, its record.
     NarrowedRead(local, caseName, caseType, field) ->
       if (isShared(caseType)) Identifier(Constructors.narrowedName(local, caseName) + "_" + Naming.snake(field))

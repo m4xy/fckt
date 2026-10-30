@@ -1,0 +1,21 @@
+import fckt.checker.core.*
+import fckt.checker.symbols.Symbol
+
+// What can be told of a type declaration whatever it is.
+module Declarations {
+  // The declaration it's of.
+  declaredAt(t: TypeDeclaration): Symbol = when (t) {
+    DeclaredRecord(s, _, _) -> s
+    DeclaredCases(s, _, _) -> s
+    DeclaredAlias(s, _, _) -> s
+    DeclaredExternal(s, _, _) -> s
+  }
+
+  // Its type parameters, those for effects among them.
+  parameters(t: TypeDeclaration): List<String> = when (t) {
+    DeclaredRecord(_, ps, _) -> ps
+    DeclaredCases(_, ps, _) -> ps
+    DeclaredAlias(_, ps, _) -> ps
+    DeclaredExternal(_, ps, _) -> ps
+  }
+}

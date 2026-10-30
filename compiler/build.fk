@@ -1,0 +1,7 @@
+// fckt's compiler, written in fckt: fckt.parser, fckt.checker and fckt.lowering, as a command that
+// compiles a program to OCaml. kiln build makes build/bin/compiler.
+import uk.m4xy.kiln.fckt.Fckt
+
+project = Project(name = "compiler", group = "fckt", version = "0.1.0", dependencies = [projectAt("../lowering")])
+
+plugins = [Fckt()]
