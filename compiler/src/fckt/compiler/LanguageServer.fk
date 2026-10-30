@@ -221,24 +221,36 @@ module LanguageServer {
   private editing(session: Session, source: SourceText): String =
     session.open.get(uriOf(source.path.getOrElse(""))).getOrElse(source.text)
 
-  // The folder with build.fk at or above file's, its folders and libraries as .kiln/paths says.
+  // The folder with build.fk at or above file's, its folders and libraries as .kiln/paths says;
+  // and, for a file in a folder a scope in .kiln/scopes names, as a plugin's tests are, that
+  // folder, and the libraries its files see too.
   @FileSystem private projectOf(file: Path): Project = {
     start = file.parent.getOrElse(path("."))
     root = rootAbove(start).getOrElse(start)
     paths = root.resolve(".kiln/paths")
     if (paths.exists()) {
       lines = paths.readLines()
+      scopes = root.resolve(".kiln/scopes")
+      scoped = (if (scopes.isDirectory()) scopes.listFiles() else []).map { it.readLines() }.filter {
+        scope -> scope.filter { it.startsWith("folder ") }.any { line ->
+          file.value.startsWith(at(root, line.removePrefix("folder ")).value + "/")
+        }
+      }.flatMap { it }
       Project(
         root,
-        lines.filter { it.startsWith("source ") }.map { line ->
-          folder = line.removePrefix("source ")
-          if (folder.startsWith("/")) path(folder) else root.resolve(folder)
-        }.filter { it.isDirectory() },
-        lines.filter { it.startsWith("library ") }.map { path(it.removePrefix("library ")) },
+        (lines + scoped).filter { it.startsWith("source ") || it.startsWith("folder ") }.map { line ->
+          at(root, line.substringAfter(" "))
+        }.filter { it.isDirectory() }.distinct(),
+        (lines + scoped).filter { it.startsWith("library ") }.map {
+          path(it.removePrefix("library "))
+        }.distinct(),
       )
     }
     else Project(root, [root.resolve("src")].filter { it.isDirectory() }, [])
   }
+
+  private at(root: Path, folder: String): Path =
+    if (folder.startsWith("/")) path(folder) else root.resolve(folder)
 
   @FileSystem private rootAbove(folder: Path): Option<Path> =
     if (folder.resolve("build.fk").exists()) Some(folder)
