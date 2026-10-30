@@ -1,0 +1,9 @@
+// What a constructor carries.
+type Carried {
+  // A: nothing.
+  Bare,
+  // B of int * string
+  Values(typexprs: List<Typexpr>),
+  // C of { x : int }
+  InlineRecord(fields: List<FieldDeclaration>),
+}

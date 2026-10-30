@@ -1,0 +1,8 @@
+// A type, as OCaml writes it: 'a, int list, (int, string) result, int -> bool, int * string.
+type Typexpr {
+  TypeVariable(name: String),
+  // A type constructor with its arguments, if it takes any: the name may be a path, M.t.
+  TypeApplication(name: String, arguments: List<Typexpr>),
+  Arrow(parameter: Typexpr, result: Typexpr),
+  Product(parts: List<Typexpr>),
+}

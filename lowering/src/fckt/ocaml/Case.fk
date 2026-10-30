@@ -1,0 +1,2 @@
+// A match's case: | pattern when guard -> body.
+type Case(pattern: Pat, guard: Option<Expr>, body: Expr)

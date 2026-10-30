@@ -1,0 +1,7 @@
+// What a module is defined as.
+type ModuleExpr {
+  // struct ... end
+  Structure(items: List<Item>),
+  // Another module, by its path: Fckt_std.Fckt.Io.
+  ModulePath(path: String),
+}

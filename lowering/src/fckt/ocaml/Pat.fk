@@ -1,0 +1,22 @@
+// A pattern, as OCaml writes it.
+type Pat {
+  // _
+  AnyPat,
+  VariablePat(name: String),
+  ConstantPat(constant: Constant),
+  TuplePat(parts: List<Pat>),
+  // [a; b]
+  ListPat(items: List<Pat>),
+  // head :: tail
+  ConsPat(head: Pat, tail: Pat),
+  // A constructor, with what it carries, if it carries anything: Some x, Circle { r }.
+  ConstructorPat(name: String, argument: Option<Pat>),
+  // { a = p; b = q }, or, if it's open, { a = p; _ }.
+  RecordPat(fields: List<FieldPat>, open: Boolean),
+  // p as name
+  AliasPat(pattern: Pat, name: String),
+  // (p : t)
+  TypedPat(pattern: Pat, typexpr: Typexpr),
+  // p | q
+  OrPat(left: Pat, right: Pat),
+}

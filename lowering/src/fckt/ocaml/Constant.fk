@@ -1,0 +1,8 @@
+// A constant, as OCaml writes it. A fckt Char is an Int in OCaml, its code point.
+type Constant {
+  IntConstant(value: Int),
+  FloatConstant(value: Float),
+  StringConstant(value: String),
+  BooleanConstant(value: Boolean),
+  UnitConstant,
+}

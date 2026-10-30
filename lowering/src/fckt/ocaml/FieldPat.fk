@@ -1,0 +1,2 @@
+// A record pattern's field: its name, and the pattern its value must match.
+type FieldPat(name: String, pattern: Pat)

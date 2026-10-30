@@ -1,0 +1,11 @@
+// What a type is.
+type TypeBody {
+  // type t: nothing said of it.
+  AbstractType,
+  // type t = int list
+  AliasType(typexpr: Typexpr),
+  // type t = { a : int; mutable b : string }
+  RecordType(fields: List<FieldDeclaration>),
+  // type t = A | B of int | C of { x : int }
+  VariantType(constructors: List<ConstructorDeclaration>),
+}

@@ -1,0 +1,32 @@
+// An expression, as OCaml writes it.
+type Expr {
+  // A value by name, which may be a path: x, List.map, Fckt.Io.Terminal.print.
+  Identifier(path: String),
+  ConstantExpr(constant: Constant),
+  // f a b
+  Application(function: Expr, arguments: List<Expr>),
+  // a + b, a ^ b, a :: b: any infix operator.
+  Infix(operator: String, left: Expr, right: Expr),
+  // fun p q -> body
+  Fun(parameters: List<Pat>, body: Expr),
+  // let [rec] b1 and b2 in body
+  LetIn(recursive: Boolean, bindings: List<Binding>, body: Expr),
+  // first; then
+  Sequence(first: Expr, then: Expr),
+  IfThenElse(condition: Expr, then: Expr, otherwise: Expr),
+  Match(subject: Expr, cases: List<Case>),
+  TupleExpr(parts: List<Expr>),
+  ListExpr(items: List<Expr>),
+  // { a = x; b = y }, or { base with a = x }.
+  RecordExpr(fields: List<FieldValue>, base: Option<Expr>),
+  // record.field
+  FieldAccess(record: Expr, field: String),
+  // record.field <- value
+  FieldUpdate(record: Expr, field: String, value: Expr),
+  // A constructor, with what it carries, if it carries anything: Some x, Circle { r = 1.0 }.
+  Construction(name: String, argument: Option<Expr>),
+  // (e : t)
+  Annotated(expression: Expr, typexpr: Typexpr),
+  // OCaml written out already, as an external's is: printed in parentheses, as it is.
+  Verbatim(code: String),
+}

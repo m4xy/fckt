@@ -1,0 +1,2 @@
+// A variant type's constructor, and what it carries.
+type ConstructorDeclaration(name: String, carries: Carried)

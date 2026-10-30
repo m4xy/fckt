@@ -1,0 +1,13 @@
+// A structure item: what a .ml file, or a module's struct, is made of.
+type Item {
+  // let [rec] b1 and b2
+  LetItem(recursive: Boolean, bindings: List<Binding>),
+  // type a = ... and b = ...
+  TypeItem(definitions: List<TypeDefinition>),
+  // module Name = struct ... end, or another module expression.
+  ModuleItem(name: String, definition: ModuleExpr),
+  // type _ Effect.t += Name : a -> r Effect.t | ...: an effect's operations, as OCaml 5's.
+  EffectItem(operations: List<EffectOperation>),
+  // (* text *)
+  CommentItem(text: String),
+}

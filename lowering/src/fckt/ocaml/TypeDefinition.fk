@@ -1,0 +1,2 @@
+// One type in a type definition: its name, its parameters, as 'a, and what it is.
+type TypeDefinition(name: String, parameters: List<String>, body: TypeBody)

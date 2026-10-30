@@ -1,0 +1,8 @@
+// fckt.lowering: turning what fckt.checker has checked into OCaml, written in fckt, toward a compiler
+// that compiles itself. fckt.ocaml is the OCaml it writes, as a tree, and the text of it.
+import uk.m4xy.kiln.fckt.Fckt
+import uk.m4xy.fktests.kiln.*
+
+project = Project(name = "lowering", group = "fckt", version = "0.1.0", dependencies = [projectAt("../checker")])
+
+plugins = [Fckt(), FkTests()]

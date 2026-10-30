@@ -1,0 +1,2 @@
+// A record type's field: its name, its type, and whether it can be changed.
+type FieldDeclaration(name: String, typexpr: Typexpr, mutable: Boolean)

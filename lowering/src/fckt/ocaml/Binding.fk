@@ -1,0 +1,3 @@
+// What let binds: a name, or a pattern, given parameters, maybe its result's type, and its body.
+// let f (x : int) : int = x + 1 binds f, with the parameter (x : int), to x + 1.
+type Binding(pattern: Pat, parameters: List<Pat>, result: Option<Typexpr>, body: Expr)

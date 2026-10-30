@@ -1,0 +1,289 @@
+// OCaml's text for a tree of it: a .ml file's, an item's, an expression's. Parentheses go where
+// OCaml needs them: around what binds more loosely than where it is, and around a construct that
+// goes on to the right, as let ... in and match do, where something follows it.
+module Printer {
+  // A .ml file: its items, with a blank line between each.
+  file(items: List<Item>): String = items.map { item(it, "") }.joinToString("\n\n") + "\n"
+
+  // ---- Items ----
+
+  // The item, its lines after the first indented by indent.
+  item(i: Item, indent: String): String = when (i) {
+    LetItem(recursive, bindings) -> bindingGroup(if (recursive) "let rec" else "let", bindings, indent)
+    TypeItem(definitions) -> definitions.mapIndexed { n, d -> (if (n == 0) "type " else "${indent}and ") + typeDefinition(d, indent) }.joinToString("\n")
+    ModuleItem(name, definition) -> "module $name = ${moduleExpr(definition, indent)}"
+    EffectItem(operations) -> "type _ Effect.t +=" + operations.map { "\n$indent  | ${effectOperation(it)}" }.joinToString("")
+    CommentItem(text) -> "(* $text *)"
+  }
+
+  private moduleExpr(m: ModuleExpr, indent: String): String = when (m) {
+    Structure(items) -> {
+      inner = indent + "  "
+      "struct\n" + items.map { inner + item(it, inner) }.joinToString("\n\n") + "\n${indent}end"
+    }
+    ModulePath(path) -> path
+  }
+
+  private effectOperation(o: EffectOperation): String =
+    o.name + " : " + (o.parameters.map { typexpr(it, arrowParameter) + " -> " }.joinToString("")) + typexpr(o.result, applied) + " Effect.t"
+
+  private bindingGroup(keyword: String, bindings: List<Binding>, indent: String): String =
+    bindings.mapIndexed { n, b -> (if (n == 0) "$keyword " else "${indent}and ") + binding(b, indent) }.joinToString("\n")
+
+  // f (x : int) : int = body, the body on a line of its own.
+  private binding(b: Binding, indent: String): String = {
+    inner = indent + "  "
+    "${head(b)} =\n$inner${expr(b.body, Anywhere, inner)}"
+  }
+
+  // What's bound, with its parameters and the type of its result, if it says.
+  private head(b: Binding): String =
+    pat(b.pattern, atomicPattern) + b.parameters.map { " " + pat(it, atomicPattern) }.joinToString("") + b.result.map { " : " + typexpr(it, 0) }.getOrElse("")
+
+  // ---- Types ----
+
+  private typeDefinition(d: TypeDefinition, indent: String): String = typeParameters(d.parameters) + d.name + when (d.body) {
+    AbstractType -> ""
+    AliasType(t) -> " = " + typexpr(t, 0)
+    RecordType(fields) -> " = " + recordFields(fields)
+    VariantType(constructors) -> " =" + constructors.map { "\n$indent  | " + constructorDeclaration(it) }.joinToString("")
+  }
+
+  private typeParameters(parameters: List<String>): String = when (parameters) {
+    [] -> ""
+    [one] -> "$one "
+    _ -> "(${parameters.joinToString(", ")}) "
+  }
+
+  private recordFields(fields: List<FieldDeclaration>): String =
+    "{ " + fields.map { f -> (if (f.mutable) "mutable " else "") + "${f.name} : ${typexpr(f.typexpr, 0)}" }.joinToString("; ") + " }"
+
+  private constructorDeclaration(c: ConstructorDeclaration): String = c.name + when (c.carries) {
+    Bare -> ""
+    Values(typexprs) -> " of " + typexprs.map { typexpr(it, productPart) }.joinToString(" * ")
+    InlineRecord(fields) -> " of " + recordFields(fields)
+  }
+
+  // How tightly each type binds: an arrow least, then a product, then an application.
+  private arrowLevel: Int = 1
+  private productLevel: Int = 2
+  private applied: Int = 3
+  private arrowParameter: Int = 2
+  private productPart: Int = 3
+
+  // The type, in parentheses if it binds more loosely than minimum.
+  typexpr(t: Typexpr, minimum: Int): String = {
+    level = when (t) {
+      Arrow(_, _) -> arrowLevel
+      Product(_) -> productLevel
+      _ -> applied
+    }
+    text = when (t) {
+      TypeVariable(name) -> name
+      TypeApplication(name, []) -> name
+      TypeApplication(name, [argument]) -> typexpr(argument, applied) + " " + name
+      TypeApplication(name, arguments) -> "(" + arguments.map { typexpr(it, 0) }.joinToString(", ") + ") " + name
+      Arrow(parameter, result) -> typexpr(parameter, arrowParameter) + " -> " + typexpr(result, arrowLevel)
+      Product(parts) -> parts.map { typexpr(it, productPart) }.joinToString(" * ")
+    }
+    if (level < minimum) "($text)" else text
+  }
+
+  // ---- Patterns ----
+
+  // How tightly each pattern binds: as, then |, then ::, then a constructor applied, then the rest.
+  private aliasPattern: Int = 1
+  private orPattern: Int = 2
+  private consPattern: Int = 3
+  private constructorPattern: Int = 4
+  private atomicPattern: Int = 5
+
+  pat(p: Pat, minimum: Int): String = {
+    level = when (p) {
+      AliasPat(_, _) -> aliasPattern
+      OrPat(_, _) -> orPattern
+      ConsPat(_, _) -> consPattern
+      ConstructorPat(_, Some(_)) -> constructorPattern
+      _ -> atomicPattern
+    }
+    text = when (p) {
+      AnyPat -> "_"
+      VariablePat(name) -> name
+      ConstantPat(c) -> constant(c)
+      TuplePat(parts) -> "(" + parts.map { pat(it, orPattern) }.joinToString(", ") + ")"
+      ListPat(items) -> "[" + items.map { pat(it, orPattern) }.joinToString("; ") + "]"
+      ConsPat(head, tail) -> pat(head, constructorPattern) + " :: " + pat(tail, consPattern)
+      ConstructorPat(name, None) -> name
+      ConstructorPat(name, Some(argument)) -> name + " " + pat(argument, atomicPattern)
+      RecordPat(fields, open) -> "{ " + (fields.map { f -> "${f.name} = ${pat(f.pattern, orPattern)}" } + (if (open) ["_"] else [])).joinToString("; ") + " }"
+      AliasPat(pattern, name) -> pat(pattern, orPattern) + " as " + name
+      TypedPat(pattern, t) -> "(" + pat(pattern, aliasPattern) + " : " + typexpr(t, 0) + ")"
+      OrPat(left, right) -> pat(left, orPattern) + " | " + pat(right, consPattern)
+    }
+    if (level < minimum) "($text)" else text
+  }
+
+  // ---- Expressions ----
+
+  // The expression, as it's written where it is, its lines after the first indented by indent.
+  expression(e: Expr, indent: String): String = expr(e, Anywhere, indent)
+
+  private expr(e: Expr, place: Place, indent: String): String =
+    if (needsParentheses(e, place)) "(" + bare(e, indent + " ") + ")" else bare(e, indent)
+
+  private bare(e: Expr, indent: String): String = when (e) {
+    Identifier(path) -> path
+    ConstantExpr(c) -> constant(c)
+    Application(function, arguments) -> expr(function, Head, indent) + arguments.map { " " + expr(it, Argument, indent) }.joinToString("")
+    Infix(operator, left, right) -> {
+      level = operatorLevel(operator)
+      // A right-associative operator's right operand can be another of its level, as in a :: b :: c.
+      fromRight = rightAssociative.contains(operator)
+      expr(left, Operand(if (fromRight) level + 1 else level), indent) + " $operator " + expr(right, Operand(if (fromRight) level else level + 1), indent)
+    }
+    Fun(parameters, body) -> "fun " + parameters.map { pat(it, atomicPattern) }.joinToString(" ") + " -> " + expr(body, Anywhere, indent + "  ")
+    LetIn(recursive, bindings, body) -> {
+      keyword = if (recursive) "let rec" else "let"
+      bindings.mapIndexed { n, b -> (if (n == 0) "$keyword " else "\n${indent}and ") + head(b) + " = " + expr(b.body, LetValue, indent + "  ") }.joinToString("") +
+        " in\n$indent" + expr(body, Anywhere, indent)
+    }
+    Sequence(first, then) -> expr(first, SequenceFirst, indent) + ";\n$indent" + expr(then, Anywhere, indent)
+    IfThenElse(condition, then, otherwise) ->
+      "if ${expr(condition, LetValue, indent)} then ${expr(then, Branch, indent + "  ")} else ${expr(otherwise, Branch, indent + "  ")}"
+    Match(subject, cases) -> {
+      inner = indent + "    "
+      "match ${expr(subject, LetValue, indent)} with" + cases.mapIndexed { n, c ->
+        guard = c.guard.map { " when " + expr(it, LetValue, inner) }.getOrElse("")
+        "\n$indent| ${pat(c.pattern, 0)}$guard -> ${expr(c.body, CaseBody(n == cases.size - 1), inner)}"
+      }.joinToString("")
+    }
+    TupleExpr(parts) -> "(" + parts.map { expr(it, Element, indent) }.joinToString(", ") + ")"
+    ListExpr(items) -> "[" + items.map { expr(it, Element, indent) }.joinToString("; ") + "]"
+    RecordExpr(fields, base) ->
+      "{ " + base.map { expr(it, Argument, indent) + " with " }.getOrElse("") + fields.map { f -> "${f.name} = ${expr(f.value, Element, indent)}" }.joinToString("; ") + " }"
+    FieldAccess(record, field) -> expr(record, Target, indent) + "." + field
+    FieldUpdate(record, field, value) -> expr(record, Target, indent) + "." + field + " <- " + expr(value, Operand(updateLevel + 1), indent)
+    Construction(name, None) -> name
+    Construction(name, Some(argument)) -> name + " " + expr(argument, Argument, indent)
+    Annotated(inner, t) -> "(" + expr(inner, Anywhere, indent) + " : " + typexpr(t, 0) + ")"
+    Verbatim(code) -> "($code)"
+  }
+
+  // Where an expression is, which says whether it needs parentheses.
+  private type Place {
+    // Where anything can be, as a body or the rest of a sequence.
+    Anywhere,
+    // Where a sequence can't be, as a let's value, a condition, or what's matched.
+    LetValue,
+    // Before ; in a sequence.
+    SequenceFirst,
+    // An if's then or else.
+    Branch,
+    // A match case's body; the last's has nothing after it.
+    CaseBody(last: Boolean),
+    // An item of a tuple, a list or a record.
+    Element,
+    // An operator's operand, which binds at least as tightly as level.
+    Operand(level: Int),
+    // What's applied, in an application.
+    Head,
+    // An argument, or what a constructor carries.
+    Argument,
+    // What a field is read from.
+    Target,
+  }
+
+  private needsParentheses(e: Expr, place: Place): Boolean = when (place) {
+    Anywhere -> false
+    LetValue -> level(e) == sequenceLevel
+    SequenceFirst -> level(e) <= sequenceLevel || endsOpen(e)
+    Branch -> level(e) < ifLevel
+    CaseBody(last) -> !last && endsInMatch(e)
+    Element -> level(e) <= updateLevel
+    Operand(minimum) -> level(e) < minimum
+    Head -> level(e) < applicationLevel
+    Argument -> level(e) < fieldLevel
+    Target -> level(e) < fieldLevel
+  }
+
+  // How tightly each expression binds, as OCaml's manual orders them.
+  private openLevel: Int = 0
+  private sequenceLevel: Int = 10
+  private ifLevel: Int = 15
+  private updateLevel: Int = 20
+  private applicationLevel: Int = 90
+  private fieldLevel: Int = 95
+  private atomicLevel: Int = 100
+
+  private level(e: Expr): Int = when (e) {
+    Fun(_, _) -> openLevel
+    LetIn(_, _, _) -> openLevel
+    Match(_, _) -> openLevel
+    Sequence(_, _) -> sequenceLevel
+    IfThenElse(_, _, _) -> ifLevel
+    FieldUpdate(_, _, _) -> updateLevel
+    Infix(operator, _, _) -> operatorLevel(operator)
+    Application(_, _) -> applicationLevel
+    Construction(_, Some(_)) -> applicationLevel
+    FieldAccess(_, _) -> fieldLevel
+    _ -> atomicLevel
+  }
+
+  // Whether it goes on to the right, past anything after it, unless it's in parentheses: a fun's,
+  // a let's or a match's last part is as long as it can be.
+  private endsOpen(e: Expr): Boolean = level(e) == openLevel
+
+  // Whether it ends in a match, whose cases would take those of a match around it.
+  private endsInMatch(e: Expr): Boolean = when (e) {
+    Match(_, _) -> true
+    Fun(_, body) -> endsInMatch(body)
+    LetIn(_, _, body) -> endsInMatch(body)
+    Sequence(_, then) -> endsInMatch(then)
+    else -> false
+  }
+
+  // An infix operator's level, by how it starts, as OCaml decides.
+  private operatorLevel(operator: String): Int =
+    if (operator == "**") 80
+    else if (["*", "/", "%", "mod", "land", "lor", "lxor", "lsl", "lsr", "asr"].any { operator.startsWith(it) } && operator != "**") 70
+    else if (operator == "::") 55
+    else if (operator.startsWith("+") || operator.startsWith("-")) 60
+    else if (operator.startsWith("@") || operator.startsWith("^")) 50
+    else if (operator == "&&" || operator == "&") 35
+    else if (operator == "||" || operator == "or") 30
+    else if (operator == ":=") 25
+    else 40
+
+  private rightAssociative: List<String> = ["**", "::", "@", "^", "&&", "||", ":="]
+
+  // ---- Constants ----
+
+  constant(c: Constant): String = when (c) {
+    IntConstant(n) -> if (n < 0) "($n)" else n.toString()
+    FloatConstant(x) -> floatText(x)
+    StringConstant(s) -> quoted(s)
+    BooleanConstant(b) -> b.toString()
+    UnitConstant -> "()"
+  }
+
+  private floatText(x: Float): String = {
+    text = x.toString()
+    if (text == "NaN") "nan"
+    else if (text == "Infinity") "infinity"
+    else if (text == "-Infinity") "neg_infinity"
+    else if (x < 0.0) "($text)"
+    else text
+  }
+
+  // The text as an OCaml string literal.
+  quoted(text: String): String = "\"" + text.toList().map { c -> escaped(c) }.joinToString("") + "\""
+
+  private escaped(c: Char): String =
+    if (c == '"') "\\\""
+    else if (c == '\\') "\\\\"
+    else if (c == '\n') "\\n"
+    else if (c == '\t') "\\t"
+    else if (c == '\r') "\\r"
+    else if (c.code < 32) "\\" + (if (c.code < 10) "00" else "0") + c.code.toString()
+    else c.toString()
+}
