@@ -1,0 +1,22 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+run(block: () -> Unit): Unit = block()
+
+each(xs: List<Int>, f: (Int) -> Unit): Unit = xs.forEach(f)
+
+main() = {
+  run { }
+  each([1, 2]) { }
+  n = 3
+  when (n) {
+    1 -> println("one")
+    else -> {}
+  }
+  if (n > 5) { } else println("small")
+}
+
+// prints: small

@@ -1247,7 +1247,7 @@ module Parser {
     statements = statementList(s, [])
     expect(s, RightBrace, "'}'")
     when (statements.lastOrNone()) {
-      None -> reject(at, "a block needs a result expression")
+      None -> Block(at, [], Name(at, "Unit"), false)
       Some(Binding(lastAt, _, None, None, _, false)) -> Block(at, statements, Name(lastAt, "Unit"), true)
       Some(Evaluation(_, e)) -> Block(at, statements.dropLast(1), e, false)
       Some(last) -> reject(statementAt(last), "a block must end with an expression, not a binding")

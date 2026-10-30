@@ -1181,7 +1181,7 @@ class Parser(private val tokens: List<Token>, private val file: String? = null, 
             }
         }
         expect(T.RBRACE, "'}'")
-        val last = statements.removeLastOrNull() ?: throw error("a block needs a result expression", pos)
+        val last = statements.removeLastOrNull() ?: return Expr.Block(pos, emptyList(), Expr.Name(pos, "Unit"))
         if (last is Statement.Binding && !last.isVar && last.params == null && last.returnType == null) {
             return Expr.Block(pos, statements + last, Expr.Name(last.pos, "Unit"), endsWith = last)
         }
