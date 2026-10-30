@@ -1,0 +1,71 @@
+import fckt.collections.Maps.*
+import fckt.checker.symbols.*
+import fckt.checker.types.*
+import fckt.parser.*
+
+// A value's type, with each row of effects it holds only as what its functions may do left open,
+// for any more: a List<Route<@Database>> is a List<Route<@Database @Clock>> too, as its routes do
+// no more than that allows. Only where more can't be done by what's given to the value, so not in a
+// function's parameters, nor where a type's parameter isn't covariant. OCaml has no effects, so
+// the value's OCaml type is no more generic for it.
+@Solving widened(t: Type, table: SymbolTable): Scheme = {
+  var opened: List<TypeVariable> = []
+  open = (row: Row) -> when (row.rest) {
+    Some(_) -> row
+    None -> {
+      v = fresh()
+      opened = opened + [v]
+      Row(row.labels, Some(v))
+    }
+  }
+  widenedType = widenedIn(t, true, open, table)
+  Scheme(opened, widenedType)
+}
+
+@Solving private widenedIn(t: Type, positive: Boolean, open: @Solving (Row) -> Row, table: SymbolTable): Type = when (t) {
+  FunctionOf(parameters, result, effects) ->
+    FunctionOf(parameters.map { widenedIn(it, !positive, open, table) }, widenedIn(result, positive, open, table), if (positive) open(effects) else effects)
+  Effects(row) -> if (positive) Effects(open(row)) else t
+  Named(_, _, Some(_)) -> t
+  Named(name, arguments, None) ->
+    Named(name, arguments.mapIndexed { i, a -> if (isCovariant(name, i, table)) widenedIn(a, positive, open, table) else a }, None)
+  TupleOf(elements) -> TupleOf(elements.map { widenedIn(it, positive, open, table) })
+  _ -> t
+}
+
+// Whether the type's parameter at index is only ever given out by its values: as List's are, or a
+// type's whose fields that can't change hold it only as what they give, or what their functions do.
+// A field that can change, or another type that might take it in, and it isn't.
+private isCovariant(name: String, index: Int, table: SymbolTable): Boolean =
+  if (["List", "Option", "Result", "Lazy"].contains(name)) true
+  else when (table.records.get(name).orElse { table.caseTypes.get(name) }.map { it.declaration.definition }) {
+    Some(RecordDefinition(parameters, fields, _, _, None)) -> holdsOnlyGiven(parameters, fields, index, lastPart(name))
+    Some(CasesDefinition(parameters, cases, _, _)) -> holdsOnlyGiven(parameters, cases.flatMap { it.fields }, index, lastPart(name))
+    _ -> false
+  }
+
+private holdsOnlyGiven(parameters: List<String>, fields: List<Field>, index: Int, own: String): Boolean = when (parameters.getOrNone(index)) {
+  Some(p) -> fields.all { f -> if (f.variable) !mentions(f.fieldType, p) else only(f.fieldType, p, true, own) }
+  None -> false
+}
+
+private only(ref: TypeRef, p: String, positive: Boolean, own: String): Boolean = when (ref) {
+  NamedType(_, name, arguments) ->
+    if (name == p) positive
+    else if (arguments.none { mentions(it, p) }) true
+    else if (["List", "Option", "Result", "Lazy"].contains(name) || name == own) arguments.all { only(it, p, positive, own) }
+    else false
+  FunctionType(_, parameters, result, effects) ->
+    parameters.all { only(it, p, !positive, own) } && only(result, p, positive, own) && (positive || effects.none { "@" + it.name == p })
+  TupleType(_, elements) -> elements.all { only(it, p, positive, own) }
+  EffectsType(_, effects) -> positive || effects.none { "@" + it.name == p }
+}
+
+private mentions(ref: TypeRef, p: String): Boolean = when (ref) {
+  NamedType(_, name, arguments) -> name == p || arguments.any { mentions(it, p) }
+  FunctionType(_, parameters, result, effects) -> parameters.any { mentions(it, p) } || mentions(result, p) || effects.any { "@" + it.name == p }
+  TupleType(_, elements) -> elements.any { mentions(it, p) }
+  EffectsType(_, effects) -> effects.any { "@" + it.name == p }
+}
+
+private lastPart(name: String): String = name.split(".").lastOrNone().getOrElse(name)

@@ -90,7 +90,7 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
   }
   withSchemes = signatures.zip(done).fold(known) { k, entry ->
     (s, row) = entry
-    withScheme(s, row, k)
+    withScheme(s, row, k, environment.definitions.namespace.table)
   }.copy(bodies = bodies.fold(known.bodies) { all, entry ->
     (name, body) = entry
     all.put(name, settled(body))
@@ -318,7 +318,7 @@ private allows(effects: List<String>): String = {
 // must have stayed unknown, each its own. A top-level value isn't generic, as OCaml's value
 // restriction wouldn't make most generic either, and lives as long as the program, as do the values
 // it holds.
-@Solving @Abandoning private withScheme(s: Signature, done: Row, known: Known): Known = {
+@Solving @Abandoning private withScheme(s: Signature, done: Row, known: Known, table: SymbolTable): Known = {
   f = s.function
   checkTypeParametersStayed(s)
   t = resolvedFully(when (s.t) {
@@ -336,14 +336,15 @@ private allows(effects: List<String>): String = {
     }
   } else Unit
   final = resolvedFully(t)
-  scheme = if (isValue) Scheme([], final) else Scheme(variablesIn(final), final)
+  // A value isn't generalized, but what effects its functions may do is open.
+  scheme = if (isValue) widened(final, table) else Scheme(variablesIn(final), final)
   // How callers outside its module see it, with an opaque alias there as written.
   outside = s.outside.map { o ->
     shown = resolvedFully(when (o) {
       FunctionOf(parameters, result, _) -> FunctionOf(parameters, result, done)
       other -> other
     })
-    if (isValue) Scheme([], shown) else Scheme(variablesIn(shown), shown)
+    if (isValue) widened(shown, table) else Scheme(variablesIn(shown), shown)
   }
   variables = s.typeVariables.filter { name, _ -> !name.startsWith("@") }.mapNotNull { name, v ->
     when (resolved(Variable(v))) {

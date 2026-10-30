@@ -2241,6 +2241,70 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
     }
 
     /**
+     * A value's [type], with each row of effects it holds only as what its functions may do left
+     * open, for any more: a `List<Route<@Database>>` is a `List<Route<@Database @Clock>>` too, as
+     * its routes do no more than that allows. Only where more can't be done by what's given to the
+     * value, so not in a function's parameters, nor where a type's parameter isn't [covariant].
+     */
+    private fun widened(type: Type): Scheme {
+        val opened = mutableListOf<Type.Var>()
+        fun open(row: Type): Type {
+            val (labels, rest) = Type.row(row)
+            if (rest != null) return row
+            return Type.row(labels, u.fresh().also { opened += it })
+        }
+        fun go(t: Type, positive: Boolean): Type = when (val p = t.prune()) {
+            is Type.Fn -> Type.Fn(p.params.map { go(it, !positive) }, go(p.result, positive), if (positive) open(p.effects) else p.effects)
+            is Type.Con -> when {
+                p.name == Type.EFFECTS -> if (positive) open(p) else p
+                p.region != null -> p
+                else -> Type.Con(p.name, p.args.mapIndexed { i, arg -> if (covariant(p.name, i)) go(arg, positive) else arg }, p.region)
+            }
+            else -> p
+        }
+        val widened = go(type, true)
+        return Scheme(opened, widened)
+    }
+
+    /**
+     * Whether the [index]th of [name]'s type parameters is only ever given out by its values: as
+     * List's are, or a type's whose fields that can't change hold it only as what they give, or
+     * what their functions do. A field that can change, or another type that might take it in, and
+     * it isn't.
+     */
+    private fun covariant(name: String, index: Int): Boolean {
+        if (name in setOf("List", "Option", "Result", "Lazy", Type.TUPLE)) return true
+        val decl = typeDecl(name) ?: return false
+        val (params, fields) = when (decl) {
+            is Decl.Record -> if (decl.external != null) return false else decl.typeParams to decl.fields
+            is Decl.Sealed -> decl.typeParams to decl.variants.flatMap { it.fields }
+            else -> return false
+        }
+        val param = params.getOrNull(index) ?: return false
+        val own = name.substringAfterLast('.')
+        fun only(ref: TypeRef, positive: Boolean): Boolean = when (ref) {
+            is TypeRef.Named -> when {
+                ref.name == param -> positive
+                ref.args.none { mentions(it, param) } -> true
+                ref.name in setOf("List", "Option", "Result", "Lazy") || ref.name == own -> ref.args.all { only(it, positive) }
+                else -> false
+            }
+            is TypeRef.Function -> ref.params.all { only(it, !positive) } && only(ref.result, positive) &&
+                (positive || ref.effects.none { "@" + it.name == param })
+            is TypeRef.Tuple -> ref.elements.all { only(it, positive) }
+            is TypeRef.Effects -> positive || ref.effects.none { "@" + it.name == param }
+        }
+        return fields.all { f -> if (f.isVar) !mentions(f.type, param) else only(f.type, true) }
+    }
+
+    private fun mentions(ref: TypeRef, param: String): Boolean = when (ref) {
+        is TypeRef.Named -> ref.name == param || ref.args.any { mentions(it, param) }
+        is TypeRef.Function -> ref.params.any { mentions(it, param) } || mentions(ref.result, param) || ref.effects.any { "@" + it.name == param }
+        is TypeRef.Tuple -> ref.elements.any { mentions(it, param) }
+        is TypeRef.Effects -> ref.effects.any { "@" + it.name == param }
+    }
+
+    /**
      * [row] without changes to regions [type] doesn't mention: values that were made inside the
      * function and never left it, which no one else can see change. [row] is the function's own,
      * which its parameters' function types share, so it doesn't count as mentioning them.
@@ -2831,9 +2895,11 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             // A top-level value lives as long as the program, and so do the values it holds.
             if (decl.params == null) regionsIn(type).forEach { if (it is Type.Var) u.unify(it, Type.GLOBAL) }
             // Values aren't generalized: OCaml's value restriction wouldn't generalize most of them either.
-            schemes[decl] = if (decl.params == null) Scheme.mono(type) else Scheme(type.freeVars().toList(), type)
+            // But what effects their functions may do is open: a value whose routes do @Database is
+            // one whose routes may do more too, as OCaml has no effects to restrict.
+            schemes[decl] = if (decl.params == null) widened(type) else Scheme(type.freeVars().toList(), type)
             typeParamVars[decl] = vars.filterKeys { !it.startsWith("@") }.mapValues { it.value.prune() as Type.Var }
-            outside[decl]?.let(::seen)?.let { shown -> outsideSchemes[decl] = if (decl.params == null) Scheme.mono(shown) else Scheme(shown.freeVars().toList(), shown) }
+            outside[decl]?.let(::seen)?.let { shown -> outsideSchemes[decl] = if (decl.params == null) widened(shown) else Scheme(shown.freeVars().toList(), shown) }
         }
         for (decl in group.decls) conform(decl)
         // Now its types are known, each `when` must cover every value of its subject's.

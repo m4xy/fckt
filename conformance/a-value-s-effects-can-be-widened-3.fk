@@ -1,0 +1,22 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Users { name(): String }
+effect Orders { count(): Int }
+
+type Job<@E>(run: @E () -> String)
+
+users: List<Job<@Users>> = [Job(() -> name())]
+orders: List<Job<@Orders>> = [Job(() -> "${count()}")]
+
+@Users runAll(): List<String> = (users + orders).map { job ->
+  run = job.run
+  run()
+}
+
+main() = Unit
+
+// error: 'runAll' does @Orders, so it must say so

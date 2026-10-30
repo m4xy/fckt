@@ -1,0 +1,27 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Users { name(): String }
+effect Orders { count(): Int }
+
+type Job<@E>(title: String, run: @E () -> String)
+
+users: List<Job<@Users>> = [Job("user", () -> name())]
+orders: List<Job<@Orders>> = [Job("orders", () -> "${count()}")]
+
+all: List<Job<@Users @Orders>> = users + orders
+
+main() = Users(name = ~"ada") {
+  Orders(count = ~3) {
+    all.forEach { job ->
+      run = job.run
+      println("${job.title}: ${run()}")
+    }
+  }
+}
+
+// prints: user: ada
+// prints: orders: 3

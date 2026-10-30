@@ -1,0 +1,19 @@
+import fckt.io.Console
+import fckt.effects.Fail
+import fckt.effects.Failure.*
+import fckt.collections.Maps.*
+import fckt.collections.Sets.*
+
+effect Users { name(): String }
+effect Orders { count(): Int }
+
+type Slot<@E>(var run: @E () -> String)
+
+users: List<Slot<@Users>> = [Slot(() -> name())]
+orders: List<Slot<@Orders>> = [Slot(() -> "${count()}")]
+
+all: List<Slot<@Users @Orders>> = users + orders
+
+main() = Unit
+
+// error: type mismatch
