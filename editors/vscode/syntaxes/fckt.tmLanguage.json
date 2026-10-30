@@ -29,6 +29,12 @@
           "include": "#chars"
         },
         {
+          "include": "#extension-declaration"
+        },
+        {
+          "include": "#function-declaration"
+        },
+        {
           "include": "#annotations"
         },
         {
@@ -45,9 +51,6 @@
         },
         {
           "include": "#type-declaration"
-        },
-        {
-          "include": "#function-declaration"
         },
         {
           "include": "#destructuring"
@@ -80,6 +83,12 @@
           "include": "#numbers"
         },
         {
+          "include": "#block-parameters"
+        },
+        {
+          "include": "#inline-member"
+        },
+        {
           "include": "#lambda-parameter-list"
         },
         {
@@ -90,6 +99,9 @@
         },
         {
           "include": "#named-argument"
+        },
+        {
+          "include": "#assignment"
         },
         {
           "include": "#builtin-functions"
@@ -227,7 +239,7 @@
       ]
     },
     "import": {
-      "match": "^\\s*(import)\\s+([A-Za-z_][A-Za-z0-9_.]*?)(\\.\\*)?(?:\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*$",
+      "match": "^\\s*(import)\\s+([A-Za-z_][A-Za-z0-9_.]*?)(\\.\\*)?(?:\\s+(as)\\s+([A-Za-z_][A-Za-z0-9_]*))?(?=\\s*(?://|/\\*|$))",
       "captures": {
         "1": {
           "name": "keyword.other.import.fckt"
@@ -272,9 +284,16 @@
               "include": "#comments"
             },
             {
-              "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*[(:])",
+              "match": "^\\s*((?:@[A-Za-z_][A-Za-z0-9_.]*(?:<[^<>]*>)?(?:\\([^()]*\\))?\\s+)*)([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*[(:])",
               "captures": {
                 "1": {
+                  "patterns": [
+                    {
+                      "include": "#annotations"
+                    }
+                  ]
+                },
+                "2": {
                   "name": "entity.name.function.fckt"
                 }
               }
@@ -298,7 +317,7 @@
       ]
     },
     "spec-declaration": {
-      "begin": "\\b(spec)\\s+([A-Z][A-Za-z0-9_]*)\\s*(\\{)",
+      "begin": "\\b(spec)\\s+([A-Z][A-Za-z0-9_]*)\\s*(?:(:)\\s*([A-Z][A-Za-z0-9_.,\\s]*?))?\\s*(\\{)",
       "beginCaptures": {
         "1": {
           "name": "keyword.declaration.fckt"
@@ -307,6 +326,20 @@
           "name": "entity.name.type.interface.fckt string.other.interface.fckt"
         },
         "3": {
+          "name": "punctuation.separator.colon.fckt"
+        },
+        "4": {
+          "patterns": [
+            {
+              "name": "entity.name.type.interface.fckt string.other.interface.fckt",
+              "match": "[A-Z][A-Za-z0-9_]*"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        },
+        "5": {
           "name": "punctuation.section.braces.fckt"
         }
       },
@@ -324,9 +357,16 @@
           "include": "#type-declaration"
         },
         {
-          "match": "^\\s*([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*[(:])",
+          "match": "^\\s*((?:@[A-Za-z_][A-Za-z0-9_.]*(?:<[^<>]*>)?(?:\\([^()]*\\))?\\s+)*)([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*[(:])",
           "captures": {
             "1": {
+              "patterns": [
+                {
+                  "include": "#annotations"
+                }
+              ]
+            },
+            "2": {
               "name": "entity.name.function.fckt"
             }
           }
@@ -469,12 +509,27 @@
       }
     },
     "function-declaration": {
-      "match": "^\\s*(?:(private)\\s+)?([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(?::[^=]*)?=(?![=>]))",
+      "match": "^\\s*((?:@[A-Za-z_][A-Za-z0-9_.]*(?:<[^<>]*>)?(?:\\([^()]*\\))?\\s+)*)((?:(?:private|internal|operator|external|override)\\s+)*)([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\)\\s*(?::[^=]*)?=(?![=>]))",
       "captures": {
         "1": {
-          "name": "storage.modifier.fckt"
+          "patterns": [
+            {
+              "include": "#annotations"
+            },
+            {
+              "include": "#code"
+            }
+          ]
         },
         "2": {
+          "patterns": [
+            {
+              "name": "storage.modifier.fckt",
+              "match": "\\b\\w+\\b"
+            }
+          ]
+        },
+        "3": {
           "name": "entity.name.function.fckt"
         }
       }
@@ -519,18 +574,25 @@
       ]
     },
     "binding": {
-      "match": "^\\s*(?:(private)\\s+)?([a-z_][A-Za-z0-9_]*)(?=\\s*(?::[^=]*)?=(?![=>]))",
+      "match": "^\\s*(?:(private|internal)\\s+)?(?:(var)\\s+)?([a-z_][A-Za-z0-9_]*)(?=\\s*(?::[^=]*)?=(?![=>]))",
       "captures": {
         "1": {
           "name": "storage.modifier.fckt"
         },
         "2": {
+          "name": "storage.type.var.fckt"
+        },
+        "3": {
           "name": "variable.other.definition.fckt"
         }
       }
     },
     "keywords": {
       "patterns": [
+        {
+          "name": "storage.type.var.fckt",
+          "match": "\\bvar\\b"
+        },
         {
           "name": "keyword.control.fckt",
           "match": "\\b(when|if|else|is)\\b"
@@ -574,6 +636,18 @@
         {
           "name": "storage.modifier.fckt",
           "match": "\\bannotation(?=\\s+type\\b)"
+        },
+        {
+          "name": "variable.language.it.fckt",
+          "match": "\\bit\\b"
+        },
+        {
+          "name": "keyword.declaration.fckt",
+          "match": "\\b(effect|spec)(?=\\s+[A-Z])"
+        },
+        {
+          "name": "keyword.control.fckt",
+          "match": "!is\\b"
         }
       ]
     },
@@ -587,14 +661,14 @@
     },
     "option": {
       "name": "entity.name.type.variant.fckt",
-      "match": "\\b(Some|None)\\b"
+      "match": "\\b(Some|None|Ok|Error)\\b"
     },
     "types": {
       "name": "entity.name.type.fckt",
       "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
     },
     "type-arguments": {
-      "begin": "<(?=[A-Z][A-Za-z0-9_\\s,.:<>]*>)",
+      "begin": "<(?=\\s*[@A-Z(_])",
       "end": ">",
       "beginCaptures": {
         "0": {
@@ -608,13 +682,23 @@
       },
       "patterns": [
         {
+          "include": "#annotations"
+        },
+        {
           "include": "#type-arguments"
+        },
+        {
+          "name": "keyword.operator.arrow.fckt",
+          "match": "->"
         },
         {
           "include": "#builtin-types"
         },
         {
           "include": "#types"
+        },
+        {
+          "include": "#wildcard"
         },
         {
           "include": "#punctuation"
@@ -693,7 +777,7 @@
       }
     },
     "named-argument": {
-      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?==(?![=>]))",
+      "match": "(?<=[(,])\\s*([a-z_][A-Za-z0-9_]*)\\s*(?==(?![=>]))",
       "captures": {
         "1": {
           "name": "variable.parameter.named-argument.fckt"
@@ -709,7 +793,7 @@
       }
     },
     "method-call": {
-      "match": "(\\.)\\s*([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "match": "(\\.)\\s*([a-z_][A-Za-z0-9_]*)\\s*(?=\\(|\\{|<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>\\s*\\()",
       "captures": {
         "1": {
           "name": "punctuation.accessor.fckt"
@@ -731,7 +815,7 @@
       }
     },
     "call": {
-      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\(|\\{|<[^<>()]*(?:<[^<>()]*>[^<>()]*)*>\\s*\\()",
       "captures": {
         "1": {
           "name": "entity.name.function.call.fckt"
@@ -744,6 +828,14 @@
     },
     "operators": {
       "patterns": [
+        {
+          "name": "keyword.operator.range.fckt",
+          "match": "\\.\\.<?"
+        },
+        {
+          "name": "keyword.operator.assignment.compound.fckt",
+          "match": "[+\\-*/%]="
+        },
         {
           "name": "keyword.operator.arrow.fckt",
           "match": "->"
@@ -810,6 +902,103 @@
     "identifiers": {
       "name": "variable.other.fckt",
       "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+    },
+    "extension-declaration": {
+      "match": "^\\s*((?:@[A-Za-z_][A-Za-z0-9_.]*(?:<[^<>]*>)?(?:\\([^()]*\\))?\\s+)*)((?:(?:private|internal|operator|external|override)\\s+)*)([A-Z][A-Za-z0-9_]*)(<[^=]*?>)?(\\.)([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*[(:=])",
+      "captures": {
+        "1": {
+          "patterns": [
+            {
+              "include": "#annotations"
+            },
+            {
+              "include": "#code"
+            }
+          ]
+        },
+        "2": {
+          "patterns": [
+            {
+              "name": "storage.modifier.fckt",
+              "match": "\\b\\w+\\b"
+            }
+          ]
+        },
+        "3": {
+          "patterns": [
+            {
+              "include": "#builtin-types"
+            },
+            {
+              "include": "#types"
+            }
+          ]
+        },
+        "4": {
+          "patterns": [
+            {
+              "include": "#type-arguments"
+            },
+            {
+              "include": "#builtin-types"
+            },
+            {
+              "include": "#types"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        },
+        "5": {
+          "name": "punctuation.accessor.fckt"
+        },
+        "6": {
+          "name": "entity.name.function.fckt"
+        }
+      }
+    },
+    "inline-member": {
+      "match": "(?<=\\{)\\s*((?:@[A-Za-z_][A-Za-z0-9_.]*(?:<[^<>]*>)?(?:\\([^()]*\\))?\\s+)*)([a-z_][A-Za-z0-9_]*)(?=\\s*(?:<[^<>]*>)?\\s*\\([^()]*\\)\\s*(?::|=(?![=>])))",
+      "captures": {
+        "1": {
+          "patterns": [
+            {
+              "include": "#annotations"
+            }
+          ]
+        },
+        "2": {
+          "name": "entity.name.function.fckt"
+        }
+      }
+    },
+    "block-parameters": {
+      "match": "(?<=\\{)\\s*([a-z_][A-Za-z0-9_]*(?:\\s*,\\s*[a-z_][A-Za-z0-9_]*)*)\\s*(?=->)",
+      "captures": {
+        "1": {
+          "patterns": [
+            {
+              "include": "#wildcard"
+            },
+            {
+              "name": "variable.parameter.fckt",
+              "match": "[a-z_][A-Za-z0-9_]*"
+            },
+            {
+              "include": "#punctuation"
+            }
+          ]
+        }
+      }
+    },
+    "assignment": {
+      "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=(?:[+\\-*/%]?=)(?![=>]))",
+      "captures": {
+        "1": {
+          "name": "variable.other.fckt"
+        }
+      }
     }
   }
 }
