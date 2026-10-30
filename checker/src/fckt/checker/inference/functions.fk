@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.annotations.*
 import fckt.checker.coverage.*
 import fckt.checker.definitions.*
@@ -79,7 +80,7 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
   known = environment.known
   checking = Environment(environment.definitions, environment.functions, environment.orderedFunctions, environment.extensions, environment.casesByName,
     environment.moduleSpecs, environment.specTypes, environment.operations, known.copy(provisional = provisional, viewed = viewed))
-  signatures.forEach { s -> checkBody(s, checking) }
+  bodies = signatures.mapNotNull { s -> checkBody(s, checking).map { b -> (s.function.name, b) } }
   // What each does as its callers see it: changing values that never left it doesn't count.
   done = signatures.map { s -> masked(s.row, s.t) }
   signatures.zip(done).forEach { s, row -> checkDeclaredArguments(s, row, environment) }
@@ -90,7 +91,10 @@ private inApplication(made: String, d: Diagnostic, environment: Environment): Di
   withSchemes = signatures.zip(done).fold(known) { k, entry ->
     (s, row) = entry
     withScheme(s, row, k)
-  }
+  }.copy(bodies = bodies.fold(known.bodies) { all, entry ->
+    (name, body) = entry
+    all.put(name, settled(body))
+  })
   signatures.fold(withSchemes) { k, s -> conform(s.function, k, environment) }
 }
 
@@ -275,9 +279,9 @@ private allows(effects: List<String>): String = {
   if (doing.isEmpty()) "be pure" else "do ${Doings.shown(doing)}"
 }
 
-// Checks a function's body, as code that does its row; an external's is OCaml, trusted to do what it
-// says, and, if it's @Mutating, to change what it's given.
-@Solving @Abandoning @Covering private checkBody(s: Signature, environment: Environment): Unit = {
+// Checks a function's body, as code that does its row, and gives its code; an external's is OCaml,
+// trusted to do what it says, and, if it's @Mutating, to change what it's given.
+@Solving @Abandoning @Covering private checkBody(s: Signature, environment: Environment): Option<CoreFunction> = {
   f = s.function
   context = contextOf(f, s.typeVariables, environment)
   if (Signatures.isExternal(f)) {
@@ -286,19 +290,20 @@ private allows(effects: List<String>): String = {
       else -> []
     }
     unifyRows(s.row, declaredRow(f, parameters, environment))
-    Unit
+    None
   } else when (Signatures.bodyOf(f)) {
-    None -> Unit
+    None -> None
     Some(body) -> doingIn(s.row, context) {
+      parameters = Signatures.parametersOf(f).getOrElse([])
       when (s.t) {
         FunctionOf(parameterTypes, result, _) -> {
-          scope = Signatures.parametersOf(f).getOrElse([]).zip(parameterTypes).fold(Scopes.empty) { scope, entry ->
+          scope = parameters.zip(parameterTypes).fold(Scopes.empty) { scope, entry ->
             (p, t) = entry
             Scopes.bind(scope, p.name, Local(t))
           }
-          check(body, result, scope, context)
+          Some(CoreFunction(parameters.map { it.name }, check(body, result, scope, context)))
         }
-        other -> check(body, other, Scopes.empty, context)
+        other -> Some(CoreFunction([], check(body, other, Scopes.empty, context)))
       }
     }
   }

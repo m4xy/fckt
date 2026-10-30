@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.definitions.*
 import fckt.checker.diagnostics.*
 import fckt.checker.resolution.*
@@ -22,7 +23,7 @@ import fckt.parser.*
   scope: Scope,
   monad: Option<MonadFunctions>,
   context: Context,
-): Type = {
+): Typed = {
   whole = Variable(fresh())
   independent = when (monad) {
     Some(Mapping(_, _, _, _, _)) -> true
@@ -34,20 +35,23 @@ import fckt.parser.*
     abandon(Globals.problem(context, statements.lastOrNone().map { statementPosition(it) }.getOrElse(at), "a block must end with an expression, not a binding"))
   } else Unit
   when (monad) {
-    None -> infer(result, expected, done.scope, context).t
+    None -> {
+      typed = infer(result, expected, done.scope, context)
+      Typed(typed.t, None, around(done.lines, typed.core))
+    }
     Some(m) ->
       if (independent && done.steps.isNotEmpty()) {
         inner = bindSteps(done.pending, done.scope, context)
         (resultType, blockType) = combine(m, done.steps, at, context)
         check(result, resultType, inner, context)
-        blockType
+        Typed(blockType, None, Pending("a module's block"))
       } else when (pureOf(m)) {
         None -> abandon(Globals.problem(context, positionOfMonad(m), "${nameOf(m)} has no pure, so its block needs a 'by' line"))
         Some(pure) -> when (resolved(Globals.typeOf(pure, positionOfMonad(m), context))) {
           FunctionOf([value], pureResult, _) -> {
             expect(pureResult, done.rest, Positions.of(result), context)
             check(result, value, done.scope, context)
-            whole
+            Typed(whole, None, Pending("a module's block"))
           }
           else -> abandon(Globals.problem(context, positionOfMonad(m), "${pure.name} should take one value, as Monad's pure does"))
         }
@@ -55,26 +59,46 @@ import fckt.parser.*
   }
 }
 
+// A block's core: its lines, in order, around what it gives.
+private around(lines: List<BlockStep>, result: Core): Core = lines.reversed().fold(result) { rest, step ->
+  when (step) {
+    RunStep(core) -> Sequenced(core, rest)
+    BindStep(pattern, value) -> Bound(pattern, value, rest)
+    VarStep(name, value) -> VarBound(name, value, rest)
+    FunctionStep(name, parameters, body) -> FunctionBound(name, parameters, body, rest)
+  }
+}
+
 // A line of a block, checked, and how far the block has got after it.
 @Inferring private line(statement: Statement, before: BlockSoFar, independent: Boolean, monad: Option<MonadFunctions>, context: Context): BlockSoFar = {
   // Without a bind, a line that isn't a by line ends the by lines before it, whose names it can use.
   soFar = if (independent && !isBind(statement) && before.steps.isNotEmpty())
-    BlockSoFar(bindSteps(before.pending, before.scope, context), before.rest, before.steps, [], before.after.orElse { Some(statementPosition(statement)) }, before.assigned)
+    BlockSoFar(bindSteps(before.pending, before.scope, context), before.rest, before.steps, [], before.after.orElse { Some(statementPosition(statement)) }, before.assigned, before.lines)
   else before
   inner = soFar.scope
   when (statement) {
     Evaluation(_, e) -> {
-      infer(e, None, inner, context)
-      withScope(soFar, inner, false)
+      typed = infer(e, None, inner, context)
+      withScope(soFar, inner, false).copy(lines = soFar.lines + [RunStep(typed.core)])
     }
-    Destructuring(at, pattern, value) -> withScope(soFar, bindPattern(at, pattern, infer(value, None, inner, context).t, inner, false, context), false)
+    Destructuring(at, pattern, value) -> {
+      typed = infer(value, None, inner, context)
+      withScope(soFar, bindPattern(at, pattern, typed.t, inner, false, context), false).copy(lines = soFar.lines + [BindStep(irrefutableMatcher(pattern), typed.core)])
+    }
     Bind(at, pattern, value) -> byLine(at, pattern, value, soFar, independent, monad, context)
     Binding(at, name, parameters, valueType, value, variable) -> binding(at, name, parameters, valueType, value, variable, soFar, context)
   }
 }
 
 private withScope(soFar: BlockSoFar, scope: Scope, assigned: Boolean): BlockSoFar =
-  BlockSoFar(scope, soFar.rest, soFar.steps, soFar.pending, soFar.after, assigned)
+  BlockSoFar(scope, soFar.rest, soFar.steps, soFar.pending, soFar.after, assigned, soFar.lines)
+
+// An irrefutable pattern, as a destructuring binding has, as core: names, _, and tuples of them.
+irrefutableMatcher(p: Pattern): Matcher = when (p) {
+  NamePattern(_, name) -> NameMatcher(name)
+  TuplePattern(_, parts) -> TupleMatcher(parts.map { irrefutableMatcher(it) })
+  else -> AnyMatcher
+}
 
 private isBind(s: Statement): Boolean = when (s) {
   Bind(_, _, _) -> true
@@ -98,9 +122,9 @@ private isBind(s: Statement): Boolean = when (s) {
   changed = if (!variable && parameters.isNone() && valueType.isNone()) existing.flatMap { local -> local.region.map { r -> (local, r) } } else None
   when (changed) {
     Some((local, region)) -> {
-      check(value, local.t, inner, context)
+      core = check(value, local.t, inner, context)
       perform(mutating(region), at)
-      withScope(soFar, inner, true)
+      withScope(soFar, inner, true).copy(lines = soFar.lines + [RunStep(VarWritten(name, core))])
     }
     None -> {
       if (Scopes.bindsHere(inner, name)) {
@@ -112,7 +136,8 @@ private isBind(s: Statement): Boolean = when (s) {
           typed = infer(value, declared, inner, context)
           declared.forEach { d -> assign(value, typed, d, context) }
           region = if (variable) Some(Variable(fresh())) else None
-          withScope(soFar, Scopes.bind(inner, name, Local(typed.t, region)), false)
+          step = if (variable) VarStep(name, typed.core) else BindStep(NameMatcher(name), typed.core)
+          withScope(soFar, Scopes.bind(inner, name, Local(typed.t, region)), false).copy(lines = soFar.lines + [step])
         }
         Some(ps) -> {
           checkDistinct(ps.map { p -> (p.name, p.at) }, context)
@@ -125,8 +150,8 @@ private isBind(s: Statement): Boolean = when (s) {
             (p, t) = entry
             Scopes.bind(s, p.name, Local(t))
           }
-          doingIn(row, context) { check(value, result, body, context) }
-          withScope(soFar, withFunction, false)
+          core = doingIn(row, context) { check(value, result, body, context) }
+          withScope(soFar, withFunction, false).copy(lines = soFar.lines + [FunctionStep(name, ps.map { p -> NameMatcher(p.name) }, core)])
         }
       }
     }
@@ -147,7 +172,7 @@ private isBind(s: Statement): Boolean = when (s) {
           abandon(Globals.problem(context, Positions.of(value), "${nameOf(m)} has no bind, so a step can't use $used from an earlier step"))
         }
         (valueType, held) = step(m, value, soFar.scope, context)
-        BlockSoFar(soFar.scope, soFar.rest, soFar.steps + [(valueType, held)], soFar.pending + [(at, pattern, held)], soFar.after, false)
+        BlockSoFar(soFar.scope, soFar.rest, soFar.steps + [(valueType, held)], soFar.pending + [(at, pattern, held)], soFar.after, false, soFar.lines)
       } else {
         (valueType, next, result) = bindType(m, context)
         expect(result, soFar.rest, at, context)
@@ -160,7 +185,7 @@ private isBind(s: Statement): Boolean = when (s) {
           FunctionOf([p], r, _) -> (p, r)
           _ -> (Variable(fresh()), Variable(fresh()))
         }
-        BlockSoFar(bindPattern(at, pattern, nextValue, soFar.scope, true, context), nextResult, soFar.steps, soFar.pending, soFar.after, false)
+        BlockSoFar(bindPattern(at, pattern, nextValue, soFar.scope, true, context), nextResult, soFar.steps, soFar.pending, soFar.after, false, soFar.lines)
       }
   }
 
@@ -236,7 +261,7 @@ private pureOf(monad: MonadFunctions): Option<Symbol> = when (monad) {
         None -> {
           functions = monadFunctions(m, shown, monadAt, context)
           when (block) {
-            Block(blockAt, statements, result, endsInBinding) -> inferBlock(blockAt, statements, result, endsInBinding, None, scope, Some(functions), context)
+            Block(blockAt, statements, result, endsInBinding) -> inferBlock(blockAt, statements, result, endsInBinding, None, scope, Some(functions), context).t
             other -> infer(other, None, scope, context).t
           }
         }

@@ -1,0 +1,14 @@
+import fckt.checker.core.*
+
+// A line of a block, as core: what it binds, or what's run for what it does. A block's core is its
+// steps around what it gives.
+type BlockStep {
+  // Run for what it does, as a line that's only an expression, or changes a var, is.
+  RunStep(core: Core),
+  // A value, taken apart by the pattern.
+  BindStep(pattern: Matcher, value: Core),
+  // var name = value
+  VarStep(name: String, value: Core),
+  // A function of the block's own.
+  FunctionStep(name: String, parameters: List<Matcher>, body: Core),
+}

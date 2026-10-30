@@ -1,0 +1,5 @@
+import fckt.checker.symbols.Symbol
+
+// A handled effect, and the module @HandledBy names as its default, which main runs in unless it
+// handles the effect itself.
+type DefaultHandler(effect: Symbol, handler: Symbol)

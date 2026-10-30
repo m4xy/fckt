@@ -14,6 +14,7 @@ module Printer {
     ModuleItem(name, definition) -> "module $name = ${moduleExpr(definition, indent)}"
     EffectItem(operations) -> "type _ Effect.t +=" + operations.map { "\n$indent  | ${effectOperation(it)}" }.joinToString("")
     CommentItem(text) -> "(* $text *)"
+    VerbatimItem(code) -> code
   }
 
   private moduleExpr(m: ModuleExpr, indent: String): String = when (m) {

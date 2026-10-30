@@ -1,0 +1,39 @@
+// The OCaml functions lowered code calls that fckt's compiler writes beside a program rather than
+// having in its core: showing floats, characters, lists, options and results, and assertEquals.
+module Helpers {
+  items: String = """let fk_show_float f =
+  if Float.is_nan f then "NaN"
+  else if f = Float.infinity then "Infinity"
+  else if f = Float.neg_infinity then "-Infinity"
+  else if f = 0.0 then (if 1.0 /. f < 0.0 then "-0.0" else "0.0")
+  else
+    let rec shortest p = let s = Printf.sprintf "%.*e" (p - 1) (Float.abs f) in if p >= 17 || float_of_string s = Float.abs f then s else shortest (p + 1) in
+    let s = shortest 1 in
+    let i = String.index s 'e' in
+    let digits = String.concat "" (String.split_on_char '.' (String.sub s 0 i)) in
+    let exponent = String.sub s (i + 1) (String.length s - i - 1) in
+    let e = int_of_string (if exponent.[0] = '+' then String.sub exponent 1 (String.length exponent - 1) else exponent) in
+    let n = String.length digits in
+    let a = Float.abs f in
+    let body =
+      if a >= 1e-3 && a < 1e7 then
+        if e >= 0 then
+          (if n > e + 1 then String.sub digits 0 (e + 1) else digits ^ String.make (e + 1 - n) '0') ^ "." ^
+            (if n > e + 1 then String.sub digits (e + 1) (n - e - 1) else "0")
+        else "0." ^ String.make (- e - 1) '0' ^ digits
+      else String.sub digits 0 1 ^ "." ^ (if n > 1 then String.sub digits 1 (n - 1) else "0") ^ "E" ^ string_of_int e
+    in
+    (if f < 0.0 then "-" else "") ^ body
+
+let fk_show_char c = let b = Buffer.create 4 in Buffer.add_utf_8_uchar b (Uchar.of_int c); Buffer.contents b
+
+let fk_assert_equals show where expected actual =
+  if expected = actual then () else failwith (where ^ ": expected:<" ^ show expected ^ "> but was:<" ^ show actual ^ ">")
+
+let fk_show_list show l = "[" ^ String.concat ", " (List.map show l) ^ "]"
+
+let fk_show_option show o = match o with Some x -> "Some(" ^ show x ^ ")" | None -> "None"
+
+let fk_show_result show show_error r = match r with Ok x -> "Ok(" ^ show x ^ ")" | Error e -> "Error(" ^ show_error e ^ ")"
+"""
+}

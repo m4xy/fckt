@@ -1,0 +1,60 @@
+import fckt.checker.inference.DefaultHandler
+import fckt.checker.symbols.*
+import fckt.ocaml.*
+import fckt.parser.Definition
+import fckt.parser.SpecValue
+
+// Handled effects, as OCaml 5's: each operation is an effect constructor, performed for whatever
+// handles it to answer, as fckt's compiler declares them beside the effect; and main is run in each
+// effect's default handler, a record of its module's functions, each resumed with what it gives.
+module HandledEffects {
+  // An operation's effect constructor, written from the top of the program: Fckt.Io.Console_println.
+  operationConstructor(effect: Symbol, operation: String): String =
+    Naming.reference(effect) { "${it}_$operation" }
+
+  // main, given the command line's arguments if it takes them, run in each default handler, the
+  // first innermost.
+  runningMain(main: Symbol, takesArguments: Boolean, defaults: List<DefaultHandler>): Expr = {
+    arguments = if (takesArguments) Application(Identifier("List.tl"), [Application(Identifier("Array.to_list"), [Identifier("Sys.argv")])]) else ConstantExpr(UnitConstant)
+    defaults.fold(Application(Identifier(Naming.valueReference(main)), [arguments])) { inner, d ->
+      Application(Identifier(nextTo(d.effect, "handle_" + simpleSnake(d.effect))), [handlerRecord(d), Fun([ConstantPat(UnitConstant)], inner)])
+    }
+  }
+
+  // The default handler, as the effect's record of answers: each operation's, the module's function
+  // of its name, resumed with what it gives; a value as it is.
+  private handlerRecord(d: DefaultHandler): Expr = {
+    record = RecordExpr(operationsOf(d.effect).map { op ->
+      answer = Identifier(modulePath(d.handler) + "." + Naming.snake(op.name))
+      FieldValue(Naming.snake(op.name), when (op.parameters) {
+        None -> answer
+        Some(parameters) -> {
+          names = parameters.mapIndexed { i, _ -> "x$i" }
+          given = Application(answer, if (names.isEmpty()) [ConstantExpr(UnitConstant)] else names.map { Identifier(it) })
+          Fun(names.map { VariablePat(it) } + [VariablePat("k")], Application(Identifier("k"), [given]))
+        }
+      })
+    }, None)
+    typeParameters = typeParametersOf(d.effect)
+    handlerType = TypeApplication(nextTo(d.effect, simpleSnake(d.effect) + "_handler"), (typeParameters + ["answer"]).map { TypeVariable("_") })
+    Annotated(record, handlerType)
+  }
+
+  // A module, written from the top of the program: Fckt.Io.Terminal.
+  private modulePath(m: Symbol): String = (m.path + [Naming.ownName(m)]).map { Naming.moduleName(it) }.joinToString(".")
+
+  // [local], declared next to the effect, written from the top of the program.
+  private nextTo(effect: Symbol, local: String): String = (effect.path.map { Naming.moduleName(it) } + [local]).joinToString(".")
+
+  private simpleSnake(effect: Symbol): String = Naming.snake(Naming.ownName(effect)).removeSuffix("_")
+
+  private operationsOf(effect: Symbol): List<SpecValue> = when (effect.declaration.definition) {
+    SpecDefinition(_, values, _, _, _) -> values
+    else -> []
+  }
+
+  private typeParametersOf(effect: Symbol): List<String> = when (effect.declaration.definition) {
+    SpecDefinition(_, _, typeParameters, _, _) -> typeParameters.filter { !it.startsWith("@") }
+    else -> []
+  }
+}

@@ -1,0 +1,9 @@
+// A pattern, in core: what a value must be to match, and the names it binds to parts of it.
+type Matcher {
+  // _, or a parameter that's never named: anything, binding nothing.
+  AnyMatcher,
+  // A name: anything, bound to it.
+  NameMatcher(name: String),
+  // A tuple, each part matching its own.
+  TupleMatcher(parts: List<Matcher>),
+}

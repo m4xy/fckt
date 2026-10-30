@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.annotations.*
 import fckt.checker.diagnostics.*
 import fckt.checker.resolution.*
@@ -171,15 +172,15 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
   }
 
 // println("hi"): does Console's println, so the code it's in does @Console.
-@Inferring callOperation(at: Position, operation: Operation, arguments: List<CallArgument>, scope: Scope, context: Context): Type = {
+@Inferring callOperation(at: Position, operation: Operation, arguments: List<CallArgument>, scope: Scope, context: Context): Typed = {
   (t, label) = operationType(operation, at, context)
   name = operation.value.name
   when (t) {
     FunctionOf(parameterTypes, result, _) -> {
       order = argumentOrder(arguments, operation.value.parameters.getOrElse([]).map { it.name }, at, "'$name'", context)
-      checkArguments(arguments, order, parameterTypes, scope, context)
+      cores = checkArguments(arguments, order, parameterTypes, scope, context)
       perform(Row([label], None), at)
-      result
+      Typed(result, None, Performed(operation.effect, name, cores))
     }
     else -> abandon(Globals.problem(context, at, "'$name' is a value of ${Symbols.simpleName(operation.effect)}, not a function; write it without ()"))
   }
@@ -247,7 +248,10 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
     attempt = Diagnostics.attempting {
       when (given) {
         Some(g) -> assign(argumentExpression(argument), Typed(g), field, context)
-        None -> checkArgument(argument, field, scope, context)
+        None -> {
+          checkArgument(argument, field, scope, context)
+          Unit
+        }
       }
     }
     when (attempt) {
@@ -259,13 +263,16 @@ specValues(spec: Symbol): List<SpecValue> = when (spec.declaration.definition) {
             "as ${value.name} = (${(value.parameters.getOrElse([]).map { it.name } + ["resume"]).joinToString(", ")}) -> ..."))
     }
   }
-  else -> checkArgument(argument, t, scope, context)
+  else -> {
+    checkArgument(argument, t, scope, context)
+    Unit
+  }
 }
 
 // What an argument was found to be, worked out on its own.
 @Inferring private argumentTyped(argument: ArgumentValue, scope: Scope, context: Context): Typed = when (argument) {
   WrittenValue(e) -> infer(e, None, scope, context)
-  TrailingBlock(at, parameters, block) -> Typed(inferLambda(at, parameters, block, false, true, None, scope, context))
+  TrailingBlock(at, parameters, block) -> inferLambda(at, parameters, block, false, true, None, scope, context)
   DefaultValue(at, function) -> infer(Call(at, Name(at, function), [], []), None, scope, context)
 }
 

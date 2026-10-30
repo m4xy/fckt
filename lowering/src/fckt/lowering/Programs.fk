@@ -1,0 +1,48 @@
+import fckt.effects.Fail
+import fckt.checker.CheckedProgram
+import fckt.checker.core.*
+import fckt.checker.inference.*
+import fckt.checker.symbols.*
+import fckt.ocaml.*
+
+// A checked program, as OCaml: its own code, to be linked with the core and the standard library as
+// fckt's compiler compiles them on their own, as fckt_core.ml and fckt_std.ml. What it can't lower
+// yet, it fails saying.
+module Programs {
+  @Fail ocaml(program: CheckedProgram): List<Item> = {
+    bodies = program.functions.filter { f -> isOwn(f.function) }.mapNotNull { f -> f.body.map { b -> (f.function.name, b) } }
+    functions = program.groups.mapNotNull { g ->
+      bindings = g.functions.mapNotNull { f -> bodies.find { name, _ -> name == f.name }.map { _, body -> binding(f, body) } }
+      if (bindings.isEmpty()) None else Some(LetItem(g.recursive, bindings))
+    }
+    main = program.functions.find { f -> isOwn(f.function) && f.function.path.isEmpty() && Naming.ownName(f.function) == "main" }.map { f ->
+      takesArguments = Signatures.parametersOf(f.function).map { it.isNotEmpty() }.getOrElse(false)
+      LetItem(false, [Binding(ConstantPat(UnitConstant), [], None, HandledEffects.runningMain(f.function, takesArguments, program.defaultHandlers))])
+    }
+    [VerbatimItem(Helpers.items), aliases(program)] + functions + main.toList()
+  }
+
+  // Whether the function is the program's own: in the file it was given, not one it uses.
+  private isOwn(function: Symbol): Boolean = function.file.source.path.isNone()
+
+  // A function, with its parameters, or a value, as let binds it.
+  @Fail private binding(function: Symbol, body: CoreFunction): Binding = {
+    parameters = if (Signatures.isFunction(function)) Expressions.parametersOf(body.parameters.map { NameMatcher(it) }) else []
+    Binding(VariablePat(Naming.snake(Naming.ownName(function))), parameters, None, Expressions.expression(body.body))
+  }
+
+  // The standard library's packages and the core, by the names the program's code writes them by:
+  // Fckt.Io is Fckt_std.Fckt.Io, and Fckt.Lang Fckt_core.Fckt.Lang.
+  private aliases(program: CheckedProgram): Item = {
+    packages = program.workspace.files.mapNotNull { f ->
+      when (f.package) {
+        ["fckt", p, *_] -> Some(p)
+        else -> None
+      }
+    }.distinct()
+    ModuleItem("Fckt", Structure(packages.map { p ->
+      unit = if (p == "lang") "Fckt_core" else "Fckt_std"
+      ModuleItem(Naming.moduleName(p), ModulePath("$unit.Fckt.${Naming.moduleName(p)}"))
+    }))
+  }
+}

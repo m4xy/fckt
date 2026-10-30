@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.definitions.*
 import fckt.checker.diagnostics.*
 import fckt.checker.symbols.*
@@ -25,9 +26,12 @@ private covariant: List<String> = ["List", "Option", "Lazy", "Result"]
   if (!unify(actual, expected)) mismatch(at, shownExpected, shownActual, context) else Unit
 }
 
-// That the expression can be used where the type is wanted.
-@Inferring check(e: Expression, expected: Type, scope: Scope, context: Context): Unit =
-  assign(e, infer(e, Some(expected), scope, context), expected, context)
+// That the expression can be used where the type is wanted; and its core.
+@Inferring check(e: Expression, expected: Type, scope: Scope, context: Context): Core = {
+  typed = infer(e, Some(expected), scope, context)
+  assign(e, typed, expected, context)
+  typed.core
+}
 
 // That what the expression was found to be can be used where the type is wanted: it's the same, or
 // a type with cases that's part of it, or it spells out a case the wanted type has.

@@ -1,0 +1,62 @@
+import fckt.collections.Maps.*
+import fckt.effects.Failure.attempt
+import fckt.io.Paths.*
+import fckt.io.Files.*
+import fckt.io.FileSystem
+import fckt.io.Path
+import fckt.checker.*
+import fckt.checker.sources.*
+import fckt.lowering.Programs
+import fckt.ocaml.Printer
+
+// Writes to the first argument the OCaml fckt.lowering makes of each conformance case after it, as a
+// program of its own, with the core and the standard library beside it, after "# file": its text;
+// or, where it can't make it, "! " and why: that the case doesn't check, or what it can't lower yet.
+main(args: List<String>) = when (args) {
+  [out, *files] -> {
+    beside = SourceTree(merged(core() + standard()))
+    path(out).writeText(files.map { file -> "# $file\n" + lowered(file, beside) }.joinToString(""))
+  }
+  else -> Unit
+}
+
+@FileSystem lowered(file: String, beside: SourceTree): String = {
+  entry = SourceText(None, ProgramProject, path(file).readText())
+  (program, errors) = Checker.check(entry, beside, true)
+  when ((program, errors)) {
+    (Some(p), []) -> when (attempt { Programs.ocaml(p) }) {
+      Ok(items) -> Printer.file(items)
+      Error(why) -> "! can't lower $why\n"
+    }
+    else -> "! doesn't check\n"
+  }
+}
+
+@FileSystem core(): List<(List<String>, List<SourceText>)> = packagesIn(path("src/main/resources/std"), [], CoreProject, "core:")
+
+@FileSystem standard(): List<(List<String>, List<SourceText>)> =
+  packagesIn(path("std/src"), [], OtherProject(path("std/src").canonical().value), "std/src/")
+
+// Each package under the folder, its own path given, with its files, named as positions name them:
+// the prefix, then the file's path under the folder.
+@FileSystem packagesIn(folder: Path, pkg: List<String>, project: Project, prefix: String): List<(List<String>, List<SourceText>)> = {
+  entries = folder.listFiles().sortedBy { it.name }
+  files = entries.filter { it.extension == "fk" && !it.isDirectory() }.map { f ->
+    SourceText(Some(prefix + (pkg + [f.name]).joinToString("/")), project, f.readText())
+  }
+  inner = entries.filter { it.isDirectory() && isPackageName(it.name) }.flatMap { d -> packagesIn(d, pkg + [d.name], project, prefix) }
+  [(pkg, files), *inner]
+}
+
+// A folder named as a value is, which is a package: geometry, not Geometry or my-shapes.
+isPackageName(name: String): Boolean = when (name.toList()) {
+  [first, *rest] -> (first.isLowerCase() || first == '_') && rest.all { it.isLetterOrDigit() || it == '_' }
+  [] -> false
+}
+
+// The packages, those of the same path together, in order.
+merged(packages: List<(List<String>, List<SourceText>)>): Map<List<String>, List<SourceText>> =
+  packages.fold(emptyMap()) { m, entry ->
+    (pkg, files) = entry
+    m.put(pkg, m.getOrDefault(pkg, []) + files)
+  }

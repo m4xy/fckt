@@ -1,0 +1,5 @@
+// What a list literal's made of, in order: an item, or every item of a list spread into it.
+type ListItem {
+  OneItem(value: Core),
+  SpreadItems(list: Core),
+}

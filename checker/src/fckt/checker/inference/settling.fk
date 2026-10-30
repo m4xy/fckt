@@ -1,0 +1,38 @@
+import fckt.checker.core.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+
+// A function's core, once its group is worked out: each type in it as what was learned of it, so it
+// means the same once the solutions are gone.
+
+@Solving settled(f: CoreFunction): CoreFunction = f.copy(body = settledCore(f.body))
+
+@Solving private settledCore(c: Core): Core = when (c) {
+  Value(_) -> c
+  LocalRead(_, _) -> c
+  GlobalRead(_) -> c
+  ExternalRead(_) -> c
+  Applied(function, arguments) -> Applied(settledCore(function), arguments.map { settledCore(it) })
+  ExternalApplied(function, arguments) -> ExternalApplied(function, arguments.map { settledCore(it) })
+  Performed(effect, operation, arguments) -> Performed(effect, operation, arguments.map { settledCore(it) })
+  Operated(primitive, operands) -> Operated(primitive, operands.map { settledCore(it) })
+  Shown(value, t) -> Shown(settledCore(value), resolvedFully(t))
+  ListMade(items) -> ListMade(items.map { item ->
+    when (item) {
+      OneItem(value) -> OneItem(settledCore(value))
+      SpreadItems(list) -> SpreadItems(settledCore(list))
+    }
+  })
+  TupleMade(parts) -> TupleMade(parts.map { settledCore(it) })
+  Joined(list, separator, element) -> Joined(settledCore(list), settledCore(separator), resolvedFully(element))
+  Assertion(condition, where) -> Assertion(settledCore(condition), where)
+  EqualityAssertion(expected, actual, t, where) -> EqualityAssertion(settledCore(expected), settledCore(actual), resolvedFully(t), where)
+  Conditional(condition, then, otherwise) -> Conditional(settledCore(condition), settledCore(then), settledCore(otherwise))
+  Bound(pattern, value, body) -> Bound(pattern, settledCore(value), settledCore(body))
+  VarBound(name, value, body) -> VarBound(name, settledCore(value), settledCore(body))
+  VarWritten(name, value) -> VarWritten(name, settledCore(value))
+  FunctionBound(name, parameters, body, rest) -> FunctionBound(name, parameters, settledCore(body), settledCore(rest))
+  Sequenced(first, then) -> Sequenced(settledCore(first), settledCore(then))
+  FunctionValue(parameters, body, drops) -> FunctionValue(parameters, settledCore(body), drops)
+  Pending(_) -> c
+}

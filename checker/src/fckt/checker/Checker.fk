@@ -44,7 +44,7 @@ module Checker {
         }
         errors.forEach { report(it) }
         if (errors.isEmpty()) Inference.checkMain(inferred.environment, inferred.known) else Unit
-        CheckedProgram(workspace, inferred.functions)
+        CheckedProgram(workspace, inferred.functions, defaultHandlers(inferred.environment), inferred.groups)
       }
     }
   }

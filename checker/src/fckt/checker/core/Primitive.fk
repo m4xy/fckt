@@ -1,0 +1,14 @@
+// What a language's own operation does, decided by its operands' types: Int's + is IntPlus, and
+// Float's FloatPlus; an Int beside a Float is promoted first, as Promoted.
+type Primitive {
+  IntPlus, IntMinus, IntTimes, IntDivide, IntRemainder, IntNegate,
+  FloatPlus, FloatMinus, FloatTimes, FloatDivide, FloatRemainder, FloatNegate,
+  // An Int, as a Float.
+  Promoted,
+  // Strings joined, and lists.
+  Concatenated, Appended,
+  // Any two values of a type, compared as OCaml compares them: structurally.
+  Equal, NotEqual, Less, LessOrEqual, Greater, GreaterOrEqual,
+  // Booleans: && and || evaluate their right operand only if they need it.
+  And, Or, Not,
+}

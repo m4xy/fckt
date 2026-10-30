@@ -10,4 +10,6 @@ type Item {
   EffectItem(operations: List<EffectOperation>),
   // (* text *)
   CommentItem(text: String),
+  // Items written out already, as OCaml.
+  VerbatimItem(code: String),
 }

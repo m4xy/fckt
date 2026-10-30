@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.diagnostics.*
 import fckt.checker.resolution.*
 import fckt.checker.symbols.*
@@ -42,11 +43,11 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   scope: Scope,
   context: Context,
 ): Typed = when (declaredCallee(callee, scope, context)) {
-  Some(global) if Signatures.isFunction(global) -> Typed(callDeclared(at, global, arguments, typeArguments, scope, context))
+  Some(global) if Signatures.isFunction(global) -> callDeclared(at, global, arguments, typeArguments, scope, context)
   declared -> {
     callable = if (declared.isSome()) None else operationCalled(callee, scope, context)
     when (callable) {
-      Some(operation) -> withoutTypeArguments(typeArguments, at, context, Typed(callOperation(at, operation, arguments, scope, context)))
+      Some(operation) -> withoutTypeArguments(typeArguments, at, context, callOperation(at, operation, arguments, scope, context))
       None -> withoutTypeArguments(typeArguments, at, context, callOther(at, callee, declared, arguments, typeArguments, expected, scope, context))
     }
   }
@@ -68,15 +69,15 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
 }
 
 // A declared function, called with its parameters, by name or in order, and its defaults.
-@Inferring private callDeclared(at: Position, global: Symbol, arguments: List<CallArgument>, typeArguments: List<TypeRef>, scope: Scope, context: Context): Type =
+@Inferring private callDeclared(at: Position, global: Symbol, arguments: List<CallArgument>, typeArguments: List<TypeRef>, scope: Scope, context: Context): Typed =
   when (resolved(Globals.typeForCall(global, typeArguments, at, context))) {
     FunctionOf(parameterTypes, result, effects) -> {
       (parameters, owners) = parameterDefaults(global, context)
       given = withDefaults(at, arguments, parameters, global.name, true, owners)
       order = argumentOrder(given, parameters.map { name, _ -> name }, at, "'${Symbols.simpleName(global)}'", context)
-      checkArguments(given, order, parameterTypes, scope, context)
+      cores = checkArguments(given, order, parameterTypes, scope, context)
       perform(effects, at)
-      result
+      Typed(result, None, if (Signatures.isExternal(global)) ExternalApplied(global, cores) else Applied(GlobalRead(global), cores))
     }
     other -> abandon(Globals.problem(context, at, "'${Symbols.simpleName(global)}' is a ${TypeText.shown(other)}, not a function"))
   }
@@ -120,8 +121,8 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
           else -> CalledField(arguments)
         }
         when (method) {
-          CalledMethod(t) -> Typed(t)
-          CalledField(given) -> Typed(callValue(at, callee, given, scope, context))
+          CalledMethod(typed) -> typed
+          CalledField(given) -> callValue(at, callee, given, scope, context)
         }
       }
     }
@@ -129,7 +130,7 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
 }
 
 // A function value, called with its arguments in order.
-@Inferring callValue(at: Position, callee: Expression, arguments: List<CallArgument>, scope: Scope, context: Context): Type = {
+@Inferring callValue(at: Position, callee: Expression, arguments: List<CallArgument>, scope: Scope, context: Context): Typed = {
   if (arguments.any { it.name.isSome() }) abandon(Globals.problem(context, at, "named arguments need a call to a declared function or type")) else Unit
   calleeTyped = infer(callee, None, scope, context)
   (parameters, result, effects) = when (resolved(calleeTyped.t)) {
@@ -144,20 +145,28 @@ private liftedModule(at: Position, context: Context): Option<ModuleSymbol> = {
   if (parameters.size != arguments.size) {
     abandon(Globals.problem(context, at, "this function takes ${parameters.size} arguments, not ${arguments.size}"))
   } else Unit
-  isAssertEquals = when (callee) {
-    Name(_, "assertEquals") -> Scopes.lookup(scope, "assertEquals").isNone() && Lookups.found(Globals.find("assertEquals", context, Skipping)).isNone()
+  isBuiltin = (name: String) -> when (callee) {
+    Name(_, called) if called == name -> Scopes.lookup(scope, name).isNone() && Lookups.found(Globals.find(name, context, Skipping)).isNone()
     else -> false
   }
+  isAssertEquals = isBuiltin("assertEquals")
   // The actual value's type tells apart a case's name in the expected one: assertEquals(A, permute(B)).
   order = if (isAssertEquals) [1, 0] else arguments.mapIndexed { i, _ -> i }
-  order.forEach { i ->
+  checked = order.mapNotNull { i ->
     when ((arguments.getOrNone(i), parameters.getOrNone(i))) {
-      (Some(argument), Some(t)) -> checkArgument(argument.value, t, scope, context)
-      else -> Unit
+      (Some(argument), Some(t)) -> Some((i, checkArgument(argument.value, t, scope, context)))
+      else -> None
     }
   }
   perform(effects, at)
-  result
+  cores = checked.sortedBy { i, _ -> i }.map { _, core -> core }
+  where = context.place.file.source.path.map { p -> p.split("/").lastOrNone().getOrElse(p) + " " }.getOrElse("") + "line ${at.line}"
+  core = when (cores) {
+    [condition] if isBuiltin("assert") -> Assertion(condition, where)
+    [wanted, actual] if isAssertEquals -> EqualityAssertion(wanted, actual, parameters.getOrNone(1).getOrElse(unit), where)
+    else -> Applied(calleeTyped.core, cores)
+  }
+  Typed(result, None, core)
 }
 
 // A constructor, called with its fields, by name or in order, and their defaults.
@@ -242,25 +251,29 @@ argumentPosition(value: ArgumentValue): Position = when (value) {
 }
 
 // Checks each argument against its parameter's type, in the parameters' order, so earlier arguments
-// can tell later lambdas what they're given.
-@Inferring checkArguments(arguments: List<CallArgument>, order: List<Int>, parameterTypes: List<Type>, scope: Scope, context: Context): Unit =
-  order.zip(parameterTypes).forEach { argumentIndex, t ->
+// can tell later lambdas what they're given; and gives each one's core, in that order.
+@Inferring checkArguments(arguments: List<CallArgument>, order: List<Int>, parameterTypes: List<Type>, scope: Scope, context: Context): List<Core> =
+  order.zip(parameterTypes).map { argumentIndex, t ->
     when (arguments.getOrNone(argumentIndex)) {
       Some(argument) -> checkArgument(argument.value, t, scope, context)
-      None -> Unit
+      None -> Pending("an argument that isn't there")
     }
   }
 
-// That the argument can be given where the type is wanted.
-@Inferring checkArgument(value: ArgumentValue, t: Type, scope: Scope, context: Context): Unit = when (value) {
+// That the argument can be given where the type is wanted; and its core.
+@Inferring checkArgument(value: ArgumentValue, t: Type, scope: Scope, context: Context): Core = when (value) {
   WrittenValue(e) -> check(e, t, scope, context)
   TrailingBlock(at, parameters, block) -> {
     lambda = Lambda(at, parameters.getOrElse([]), block, false)
-    assign(lambda, Typed(inferLambda(at, parameters, block, false, true, Some(t), scope, context)), t, context)
+    typed = inferLambda(at, parameters, block, false, true, Some(t), scope, context)
+    assign(lambda, typed, t, context)
+    typed.core
   }
   DefaultValue(at, function) -> {
     call = Call(at, Name(at, function), [], [])
-    assign(call, defaultValue(at, function, context), t, context)
+    typed = defaultValue(at, function, context)
+    assign(call, typed, t, context)
+    typed.core
   }
 }
 

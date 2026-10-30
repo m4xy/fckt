@@ -1,5 +1,7 @@
+import fckt.checker.core.CoreFunction
 import fckt.checker.symbols.Symbol
 import fckt.checker.types.Scheme
 
-// A function or value, checked: its type, generic in its own unknowns.
-type CheckedFunction(function: Symbol, scheme: Scheme)
+// A function or value, checked: its type, generic in its own unknowns; and its code, as core, unless
+// it has none, as an external doesn't.
+type CheckedFunction(function: Symbol, scheme: Scheme, body: Option<CoreFunction> = None)

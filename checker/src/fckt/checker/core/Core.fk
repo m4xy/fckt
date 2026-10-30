@@ -1,0 +1,56 @@
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.Type
+
+// What checked code is: each name resolved to what it means, each operator to the operation it
+// does, each call to what it calls, its arguments in its parameters' order and its defaults filled
+// in, and each type as checking worked it out. fckt.lowering writes OCaml from it.
+type Core {
+  // A constant.
+  Value(literal: Literal),
+  // A name bound where code is: a parameter, a block's value, or what a pattern bound; or a var, as
+  // what it holds now.
+  LocalRead(name: String, isVar: Boolean),
+  // A function or value declared in a package or a module.
+  GlobalRead(function: Symbol),
+  // An external used as a value, rather than called.
+  ExternalRead(function: Symbol),
+  // The function, called with the arguments.
+  Applied(function: Core, arguments: List<Core>),
+  // An external's OCaml, given the arguments for its parameters, in order.
+  ExternalApplied(function: Symbol, arguments: List<Core>),
+  // An effect's operation, performed: whatever handles the effect answers.
+  Performed(effect: Symbol, operation: String, arguments: List<Core>),
+  // One of the language's own operations: on numbers, Booleans, strings and lists, or comparing any
+  // two values of a type.
+  Operated(primitive: Primitive, operands: List<Core>),
+  // The value as text, as toString and a string template show it: of type t.
+  Shown(value: Core, t: Type),
+  // [a, *rest, b]: a list of the items, in order.
+  ListMade(items: List<ListItem>),
+  // (a, b): a tuple of the parts.
+  TupleMade(parts: List<Core>),
+  // A list's items as text, each shown as toString shows it, with the separator between them: of
+  // element type, element.
+  Joined(list: Core, separator: Core, element: Type),
+  // assert(condition): failing, saying where, if it doesn't hold.
+  Assertion(condition: Core, where: String),
+  // assertEquals(expected, actual): failing, saying where and showing both, if they differ; of type t.
+  EqualityAssertion(expected: Core, actual: Core, t: Type, where: String),
+  // if (condition) then else otherwise
+  Conditional(condition: Core, then: Core, otherwise: Core),
+  // The value, taken apart by the pattern, whose names body can use.
+  Bound(pattern: Matcher, value: Core, body: Core),
+  // A var, holding the value to begin with, called name in body.
+  VarBound(name: String, value: Core, body: Core),
+  // The var, changed to hold the value.
+  VarWritten(name: String, value: Core),
+  // A function of the block's own, which can call itself, called name in rest.
+  FunctionBound(name: String, parameters: List<Matcher>, body: Core, rest: Core),
+  // first, done for what it does, then then.
+  Sequenced(first: Core, then: Core),
+  // A function of the parameters, each a pattern what it's given matches: what its body gives, or, if
+  // it drops what its body gives, as one wanted to give back Unit does, Unit.
+  FunctionValue(parameters: List<Matcher>, body: Core, dropsResult: Boolean),
+  // An expression whose core fckt.checker doesn't make yet: what it is.
+  Pending(what: String),
+}

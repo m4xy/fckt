@@ -2,5 +2,6 @@ import fckt.collections.Maps.*
 import fckt.checker.definitions.MetaType
 
 // What inference found: what the program has, with what's known of each function, the type of each,
-// in the order they're written, and what each annotation type's fields can hold, by its full name.
-type Inferred(environment: Environment, known: Known, functions: List<CheckedFunction>, metaTypes: Map<String, List<MetaType>>)
+// in the order they're written, and what each annotation type's fields can hold, by its full name;
+// and the functions' groups, each after those it uses.
+type Inferred(environment: Environment, known: Known, functions: List<CheckedFunction>, metaTypes: Map<String, List<MetaType>>, groups: List<FunctionGroup> = [])

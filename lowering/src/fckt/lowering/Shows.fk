@@ -1,0 +1,44 @@
+import fckt.effects.Fail
+import fckt.checker.types.*
+import fckt.ocaml.*
+
+// How a value of each type is shown as text, as toString and a string template show it: an OCaml
+// function from the value to its text.
+module Shows {
+  @Fail show(t: Type): Expr = when (t) {
+    Named("Int", [], _) -> Identifier("string_of_int")
+    Named("Boolean", [], _) -> Identifier("string_of_bool")
+    Named("Char", [], _) -> Identifier("fk_show_char")
+    Named("Float", [], _) -> Identifier("fk_show_float")
+    Named("String", [], _) -> Identifier("Fun.id")
+    Named("Unit", [], _) -> Fun([ConstantPat(UnitConstant)], ConstantExpr(StringConstant("()")))
+    Named("Byte", [], _) -> Fun([VariablePat("b")], Application(Identifier("string_of_int"), [Application(Identifier("Char.code"), [Identifier("b")])]))
+    Named("Nothing", [], _) -> Fun([AnyPat], Verbatim("assert false"))
+    Named("Lazy", _, _) -> Fun([AnyPat], ConstantExpr(StringConstant("Lazy(...)")))
+    Named("List", [element], _) -> Application(Identifier("fk_show_list"), [show(element)])
+    Named("Option", [element], _) -> Application(Identifier("fk_show_option"), [show(element)])
+    Named("Result", [value, error], _) -> Application(Identifier("fk_show_result"), [show(value), show(error)])
+    TupleOf(elements) -> {
+      names = elements.mapIndexed { i, _ -> "x$i" }
+      shown = elements.mapIndexed { i, e -> Application(show(e), [Identifier("x$i")]) }
+      parts = [ConstantExpr(StringConstant("(")), *between(shown, ConstantExpr(StringConstant(", "))), ConstantExpr(StringConstant(")"))]
+      Fun([TuplePat(names.map { VariablePat(it) })], joined(parts))
+    }
+    FunctionOf(_, _, _) -> Fun([AnyPat], ConstantExpr(StringConstant("<fun>")))
+    Named(name, _, _) -> fail("showing a $name")
+    other -> fail("showing a value of type $other")
+  }
+
+  // The texts, joined, in order.
+  joined(parts: List<Expr>): Expr = when (parts) {
+    [] -> ConstantExpr(StringConstant(""))
+    [one] -> one
+    [first, *rest] -> Infix("^", first, joined(rest))
+  }
+
+  private between(items: List<Expr>, separator: Expr): List<Expr> = when (items) {
+    [] -> []
+    [one] -> [one]
+    [first, *rest] -> [first, separator, *between(rest, separator)]
+  }
+}

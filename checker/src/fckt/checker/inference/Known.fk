@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.CoreFunction
 import fckt.checker.types.*
 
 // What's known of the functions checked so far, by full name: each one's type, generic in its own
@@ -6,11 +7,12 @@ import fckt.checker.types.*
 // them; and, while a group is checked, what each of its functions is taken to be: as it's being
 // worked out, provisional, or, to the others in its group, as it says it is, viewed; and, for those
 // seen otherwise from outside their module, how: a spec'd module's, with its spec's type, a functor's
-// parameter's, as its spec says it is.
+// parameter's, as its spec says it is; and the code of each, as core.
 type Known(
   schemes: Map<String, Scheme>,
   typeParameterVariables: Map<String, Map<String, TypeVariable>>,
   provisional: Map<String, Type>,
   viewed: Map<String, Type>,
   outside: Map<String, Scheme> = emptyMap(),
+  bodies: Map<String, CoreFunction> = emptyMap(),
 )

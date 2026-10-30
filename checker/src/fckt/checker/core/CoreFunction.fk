@@ -1,0 +1,3 @@
+// A function's code, checked: its parameters' names, in order, and its body; or a value's, which has
+// no parameters.
+type CoreFunction(parameters: List<String>, body: Core)

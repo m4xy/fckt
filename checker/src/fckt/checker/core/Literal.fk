@@ -1,0 +1,9 @@
+// A constant, as code writes it. A character is its code point.
+type Literal {
+  IntLiteral(value: Int),
+  FloatLiteral(value: Float),
+  BooleanLiteral(value: Boolean),
+  CharLiteral(code: Int),
+  StringLiteral(value: String),
+  UnitLiteral,
+}

@@ -1,9 +1,7 @@
-import fckt.checker.types.Type
-
-// What target.name(arguments) turned out to be: a method, which gives the type; or a field holding
-// a function, which is then called as any function value is, with the arguments in its parameters'
-// order.
+// What target.name(arguments) turned out to be: a method, which gives what it's typed; or a field
+// holding a function, which is then called as any function value is, with the arguments in its
+// parameters' order.
 type MethodCall {
-  CalledMethod(t: Type),
+  CalledMethod(typed: Typed),
   CalledField(arguments: List<CallArgument>),
 }

@@ -1,0 +1,168 @@
+import fckt.effects.Fail
+import fckt.checker.core.*
+import fckt.checker.symbols.*
+import fckt.ocaml.*
+
+// Core, as OCaml. fckt runs a call's arguments, and an operator's operands, left to right, and OCaml
+// right to left: where more than one runs code, each is bound first, in order, so what they do
+// happens in the order it's written.
+module Expressions {
+  @Fail expression(c: Core): Expr = when (c) {
+    Value(literal) -> ConstantExpr(constant(literal))
+    LocalRead(name, isVar) -> if (isVar) Application(Identifier("!"), [Identifier(Naming.snake(name))]) else Identifier(Naming.snake(name))
+    GlobalRead(function) -> Identifier(Naming.valueReference(function))
+    ExternalRead(function) -> Externals.asValue(function)
+    Applied(function, arguments) -> inOrder(arguments) { given ->
+      Application(expression(function), if (given.isEmpty()) [ConstantExpr(UnitConstant)] else given)
+    }
+    ExternalApplied(function, arguments) -> inOrder(arguments) { given -> Externals.applied(function, given) }
+    Performed(effect, operation, arguments) -> inOrder(arguments) { given ->
+      carried = when (given) {
+        [] -> ConstantExpr(UnitConstant)
+        [one] -> one
+        _ -> TupleExpr(given)
+      }
+      Application(Identifier("Effect.perform"), [Construction(HandledEffects.operationConstructor(effect, operation), Some(carried))])
+    }
+    Operated(And, [left, right]) -> Infix("&&", expression(left), expression(right))
+    Operated(Or, [left, right]) -> Infix("||", expression(left), expression(right))
+    Operated(primitive, operands) -> inOrder(operands) { given -> primitiveApplied(primitive, given) }
+    Shown(value, t) -> Application(Shows.show(t), [expression(value)])
+    ListMade(items) -> listMade(items)
+    TupleMade(parts) -> inOrder(parts) { given -> TupleExpr(given) }
+    Joined(list, separator, element) -> inOrder([separator, list]) { given ->
+      when (given) {
+        [s, l] -> Application(Identifier("String.concat"), [s, Application(Identifier("List.map"), [Shows.show(element), l])])
+        else -> fail("joining")
+      }
+    }
+    Assertion(condition, where) ->
+      IfThenElse(expression(condition), ConstantExpr(UnitConstant), Application(Identifier("failwith"), [ConstantExpr(StringConstant("$where: assertion failed"))]))
+    EqualityAssertion(expected, actual, t, where) -> inOrder([expected, actual]) { given ->
+      Application(Identifier("fk_assert_equals"), [Shows.show(t), ConstantExpr(StringConstant(where)), *given])
+    }
+    Conditional(condition, then, otherwise) -> IfThenElse(expression(condition), expression(then), expression(otherwise))
+    Bound(pattern, value, body) -> LetIn(false, [Binding(pat(pattern), [], None, expression(value))], expression(body))
+    VarBound(name, value, body) ->
+      LetIn(false, [Binding(VariablePat(Naming.snake(name)), [], None, Application(Identifier("ref"), [expression(value)]))], expression(body))
+    VarWritten(name, value) -> Infix(":=", Identifier(Naming.snake(name)), expression(value))
+    FunctionBound(name, parameters, body, rest) ->
+      LetIn(true, [Binding(VariablePat(Naming.snake(name)), parametersOf(parameters), None, expression(body))], expression(rest))
+    Sequenced(first, then) -> Sequence(expression(first), expression(then))
+    FunctionValue(parameters, body, dropsResult) ->
+      Fun(parametersOf(parameters), if (dropsResult) Application(Identifier("ignore"), [expression(body)]) else expression(body))
+    Pending(what) -> fail(what)
+  }
+
+  // A function's parameters, as patterns; one of none takes Unit.
+  parametersOf(parameters: List<Matcher>): List<Pat> = if (parameters.isEmpty()) [ConstantPat(UnitConstant)] else parameters.map { pat(it) }
+
+  pat(m: Matcher): Pat = when (m) {
+    AnyMatcher -> AnyPat
+    NameMatcher(name) -> VariablePat(Naming.snake(name))
+    TupleMatcher(parts) -> TuplePat(parts.map { pat(it) })
+  }
+
+  private constant(literal: Literal): Constant = when (literal) {
+    IntLiteral(n) -> IntConstant(n)
+    FloatLiteral(x) -> FloatConstant(x)
+    BooleanLiteral(b) -> BooleanConstant(b)
+    CharLiteral(code) -> IntConstant(code)
+    StringLiteral(s) -> StringConstant(s)
+    UnitLiteral -> UnitConstant
+  }
+
+  // [a, *rest, b]: items consed on, and a spread list appended.
+  @Fail private listMade(items: List<ListItem>): Expr = {
+    parts = items.map { item ->
+      when (item) {
+        OneItem(value) -> value
+        SpreadItems(list) -> list
+      }
+    }
+    inOrder(parts) { given ->
+      if (items.all { it is OneItem }) ListExpr(given)
+      else items.zip(given).reversed().fold(None) { rest, entry ->
+        (item, e) = entry
+        Some(when (item) {
+          OneItem(_) -> Infix("::", e, rest.getOrElse(ListExpr([])))
+          SpreadItems(_) -> when (rest) {
+            Some(r) -> Infix("@", e, r)
+            None -> e
+          }
+        })
+      }.getOrElse(ListExpr([]))
+    }
+  }
+
+  @Fail private primitiveApplied(primitive: Primitive, operands: List<Expr>): Expr = when ((primitive, operands)) {
+    (IntPlus, [a, b]) -> Infix("+", a, b)
+    (IntMinus, [a, b]) -> Infix("-", a, b)
+    (IntTimes, [a, b]) -> Infix("*", a, b)
+    (IntDivide, [a, b]) -> Infix("/", a, b)
+    (IntRemainder, [a, b]) -> Infix("mod", a, b)
+    (FloatPlus, [a, b]) -> Infix("+.", a, b)
+    (FloatMinus, [a, b]) -> Infix("-.", a, b)
+    (FloatTimes, [a, b]) -> Infix("*.", a, b)
+    (FloatDivide, [a, b]) -> Infix("/.", a, b)
+    (FloatRemainder, [a, b]) -> Application(Identifier("Float.rem"), [a, b])
+    (IntNegate, [ConstantExpr(IntConstant(n))]) -> ConstantExpr(IntConstant(-n))
+    (IntNegate, [a]) -> Application(Identifier("Int.neg"), [a])
+    (FloatNegate, [ConstantExpr(FloatConstant(x))]) -> ConstantExpr(FloatConstant(-x))
+    (FloatNegate, [a]) -> Application(Identifier("Float.neg"), [a])
+    (Promoted, [a]) -> Application(Identifier("float_of_int"), [a])
+    (Concatenated, parts) -> Shows.joined(parts)
+    (Appended, [a, b]) -> Infix("@", a, b)
+    (Equal, [a, b]) -> Infix("=", a, b)
+    (NotEqual, [a, b]) -> Infix("<>", a, b)
+    (Less, [a, b]) -> Infix("<", a, b)
+    (LessOrEqual, [a, b]) -> Infix("<=", a, b)
+    (Greater, [a, b]) -> Infix(">", a, b)
+    (GreaterOrEqual, [a, b]) -> Infix(">=", a, b)
+    (Not, [a]) -> Application(Identifier("not"), [a])
+    else -> fail("an operation given the wrong number of operands")
+  }
+
+  // What's built from parts, given them as OCaml: where two or more of them run code, each that does
+  // is bound first, in order, and given by its name.
+  @Fail private inOrder(parts: List<Core>, build: (List<Expr>) -> Expr): Expr = {
+    running = parts.filter { runs(it) }
+    if (running.size < 2) build(parts.map { expression(it) })
+    else {
+      // Each running part's name, fk_arg1 on, in order.
+      (names, _) = parts.fold(([], 0)) { acc, part ->
+        (found, n) = acc
+        if (runs(part)) (found + [Some("fk_arg${n + 1}")], n + 1) else (found + [None], n)
+      }
+      given = parts.zip(names).map { part, name -> name.map { Identifier(it) }.getOrElse(expression(part)) }
+      parts.zip(names).reversed().fold(build(given)) { body, entry ->
+        (part, name) = entry
+        when (name) {
+          Some(n) -> LetIn(false, [Binding(VariablePat(n), [], None, expression(part))], body)
+          None -> body
+        }
+      }
+    }
+  }
+
+  // Whether working out the core may run code, which could do something: anything but values,
+  // names, functions, and what's made of them.
+  runs(c: Core): Boolean = when (c) {
+    Value(_) -> false
+    LocalRead(_, isVar) -> isVar
+    GlobalRead(_) -> false
+    ExternalRead(_) -> false
+    FunctionValue(_, _, _) -> false
+    Operated(_, operands) -> operands.any { runs(it) }
+    Shown(value, _) -> runs(value)
+    TupleMade(parts) -> parts.any { runs(it) }
+    ListMade(items) -> items.any { item ->
+      when (item) {
+        OneItem(value) -> runs(value)
+        SpreadItems(list) -> runs(list)
+      }
+    }
+    Conditional(condition, then, otherwise) -> runs(condition) || runs(then) || runs(otherwise)
+    else -> true
+  }
+}

@@ -21,14 +21,15 @@ Each stage in the order it runs, then what any stage may use:
 | `fckt.checker.annotations` | What annotations mean: which annotation type or effect each names, and what each passes on, as `@Io` may mean `@Console @Network`. |
 | `fckt.checker.definitions` | What type declarations define: each type with cases' `CaseInfo`s, own, named or included; the types whose values can change, which have regions; and `Conversion`, which makes a written type a `Type`, its aliases expanded and its rows of effects made. |
 | `fckt.checker.inference` | The type of every expression and every function. `Groups` orders functions so each is checked after what it uses, those that use each other together; `functions.fk` checks a group and makes each function's type generic; the other lower-case files check each kind of expression: `calls`, `constructors`, `members`, `operators`, `lambdas`, `handlers`, `patterns`, `whens`, `blocks`. They call one another, so they're the package's own, a file for each, not modules, which can't. What code does is the `Doing` effect, handled around each function's and lambda's body. |
+| `fckt.checker.core` | What checked code is, for `fckt.lowering` to write OCaml from: `Core`, each expression with its names resolved to what they mean, its operators to the `Primitive`s they do, its calls to what they call with their arguments in order and defaults filled in, and its types as worked out. Inference makes each expression's core with its type, in `Typed`, and each function's `CoreFunction` is in `CheckedFunction`; what it doesn't make yet is `Pending`, saying what. |
 | `fckt.checker.metadata` | Annotations' arguments, each against what its annotation's field holds, as `definitions`' `MetaTypes` say: a constant, or a reference to a type, spec, function, module, case or field. |
 | `fckt.checker` | `Checker`, which runs the stages in turn. |
 | `fckt.checker.types` | The `Type` model, `Scheme`s, and working types out: the `Solving` effect, whose handler, `Solutions.solving`, keeps what's been learned; `Unification`, which makes two types the same, rows of effects included; `Types`, the language's own types and what a type is once solutions are followed; `TypeText`, types as messages show them. |
 | `fckt.checker.coverage` | Whether a `when`'s patterns cover every value, by Maranget's usefulness check. It knows nothing of types: it's told the `Alternative` shapes a value can have. |
 | `fckt.checker.diagnostics` | Errors, as data: a `Diagnostic` says where and why, worded as the compiler words it. `Reporting` reports one and goes on; `Abandoning` gives up on what's being checked, and `Diagnostics.recovering` carries on after it. |
 
-It checks what the compiler's checker does. What's left of a compiler that compiles itself is
-turning what's checked into OCaml.
+It checks what the compiler's checker does, and gives each function's code as core, which
+`fckt.lowering`, beside it, turns into OCaml.
 
 ## How it's written
 

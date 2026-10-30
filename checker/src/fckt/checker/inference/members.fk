@@ -1,4 +1,5 @@
 import fckt.collections.Maps.*
+import fckt.checker.core.*
 import fckt.checker.definitions.*
 import fckt.checker.diagnostics.*
 import fckt.checker.resolution.*
@@ -202,7 +203,8 @@ fieldType(field: FieldReference): Type = when (field) {
   scope: Scope,
   context: Context,
 ): MethodCall = {
-  receiver = resolved(infer(target, None, scope, context).t)
+  targetTyped = infer(target, None, scope, context)
+  receiver = resolved(targetTyped.t)
   when (fieldOf(memberAt, target, name, receiver, scope, context)) {
     Some(ModuleMember(spec, value, _)) -> when (value.parameters) {
       Some(parameters) -> {
@@ -213,7 +215,7 @@ fieldType(field: FieldReference): Type = when (field) {
       None -> CalledField(arguments)
     }
     Some(_) -> CalledField(arguments)
-    None -> CalledMethod(methodOf(at, memberAt, target, name, receiver, arguments, typeArguments, scope, context))
+    None -> CalledMethod(methodOf(at, memberAt, target, targetTyped.core, name, receiver, arguments, typeArguments, scope, context))
   }
 }
 
@@ -221,50 +223,65 @@ fieldType(field: FieldReference): Type = when (field) {
   at: Position,
   memberAt: Position,
   target: Expression,
+  targetCore: Core,
   name: String,
   receiver: Type,
   arguments: List<CallArgument>,
   typeArguments: List<TypeRef>,
   scope: Scope,
   context: Context,
-): Type = {
+): Typed = {
   record = when (receiver) {
     Named(typeName, _, _) if name == "copy" -> context.environment.definitions.namespace.table.records.get(typeName)
     else -> None
   }
   when (record) {
-    Some(r) -> copied(at, memberAt, r, receiver, arguments, scope, context)
+    Some(r) -> Typed(copied(at, memberAt, r, receiver, arguments, scope, context), None, Pending("a record's copy"))
     None -> {
       if (arguments.any { it.name.isSome() }) abandon(Globals.problem(context, at, "named arguments aren't supported in method calls")) else Unit
       // toString() is every value's; a type's own toString takes how to show its type parameters,
       // and is called with them.
       extension = extensionFor(memberAt, name, receiver, context).filter { name != "toString" || arguments.isNotEmpty() }
       when (extension) {
-        Some(s) -> callExtension(at, memberAt, target, s, receiver, arguments, typeArguments, scope, context)
+        Some(s) -> callExtension(at, memberAt, target, targetCore, s, receiver, arguments, typeArguments, scope, context)
         None -> when (builtinMethod(name, receiver, arguments, at, context)) {
           Some(t) -> {
-            checkArguments(arguments, arguments.mapIndexed { i, _ -> i }, [string], scope, context)
-            t
+            given = checkArguments(arguments, arguments.mapIndexed { i, _ -> i }, [string], scope, context)
+            Typed(t, None, builtinCore(name, targetCore, receiver, given))
           }
-          None -> calledFirst(at, memberAt, target, name, receiver, arguments, typeArguments, scope, context)
+          None -> calledFirst(at, memberAt, target, targetCore, name, receiver, arguments, typeArguments, scope, context)
         }
       }
     }
   }
 }
 
+// One of the language's own methods, as core: toString() shows any value, and a list's
+// joinToString(separator) shows each item.
+@Solving private builtinCore(name: String, receiverCore: Core, receiver: Type, arguments: List<Core>): Core =
+  if (name == "toString") (if (resolved(receiver) == string) receiverCore else Shown(receiverCore, receiver))
+  else when ((resolved(receiver), arguments)) {
+    (Named("List", [element], _), [separator]) -> Joined(receiverCore, separator, element)
+    else -> Pending("$name, one of the language's own methods")
+  }
+
+// The function called with these arguments, as core: an external's OCaml, or a function applied.
+called(function: Symbol, arguments: List<Core>): Core =
+  if (Signatures.isExternal(function)) ExternalApplied(function, arguments) else Applied(GlobalRead(function), arguments)
+
 // An extension, called with its receiver first.
 @Inferring callExtension(
   at: Position,
   memberAt: Position,
   target: Expression,
+  targetCore: Core,
   s: Symbol,
   receiver: Type,
   arguments: List<CallArgument>,
   typeArguments: List<TypeRef>,
   scope: Scope,
   context: Context,
-): Type = {
+): Typed = {
   method = Signatures.methodName(s)
   if (Signatures.isProperty(s)) abandon(Globals.problem(context, memberAt, "'$method' is a property; write it without ()")) else Unit
   when (resolved(Globals.typeForCall(s, typeArguments, at, context))) {
@@ -275,11 +292,11 @@ fieldType(field: FieldReference): Type = when (field) {
         abandon(Globals.problem(context, at, "'$method' takes ${parameters.size} argument${if (parameters.size == 1) "" else "s"}, not ${given.size}"))
       } else Unit
       assign(target, Typed(receiver), receiverType, context)
-      checkArguments(given, given.mapIndexed { i, _ -> i }, parameters, scope, context)
+      cores = checkArguments(given, given.mapIndexed { i, _ -> i }, parameters, scope, context)
       perform(effects, at)
-      result
+      Typed(result, None, called(s, [targetCore, *cores]))
     }
-    other -> other
+    other -> Typed(other, None, Pending("an extension that isn't a function"))
   }
 }
 
@@ -302,24 +319,25 @@ fieldType(field: FieldReference): Type = when (field) {
   at: Position,
   memberAt: Position,
   target: Expression,
+  targetCore: Core,
   name: String,
   receiver: Type,
   arguments: List<CallArgument>,
   typeArguments: List<TypeRef>,
   scope: Scope,
   context: Context,
-): Type = {
+): Typed = {
   global = if (Scopes.lookup(scope, name).isNone()) Lookups.found(Globals.find(name, context, Skipping)) else None
   takesTarget = global.filter { s -> Signatures.parametersOf(s).map { it.size == arguments.size + 1 }.getOrElse(false) }
   when (takesTarget) {
     Some(s) -> when (resolved(Globals.typeForCall(s, typeArguments, at, context))) {
       FunctionOf([first, *parameters], result, effects) -> {
         assign(target, Typed(receiver), first, context)
-        checkArguments(arguments, arguments.mapIndexed { i, _ -> i }, parameters, scope, context)
+        cores = checkArguments(arguments, arguments.mapIndexed { i, _ -> i }, parameters, scope, context)
         perform(effects, at)
-        result
+        Typed(result, None, called(s, [targetCore, *cores]))
       }
-      other -> other
+      other -> Typed(other, None, Pending("a function that isn't one"))
     }
     None -> when (receiver) {
       Variable(_) -> abandon(Globals.problem(context, memberAt, "can't tell what '$name' is: the receiver's type isn't known here; annotate it"))

@@ -1,0 +1,82 @@
+import fckt.checker.symbols.*
+import fckt.ocaml.*
+import fckt.parser.Definition
+
+// An external's OCaml, given its arguments: the text, split into what's applied, with each parameter
+// that stands alone replaced by its argument. List.map f this applies List.map to the arguments for f
+// and this; ~name passes one as a labelled argument; anything else is OCaml as written.
+module Externals {
+  // The external, called with the arguments, one for each of its parameters, in order.
+  applied(function: Symbol, arguments: List<Expr>): Expr = {
+    parameters = Signatures.parametersOf(function).getOrElse([]).map { it.name }
+    pieces = atoms(textOf(function)).flatMap { atom ->
+      label = atom.removePrefix("~")
+      if (parameters.contains(atom)) [argumentFor(parameters, atom, arguments)]
+      else if (atom.startsWith("~") && parameters.contains(label)) [Verbatim("~$label:"), argumentFor(parameters, label, arguments)]
+      else [Identifier(atom)]
+    }
+    when (pieces) {
+      [] -> Identifier("()")
+      [one] -> one
+      [head, *rest] -> Application(head, rest)
+    }
+  }
+
+  // The external used as a value: what it applies, if it's only that applied to its parameters in
+  // order; otherwise a function that calls it.
+  asValue(function: Symbol): Expr = when (Signatures.parametersOf(function)) {
+    None -> applied(function, [])
+    Some(parameters) -> {
+      pieces = atoms(textOf(function))
+      if (pieces.drop(1) == parameters.map { it.name }) Identifier(pieces.firstOrNone().getOrElse("()"))
+      else {
+        names = parameters.mapIndexed { i, _ -> "x$i" }
+        Fun(if (names.isEmpty()) [ConstantPat(UnitConstant)] else names.map { VariablePat(it) }, applied(function, names.map { Identifier(it) }))
+      }
+    }
+  }
+
+  private argumentFor(parameters: List<String>, name: String, arguments: List<Expr>): Expr =
+    arguments.getOrNone(parameters.indexOf(name)).getOrElse(Identifier(name))
+
+  private textOf(function: Symbol): String = when (function.declaration.definition) {
+    FunctionDefinition(_, _, _, _, _, Some(text), _) -> text
+    else -> ""
+  }
+
+  // The text, split into what's applied: words, parenthesised OCaml, and strings, each whole.
+  atoms(text: String): List<String> = atomsFrom(text.toList(), [])
+
+  private atomsFrom(chars: List<Char>, done: List<String>): List<String> = when (chars) {
+    [] -> done
+    [c, *rest] if c.isWhitespace() -> atomsFrom(rest, done)
+    ['(', *_] -> {
+      n = parenthesised(chars, 0, 0)
+      atomsFrom(chars.drop(n), done + [chars.take(n).map { it.toString() }.joinToString("")])
+    }
+    ['"', *rest] -> {
+      n = quoted(rest, 0) + 1
+      atomsFrom(chars.drop(n), done + [chars.take(n).map { it.toString() }.joinToString("")])
+    }
+    _ -> {
+      word = chars.takeWhile { !it.isWhitespace() && it != '(' }
+      atomsFrom(chars.drop(word.size), done + [word.map { it.toString() }.joinToString("")])
+    }
+  }
+
+  // How many characters, from an opening parenthesis, up to and with the one that closes it.
+  private parenthesised(chars: List<Char>, at: Int, depth: Int): Int = when (chars.getOrNone(at)) {
+    None -> at
+    Some('(') -> parenthesised(chars, at + 1, depth + 1)
+    Some(')') -> if (depth == 1) at + 1 else parenthesised(chars, at + 1, depth - 1)
+    Some(_) -> parenthesised(chars, at + 1, depth)
+  }
+
+  // How many characters of a string's, after its opening quote, up to and with its closing one.
+  private quoted(chars: List<Char>, at: Int): Int = when (chars.getOrNone(at)) {
+    None -> at
+    Some('\\') -> quoted(chars, at + 2)
+    Some('"') -> at + 1
+    Some(_) -> quoted(chars, at + 1)
+  }
+}

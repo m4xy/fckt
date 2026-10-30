@@ -33,7 +33,7 @@ module Inference {
       }
     }
     reportingAbandoned { checkExposure(environment, known) }
-    Inferred(environment, known, environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s) } }, metaTypes)
+    Inferred(environment, known, environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s, known.bodies.get(f.name)) } }, metaTypes, groups)
   }
 
   // What block gives up on, reported, going on after it.
