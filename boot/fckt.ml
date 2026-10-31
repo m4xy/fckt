@@ -1005,7 +1005,7 @@ module Fckt = struct
           (fun c n -> if n < 0 then In_channel.input_all c else match In_channel.really_input_string c n with Some s -> s | None -> In_channel.input_all c) input count
 
         let write_to (output : (out_channel)) (bytes : (string)) : unit =
-          Out_channel.output_string output bytes
+          (fun o b -> Out_channel.output_string o b; if o == stderr then Out_channel.flush o) output bytes
 
         let close_input (input : (in_channel)) : unit =
           In_channel.close input
@@ -12424,6 +12424,23 @@ module Fckt = struct
   end
 
   module Compiler = struct
+    type json =
+      | JsonNull
+      | JsonBoolean of { value : bool }
+      | JsonNumber of { text : string }
+      | JsonString of { value : string }
+      | JsonArray of { items : json list }
+      | JsonObject of { fields : (string * json) list }
+
+    let rec show_json (v : json) =
+      match v with
+      | JsonNull -> "JsonNull"
+      | JsonBoolean r -> "JsonBoolean(" ^ "value=" ^ string_of_bool r.value ^ ")"
+      | JsonNumber r -> "JsonNumber(" ^ "text=" ^ Fun.id r.text ^ ")"
+      | JsonString r -> "JsonString(" ^ "value=" ^ Fun.id r.value ^ ")"
+      | JsonArray r -> "JsonArray(" ^ "items=" ^ fk_show_list show_json r.items ^ ")"
+      | JsonObject r -> "JsonObject(" ^ "fields=" ^ fk_show_list (fun (x0, x1) -> "(" ^ Fun.id x0 ^ ", " ^ show_json x1 ^ ")") r.fields ^ ")"
+
     module Interfaces = struct
       let import_line (i : Parser.import) : string =
         let alias = Option.value (Option.map (fun it -> " as " ^ it) (i : Parser.import).Parser.alias) ~default:"" in
@@ -12616,13 +12633,18 @@ module Fckt = struct
         | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = copy_of; parents = _ } -> let copied = Option.value (Option.map (fun it -> " = " ^ type_text it) copy_of) ~default:"" in
             ((if effect_ then "effect " else "spec ") ^ name) ^ copied
 
-      let write (file : Parser.source_file) (path : string) (text : string) : string =
+      let write (file : Parser.source_file) (path : string) (text : string) (hidden : string list) : string =
         let header = ("// The interface of " ^ path ^ ", which fckt --library wrote: ") ^ "its declarations, without their code.\n" in
-        let imports = String.concat "" (List.map Fun.id (List.map (fun i -> import_line i) (file : Parser.source_file).Parser.imports)) in
+        let shown = List.filter (fun i -> let full = String.concat "." (List.map Fun.id (i : Parser.import).Parser.path) in
+             not (List.exists (fun it -> full = it || String.starts_with ~prefix:(it ^ ".") full) hidden)) (file : Parser.source_file).Parser.imports in
+        let imports = String.concat "" (List.map Fun.id (List.map (fun i -> import_line i) shown)) in
         let declarations = List.map (fun d -> "\n" ^ declaration d "" text) (seen (file : Parser.source_file).Parser.declarations) in
         let fk_arg1 = header ^ (if String.equal "" imports then "" else "\n" ^ imports) in
         let fk_arg2 = String.concat "" (List.map Fun.id declarations) in
         fk_arg1 ^ fk_arg2
+
+      let write_default_hidden () : string list =
+        []
 
       let sees_any (file : Parser.source_file) : bool =
         Lang.Lists.list_is_not_empty (seen (file : Parser.source_file).Parser.declarations)
@@ -12638,14 +12660,126 @@ module Fckt = struct
         | _ -> []
     end
 
+    module Jsons = struct
+      let char_at (cs : ((int) array)) (at : int) : int option =
+        if at >= 0 && at < Array.length cs then Some (Array.get cs at) else None
+
+      let rec spaces (cs : ((int) array)) (at : int) : int =
+        match char_at cs at with
+        | Some c when ((c = 32 || c = 10) || c = 13) || c = 9 -> spaces cs (at + 1)
+        | _ -> at
+
+      let digit (c : int) : int option =
+        if Lang.Strings.char_is_digit c then Some (Fun.id c - 48) else if c >= 97 && c <= 102 then Some (Fun.id c - 87) else if c >= 65 && c <= 70 then Some (Fun.id c - 55) else None
+
+      let hex (cs : ((int) array)) (at : int) : int option =
+        List.fold_left (fun sum k -> Option.bind sum (fun n -> Option.map (fun it -> n * 16 + it) (Option.bind (char_at cs (at + k)) (fun it -> digit it)))) (Some 0) ((fun from e -> List.init (max 0 (e - from)) (fun i -> from + i)) 0 4)
+
+      let escaped (c : int) : int option =
+        if (c = 34 || c = 92) || c = 47 then Some c else if c = 110 then Some 10 else if c = 116 then Some 9 else if c = 114 then Some 13 else if c = 98 then Some ((fun n -> Uchar.to_int (Uchar.of_int n)) 8) else if c = 102 then Some ((fun n -> Uchar.to_int (Uchar.of_int n)) 12) else None
+
+      let rec string (cs : ((int) array)) (at : int) (found : int list) : (string * int) option =
+        match char_at cs at with
+        | None -> None
+        | Some c -> if c = 34 then Some (String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) (List.rev found))), at + 1) else if c <> 92 then string cs (at + 1) ([c] @ found) else (match char_at cs (at + 1) with
+                 | Some 117 -> Option.bind (hex cs (at + 2)) (fun code -> if ((code >= 55296 && code <= 56319) && char_at cs (at + 6) = Some 92) && char_at cs (at + 7) = Some 117 then Option.bind (hex cs (at + 8)) (fun low -> let combined = 65536 + (code - 55296) * 1024 + (low - 56320) in
+                             string cs (at + 12) ([(fun n -> Uchar.to_int (Uchar.of_int n)) combined] @ found)) else if code >= 55296 && code <= 57343 then string cs (at + 6) ([(fun n -> Uchar.to_int (Uchar.of_int n)) 65533] @ found) else string cs (at + 6) ([(fun n -> Uchar.to_int (Uchar.of_int n)) code] @ found))
+                 | Some e -> Option.bind (escaped e) (fun it -> string cs (at + 2) ([it] @ found))
+                 | None -> None)
+
+      let slice (cs : ((int) array)) (from : int) (to_ : int) : string =
+        String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char (Array.get cs it)) ((fun from e -> List.init (max 0 (e - from)) (fun i -> from + i)) from (min to_ (Array.length cs)))))
+
+      let literal (cs : ((int) array)) (at : int) (word : string) (json : json) : (json * int) option =
+        if slice cs at (at + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) word) = word then Some (json, at + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) word) else None
+
+      let rec number_end (cs : ((int) array)) (at : int) : int =
+        match char_at cs at with
+        | Some c when ((((Lang.Strings.char_is_digit c || c = 45) || c = 43) || c = 46) || c = 101) || c = 69 -> number_end cs (at + 1)
+        | _ -> at
+
+      let rec value (cs : ((int) array)) (at : int) : (json * int) option =
+        let i = spaces cs at in
+        match char_at cs i with
+        | None -> None
+        | Some c -> if c = 123 then fields cs (i + 1) [] else if c = 91 then items cs (i + 1) [] else if c = 34 then Option.map (fun (s, after) -> ((JsonString { value = s } : json), after)) (string cs (i + 1) []) else if c = 116 then literal cs i "true" (JsonBoolean { value = true } : json) else if c = 102 then literal cs i "false" (JsonBoolean { value = false } : json) else if c = 110 then literal cs i "null" (JsonNull : json) else if c = 45 || Lang.Strings.char_is_digit c then (let end_ = number_end cs i in
+                           Some ((JsonNumber { text = slice cs i end_ } : json), end_)) else None
+      and fields (cs : ((int) array)) (at : int) (found : (string * json) list) : (json * int) option =
+        let i = spaces cs at in
+        if List.is_empty found && char_at cs i = Some 125 then Some ((JsonObject { fields = [] } : json), i + 1) else if char_at cs i <> Some 34 then None else Option.bind (string cs (i + 1) []) (fun key -> let (name, after_name) = key in
+               let colon = spaces cs after_name in
+               if char_at cs colon <> Some 58 then None else Option.bind (value cs (colon + 1)) (fun parsed -> let (item, after_value) = parsed in
+                    let next = spaces cs after_value in
+                    let all = found @ [(name, item)] in
+                    match char_at cs next with
+                    | Some 44 -> fields cs (next + 1) all
+                    | Some 125 -> Some ((JsonObject { fields = all } : json), next + 1)
+                    | _ -> None))
+      and items (cs : ((int) array)) (at : int) (found : json list) : (json * int) option =
+        let i = spaces cs at in
+        if List.is_empty found && char_at cs i = Some 93 then Some ((JsonArray { items = [] } : json), i + 1) else Option.bind (value cs i) (fun parsed -> let (item, after_value) = parsed in
+             let next = spaces cs after_value in
+             let all = found @ [item] in
+             match char_at cs next with
+             | Some 44 -> items cs (next + 1) all
+             | Some 93 -> Some ((JsonArray { items = all } : json), next + 1)
+             | _ -> None)
+
+      let parse (text : string) : json option =
+        let chars = Array.of_list ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) text) in
+        Option.bind (value chars 0) (fun parsed -> let (json, after) = parsed in
+           if let fk_arg1 = spaces chars after in
+           let fk_arg2 = Array.length chars in
+           fk_arg1 = fk_arg2 then Some json else None)
+
+      let rec hex_of (n : int) : string =
+        if n < 16 then Option.value (Option.map (fun it -> fk_show_char it) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in if n < 0 || i >= String.length s then None else Some (Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s i)))) "0123456789abcdef" n)) ~default:"" else (let fk_arg1 = hex_of (n / 16) in
+           let fk_arg2 = hex_of (n mod 16) in
+           fk_arg1 ^ fk_arg2)
+
+      let quoted (text : string) : string =
+        ("\"" ^ String.concat "" (List.map Fun.id (List.map (fun c -> if c = 34 then "\\\"" else if c = 92 then "\\\\" else if c = 10 then "\\n" else if c = 13 then "\\r" else if c = 9 then "\\t" else if Fun.id c < 32 then "\\u" ^ Lang.Strings.string_pad_start (hex_of (Fun.id c)) 4 48 else fk_show_char c) ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) text)))) ^ "\""
+
+      let rec render (json : json) : string =
+        match json with
+        | JsonNull -> "null"
+        | JsonBoolean { value = value } -> if value then "true" else "false"
+        | JsonNumber { text = text } -> text
+        | JsonString { value = value } -> quoted value
+        | JsonArray { items = items } -> ("[" ^ String.concat "," (List.map Fun.id (List.map (fun it -> render it) items))) ^ "]"
+        | JsonObject { fields = fields } -> ("{" ^ String.concat "," (List.map Fun.id (List.map (fun (name, value) -> let fk_arg1 = quoted name ^ ":" in
+                  let fk_arg2 = render value in
+                  fk_arg1 ^ fk_arg2) fields))) ^ "}"
+
+      let json_field (this : json) (name : string) : json option =
+        match this with
+        | JsonObject { fields = fields } -> Option.map (fun (_, value) -> value) (List.find_opt (fun (n, _) -> n = name) fields)
+        | _ -> None
+
+      let json_text (this : json) : string option =
+        match this with
+        | JsonString { value = value } -> Some value
+        | _ -> None
+
+      let json_int (this : json) : int option =
+        match this with
+        | JsonNumber { text = text } -> int_of_string_opt text
+        | _ -> None
+
+      let json_items (this : json) : json list =
+        match this with
+        | JsonArray { items = items } -> items
+        | _ -> []
+
+      let number (n : int) : json =
+        (JsonNumber { text = string_of_int n } : json)
+    end
+
     module Layout = struct
       type splittable = { open_ : Parser.token; close : Parser.token; commas : Parser.token list }
 
       let rec show_splittable (v : splittable) =
         "Splittable(" ^ "open=" ^ Parser.show_token v.open_ ^ ", close=" ^ Parser.show_token v.close ^ ", commas=" ^ fk_show_list Parser.show_token v.commas ^ ")"
-
-      let width =
-        100
 
       let tokens_of (source : string) : ((Parser.token) array) option =
         match Parser.Lexer.tokens source (Parser.Lexer.tokens_default_from ()) with
@@ -12704,6 +12838,9 @@ module Fckt = struct
            Array.set depths i here;
            if opens tokens i then here + 1 else here) 0 (Lang.Maths.int_range_to 0 (Array.length tokens - 1));
         depths
+
+      let width =
+        100
 
       let indent_of (line : string) : string =
         String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) (Lang.Lists.list_take_while ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) line) (fun it -> it = 32))))
@@ -12817,6 +12954,346 @@ module Fckt = struct
             let depths = depths_of tokens in
             List.map (fun (i, _) -> i + 1) (List.filter (fun (i, line) -> let apart = annotations_apart tokens (i + 1) line (indent_of line) in
                 (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) line > width && (Option.is_some (splittable tokens depths (i + 1)) || Option.value (Option.map (fun it -> fits it) apart) ~default:false)) (List.mapi (fun i line -> (i, line)) lines))
+    end
+
+    module Sources = struct
+      let is_package_name (name : string) : bool =
+        match (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) name with
+        | first :: rest -> (Lang.Strings.char_is_lower_case first || first = 95) && List.for_all (fun it -> Lang.Strings.char_is_letter_or_digit it || it = 95) rest
+        | [] -> false
+
+      let packages_in_default_compiled_in () : string option =
+        None
+
+      let packages_in_default_interface () : bool =
+        false
+
+      let rec packages_in (folder : Io.path) (pkg : string list) (project : Checker.Sources.project) (prefix : string) (compiled_in : string option) (interface : bool) : (string list * Checker.Sources.source_text list) list =
+        let entries = Lang.Lists.list_sorted_by (Io.Files.path_list_files folder) (fun it -> Io.Paths.path_name it) in
+        let extension = if interface then "fki" else "fk" in
+        let files = List.map (fun f -> let fk_arg1 = Some (prefix ^ String.concat "/" (List.map Fun.id (pkg @ [Io.Paths.path_name f]))) in
+             let fk_arg2 = Io.Files.path_read_text f in
+             let fk_arg3 = Checker.Sources.source_text_default_trusted () in
+             ({ Checker.Sources.path = fk_arg1; project = project; text = fk_arg2; compiled_in = compiled_in; interface = interface; trusted = fk_arg3 } : Checker.Sources.source_text)) (List.filter (fun it -> Io.Paths.path_extension it = extension && not (Io.Files.path_is_directory it)) entries) in
+        let inner = List.concat_map (fun d -> packages_in d (pkg @ [Io.Paths.path_name d]) project prefix compiled_in interface) (List.filter (fun it -> Io.Files.path_is_directory it && is_package_name (Io.Paths.path_name it)) entries) in
+        (pkg, files) :: inner
+
+      let interfaces_in (dir : Io.path) : (string list * Checker.Sources.source_text list) list =
+        let unit = String.trim (Io.Files.path_read_text (Io.Paths.path_resolve dir "unit")) in
+        packages_in dir [] (Checker.Sources.OtherProject { root = (Io.Files.path_canonical dir : Io.path).Io.value } : Checker.Sources.project) ((dir : Io.path).Io.value ^ "/") (Some unit) true
+
+      let standard (home : Io.path) : (string list * Checker.Sources.source_text list) list =
+        let std = Io.Paths.path_resolve home "std/src" in
+        let fk_arg1 = (Checker.Sources.OtherProject { root = (Io.Files.path_canonical std : Io.path).Io.value } : Checker.Sources.project) in
+        let fk_arg2 = packages_in_default_interface () in
+        packages_in std [] fk_arg1 "std/src/" (Some "Fckt_std") fk_arg2
+
+      let home () : Io.path =
+        match Effect.perform (Io.Process_env "FCKT_HOME") with
+        | Some given -> Io.Paths.path given
+        | None -> let installed = Option.map (fun it -> Io.Paths.path_resolve it "../lib/fckt") (Io.Paths.path_parent (Io.Files.path_canonical (Effect.perform (Io.Process_executable ())))) in
+            match installed with
+            | Some lib when Io.Files.path_is_directory (Io.Paths.path_resolve lib "core") -> lib
+            | _ -> Io.Paths.path "."
+
+      let merged (packages : (string list * Checker.Sources.source_text list) list) : (string list, Checker.Sources.source_text list) Collections.Maps.map =
+        List.fold_left (fun m entry -> let (pkg, files) = entry in
+           Collections.Maps.map_put m pkg (Collections.Maps.map_get_or_default m pkg [] @ files)) (Collections.Maps.empty_map ()) packages
+
+      let core (home : Io.path) : (string list * Checker.Sources.source_text list) list =
+        let installed = Io.Paths.path_resolve home "core" in
+        let folder = if Io.Files.path_is_directory installed then installed else Io.Paths.path_resolve home "src/main/resources/std" in
+        let fk_arg1 = packages_in_default_compiled_in () in
+        let fk_arg2 = packages_in_default_interface () in
+        packages_in folder [] (Checker.Sources.CoreProject : Checker.Sources.project) "core:" fk_arg1 fk_arg2
+    end
+
+    module LanguageServer = struct
+      type session = { mutable open_ : (string, string) Collections.Maps.map; mutable said : (string, string list) Collections.Maps.map; mutable programs : (string, Checker.checked_program list) Collections.Maps.map; mutable stopping : bool; mutable changed : string list }
+
+      let rec show_session (v : session) =
+        "Session(" ^ "open=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Fun.id) v.open_ ^ ", said=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Fun.id)) v.said ^ ", programs=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Checker.show_checked_program)) v.programs ^ ", stopping=" ^ string_of_bool v.stopping ^ ", changed=" ^ fk_show_list Fun.id v.changed ^ ")"
+
+      type project = { root : Io.path; folders : Io.path list; libraries : Io.path list }
+
+      let rec show_project (v : project) =
+        "Project(" ^ "root=" ^ Io.show_path v.root ^ ", folders=" ^ fk_show_list Io.show_path v.folders ^ ", libraries=" ^ fk_show_list Io.show_path v.libraries ^ ")"
+
+      let rec headers (length : int option) : int option =
+        match Effect.perform (Io.Channel_readLineFrom stdin) with
+        | None -> None
+        | Some raw -> let line = Lang.Strings.string_remove_suffix raw "\r" in
+            if String.equal "" line then if Option.is_some length then length else headers length else if String.starts_with ~prefix:"content-length:" (String.lowercase_ascii line) then headers (int_of_string_opt (String.trim (Lang.Strings.string_substring_after line ":"))) else headers length
+
+      let received () : json option =
+        Option.bind (headers None) (fun length -> Jsons.parse ((fun s -> let b = Buffer.create (String.length s) in let rec go i = if i < String.length s then (let d = String.get_utf_8_uchar s i in Buffer.add_utf_8_uchar b (Uchar.utf_decode_uchar d); go (i + Uchar.utf_decode_length d)) in go 0; Buffer.contents b) (Effect.perform (Io.Channel_readFrom (stdin, length)))))
+
+      let sent (message : json) : unit =
+        let body = Fun.id (Jsons.render message) in
+        Effect.perform (Io.Channel_writeTo (stdout, Fun.id ("Content-Length: " ^ string_of_int (String.length body) ^ "\r\n\r\n") ^ body));
+        (fun _ -> flush stdout) ()
+
+      let answer (id : json option) (result : json) : unit =
+        sent (JsonObject { fields = [("jsonrpc", (JsonString { value = "2.0" } : json)); ("id", Option.value id ~default:(JsonNull : json)); ("result", result)] } : json)
+
+      let range (start_line : int) (start_column : int) (end_line : int) (end_column : int) : json =
+        (JsonObject { fields = (let fk_arg1 = ("start", (JsonObject { fields = (let fk_arg1 = ("line", Jsons.number start_line) in
+            let fk_arg2 = ("character", Jsons.number start_column) in
+            [fk_arg1; fk_arg2]) } : json)) in
+         let fk_arg2 = ("end", (JsonObject { fields = (let fk_arg1 = ("line", Jsons.number end_line) in
+            let fk_arg2 = ("character", Jsons.number end_column) in
+            [fk_arg1; fk_arg2]) } : json)) in
+         [fk_arg1; fk_arg2]) } : json)
+
+      let whole (text : string) (laid : string) : json =
+        let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
+        (JsonObject { fields = [("range", range 0 0 (List.length lines) 0); ("newText", (JsonString { value = laid } : json))] } : json)
+
+      let hex_digit (c : int) : int option =
+        if Lang.Strings.char_is_digit c then Some (Fun.id c - 48) else if c >= 97 && c <= 102 then Some (Fun.id c - 87) else if c >= 65 && c <= 70 then Some (Fun.id c - 55) else None
+
+      let rec unescaped (cs : int list) : string =
+        match cs with
+        | 37 :: a :: b :: rest -> (match let fk_arg1 = hex_digit a in
+             let fk_arg2 = hex_digit b in
+             (fk_arg1, fk_arg2) with
+             | (Some high, Some low) -> let fk_arg1 = fk_show_char ((fun n -> Uchar.to_int (Uchar.of_int n)) (high * 16 + low)) in
+                 let fk_arg2 = unescaped rest in
+                 fk_arg1 ^ fk_arg2
+             | _ -> "%" ^ unescaped ([a; b] @ rest))
+        | c :: rest -> fk_show_char c ^ unescaped rest
+        | [] -> ""
+
+      let path_of (uri : string) : Io.path =
+        Io.Paths.path (unescaped ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) (Lang.Strings.string_remove_prefix uri "file://")))
+
+      let read_or_empty (file : Io.path) : string =
+        if Io.Files.path_exists file then Io.Files.path_read_text file else ""
+
+      let word_at (line : string) (column : int) : string =
+        let cs = (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) line in
+        let is_name = fun c -> Lang.Strings.char_is_letter_or_digit c || c = 95 in
+        let start = List.length (Lang.Lists.list_take_while (List.rev (List.take column cs)) (fun it -> is_name it)) in
+        let end_ = List.length (Lang.Lists.list_take_while (List.drop column cs) (fun it -> is_name it)) in
+        String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) (List.take (start + end_) (List.drop (column - start) cs))))
+
+      let rec root_above (folder : Io.path) : Io.path option =
+        if Io.Files.path_exists (Io.Paths.path_resolve folder "build.fk") then Some folder else (match Io.Paths.path_parent folder with
+           | Some up when (up : Io.path).Io.value <> (folder : Io.path).Io.value -> root_above up
+           | _ -> None)
+
+      let at (root : Io.path) (folder : string) : Io.path =
+        if String.starts_with ~prefix:"/" folder then Io.Paths.path folder else Io.Paths.path_resolve root folder
+
+      let project_of (file : Io.path) : project =
+        let start = let fk_arg1 = Io.Paths.path_parent file in
+          let fk_arg2 = Io.Paths.path "." in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let root = Option.value (root_above start) ~default:start in
+        let paths = Io.Paths.path_resolve root ".kiln/paths" in
+        if Io.Files.path_exists paths then (let lines = Io.Files.path_read_lines paths in
+           let scopes = Io.Paths.path_resolve root ".kiln/scopes" in
+           let scoped = List.concat_map (fun it -> it) (List.filter (fun scope -> List.exists (fun line -> String.starts_with ~prefix:((at root (Lang.Strings.string_remove_prefix line "folder ") : Io.path).Io.value ^ "/") (file : Io.path).Io.value) (List.filter (fun it -> String.starts_with ~prefix:"folder " it) scope)) (List.map (fun it -> Io.Files.path_read_lines it) (if Io.Files.path_is_directory scopes then Io.Files.path_list_files scopes else []))) in
+           let fk_arg1 = Lang.Lists.list_distinct (List.filter (fun it -> Io.Files.path_is_directory it) (List.map (fun line -> at root (Lang.Strings.string_substring_after line " ")) (List.filter (fun it -> String.starts_with ~prefix:"source " it || String.starts_with ~prefix:"folder " it) (lines @ scoped)))) in
+           let fk_arg2 = Lang.Lists.list_distinct (List.map (fun it -> Io.Paths.path (Lang.Strings.string_remove_prefix it "library ")) (List.filter (fun it -> String.starts_with ~prefix:"library " it) (lines @ scoped))) in
+           ({ root = root; folders = fk_arg1; libraries = fk_arg2 } : project)) else ({ root = root; folders = List.filter (fun it -> Io.Files.path_is_directory it) [Io.Paths.path_resolve root "src"]; libraries = [] } : project)
+
+      let named (session : session) (uri : string) (params : json) : Checker.Inference.checked_function option =
+        let position = Jsons.json_field params "position" in
+        let line = Option.value (Option.bind (Option.bind position (fun it -> Jsons.json_field it "line")) (fun it -> Jsons.json_int it)) ~default:0 in
+        let character = Option.value (Option.bind (Option.bind position (fun it -> Jsons.json_field it "character")) (fun it -> Jsons.json_int it)) ~default:0 in
+        let file = path_of uri in
+        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
+          let fk_arg2 = read_or_empty file in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let name = word_at (Option.value (Lang.Lists.list_get_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n") line) ~default:"") character in
+        let programs = Collections.Maps.map_get_or_default (session : session).programs ((project_of file : project).root : Io.path).Io.value [] in
+        let candidates = List.filter (fun it -> (((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name = name) (List.concat_map (fun it -> (it : Checker.checked_program).Checker.functions) programs) in
+        let distinct = Collections.Maps.map_values (List.fold_left (fun m f -> Collections.Maps.map_put m ((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.name f) (Collections.Maps.empty_map ()) candidates) in
+        let here = List.find_opt (fun f -> ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path = Some (file : Io.path).Io.value && ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at : Parser.position).Parser.line = line + 1) distinct in
+        if String.equal "" name then None else (match here with
+           | Some found -> Some found
+           | None -> if List.length distinct = 1 then List.nth_opt distinct 0 else None)
+
+      let type_of (f : Checker.Inference.checked_function) : string =
+        Checker.Types.Solutions.solving (fun () -> Checker.Types.TypeText.shown ((f : Checker.Inference.checked_function).Checker.Inference.scheme : Checker.Types.scheme).Checker.Types.template)
+
+      let uri_of (file : string) : string =
+        "file://" ^ String.concat "" (List.map Fun.id (List.map (fun c -> if c = 32 then "%20" else fk_show_char c) ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) file)))
+
+      let definition_of (f : Checker.Inference.checked_function) : json option =
+        Option.map (fun file -> let at = (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at in
+           (JsonObject { fields = (let fk_arg1 = ("uri", (JsonString { value = uri_of file } : json)) in
+            let fk_arg2 = ("range", range ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1) ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1)) in
+            [fk_arg1; fk_arg2]) } : json)) ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path
+
+      let completions (session : session) (uri : string) (params : json) : json list =
+        let position = Jsons.json_field params "position" in
+        let line = Option.value (Option.bind (Option.bind position (fun it -> Jsons.json_field it "line")) (fun it -> Jsons.json_int it)) ~default:0 in
+        let character = Option.value (Option.bind (Option.bind position (fun it -> Jsons.json_field it "character")) (fun it -> Jsons.json_int it)) ~default:0 in
+        let file = path_of uri in
+        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
+          let fk_arg2 = read_or_empty file in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let before = (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in String.sub s 0 (at 0 n)) (Option.value (Lang.Lists.list_get_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n") line) ~default:"") character) in
+        let is_name = fun c -> Lang.Strings.char_is_letter_or_digit c || c = 95 in
+        let prefix = List.rev (Lang.Lists.list_take_while (List.rev before) (fun it -> is_name it)) in
+        let rest = Lang.Lists.list_drop_last before (List.length prefix) in
+        let owner = match Lang.Lists.list_last_or_none rest with
+          | Some 46 -> Some (List.rev (Lang.Lists.list_take_while (List.rev (Lang.Lists.list_drop_last rest 1)) (fun it -> is_name it)))
+          | _ -> None in
+        let typed = String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) prefix)) in
+        let functions = List.concat_map (fun it -> (it : Checker.checked_program).Checker.functions) (Collections.Maps.map_get_or_default (session : session).programs ((project_of file : project).root : Io.path).Io.value []) in
+        let candidates = List.filter (fun f -> let name = (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name in
+             let in_owner = match owner with
+               | Some o -> let fk_arg1 = Lang.Lists.list_last_or_none ((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.path in
+                   let fk_arg2 = Some (String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) o))) in
+                   fk_arg1 = fk_arg2
+               | None -> List.is_empty ((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.path || ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path = Some (file : Io.path).Io.value in
+             let same_file = ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path = Some (file : Io.path).Io.value in
+             let visible = same_file || (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.visibility <> (Parser.Private : Parser.visibility) in
+             ((in_owner && visible) && String.starts_with ~prefix:typed name) && not (Lang.Strings.string_contains name "__")) functions in
+        let modules = if Option.is_some owner then [] else List.map (fun m -> (JsonObject { fields = [("label", (JsonString { value = m } : json)); ("kind", Jsons.number 9)] } : json)) (List.take 100 (Lang.Lists.list_distinct (List.filter (fun m -> (String.starts_with ~prefix:typed m && Option.value (Option.map (fun it -> Lang.Strings.char_is_upper_case it) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in if n < 0 || i >= String.length s then None else Some (Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s i)))) m 0)) ~default:false) && not (Lang.Strings.string_contains m "__")) (Lang.Lists.list_map_not_null functions (fun it -> Lang.Lists.list_last_or_none ((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.path))))) in
+        modules @ List.map (fun f -> (JsonObject { fields = (let fk_arg1 = ("kind", Jsons.number (match (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
+               | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> 3
+               | _ -> 6)) in
+            let fk_arg2 = ("detail", (JsonString { value = type_of f } : json)) in
+            [("label", (JsonString { value = (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name } : json)); fk_arg1; fk_arg2]) } : json)) (List.take 200 (Collections.Maps.map_values (List.fold_left (fun m f -> Collections.Maps.map_put m (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name f) (Collections.Maps.empty_map ()) candidates)))
+
+      let kind_of (definition : Parser.definition) : int =
+        match definition with
+        | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> 2
+        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> 12
+        | Parser.FunctionDefinition { type_parameters = _; receiver = Some _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> 7
+        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = _; result = _; body = _; external_ = _; operator = _ } -> 14
+        | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _ } -> 10
+        | Parser.RecordDefinition { type_parameters = _; fields = _; private_constructor = _; annotation = _; external_ = _ } -> 23
+        | Parser.AliasDefinition { type_parameters = _; target = _ } -> 26
+        | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> 11
+
+      let rec symbol_of (d : Parser.declaration) (text : string) : json =
+        let line = ((d : Parser.declaration).Parser.at : Parser.position).Parser.line - 1 in
+        let width = Option.value (Option.map (fun it -> (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) it) (Lang.Lists.list_get_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n") line)) ~default:0 in
+        let column = max 0 (((d : Parser.declaration).Parser.at : Parser.position).Parser.column - 1) in
+        let found = (fun s t -> let n = String.length s and m = String.length t in let rec find i = if i + m > n then -1 else if String.sub s i m = t then i else find (i + 1) in let rec count i k = if i >= k then 0 else 1 + count (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) k in let i = find 0 in if i < 0 then -1 else count 0 i) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in String.sub s i (String.length s - i)) (Option.value (Lang.Lists.list_get_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n") line) ~default:"") column) (d : Parser.declaration).Parser.name in
+        let start = if found >= 0 then column + found else column in
+        let inner = match (d : Parser.declaration).Parser.definition with
+          | Parser.ModuleDefinition { declarations = declarations; spec = _; parameters = _; application = _; type_parameters = _ } -> List.map (fun it -> symbol_of it text) declarations
+          | _ -> [] in
+        (JsonObject { fields = (let fk_arg1 = ("kind", Jsons.number (kind_of (d : Parser.declaration).Parser.definition)) in
+         let fk_arg2 = ("range", range line 0 line width) in
+         let fk_arg3 = ("selectionRange", range line start line (min width (start + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (d : Parser.declaration).Parser.name))) in
+         [("name", (JsonString { value = (d : Parser.declaration).Parser.name } : json)); fk_arg1; fk_arg2; fk_arg3; ("children", (JsonArray { items = inner } : json))]) } : json)
+
+      let refuse (id : json option) (method_ : string) : unit =
+        sent (JsonObject { fields = (let fk_arg1 = ("id", Option.value id ~default:(JsonNull : json)) in
+         let fk_arg2 = ("error", (JsonObject { fields = [("code", Jsons.number (-32601)); ("message", (JsonString { value = "fckt doesn't do " ^ method_ } : json))] } : json)) in
+         [("jsonrpc", (JsonString { value = "2.0" } : json)); fk_arg1; fk_arg2]) } : json)
+
+      let handled (session : session) (message : json) : unit =
+        let id = Jsons.json_field message "id" in
+        let params = Option.value (Jsons.json_field message "params") ~default:(JsonNull : json) in
+        let uri = Option.bind (Option.bind (Jsons.json_field params "textDocument") (fun it -> Jsons.json_field it "uri")) (fun it -> Jsons.json_text it) in
+        match Option.value (Option.bind (Jsons.json_field message "method") (fun it -> Jsons.json_text it)) ~default:"" with
+        | "initialize" -> answer id (JsonObject { fields = [("capabilities", (JsonObject { fields = [("textDocumentSync", Jsons.number 1); ("documentFormattingProvider", (JsonBoolean { value = true } : json)); ("hoverProvider", (JsonBoolean { value = true } : json)); ("definitionProvider", (JsonBoolean { value = true } : json)); ("documentSymbolProvider", (JsonBoolean { value = true } : json)); ("completionProvider", (JsonObject { fields = [("triggerCharacters", (JsonArray { items = [(JsonString { value = "." } : json)] } : json))] } : json))] } : json)); ("serverInfo", (JsonObject { fields = [("name", (JsonString { value = "fckt" } : json))] } : json))] } : json)
+        | "shutdown" -> session.stopping <- true;
+            answer id (JsonNull : json)
+        | "exit" -> (match Effect.perform (Io.Process_exit (if (session : session).stopping then 0 else 1)) with
+             | _ -> (assert false))
+        | "textDocument/didOpen" -> Option.iter (fun u -> let text = Option.bind (Option.bind (Jsons.json_field params "textDocument") (fun it -> Jsons.json_field it "text")) (fun it -> Jsons.json_text it) in
+               session.open_ <- Collections.Maps.map_put (session : session).open_ u (Option.value text ~default:"");
+               session.changed <- (session : session).changed @ [u]) uri
+        | "textDocument/didChange" -> Option.iter (fun u -> let changes = Option.value (Option.map (fun it -> Jsons.json_items it) (Jsons.json_field params "contentChanges")) ~default:[] in
+               Option.iter (fun text -> session.open_ <- Collections.Maps.map_put (session : session).open_ u text) (Option.bind (Option.bind (Lang.Lists.list_last_or_none changes) (fun it -> Jsons.json_field it "text")) (fun it -> Jsons.json_text it));
+               session.changed <- (session : session).changed @ [u]) uri
+        | "textDocument/didSave" -> Option.iter (fun u -> session.changed <- (session : session).changed @ [u]) uri
+        | "textDocument/didClose" -> Option.iter (fun u -> session.open_ <- Collections.Maps.map_remove (session : session).open_ u) uri
+        | "textDocument/formatting" -> answer id (JsonArray { items = Option.to_list (Option.bind uri (fun u -> Option.bind (Collections.Maps.map_get (session : session).open_ u) (fun text -> let laid = Layout.formatted text in
+                   if laid = text then None else Some (whole text laid)))) } : json)
+        | "textDocument/hover" -> answer id (Option.value (Option.map (fun f -> (JsonObject { fields = [("contents", (JsonObject { fields = [("kind", (JsonString { value = "markdown" } : json)); ("value", (JsonString { value = "```fckt\n" ^ (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ^ ": " ^ type_of f ^ "\n```" } : json))] } : json))] } : json)) (Option.bind uri (fun u -> named session u params))) ~default:(JsonNull : json))
+        | "textDocument/definition" -> answer id (Option.value (Option.bind (Option.bind uri (fun u -> named session u params)) (fun it -> definition_of it)) ~default:(JsonNull : json))
+        | "textDocument/completion" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> completions session u params) uri) ~default:[] } : json)
+        | "textDocument/documentSymbol" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ u in
+                  let fk_arg2 = read_or_empty (path_of u) in
+                  Option.value fk_arg1 ~default:fk_arg2 in
+                match Parser.Parser.parse text with
+                | Ok file -> List.map (fun it -> symbol_of it text) (file : Parser.source_file).Parser.declarations
+                | Error _ -> []) uri) ~default:[] } : json)
+        | method_ -> if Option.is_some id && not (String.starts_with ~prefix:"$/" method_) then refuse id method_ else ()
+
+      let editing (session : session) (source : Checker.Sources.source_text) : string =
+        Option.value (Collections.Maps.map_get (session : session).open_ (uri_of (Option.value (source : Checker.Sources.source_text).Checker.Sources.path ~default:""))) ~default:(source : Checker.Sources.source_text).Checker.Sources.text
+
+      let declares_main (text : string) : bool =
+        match Parser.Parser.parse text with
+        | Ok file -> List.exists (fun it -> (it : Parser.declaration).Parser.name = "main") (file : Parser.source_file).Parser.declarations
+        | Error _ -> false
+
+      let publish (uri : string) (diagnostics : json list) : unit =
+        sent (JsonObject { fields = [("jsonrpc", (JsonString { value = "2.0" } : json)); ("method", (JsonString { value = "textDocument/publishDiagnostics" } : json)); ("params", (JsonObject { fields = [("uri", (JsonString { value = uri } : json)); ("diagnostics", (JsonArray { items = diagnostics } : json))] } : json))] } : json)
+
+      let shown (d : Checker.Diagnostics.diagnostic) (text : string) : json =
+        let line = max (((d : Checker.Diagnostics.diagnostic).Checker.Diagnostics.at : Parser.position).Parser.line - 1) 0 in
+        let column = max (((d : Checker.Diagnostics.diagnostic).Checker.Diagnostics.at : Parser.position).Parser.column - 1) 0 in
+        let rest = Option.value (Option.map (fun it -> (fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in String.sub s i (String.length s - i)) it column) (Lang.Lists.list_get_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n") line)) ~default:"" in
+        let word = List.length (Lang.Lists.list_take_while ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) rest) (fun it -> Lang.Strings.char_is_letter_or_digit it || it = 95)) in
+        (JsonObject { fields = (let fk_arg1 = ("range", range line column line (column + max word 1)) in
+         let fk_arg2 = ("severity", Jsons.number 1) in
+         [fk_arg1; fk_arg2; ("source", (JsonString { value = "fckt" } : json)); ("message", (JsonString { value = (d : Checker.Diagnostics.diagnostic).Checker.Diagnostics.message } : json))]) } : json)
+
+      let check (session : session) (uri : string) : unit =
+        let file = path_of uri in
+        let project = project_of file in
+        let folders = if List.exists (fun it -> String.starts_with ~prefix:((it : Io.path).Io.value ^ "/") (file : Io.path).Io.value) (project : project).folders then (project : project).folders else (project : project).folders @ Option.to_list (Io.Paths.path_parent file) in
+        let own = List.concat_map (fun dir -> List.map (fun (pkg, sources) -> (pkg, List.map (fun s -> { (s : Checker.Sources.source_text) with Checker.Sources.text = editing session s }) sources)) (let fk_arg1 = Sources.packages_in_default_compiled_in () in
+              let fk_arg2 = Sources.packages_in_default_interface () in
+              Sources.packages_in dir [] (Checker.Sources.ProgramProject : Checker.Sources.project) ((dir : Io.path).Io.value ^ "/") fk_arg1 fk_arg2)) folders in
+        let libraries = List.concat_map (fun it -> Sources.interfaces_in it) (List.filter (fun it -> Io.Files.path_exists (Io.Paths.path_resolve it "unit")) (project : project).libraries) in
+        let std = if List.is_empty libraries then Sources.standard (Sources.home ()) else [] in
+        let imported = Lang.Lists.list_distinct (List.map (fun (pkg, _) -> "import " ^ String.concat "." (List.map Fun.id pkg) ^ ".*\n") (List.filter (fun (pkg, sources) -> Lang.Lists.list_is_not_empty pkg && Lang.Lists.list_is_not_empty sources) own)) in
+        let tree = let fk_arg1 = Sources.merged (((Sources.core (Sources.home ()) @ std) @ own) @ libraries) in
+          let fk_arg2 = Checker.Sources.source_tree_default_imports () in
+          ({ Checker.Sources.packages = fk_arg1; imports = fk_arg2 } : Checker.Sources.source_tree) in
+        let mains = List.filter (fun it -> declares_main (it : Checker.Sources.source_text).Checker.Sources.text) (List.concat_map (fun (_, sources) -> sources) (List.filter (fun (pkg, _) -> List.is_empty pkg) own)) in
+        let entries = [(let fk_arg1 = String.concat "" (List.map Fun.id imported) in
+           let fk_arg2 = Checker.Sources.source_text_default_compiled_in () in
+           let fk_arg3 = Checker.Sources.source_text_default_interface () in
+           let fk_arg4 = Checker.Sources.source_text_default_trusted () in
+           ({ Checker.Sources.path = None; project = (Checker.Sources.ProgramProject : Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4 } : Checker.Sources.source_text))] @ mains in
+        let results = List.map (fun entry -> Checker.Checker.check entry tree true) entries in
+        let problems = Lang.Lists.list_distinct (List.concat_map (fun (_, found) -> found) results) in
+        session.programs <- Collections.Maps.map_put (session : session).programs ((project : project).root : Io.path).Io.value (List.concat_map (fun (program, _) -> Option.to_list program) results);
+        let found = List.filter (fun it -> Option.is_some (it : Checker.Diagnostics.diagnostic).Checker.Diagnostics.file) problems in
+        let by_file = List.fold_left (fun m d -> let key = uri_of (Option.value (d : Checker.Diagnostics.diagnostic).Checker.Diagnostics.file ~default:"") in
+             Collections.Maps.map_put m key (Collections.Maps.map_get_or_default m key [] @ [d])) (Collections.Maps.empty_map ()) found in
+        let before = Collections.Maps.map_get_or_default (session : session).said ((project : project).root : Io.path).Io.value [] in
+        List.iter (fun it -> publish it []) (List.filter (fun it -> not (Collections.Maps.map_contains_key by_file it)) before);
+        List.iter (fun (key, diagnostics) -> let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ key in
+             let fk_arg2 = read_or_empty (path_of key) in
+             Option.value fk_arg1 ~default:fk_arg2 in
+           publish key (List.map (fun it -> shown it text) diagnostics)) (Collections.Maps.map_entries by_file);
+        session.said <- Collections.Maps.map_put (session : session).said ((project : project).root : Io.path).Io.value (Collections.Maps.map_keys by_file)
+
+      let checked (session : session) (uri : string) : unit =
+        match Effects.Failure.attempt (fun () -> check session uri) with
+        | Ok _ -> ()
+        | Error why -> Io.Channels.print_error ("fckt: can't check " ^ uri ^ ": " ^ why)
+
+      let rec served (session : session) : unit =
+        match received () with
+        | None -> (match Effect.perform (Io.Process_exit (if (session : session).stopping then 0 else 1)) with
+             | _ -> (assert false))
+        | Some message -> handled session message;
+            if Lang.Lists.list_is_not_empty (session : session).changed && not ((fun s -> try let (r, _, _) = Unix.select [Unix.stdin] [] [] s in r <> [] with Unix.Unix_error _ -> false) 0.15) then (let changed = (session : session).changed in
+               session.changed <- [];
+               List.iter (fun it -> checked session it) (Collections.Maps.map_values (List.fold_left (fun by_root u -> Collections.Maps.map_put by_root ((project_of (path_of u) : project).root : Io.path).Io.value u) (Collections.Maps.empty_map ()) changed))) else ();
+            served session
+
+      let serve () : unit =
+        served (let fk_arg1 = Collections.Maps.empty_map () in
+         let fk_arg2 = Collections.Maps.empty_map () in
+         let fk_arg3 = Collections.Maps.empty_map () in
+         ({ open_ = fk_arg1; said = fk_arg2; programs = fk_arg3; stopping = false; changed = [] } : session))
     end
 
     module Symbols = struct
@@ -13351,46 +13828,6 @@ let checked (entry : Fckt.Checker.Sources.source_text) (file : string) (tree : F
      | Ok items -> write (Fckt.Ocaml.Printer.file items)
      | Error why -> failing ["can't lower " ^ why])
 
-let merged (packages : (string list * Fckt.Checker.Sources.source_text list) list) : (string list, Fckt.Checker.Sources.source_text list) Fckt.Collections.Maps.map =
-  List.fold_left (fun m entry -> let (pkg, files) = entry in
-     Fckt.Collections.Maps.map_put m pkg (Fckt.Collections.Maps.map_get_or_default m pkg [] @ files)) (Fckt.Collections.Maps.empty_map ()) packages
-
-let is_package_name (name : string) : bool =
-  match (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) name with
-  | first :: rest -> (Fckt.Lang.Strings.char_is_lower_case first || first = 95) && List.for_all (fun it -> Fckt.Lang.Strings.char_is_letter_or_digit it || it = 95) rest
-  | [] -> false
-
-let packages_in_default_compiled_in () : string option =
-  None
-
-let packages_in_default_interface () : bool =
-  false
-
-let rec packages_in (folder : Fckt.Io.path) (pkg : string list) (project : Fckt.Checker.Sources.project) (prefix : string) (compiled_in : string option) (interface : bool) : (string list * Fckt.Checker.Sources.source_text list) list =
-  let entries = Fckt.Lang.Lists.list_sorted_by (Fckt.Io.Files.path_list_files folder) (fun it -> Fckt.Io.Paths.path_name it) in
-  let extension = if interface then "fki" else "fk" in
-  let files = List.map (fun f -> let fk_arg1 = Some (prefix ^ String.concat "/" (List.map Fun.id (pkg @ [Fckt.Io.Paths.path_name f]))) in
-       let fk_arg2 = Fckt.Io.Files.path_read_text f in
-       let fk_arg3 = Fckt.Checker.Sources.source_text_default_trusted () in
-       ({ Fckt.Checker.Sources.path = fk_arg1; project = project; text = fk_arg2; compiled_in = compiled_in; interface = interface; trusted = fk_arg3 } : Fckt.Checker.Sources.source_text)) (List.filter (fun it -> Fckt.Io.Paths.path_extension it = extension && not (Fckt.Io.Files.path_is_directory it)) entries) in
-  let inner = List.concat_map (fun d -> packages_in d (pkg @ [Fckt.Io.Paths.path_name d]) project prefix compiled_in interface) (List.filter (fun it -> Fckt.Io.Files.path_is_directory it && is_package_name (Fckt.Io.Paths.path_name it)) entries) in
-  (pkg, files) :: inner
-
-let core (home : Fckt.Io.path) : (string list * Fckt.Checker.Sources.source_text list) list =
-  let installed = Fckt.Io.Paths.path_resolve home "core" in
-  let folder = if Fckt.Io.Files.path_is_directory installed then installed else Fckt.Io.Paths.path_resolve home "src/main/resources/std" in
-  let fk_arg1 = packages_in_default_compiled_in () in
-  let fk_arg2 = packages_in_default_interface () in
-  packages_in folder [] (Fckt.Checker.Sources.CoreProject : Fckt.Checker.Sources.project) "core:" fk_arg1 fk_arg2
-
-let home () : Fckt.Io.path =
-  match Effect.perform (Fckt.Io.Process_env "FCKT_HOME") with
-  | Some given -> Fckt.Io.Paths.path given
-  | None -> let installed = Option.map (fun it -> Fckt.Io.Paths.path_resolve it "../lib/fckt") (Fckt.Io.Paths.path_parent (Fckt.Io.Files.path_canonical (Effect.perform (Fckt.Io.Process_executable ())))) in
-      match installed with
-      | Some lib when Fckt.Io.Files.path_is_directory (Fckt.Io.Paths.path_resolve lib "core") -> lib
-      | _ -> Fckt.Io.Paths.path "."
-
 let write_output (output : string) (ml : string) : unit =
   if output = "-" then Effect.perform (Fckt.Io.Console_print ml) else Fckt.Io.Files.path_write_text (Fckt.Io.Paths.path output) ml
 
@@ -13399,7 +13836,7 @@ let core_unit (out : string) : unit =
     let fk_arg2 = Fckt.Checker.Sources.source_text_default_interface () in
     let fk_arg3 = Fckt.Checker.Sources.source_text_default_trusted () in
     ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = ""; compiled_in = fk_arg1; interface = fk_arg2; trusted = fk_arg3 } : Fckt.Checker.Sources.source_text) in
-  checked entry "the core" (let fk_arg1 = merged (core (home ())) in
+  checked entry "the core" (let fk_arg1 = Fckt.Compiler.Sources.merged (Fckt.Compiler.Sources.core (Fckt.Compiler.Sources.home ())) in
    let fk_arg2 = Fckt.Checker.Sources.source_tree_default_imports () in
    ({ Fckt.Checker.Sources.packages = fk_arg1; imports = fk_arg2 } : Fckt.Checker.Sources.source_tree)) true (fun ml -> write_output out ml)
 
@@ -13414,19 +13851,13 @@ let laid_out (paths : string list) (checking : bool) : unit =
           [])) files in
   if Fckt.Lang.Lists.list_is_not_empty unformatted then failing unformatted else ()
 
-let standard (home : Fckt.Io.path) : (string list * Fckt.Checker.Sources.source_text list) list =
-  let std = Fckt.Io.Paths.path_resolve home "std/src" in
-  let fk_arg1 = (Fckt.Checker.Sources.OtherProject { root = (Fckt.Io.Files.path_canonical std : Fckt.Io.path).Fckt.Io.value } : Fckt.Checker.Sources.project) in
-  let fk_arg2 = packages_in_default_interface () in
-  packages_in std [] fk_arg1 "std/src/" (Some "Fckt_std") fk_arg2
-
 let compile (file : string) (out : string) (folders : string list) (whole : bool) : unit =
   let own = List.concat_map (fun folder -> let fk_arg1 = Fckt.Io.Paths.path folder in
-       let fk_arg2 = packages_in_default_compiled_in () in
-       let fk_arg3 = packages_in_default_interface () in
-       packages_in fk_arg1 [] (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project) (folder ^ "/") fk_arg2 fk_arg3) folders in
-  let tree = let fk_arg1 = merged ((let fk_arg1 = core (Fckt.Io.Paths.path ".") in
-        let fk_arg2 = standard (Fckt.Io.Paths.path ".") in
+       let fk_arg2 = Fckt.Compiler.Sources.packages_in_default_compiled_in () in
+       let fk_arg3 = Fckt.Compiler.Sources.packages_in_default_interface () in
+       Fckt.Compiler.Sources.packages_in fk_arg1 [] (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project) (folder ^ "/") fk_arg2 fk_arg3) folders in
+  let tree = let fk_arg1 = Fckt.Compiler.Sources.merged ((let fk_arg1 = Fckt.Compiler.Sources.core (Fckt.Io.Paths.path ".") in
+        let fk_arg2 = Fckt.Compiler.Sources.standard (Fckt.Io.Paths.path ".") in
         fk_arg1 @ fk_arg2) @ own) in
     let fk_arg2 = Fckt.Checker.Sources.source_tree_default_imports () in
     ({ Fckt.Checker.Sources.packages = fk_arg1; imports = fk_arg2 } : Fckt.Checker.Sources.source_tree) in
@@ -13480,24 +13911,20 @@ let options_default_symbols () : string option =
 
 let own_packages (o : options) : (string list * Fckt.Checker.Sources.source_text list) list =
   List.concat_map (fun dir -> let fk_arg1 = Fckt.Io.Paths.path dir in
-     let fk_arg2 = packages_in_default_compiled_in () in
-     let fk_arg3 = packages_in_default_interface () in
-     packages_in fk_arg1 [] (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project) (dir ^ "/") fk_arg2 fk_arg3) (o : options).own
-
-let interfaces_in (dir : Fckt.Io.path) : (string list * Fckt.Checker.Sources.source_text list) list =
-  let unit = String.trim (Fckt.Io.Files.path_read_text (Fckt.Io.Paths.path_resolve dir "unit")) in
-  packages_in dir [] (Fckt.Checker.Sources.OtherProject { root = (Fckt.Io.Files.path_canonical dir : Fckt.Io.path).Fckt.Io.value } : Fckt.Checker.Sources.project) ((dir : Fckt.Io.path).Fckt.Io.value ^ "/") (Some unit) true
+     let fk_arg2 = Fckt.Compiler.Sources.packages_in_default_compiled_in () in
+     let fk_arg3 = Fckt.Compiler.Sources.packages_in_default_interface () in
+     Fckt.Compiler.Sources.packages_in fk_arg1 [] (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project) (dir ^ "/") fk_arg2 fk_arg3) (o : options).own
 
 let tree (o : options) (own : (string list * Fckt.Checker.Sources.source_text list) list) : Fckt.Checker.Sources.source_tree =
-  let home = home () in
+  let home = Fckt.Compiler.Sources.home () in
   let others = List.concat_map (fun dir -> let fk_arg1 = Fckt.Io.Paths.path dir in
        let fk_arg2 = (Fckt.Checker.Sources.OtherProject { root = (Fckt.Io.Files.path_canonical (Fckt.Io.Paths.path dir) : Fckt.Io.path).Fckt.Io.value } : Fckt.Checker.Sources.project) in
-       let fk_arg3 = packages_in_default_compiled_in () in
-       let fk_arg4 = packages_in_default_interface () in
-       packages_in fk_arg1 [] fk_arg2 (dir ^ "/") fk_arg3 fk_arg4) (o : options).others in
-  let libraries = List.concat_map (fun dir -> interfaces_in (Fckt.Io.Paths.path dir)) (o : options).libraries in
-  ({ Fckt.Checker.Sources.packages = merged ((((let fk_arg1 = core home in
-      let fk_arg2 = if (o : options).no_std then [] else standard home in
+       let fk_arg3 = Fckt.Compiler.Sources.packages_in_default_compiled_in () in
+       let fk_arg4 = Fckt.Compiler.Sources.packages_in_default_interface () in
+       Fckt.Compiler.Sources.packages_in fk_arg1 [] fk_arg2 (dir ^ "/") fk_arg3 fk_arg4) (o : options).others in
+  let libraries = List.concat_map (fun dir -> Fckt.Compiler.Sources.interfaces_in (Fckt.Io.Paths.path dir)) (o : options).libraries in
+  ({ Fckt.Checker.Sources.packages = Fckt.Compiler.Sources.merged ((((let fk_arg1 = Fckt.Compiler.Sources.core home in
+      let fk_arg2 = if (o : options).no_std then [] else Fckt.Compiler.Sources.standard home in
       fk_arg1 @ fk_arg2) @ own) @ others) @ libraries); imports = (o : options).imports } : Fckt.Checker.Sources.source_tree)
 
 let tests (o : options) (dir : string) : unit =
@@ -13512,9 +13939,9 @@ let tests (o : options) (dir : string) : unit =
   if Option.is_none (o : options).marker || Option.is_none (o : options).runner then failing ["fckt: --test needs --marker and --runner"] else ();
   let given = own_packages o in
   let own = if List.mem dir (o : options).own then given else given @ (let fk_arg1 = Fckt.Io.Paths.path dir in
-       let fk_arg2 = packages_in_default_compiled_in () in
-       let fk_arg3 = packages_in_default_interface () in
-       packages_in fk_arg1 [] (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project) (dir ^ "/") fk_arg2 fk_arg3) in
+       let fk_arg2 = Fckt.Compiler.Sources.packages_in_default_compiled_in () in
+       let fk_arg3 = Fckt.Compiler.Sources.packages_in_default_interface () in
+       Fckt.Compiler.Sources.packages_in fk_arg1 [] (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project) (dir ^ "/") fk_arg2 fk_arg3) in
   let outermost = List.concat_map (fun (_, sources) -> sources) (List.filter (fun (p, _) -> List.is_empty p) own) in
   let files = Fckt.Lang.Lists.list_sorted_by (Fckt.Lang.Lists.list_map_not_null outermost (fun source -> let name = Fckt.Lang.Strings.string_remove_prefix (Option.value (source : Fckt.Checker.Sources.source_text).Fckt.Checker.Sources.path ~default:"") (dir ^ "/") in
         let lower_case = Option.value (Option.map (fun it -> Fckt.Lang.Strings.char_is_lower_case it) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in if n < 0 || i >= String.length s then None else Some (Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s i)))) name 0)) ~default:false in
@@ -13583,11 +14010,12 @@ let library (o : options) (interface : Fckt.Io.path) (packages : string list) : 
              | _ -> None)) (List.filter (fun (p, _) -> List.mem (String.concat "." (List.map Fun.id p)) packages) own) in
      let untyped = List.concat_map (fun (_, source, parsed) -> List.map (fun (at, message) -> Option.value (source : Fckt.Checker.Sources.source_text).Fckt.Checker.Sources.path ~default:"" ^ ":" ^ string_of_int (at : Fckt.Parser.position).Fckt.Parser.line ^ ":" ^ string_of_int (at : Fckt.Parser.position).Fckt.Parser.column ^ ": error: " ^ message) (Fckt.Compiler.Interfaces.untyped (parsed : Fckt.Parser.source_file).Fckt.Parser.declarations)) files in
      if Fckt.Lang.Lists.list_is_not_empty untyped then failing untyped else ();
+     let hidden = List.concat_map (fun (pkg, _, parsed) -> List.map (fun it -> String.concat "." (List.map Fun.id (pkg @ [(it : Fckt.Parser.declaration).Fckt.Parser.name]))) (List.filter (fun it -> (it : Fckt.Parser.declaration).Fckt.Parser.visibility <> (Fckt.Parser.Public : Fckt.Parser.visibility)) (parsed : Fckt.Parser.source_file).Fckt.Parser.declarations)) files in
      Fckt.Io.Files.path_delete interface;
      List.iter (fun (pkg, source, parsed) -> let source_path = Option.value (source : Fckt.Checker.Sources.source_text).Fckt.Checker.Sources.path ~default:"" in
         let folder = Fckt.Io.Paths.path_resolve interface (String.concat "/" (List.map Fun.id pkg)) in
         Fckt.Io.Files.path_make_dirs folder;
-        let written = Fckt.Compiler.Interfaces.write parsed source_path (source : Fckt.Checker.Sources.source_text).Fckt.Checker.Sources.text in
+        let written = Fckt.Compiler.Interfaces.write parsed source_path (source : Fckt.Checker.Sources.source_text).Fckt.Checker.Sources.text hidden in
         Fckt.Io.Files.path_write_text (Fckt.Io.Paths.path_resolve folder (Fckt.Checker.Sources.Loader.file_name source ^ ".fki")) written) (List.filter (fun (_, _, parsed) -> Fckt.Compiler.Interfaces.sees_any parsed) files);
      Fckt.Io.Files.path_make_dirs interface;
      (let fk_arg1 = Fckt.Io.Paths.path_resolve interface "unit" in
@@ -13615,7 +14043,7 @@ let unknown (args : string list) : unit =
   Effect.perform (Fckt.Io.Console_println "       fckt --test <folder> -o <out.ml> --marker <name> --runner <name> [options]");
   Effect.perform (Fckt.Io.Console_println "       fckt --symbols <out> [options] [<package>...]");
   Effect.perform (Fckt.Io.Console_println "       fckt --core -o <out.ml> | --format <path>... | --check-format <path>...");
-  Effect.perform (Fckt.Io.Console_println "       fckt --std-path | --version");
+  Effect.perform (Fckt.Io.Console_println "       fckt --std-path | --version | --language-server");
   match Effect.perform (Fckt.Io.Process_exit 2) with
   | _ -> (assert false)
 
@@ -13625,7 +14053,8 @@ let main (args : string list) : unit =
   | ["--core"; "-o"; out] -> core_unit out
   | "--format" :: paths -> laid_out paths false
   | "--check-format" :: paths -> laid_out paths true
-  | ["--std-path"] -> Effect.perform (Fckt.Io.Console_println (Fckt.Io.Files.path_canonical (Fckt.Io.Paths.path_resolve (home ()) "std/src") : Fckt.Io.path).Fckt.Io.value)
+  | ["--language-server"] -> Fckt.Compiler.LanguageServer.serve ()
+  | ["--std-path"] -> Effect.perform (Fckt.Io.Console_println (Fckt.Io.Files.path_canonical (Fckt.Io.Paths.path_resolve (Fckt.Compiler.Sources.home ()) "std/src") : Fckt.Io.path).Fckt.Io.value)
   | "--whole" :: file :: out :: folders -> compile file out folders true
   | file :: out :: folders when not (List.exists (fun it -> String.starts_with ~prefix:"-" it) args) -> compile file out folders false
   | _ -> match options args (let fk_arg1 = options_default_test () in
