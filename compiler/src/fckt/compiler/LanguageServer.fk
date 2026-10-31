@@ -11,6 +11,10 @@ import fckt.text.Encodings.*
 import fckt.checker.Checker
 import fckt.checker.CheckedProgram
 import fckt.checker.inference.CheckedFunction
+import fckt.checker.inference.Fact
+import fckt.checker.inference.Doings
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.Type
 import fckt.checker.types.TypeText
 import fckt.checker.types.Solutions
 import fckt.parser.*
@@ -77,6 +81,9 @@ module LanguageServer {
           ("hoverProvider", JsonBoolean(true)),
           ("definitionProvider", JsonBoolean(true)),
           ("documentSymbolProvider", JsonBoolean(true)),
+          ("referencesProvider", JsonBoolean(true)),
+          ("renameProvider", JsonBoolean(true)),
+          ("inlayHintProvider", JsonBoolean(true)),
           ("completionProvider", JsonObject([("triggerCharacters", JsonArray([JsonString(".")]))])),
         ])),
         ("serverInfo", JsonObject([("name", JsonString("fckt"))])),
@@ -106,17 +113,31 @@ module LanguageServer {
           if (laid == text) None else Some(whole(text, laid))
         }
       }.toList()))
-      "textDocument/hover" -> answer(id, uri.flatMap { u -> named(session, u, params) }.map { f ->
-        JsonObject([
-          ("contents", JsonObject([
-            ("kind", JsonString("markdown")),
-            ("value", JsonString("```fckt\n${f.function.declaration.name}: ${typeOf(f)}\n```")),
-          ])),
-        ])
-      }.getOrElse(JsonNull))
+      "textDocument/hover" -> answer(
+        id,
+        uri.flatMap { u -> hover(session, u, params) }.getOrElse(JsonNull),
+      )
       "textDocument/definition" -> answer(
         id,
-        uri.flatMap { u -> named(session, u, params) }.flatMap { definitionOf(it) }.getOrElse(JsonNull),
+        uri.flatMap { u -> symbolAt(session, u, params) }.flatMap { locationOf(it) }.getOrElse(JsonNull),
+      )
+      "textDocument/references" -> answer(id, JsonArray(uri.map { u ->
+        whole = params.field("context").flatMap { it.field("includeDeclaration") }
+        withDeclaration = whole.map { it == JsonBoolean(true) }.getOrElse(true)
+        symbolAt(session, u, params).map { s ->
+          (if (withDeclaration) locationOf(s).toList() else []) + usesOf(session, u, s).map { use ->
+            (file, at, length) = use
+            location(file, at.line - 1, at.column - 1, length)
+          }
+        }.getOrElse([])
+      }.getOrElse([])))
+      "textDocument/rename" -> answer(id, uri.flatMap { u ->
+        newName = params.field("newName").flatMap { it.text }.getOrElse("")
+        symbolAt(session, u, params).map { s -> renamed(session, u, s, newName) }
+      }.getOrElse(JsonNull))
+      "textDocument/inlayHint" -> answer(
+        id,
+        JsonArray(uri.map { u -> hints(session, u) }.getOrElse([])),
       )
       "textDocument/completion" -> answer(
         id,
@@ -174,7 +195,7 @@ module LanguageServer {
       declaresMain(it.text)
     }
     entries = [SourceText(None, ProgramProject, imported.joinToString(""))] + mains
-    results = entries.map { entry -> Checker.check(entry, tree, true) }
+    results = entries.map { entry -> Checker.check(entry, tree, true, true) }
     problems = results.flatMap { _, found -> found }.distinct()
     session.programs = session.programs.put(
       project.root.value,
@@ -222,6 +243,241 @@ module LanguageServer {
     else when (here) {
       Some(found) -> Some(found)
       None -> if (distinct.size == 1) distinct.firstOrNone() else None
+    }
+  }
+
+  // What's noted of what the project the file is in was last checked as, once each.
+  @FileSystem private factsOf(session: Session, file: Path): List<Fact> =
+    session.programs.getOrDefault(projectOf(file).root.value, []).flatMap { it.facts }.distinct()
+
+  // The zero-based line and character params says.
+  private positionOf(params: Json): (Int, Int) = {
+    position = params.field("position")
+    (
+      position.flatMap { it.field("line") }.flatMap { it.int }.getOrElse(0),
+      position.flatMap { it.field("character") }.flatMap { it.int }.getOrElse(0)
+    )
+  }
+
+  // What the name at params' position means: as the checker noted it, or the function declared
+  // there, or the one function of that name the project has.
+  @FileSystem private symbolAt(session: Session, uri: String, params: Json): Option<Symbol> =
+    meansAt(
+      session,
+      uri,
+      params,
+    ).map { it.symbol }.orElse { named(session, uri, params).map { it.function } }
+
+  private type Meaning(at: Position, length: Int, symbol: Symbol, t: Option<Type>)
+
+  @FileSystem private meansAt(session: Session, uri: String, params: Json): Option<Meaning> = {
+    (line, character) = positionOf(params)
+    file = pathOf(uri).value
+    factsOf(session, pathOf(uri)).flatMap { f ->
+      when (f) {
+        Means(in, at, length, symbol, t) ->
+          if (in == Some(file) && at.line == line + 1 && character + 1 >= at.column && character + 1 <= at.column + length)
+            [Meaning(at, length, symbol, t)]
+          else []
+        else -> []
+      }
+    }.firstOrNone()
+  }
+
+  // Where s is used, each as the file, where, and how long the name is there.
+  @FileSystem private usesOf(
+    session: Session,
+    uri: String,
+    s: Symbol,
+  ): List<(String, Position, Int)> =
+    factsOf(session, pathOf(uri)).flatMap { f ->
+      when (f) {
+        Means(Some(file), at, length, symbol, _) if symbol.name == s.name -> [(file, at, length)]
+        else -> []
+      }
+    }
+
+  // The name, its type, and what calling it there does.
+  @FileSystem private hover(session: Session, uri: String, params: Json): Option<Json> =
+    meansAt(session, uri, params).map { m ->
+      file = pathOf(uri).value
+      t = m.t.map { Solutions.solving { TypeText.shown(it) } }.orElse {
+        checkedOf(session, uri, m.symbol).map { typeOf(it) }
+      }
+      does = factsOf(session, pathOf(uri)).flatMap { f ->
+        when (f) {
+          Does(
+            Some(in),
+            at,
+            row,
+          ) if in == file && at.line == m.at.line && at.column == m.at.column + m.length ->
+            row.labels.map { it.name }
+          else -> []
+        }
+      }
+      shownType = t.map { ": $it" }.getOrElse("")
+      said = "```fckt\n${m.symbol.declaration.name}$shownType\n```" +
+        (if (does.isEmpty()) "" else "\n\nThis call does ${Doings.shown(does)}.")
+      JsonObject(
+        [("contents", JsonObject([("kind", JsonString("markdown")), ("value", JsonString(said))]))],
+      )
+    }.orElse {
+      named(session, uri, params).map { f ->
+        JsonObject([
+          ("contents", JsonObject([
+            ("kind", JsonString("markdown")),
+            ("value", JsonString("```fckt\n${f.function.declaration.name}: ${typeOf(f)}\n```")),
+          ])),
+        ])
+      }
+    }
+
+  @FileSystem private checkedOf(session: Session, uri: String, s: Symbol): Option<CheckedFunction> =
+    session.programs.getOrDefault(
+      projectOf(pathOf(uri)).root.value,
+      [],
+    ).flatMap { it.functions }.find {
+      it.function.name == s.name
+    }
+
+  // Where the name s is declared with is, in its file: the line and column, from 0.
+  @FileSystem private nameOf(
+    session: Session,
+    s: Symbol,
+  ): Option<(String, Int, Int)> = s.file.source.path.flatMap { file ->
+    text = session.open.get(uriOf(file)).getOrElse(readOrEmpty(path(file)))
+    lines = text.split("\n")
+    name = s.declaration.name.split(".").lastOrNone().getOrElse(s.declaration.name)
+    start = s.declaration.at.line - 1
+    [start, start + 1, start + 2, start + 3].flatMap { n ->
+      from = if (n == start) s.declaration.at.column - 1 else 0
+      lines.getOrNone(
+        n,
+      ).toList().flatMap { line -> wordIn(line, name, from).map { (n, it) }.toList() }
+    }.firstOrNone().map { found ->
+      (n, column) = found
+      (file, n, column)
+    }
+  }
+
+  // Where name is in line, as a word of its own, from column on.
+  private wordIn(line: String, name: String, column: Int): Option<Int> = {
+    found = line.drop(column).indexOf(name)
+    i = if (found < 0) -1 else found + column
+    isName = (c: Option<Char>) -> c.map { it.isLetterOrDigit() || it == '_' }.getOrElse(false)
+    if (i < 0) None
+    else if (isName(line.toList().getOrNone(i - 1)) || isName(line.toList().getOrNone(i + name.length))) wordIn(
+      line,
+      name,
+      i + 1,
+    )
+    else Some(i)
+  }
+
+  @FileSystem private locationOf(s: Symbol): Option<Json> = s.file.source.path.map { file ->
+    at = s.declaration.at
+    location(file, at.line - 1, at.column - 1, 0)
+  }
+
+  private location(file: String, line: Int, column: Int, length: Int): Json = JsonObject([
+    ("uri", JsonString(uriOf(file))),
+    ("range", range(line, column, line, column + length)),
+  ])
+
+  // Every use of s, and its declaration, named newName: only if it's the program's own.
+  @FileSystem private renamed(session: Session, uri: String, s: Symbol, newName: String): Json =
+    if (s.file.source.project != ProgramProject) JsonNull
+    else {
+      uses = usesOf(session, uri, s).map { use ->
+        (file, at, length) = use
+        (file, at.line - 1, at.column - 1, length)
+      }
+      declared = nameOf(session, s).map { found ->
+        (file, line, column) = found
+        (file, line, column, s.declaration.name.split(".").lastOrNone().getOrElse("").length)
+      }.toList()
+      edits = (declared + uses).distinct().fold(emptyMap()) { byFile, edit ->
+        (file, line, column, length) = edit
+        change = JsonObject(
+          [("range", range(line, column, line, column + length)), ("newText", JsonString(newName))],
+        )
+        byFile.put(uriOf(file), byFile.getOrDefault(uriOf(file), []) + [change])
+      }
+      JsonObject(
+        [("changes", JsonObject(edits.entries.map { u, changes -> (u, JsonArray(changes)) }))],
+      )
+    }
+
+  // What the checker worked out of each function declared in the file that it doesn't say: the
+  // effects it does, before its name, and what it gives, after its parameters.
+  @FileSystem private hints(session: Session, uri: String): List<Json> = {
+    file = pathOf(uri).value
+    text = session.open.get(uri).getOrElse(readOrEmpty(pathOf(uri)))
+    lines = text.split("\n")
+    own = session.programs.getOrDefault(
+      projectOf(pathOf(uri)).root.value,
+      [],
+    ).flatMap { it.functions }.filter {
+      it.function.file.source.path == Some(file)
+    }
+    own.fold(emptyMap()) { m, f -> m.put(f.function.name, f) }.values.flatMap { f ->
+      d = f.function.declaration
+      written = d.annotations.map { it.name }
+      when ((d.definition, nameOf(session, f.function))) {
+        (FunctionDefinition(_, _, parameters, result, _, None, _), Some(found)) -> {
+          (_, line, column) = found
+          name = d.name.split(".").lastOrNone().getOrElse(d.name)
+          (results, does) = Solutions.solving {
+            when (f.scheme.template) {
+              FunctionOf(_, r, row) -> (TypeText.shown(r), row.labels.map { it.name })
+              other -> (TypeText.shown(other), [])
+            }
+          }
+          unsaid = does.filter { e -> !written.contains(e.split(".").lastOrNone().getOrElse(e)) }
+          effects = if (unsaid.isEmpty()) [] else [hint(line, column, Doings.shown(unsaid) + " ")]
+          after = if (parameters.isSome()) closing(lines, line, column + name.length) else Some(
+            (line, column + name.length),
+          )
+          gives = if (result.isSome()) [] else after.map { end ->
+            (l, c) = end
+            hint(l, c, ": $results")
+          }.toList()
+          effects + gives
+        }
+        _ -> []
+      }
+    }
+  }
+
+  private hint(line: Int, column: Int, label: String): Json = JsonObject([
+    ("position", JsonObject([("line", number(line)), ("character", number(column))])),
+    ("label", JsonString(label)),
+  ])
+
+  // Where the parameters that open at or after line and column close: just after their ).
+  private closing(lines: List<String>, line: Int, column: Int): Option<(Int, Int)> =
+    closingFrom(lines, line, column, 0, false)
+
+  private closingFrom(
+    lines: List<String>,
+    line: Int,
+    column: Int,
+    depth: Int,
+    opened: Boolean,
+  ): Option<(Int, Int)> = when (lines.getOrNone(line)) {
+    None -> None
+    Some(text) -> when (text.toList().getOrNone(column)) {
+      None -> closingFrom(lines, line + 1, 0, depth, opened)
+      Some('(') -> closingFrom(lines, line, column + 1, depth + 1, true)
+      Some(')') -> if (depth == 1) Some((line, column + 1)) else closingFrom(
+        lines,
+        line,
+        column + 1,
+        depth - 1,
+        opened,
+      )
+      Some(_) -> if (!opened && column > 0 && text.toList().getOrNone(column) == Some('=')) None
+      else closingFrom(lines, line, column + 1, depth, opened)
     }
   }
 
