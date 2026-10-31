@@ -13,6 +13,13 @@ module Defaults {
   // Whether the function is a default's.
   isDefault(s: Symbol): Boolean = s.name.contains(marker)
 
+  // The defaults' functions among functions, by their owners' names, in the order they're given.
+  byOwner(functions: List<Symbol>): Map<String, List<Symbol>> =
+    functions.filter { isDefault(it) }.reversed().fold(emptyMap()) { m, f ->
+      owner = f.name.substringBefore(marker)
+      m.put(owner, [f] + m.getOrDefault(owner, []))
+    }
+
   // What's between a default's owner's name and its own.
   private marker: String = "\$default\$"
 

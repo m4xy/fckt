@@ -12,6 +12,7 @@ import fckt.checker.Checker
 import fckt.checker.CheckedProgram
 import fckt.checker.inference.CheckedFunction
 import fckt.checker.inference.Fact
+import fckt.checker.inference.Reuse
 import fckt.checker.inference.Doings
 import fckt.checker.symbols.Symbol
 import fckt.checker.types.Type
@@ -37,13 +38,14 @@ module LanguageServer {
     var programs: Map<String, List<CheckedProgram>>,
     var stopping: Boolean,
     var changed: List<String>,
+    var reuses: Map<String, Reuse>,
   )
 
   // A project: the folders of its own packages, and the libraries' interfaces.
   private type Project(root: Path, folders: List<Path>, libraries: List<Path>)
 
   @FileSystem @Channel @Process serve(): Unit = served(
-    Session(emptyMap(), emptyMap(), emptyMap(), false, []),
+    Session(emptyMap(), emptyMap(), emptyMap(), false, [], emptyMap()),
   )
 
   @FileSystem @Channel @Process private served(session: Session): Unit = when (received()) {
@@ -195,7 +197,14 @@ module LanguageServer {
       declaresMain(it.text)
     }
     entries = [SourceText(None, ProgramProject, imported.joinToString(""))] + mains
-    results = entries.map { entry -> Checker.check(entry, tree, true, true) }
+    // What checking each before found, so what hasn't changed since isn't checked again.
+    results = entries.map { entry ->
+      key = "${project.root.value} ${entry.path.getOrElse("")}"
+      earlier = session.reuses.get(key).getOrElse(Reuse("", emptyMap(), 0))
+      (program, problems) = Checker.check(entry, tree, true, true, Some(earlier))
+      program.flatMap { it.reuse }.forEach { r -> session.reuses = session.reuses.put(key, r) }
+      (program, problems)
+    }
     problems = results.flatMap { _, found -> found }.distinct()
     session.programs = session.programs.put(
       project.root.value,

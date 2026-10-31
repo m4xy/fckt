@@ -29,14 +29,17 @@ module Checker {
   // The program, checked, as far as it can be, and every error found. With coverage, each when
   // must cover every value of its subject, as it must for a program to compile; tools that only
   // want to know what names mean needn't ask. With facts, what each name written means and what
-  // each call does are kept, for tools that show them.
+  // each call does are kept, for tools that show them. With earlier, what checking it before
+  // found, what hasn't changed since isn't checked again; and the program has what this check
+  // found, for the next.
   check(
     entry: SourceText,
     tree: SourceTree,
     coverage: Boolean,
     facts: Boolean = false,
+    earlier: Option<Reuse> = None,
   ): (Option<CheckedProgram>, List<Diagnostic>) = {
-    (checked, errors) = checking(entry, tree, coverage, facts)
+    (checked, errors) = checking(entry, tree, coverage, facts, earlier)
     (checked, Diagnostics.ordered(errors))
   }
 
@@ -45,8 +48,9 @@ module Checker {
     tree: SourceTree,
     coverage: Boolean,
     facts: Boolean,
+    earlier: Option<Reuse>,
   ): (Option<CheckedProgram>, List<Diagnostic>) = Diagnostics.collecting {
-    Solutions.solving {
+    Solutions.solving(earlier.map { it.highest }.getOrElse(0)) {
       Diagnostics.recovering {
         workspace = Expansion.expanded(Loader.load(entry, tree))
         namespace = Functors.applied(Resolution.namespace(workspace, tree))
@@ -55,7 +59,7 @@ module Checker {
         var noted: List<Fact> = []
         (inferred, errors) = Noting(note = fact -> { if (facts) noted = [fact] + noted }) {
           Diagnostics.collecting {
-            inferred = Inference.functionTypes(definitions, coverage)
+            inferred = Inference.functionTypes(definitions, coverage, earlier)
             Diagnostics.recovering { AnnotationChecks.checkAll(inferred) }
             inferred
           }
@@ -68,24 +72,9 @@ module Checker {
           ), declaredSpecs(
             inferred.environment,
           ),
-          Some(inferred.environment), settled(noted))
+          Some(inferred.environment), Facts.settled(noted), inferred.reuse)
       }
     }
   }
 
-  // What was noted, in the order it was, once, with its types as they were worked out to be; a
-  // call that does nothing isn't.
-  @Solving private settled(
-    noted: List<Fact>,
-  ): List<Fact> = noted.reversed().distinct().flatMap { fact ->
-    when (fact) {
-      Means(file, at, length, symbol, t) -> [
-        Means(file, at, length, symbol, t.map { resolvedFully(it) }),
-      ]
-      Does(file, at, row) -> {
-        done = resolvedRowFully(row)
-        if (done.labels.isEmpty()) [] else [Does(file, at, done)]
-      }
-    }
-  }
 }

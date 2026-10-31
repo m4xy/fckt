@@ -4,9 +4,10 @@ import fckt.collections.Maps.*
 module Solutions {
   // What block gives, with every unknown it makes and solves kept here while it runs. What it
   // gives may hold unknowns this knew the solutions to, so it should resolve them first, with
-  // Types.resolvedFully, if they're to mean anything outside.
-  solving<A>(block: @Solving () -> A): A = {
-    var made = 0
+  // Types.resolvedFully, if they're to mean anything outside. Each unknown it makes is numbered
+  // after from, so none is one a type given it from another solving has.
+  solving<A>(from: Int = 0, block: @Solving () -> A): A = {
+    var made = from
     var solutions: Map<TypeVariable, Type> = emptyMap()
     Solving(
       fresh = () -> {

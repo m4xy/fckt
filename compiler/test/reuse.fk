@@ -1,0 +1,118 @@
+import uk.m4xy.fktests.api.Test
+import fckt.collections.Maps.*
+import fckt.checker.Checker
+import fckt.checker.CheckedProgram
+import fckt.checker.sources.*
+import fckt.checker.inference.*
+import fckt.checker.types.Solutions
+import fckt.checker.types.TypeText
+import fckt.checker.diagnostics.Diagnostic
+import fckt.compiler.Sources
+import fckt.io.FileSystem
+import fckt.io.Paths.*
+
+// Checking a program again with what checking it before found gives what checking it afresh does,
+// whatever's changed since.
+
+shapesText = "module Shapes {\n  area(w: Int, h: Int): Int = w * h\n  twice(n: Int): Int = n * 2\n}\n"
+
+countingText = "import a.Shapes\n\nmodule Counting {\n  total(n: Int): Int = Shapes.twice(Shapes.area(n, n))\n  more(n: Int): Int = total(n) + 1\n}\n"
+
+mainText = "import a.Counting\n\nsize(): Int = Counting.more(3)\n"
+
+@FileSystem reuseTree(startingFiles: List<(String, String)>): SourceTree = {
+  core = Sources.core(path("..")).fold(emptyMap()) { m, entry ->
+    (pkg, sources) = entry
+    m.put(pkg, sources)
+  }
+  SourceTree(
+    core.put(
+      ["a"],
+      startingFiles.map { file, text -> SourceText(Some(file), ProgramProject, text) },
+    ),
+  )
+}
+
+// What a check says: its errors, each function's type, and what it noted.
+whatsSaid(checked: (Option<CheckedProgram>, List<Diagnostic>)): List<String> = {
+  (program, problems) = checked
+  problems.map { "error ${it.at.line}:${it.at.column} ${it.message}" } + program.toList().flatMap { p ->
+    p.functions.map { f -> "type ${f.function.name}: ${Solutions.solving { TypeText.shown(f.scheme.template) }}" } +
+      p.facts.map { fact ->
+        when (fact) {
+          Means(file, at, length, symbol, _) -> "means ${file.getOrElse("")}:${at.line}:${at.column}+$length ${symbol.name}"
+          Does(file, at, row) -> "does ${file.getOrElse("")}:${at.line}:${at.column}"
+        }
+      }
+  }
+}
+
+// Checks the program, then, changed, checks it again, with what the first check found and afresh,
+// which must say the same; and gives what it says.
+@FileSystem reusedAndFresh(
+  before: List<(String, String)>,
+  after: List<(String, String)>,
+  mainAfter: String = mainText,
+): List<String> = {
+  first = Checker.check(
+    SourceText(Some("main.fk"), ProgramProject, mainText),
+    reuseTree(before),
+    false,
+    true,
+    Some(Reuse("", emptyMap(), 0)),
+  )
+  (program, _) = first
+  earlier = program.flatMap { it.reuse }
+  assertEquals(true, earlier.isSome())
+  entry = SourceText(Some("main.fk"), ProgramProject, mainAfter)
+  reused = whatsSaid(Checker.check(entry, reuseTree(after), false, true, earlier))
+  fresh = whatsSaid(Checker.check(entry, reuseTree(after), false, true))
+  assertEquals(fresh, reused)
+  fresh
+}
+
+startingFiles = [("a/Shapes.fk", shapesText), ("a/Counting.fk", countingText)]
+
+@Test @FileSystem whatsUnchangedIsAsBefore() = {
+  said = reusedAndFresh(startingFiles, startingFiles)
+  assertEquals(true, said.contains("type a.Counting.more: (Int) -> Int"))
+}
+
+@Test @FileSystem aChangedBodyIsCheckedAgain() = {
+  changed = [
+    ("a/Shapes.fk", shapesText.replace("w * h", "w * h + 0")),
+    ("a/Counting.fk", countingText),
+  ]
+  assertEquals(
+    true,
+    reusedAndFresh(startingFiles, changed).contains("type a.Shapes.area: (Int, Int) -> Int"),
+  )
+}
+
+@Test @FileSystem aChangedTypeIsCheckedWhereItsUsed() = {
+  changed = [
+    ("a/Shapes.fk", shapesText.replace("twice(n: Int): Int = n * 2", "twice(n: Int): String = \"two\"")),
+    ("a/Counting.fk", countingText),
+  ]
+  said = reusedAndFresh(startingFiles, changed)
+  assertEquals(true, said.any { it.startsWith("error ") })
+}
+
+@Test @FileSystem whatWasWrongIsCheckedAgain() = {
+  broken = "import a.Counting\n\nsize(): Int = Counting.more(\"three\")\n"
+  first = Checker.check(
+    SourceText(Some("main.fk"), ProgramProject, broken),
+    reuseTree(startingFiles),
+    false,
+    true,
+    Some(Reuse("", emptyMap(), 0)),
+  )
+  (program, problems) = first
+  assertEquals(1, problems.size)
+  entry = SourceText(Some("main.fk"), ProgramProject, mainText)
+  reused = whatsSaid(
+    Checker.check(entry, reuseTree(startingFiles), false, true, program.flatMap { it.reuse }),
+  )
+  assertEquals(whatsSaid(Checker.check(entry, reuseTree(startingFiles), false, true)), reused)
+  assertEquals(false, reused.any { it.startsWith("error ") })
+}

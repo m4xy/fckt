@@ -1,0 +1,16 @@
+import fckt.collections.Maps.*
+import fckt.checker.core.CoreFunction
+import fckt.checker.types.*
+
+// What checking a group found, kept for checking the program again: the files its functions are in,
+// as their text's digests; the type of each function it uses, as text; what's known of its own
+// functions; and what was noted of it.
+type Remembered(
+  files: Map<String, String>,
+  uses: Map<String, String>,
+  schemes: Map<String, Scheme>,
+  outside: Map<String, Scheme>,
+  typeParameterVariables: Map<String, Map<String, TypeVariable>>,
+  bodies: Map<String, CoreFunction>,
+  facts: List<Fact>,
+)

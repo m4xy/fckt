@@ -10,4 +10,5 @@ type Inferred(
   functions: List<CheckedFunction>,
   metaTypes: Map<String, List<MetaType>>,
   groups: List<FunctionGroup> = [],
+  reuse: Option<Reuse> = None,
 )

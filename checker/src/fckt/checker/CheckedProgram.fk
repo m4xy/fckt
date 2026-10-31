@@ -9,6 +9,7 @@ import fckt.checker.inference.DefaultHandler
 import fckt.checker.inference.FunctionGroup
 import fckt.checker.inference.Environment
 import fckt.checker.inference.Fact
+import fckt.checker.inference.Reuse
 
 // A program, checked: the files it's checked with; the type of each of its functions and values,
 // and its code, in the order they're written; each handled effect's default handler, which main is
@@ -28,4 +29,6 @@ type CheckedProgram(
   environment: Option<Environment> = None,
   // What each name written means and what each call does, if they were asked for.
   facts: List<Fact> = [],
+  // What checking it found that checking it again can use, if it was asked for.
+  reuse: Option<Reuse> = None,
 )

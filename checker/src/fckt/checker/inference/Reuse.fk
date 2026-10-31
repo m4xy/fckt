@@ -1,0 +1,6 @@
+import fckt.collections.Maps.*
+
+// What a check of a program found that checking it again can use: each group it checked without an
+// error, by its functions' names; the program's shape, which must be the same for any of it to be;
+// and the highest unknown any of it has, so those made checking again are new.
+type Reuse(shape: String, groups: Map<String, Remembered>, highest: Int)

@@ -21,8 +21,9 @@ module Groups {
       f.name,
     )
     functions = all.filter { f -> !isParameterMember(f) }
+    defaults = Defaults.byOwner(environment.orderedFunctions)
     uses = functions.map { f ->
-      found = usesOf(f, environment)
+      found = usesIn(f, environment, defaults)
       (f.name, Uses(found.functions.filter { u -> !isParameterMember(u) }, found.guessed))
     }.toMap()
     usedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions }.getOrElse([])
@@ -59,11 +60,14 @@ module Groups {
   }
 
   // What a function's body may use, from the names in it, seen from where it's written.
-  usesOf(f: Symbol, environment: Environment): Uses = {
+  usesOf(f: Symbol, environment: Environment): Uses =
+    usesIn(f, environment, Defaults.byOwner(environment.orderedFunctions))
+
+  private usesIn(f: Symbol, environment: Environment, defaults: Map<String, List<Symbol>>): Uses = {
     context = Context(environment, Place(f.file, f.path), emptyMap())
     bound = Signatures.parametersOf(f).getOrElse([]).map { it.name }
     names = Signatures.bodyOf(f).map { body -> References.of(body, bound) }.getOrElse([])
-    each = names.map { name -> uses(name, context) }
+    each = names.map { name -> uses(name, context, defaults) }
     named = each.flatMap { it.named }.map { it.name }
     lifted = Signatures.bodyOf(f).map { body -> liftedUses(body, f, environment) }.getOrElse([])
     Uses(
@@ -76,10 +80,10 @@ module Groups {
   // package-mate's method; and those it means by name.
   private type NameUses(functions: List<Symbol>, guessed: List<Symbol>, named: List<Symbol>)
 
-  private uses(name: String, context: Context): NameUses =
+  private uses(name: String, context: Context, defaults: Map<String, List<Symbol>>): NameUses =
     if (name.startsWith(".")) {
       method = name.drop(1)
-      found = Globals.extensionsNamed(method, context) + defaultsUsed(method, context)
+      found = Globals.extensionsNamed(method, context) + defaultsUsed(method, context, defaults)
       NameUses(
         found,
         found.filter { f -> Signatures.isExtension(f) && isOnlyPackageMates(f, context) },
@@ -95,7 +99,7 @@ module Groups {
       // A plain name is never an extension, which is only reached through what it extends, as .name.
       found = moduleFunctions(name, context) +
         declaredOrMember(name, context).toList() +
-        defaultsUsed(name, context)
+        defaultsUsed(name, context, defaults)
       NameUses(found, [], found)
     }
 
@@ -103,7 +107,8 @@ module Groups {
   private liftedUses(body: Expression, f: Symbol, environment: Environment): List<Symbol> = {
     lifted = environment.definitions.namespace.modules.lifted
     made = Calls.of(body).mapNotNull { call -> lifted.get(CallSite(f.file.source.path, call.at)) }
-    environment.functions.toList().map { _, g -> g }.filter { g -> made.contains(g.path.joinToString(".")) }
+    if (made.isEmpty()) []
+    else environment.functions.toList().map { _, g -> g }.filter { g -> made.contains(g.path.joinToString(".")) }
   }
 
   private isOnlyPackageMates(
@@ -157,7 +162,11 @@ module Groups {
 
   // The defaults' functions a use of the name may call: a function's or extension's, or the
   // fields' of a record or case it may build, as calls that leave arguments out call them.
-  private defaultsUsed(name: String, context: Context): List<Symbol> = {
+  private defaultsUsed(
+    name: String,
+    context: Context,
+    defaults: Map<String, List<Symbol>>,
+  ): List<Symbol> = {
     namespace = context.environment.definitions.namespace
     lastPart = name.split(".").lastOrNone().getOrElse(name)
     owners = Lookups.found(Globals.find(name, context, Skipping)).map { it.name }.toList() +
@@ -169,6 +178,6 @@ module Groups {
         lastPart,
         [],
       ).map { c -> "${c.owner.name}$${c.definition.name}" }
-    owners.flatMap { owner -> context.environment.orderedFunctions.filter { f -> f.name.startsWith(Defaults.nameOf(owner, "")) } }
+    owners.flatMap { owner -> defaults.getOrDefault(owner, []) }
   }
 }

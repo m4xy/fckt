@@ -1,0 +1,32 @@
+import fckt.collections.Maps.*
+import fckt.checker.types.*
+import fckt.checker.types.Types.*
+
+// What was noted, as tools are given it.
+module Facts {
+  // What was noted, in the order it was, once each, with its types as they were worked out to be;
+  // a call that does nothing isn't.
+  @Solving settled(noted: List<Fact>): List<Fact> = {
+    unique = noted.fold((emptyMap(), [])) { seen, fact ->
+      (keys, kept) = seen
+      key = keyOf(fact)
+      if (keys.containsKey(key)) seen else (keys.put(key, true), [fact] + kept)
+    }
+    (_, kept) = unique
+    kept.flatMap { fact ->
+      when (fact) {
+        Means(file, at, length, symbol, t) ->
+          [Means(file, at, length, symbol, t.map { resolvedFully(it) })]
+        Does(file, at, row) -> {
+          done = resolvedRowFully(row)
+          if (done.labels.isEmpty()) [] else [Does(file, at, done)]
+        }
+      }
+    }
+  }
+
+  private keyOf(fact: Fact): String = when (fact) {
+    Means(file, at, _, symbol, _) -> "m ${file.getOrElse("")} ${at.line} ${at.column} ${symbol.name}"
+    Does(file, at, _) -> "d ${file.getOrElse("")} ${at.line} ${at.column}"
+  }
+}

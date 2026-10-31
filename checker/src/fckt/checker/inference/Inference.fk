@@ -1,4 +1,6 @@
 import fckt.collections.Maps.*
+import fckt.text.Digests.*
+import fckt.checker.core.CoreFunction
 import fckt.checker.definitions.*
 import fckt.checker.diagnostics.*
 import fckt.checker.resolution.*
@@ -13,10 +15,13 @@ import fckt.parser.*
 module Inference {
   // Each function's and value's type, in the order they're written, and every error found. Where a
   // group can't be checked, its functions may be anything, so what uses them is checked without
-  // more errors about them. With coverage, each when must cover every value of its subject.
+  // more errors about them. With coverage, each when must cover every value of its subject. With
+  // what checking it before found, earlier, a group whose files and what it uses are as they were
+  // then is as it was, rather than checked again; and what this check finds is given for the next.
   @Solving @Reporting @Abandoning @Noting functionTypes(
     definitions: Definitions,
     coverage: Boolean,
+    earlier: Option<Reuse> = None,
   ): Inferred = {
     checkTypeDeclarations(definitions)
     metaTypes = MetaTypes.all(definitions)
@@ -24,14 +29,75 @@ module Inference {
     checkModulesDefine(environment)
     checkArgumentsDefine(environment)
     groups = Groups.ordered(environment.orderedFunctions, environment)
+    shape = shapeOf(environment)
+    usable = earlier.filter { it.shape == shape }
+    var digests: Map<String, String> = emptyMap()
+    var texts: Map<String, String> = emptyMap()
+    var remembered: Map<String, Remembered> = emptyMap()
+    digestOf = (file: String, text: String) -> when (digests.get(file)) {
+      Some(d) -> d
+      None -> {
+        d = text.md5()
+        digests = digests.put(file, d)
+        d
+      }
+    }
+    textOf = (name: String, k: Known) -> when (texts.get(name)) {
+      Some(t) -> t
+      None -> {
+        t = k.schemes.get(name).map { TypeText.shown(it.template) }.getOrElse("")
+        texts = texts.put(name, t)
+        t
+      }
+    }
     known = groups.fold(environment.known) { k, group ->
       checking = Environment(environment.definitions, environment.functions, environment.orderedFunctions, environment.extensions,
         environment.casesByName, environment.moduleSpecs, environment.specTypes, environment.operations, k)
-      when (Diagnostics.attempting { checkGroup(group, checking, coverage) }) {
-        Ok(checked) -> checked
-        Error(diagnostic) -> {
-          report(diagnostic)
-          failed(group, k)
+      key = group.functions.map { it.name }.joinToString(" ")
+      files = group.functions.map { f ->
+        path = f.file.source.path.getOrElse("")
+        (path, digestOf(path, f.file.source.text))
+      }.toMap()
+      still = usable.flatMap { it.groups.get(key) }.filter { r ->
+        r.files == files && r.uses.all { name, t -> textOf(name, k) == t }
+      }
+      when (still) {
+        Some(r) -> {
+          r.facts.forEach { note(it) }
+          remembered = remembered.put(key, r)
+          k.copy(
+            schemes = putAll(k.schemes, r.schemes),
+            outside = putAll(k.outside, r.outside),
+            typeParameterVariables = putAll(k.typeParameterVariables, r.typeParameterVariables),
+            bodies = putAll(k.bodies, r.bodies),
+          )
+        }
+        None -> {
+          var noted: List<Fact> = []
+          outcome = Noting(note = fact -> { noted = [fact] + noted }) {
+            Diagnostics.attempting { checkGroup(group, checking, coverage) }
+          }
+          found = Facts.settled(noted)
+          found.forEach { note(it) }
+          when (outcome) {
+            Ok(checked) -> {
+              if (earlier.isSome()) remembered = remembering(
+                group,
+                checked,
+                found,
+                files,
+                textOf,
+              ).map { r ->
+                remembered.put(key, r)
+              }.getOrElse(remembered)
+              else Unit
+              checked
+            }
+            Error(diagnostic) -> {
+              report(diagnostic)
+              failed(group, k)
+            }
+          }
         }
       }
     }
@@ -42,8 +108,72 @@ module Inference {
       environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s, known.bodies.get(f.name)) } },
       metaTypes,
       groups,
+      earlier.map { _ -> Reuse(shape, remembered, highestIn(remembered)) },
     )
   }
+
+  // What to remember of a group, checked: its functions' types, if none is open, as a value's may
+  // be, to be settled by what uses it; and the types, as they are now, of what it uses.
+  @Solving private remembering(
+    group: FunctionGroup,
+    checked: Known,
+    found: List<Fact>,
+    files: Map<String, String>,
+    textOf: @Solving (String, Known) -> String,
+  ): Option<Remembered> = {
+    names = group.functions.map { it.name }
+    own = names.mapNotNull { n -> checked.schemes.get(n).map { (n, it) } }.toMap()
+    closed = own.values.all { scheme ->
+      variablesIn(scheme.template).all { scheme.variables.contains(it) }
+    }
+    if (!closed) None
+    else {
+      uses = found.flatMap { fact ->
+        when (fact) {
+          Means(_, _, _, symbol, _) if !names.contains(symbol.name) -> [symbol.name]
+          else -> []
+        }
+      }.distinct().map { name -> (name, textOf(name, checked)) }.toMap()
+      Some(Remembered(
+        files,
+        uses,
+        own,
+        names.mapNotNull { n -> checked.outside.get(n).map { (n, it) } }.toMap(),
+        names.mapNotNull { n -> checked.typeParameterVariables.get(n).map { (n, it) } }.toMap(),
+        names.mapNotNull { n -> checked.bodies.get(n).map { (n, it) } }.toMap(),
+        found,
+      ))
+    }
+  }
+
+  // What the program is, but for its functions' code: the names of its functions, and the text of
+  // each file that declares anything else, a type, an effect or a spec, each of which any function
+  // may be checked against.
+  private shapeOf(environment: Environment): String = {
+    others = environment.definitions.namespace.table.declarations.filter { s ->
+      when (s.declaration.definition) {
+        FunctionDefinition(_, _, _, _, _, _, _) -> false
+        else -> true
+      }
+    }.map { s -> (s.file.source.path.getOrElse(""), s.file.source.text) }.distinct()
+    names = environment.orderedFunctions.map { it.name }.sorted()
+    texts = others.map { path, text -> "\n$path\n$text" }.sorted().joinToString("")
+    (names.joinToString(" ") + texts).md5()
+  }
+
+  private putAll<V>(into: Map<String, V>, more: Map<String, V>): Map<String, V> =
+    more.entries.fold(into) { m, entry ->
+      (name, value) = entry
+      m.put(name, value)
+    }
+
+  // The highest unknown any of what's remembered has.
+  @Solving private highestIn(remembered: Map<String, Remembered>): Int =
+    remembered.values.flatMap { r ->
+      r.schemes.values.flatMap { variablesIn(it.template) } +
+        r.outside.values.flatMap { variablesIn(it.template) } +
+        r.typeParameterVariables.values.flatMap { it.values }
+    }.map { it.id }.maxOrNone().getOrElse(0)
 
   // What block gives up on, reported, going on after it.
   @Reporting private reportingAbandoned(block: @Abandoning () -> Unit): Unit = {
