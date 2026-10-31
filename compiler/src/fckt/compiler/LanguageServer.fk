@@ -88,6 +88,7 @@ module LanguageServer {
           ("referencesProvider", JsonBoolean(true)),
           ("renameProvider", JsonBoolean(true)),
           ("inlayHintProvider", JsonBoolean(true)),
+          ("codeActionProvider", JsonBoolean(true)),
           ("completionProvider", JsonObject([("triggerCharacters", JsonArray([JsonString(".")]))])),
         ])),
         ("serverInfo", JsonObject([("name", JsonString("fckt"))])),
@@ -158,6 +159,12 @@ module LanguageServer {
           JsonObject([("changes", JsonObject([(uriOf(l.file), JsonArray(changes))]))])
         }.orElse { symbolAt(session, u, params).map { s -> renamed(session, u, s, newName) } }
       }.getOrElse(JsonNull))
+      "textDocument/codeAction" -> answer(id, JsonArray(uri.map { u ->
+        said = params.field(
+          "context",
+        ).flatMap { it.field("diagnostics") }.map { it.items }.getOrElse([])
+        said.flatMap { d -> fixes(session, u, d) }
+      }.getOrElse([])))
       "textDocument/inlayHint" -> answer(
         id,
         JsonArray(uri.map { u -> hints(session, u) }.getOrElse([])),
@@ -361,6 +368,60 @@ module LanguageServer {
       uri,
       params,
     ).map { it.symbol }.orElse { named(session, uri, params).map { it.function } }
+
+  // What would put right what the diagnostic says is wrong: an import it names, or an effect a
+  // function must say it does.
+  @FileSystem private fixes(session: Session, uri: String, diagnostic: Json): List<Json> = {
+    message = diagnostic.field("message").flatMap { it.text }.getOrElse("")
+    start = diagnostic.field("range").flatMap { it.field("start") }
+    line = start.flatMap { it.field("line") }.flatMap { it.int }.getOrElse(0)
+    character = start.flatMap { it.field("character") }.flatMap { it.int }.getOrElse(0)
+    text = session.open.get(uri).getOrElse(readOrEmpty(pathOf(uri)))
+    imports = if (!message.contains(" has one")) [] else message.substringAfter(";").split(
+      "import ",
+    ).drop(
+      1,
+    ).map { part ->
+      part.toList().takeWhile { it != ',' && it != ' ' }.map { it.toString() }.joinToString("")
+    }.filter { it.isNotEmpty() }
+    importing = imports.map { name ->
+      fix("Import $name", diagnostic, uri, importedAt(text), 0, "import $name\n")
+    }
+    said = message.substringAfter(
+      " does @",
+    ).toList().takeWhile { it.isLetterOrDigit() || it == '.' }
+    e = said.map { it.toString() }.joinToString("")
+    effect = if (!message.contains(", so it must say so") || e.isEmpty()) []
+    else [fix("Say it does @$e", diagnostic, uri, line, character, "@$e ")]
+    importing + effect
+  }
+
+  // The line a new import goes on: after the file's last, or first.
+  private importedAt(text: String): Int =
+    text.split(
+      "\n",
+    ).mapIndexed { i, l -> (i, l) }.filter { _, l -> l.startsWith("import ") }.lastOrNone().map { entry ->
+      (i, _) = entry
+      i + 1
+    }.getOrElse(0)
+
+  private fix(
+    title: String,
+    diagnostic: Json,
+    uri: String,
+    line: Int,
+    character: Int,
+    inserted: String,
+  ): Json =
+    JsonObject([
+      ("title", JsonString(title)),
+      ("kind", JsonString("quickfix")),
+      ("diagnostics", JsonArray([diagnostic])),
+      ("edit", JsonObject([("changes", JsonObject([(uri, JsonArray([JsonObject([
+        ("range", range(line, character, line, character)),
+        ("newText", JsonString(inserted)),
+      ])]))]))])),
+    ])
 
   // A local: the file it's in, where it's bound, its name and its type.
   private type LocalName(file: String, bound: Position, name: String, t: Type)
