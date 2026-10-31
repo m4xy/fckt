@@ -13,7 +13,7 @@ import fckt.checker.CheckedProgram
 import fckt.checker.inference.CheckedFunction
 import fckt.checker.types.TypeText
 import fckt.checker.types.Solutions
-import fckt.parser.Parser
+import fckt.parser.*
 import fckt.checker.diagnostics.Diagnostic
 import fckt.checker.sources.*
 import fckt.compiler.Sources.*
@@ -59,6 +59,7 @@ module LanguageServer {
           ("documentFormattingProvider", JsonBoolean(true)),
           ("hoverProvider", JsonBoolean(true)),
           ("definitionProvider", JsonBoolean(true)),
+          ("documentSymbolProvider", JsonBoolean(true)),
         ])),
         ("serverInfo", JsonObject([("name", JsonString("fckt"))])),
       ]))
@@ -99,6 +100,13 @@ module LanguageServer {
         id,
         uri.flatMap { u -> named(session, u, params) }.flatMap { definitionOf(it) }.getOrElse(JsonNull),
       )
+      "textDocument/documentSymbol" -> answer(id, JsonArray(uri.map { u ->
+        text = session.open.get(u).getOrElse(readOrEmpty(pathOf(u)))
+        when (Parser.parse(text)) {
+          Ok(file) -> file.declarations.map { symbolOf(it, text) }
+          Error(_) -> []
+        }
+      }.getOrElse([])))
       method -> if (id.isSome() && !method.startsWith("$/")) refuse(id, method) else Unit
     }
   }
@@ -202,6 +210,40 @@ module LanguageServer {
       ("uri", JsonString(uriOf(file))),
       ("range", range(at.line - 1, at.column - 1, at.line - 1, at.column - 1)),
     ])
+  }
+
+  // A declaration, as an editor's outline shows it: its name, what kind it is, its line, and what
+  // a module declares, in it.
+  private symbolOf(d: Declaration, text: String): Json = {
+    line = d.at.line - 1
+    width = text.split("\n").getOrNone(line).map { it.length }.getOrElse(0)
+    column = max(0, d.at.column - 1)
+    // Where the name is, as a module's declaration starts at module.
+    found = text.split("\n").getOrNone(line).getOrElse("").drop(column).indexOf(d.name)
+    start = if (found >= 0) column + found else column
+    inner = when (d.definition) {
+      ModuleDefinition(declarations, _, _, _, _) -> declarations.map { symbolOf(it, text) }
+      else -> []
+    }
+    JsonObject([
+      ("name", JsonString(d.name)),
+      ("kind", number(kindOf(d.definition))),
+      ("range", range(line, 0, line, width)),
+      ("selectionRange", range(line, start, line, min(width, start + d.name.length))),
+      ("children", JsonArray(inner)),
+    ])
+  }
+
+  // LSP's kind of symbol: a module, a function, a value, a type with cases, a record, or a spec.
+  private kindOf(definition: Definition): Int = when (definition) {
+    ModuleDefinition(_, _, _, _, _) -> 2
+    FunctionDefinition(_, _, Some(_), _, _, _, _) -> 12
+    FunctionDefinition(_, Some(_), None, _, _, _, _) -> 7
+    FunctionDefinition(_, _, _, _, _, _, _) -> 14
+    CasesDefinition(_, _, _, _) -> 10
+    RecordDefinition(_, _, _, _, _) -> 23
+    AliasDefinition(_, _) -> 26
+    SpecDefinition(_, _, _, _, _) -> 11
   }
 
   // The name the character at column is in, or "".
