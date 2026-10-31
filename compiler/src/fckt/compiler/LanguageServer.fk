@@ -40,13 +40,14 @@ module LanguageServer {
     var changed: List<String>,
     var reuses: Map<String, Reuse>,
     var facts: Map<String, Map<String, List<Fact>>>,
+    var prepared: Map<String, (String, Prepared)>,
   )
 
   // A project: the folders of its own packages, and the libraries' interfaces.
   private type Project(root: Path, folders: List<Path>, libraries: List<Path>)
 
   @FileSystem @Channel @Process serve(): Unit = served(
-    Session(emptyMap(), emptyMap(), emptyMap(), false, [], emptyMap(), emptyMap()),
+    Session(emptyMap(), emptyMap(), emptyMap(), false, [], emptyMap(), emptyMap(), emptyMap()),
   )
 
   @FileSystem @Channel @Process private served(session: Session): Unit = when (received()) {
@@ -189,7 +190,9 @@ module LanguageServer {
       interfacesIn(it)
     }
     std = if (libraries.isEmpty()) standard(home()) else []
-    tree = SourceTree(merged(core(home()) + std + own + libraries))
+    tree = SourceTree(merged(core(home()) + std + own + libraries).mapValues { _, sources ->
+      sources.map { withParsed(session, it) }
+    })
     // A file with main is a program of its own, checked from it; the packages none of them reaches,
     // from what imports them.
     mains = own.filter { pkg, _ -> pkg.isEmpty() }.flatMap { _, sources -> sources }.filter {
@@ -234,6 +237,21 @@ module LanguageServer {
       publish(key, diagnostics.map { shown(it, text) })
     }
     session.said = session.said.put(project.root.value, byFile.keys)
+  }
+
+  // The source, read: as it was when its text was last the same, or now.
+  @Mutating private withParsed(session: Session, source: SourceText): SourceText = {
+    key = "${source.path.getOrElse("")} ${source.interface}"
+    when (session.prepared.get(key)) {
+      Some((text, prepared)) if text == source.text -> source.copy(prepared = Some(prepared))
+      _ -> when (Loader.prepare(source)) {
+        Some(prepared) -> {
+          session.prepared = session.prepared.put(key, (source.text, prepared))
+          source.copy(prepared = Some(prepared))
+        }
+        None -> source
+      }
+    }
   }
 
   // The program checked from entry, with what checking it before found, so what hasn't changed

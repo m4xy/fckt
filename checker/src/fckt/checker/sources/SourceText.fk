@@ -11,4 +11,6 @@ type SourceText(
   compiledIn: Option<String> = None,
   interface: Boolean = false,
   trusted: Boolean = false,
+  // What it says, read already, as a tool that checks it again and again keeps it.
+  prepared: Option<Prepared> = None,
 )

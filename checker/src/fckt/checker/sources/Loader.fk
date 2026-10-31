@@ -68,7 +68,7 @@ module Loader {
       followImport(loading, file, i)
       follow(loading, loading.files.drop(before))
     }
-    namedInFull(loading.tree, file.source.text).forEach { pkg ->
+    namedInFull(loading.tree, file.source).forEach { pkg ->
       before = loading.files.size
       loadPackage(loading, pkg)
       follow(loading, loading.files.drop(before))
@@ -77,17 +77,20 @@ module Loader {
 
   // The packages the text names in full, as geometry is in geometry.Shapes.area: each run of names
   // joined by dots that starts with an outermost package, the most of it that's one.
-  private namedInFull(
-    tree: SourceTree,
-    text: String,
-  ): List<List<String>> = when (Lexer.tokens(text)) {
-    Error(_) -> []
-    Ok(tokens) -> dottedRuns(
-      tokens,
-      [],
-    ).filter { run -> run.size > 1 && tree.packages.containsKey(run.take(1)) }.mapNotNull { run ->
+  private namedInFull(tree: SourceTree, source: SourceText): List<List<String>> = {
+    dotted = when (source.prepared) {
+      Some(prepared) -> prepared.dotted
+      None -> dottedIn(source.text)
+    }
+    dotted.filter { run -> tree.packages.containsKey(run.take(1)) }.mapNotNull { run ->
       packageOf(tree, run)
     }.distinct()
+  }
+
+  // Each run of two or more names joined by dots in the text.
+  private dottedIn(text: String): List<List<String>> = when (Lexer.tokens(text)) {
+    Error(_) -> []
+    Ok(tokens) -> dottedRuns(tokens, [])
   }
 
   // Each run of names joined by dots, Identifier (. Identifier)*, in the tokens.
@@ -289,15 +292,28 @@ module Loader {
     else -> false
   }
 
-  // The file's declarations and imports, or None, with why it can't be read reported.
-  @Reporting private parsed(
+  // The file's declarations and imports, as they were parsed already or parsed now, or None, with
+  // why it can't be read reported.
+  @Reporting private parsed(source: SourceText): Option<SourceFile> = when (source.prepared) {
+    Some(prepared) -> Some(trustedAsSaid(source, prepared.file))
+    None -> parsedNow(source)
+  }
+
+  // The source, read, for checking it again and again without reading it each time: None if it
+  // can't be parsed.
+  prepare(source: SourceText): Option<Prepared> =
+    when (if (source.interface) Parser.parseInterface(source.text) else Parser.parse(source.text)) {
+      Ok(file) -> Some(Prepared(file, dottedIn(source.text)))
+      Error(_) -> None
+    }
+
+  private trustedAsSaid(source: SourceText, file: SourceFile): SourceFile =
+    if (source.trusted) file.copy(declarations = file.declarations.map { trusting(it) }) else file
+
+  @Reporting private parsedNow(
     source: SourceText,
   ): Option<SourceFile> = when (if (source.interface) Parser.parseInterface(source.text) else Parser.parse(source.text)) {
-    Ok(file) -> Some(
-      if (source.trusted) file.copy(
-        declarations = file.declarations.map { trusting(it) },
-      ) else file,
-    )
+    Ok(file) -> Some(trustedAsSaid(source, file))
     Error(errors) -> {
       errors.forEach { report(Diagnostic(source.path, it.at, it.message)) }
       None

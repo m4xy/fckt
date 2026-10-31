@@ -14,21 +14,24 @@ import fckt.parser.*
 // file's imports.
 module Expansion {
   @Abandoning expanded(workspace: Workspace): Workspace = {
+    whole = outline(workspace)
     copied = mapDeclarations(workspace) { s ->
       when (s.declaration.definition) {
-        SpecDefinition(_, _, _, Some(_), _) -> copiedEffect(s, outline(workspace), [])
+        SpecDefinition(_, _, _, Some(_), _) -> copiedEffect(s, whole, [])
         else -> s.declaration
       }
     }
+    copiedOutline = outline(copied)
     flattened = mapDeclarations(copied) { s ->
       when (s.declaration.definition) {
-        SpecDefinition(_, _, _, _, [_, *_]) -> flattenedSpec(s, outline(copied), [])
+        SpecDefinition(_, _, _, _, [_, *_]) -> flattenedSpec(s, copiedOutline, [])
         else -> s.declaration
       }
     }
+    flattenedOutline = outline(flattened)
     filled = mapDeclarations(flattened) { s ->
       when (s.declaration.definition) {
-        ModuleDefinition(_, _, _, _, _) -> filledModule(s, outline(flattened))
+        ModuleDefinition(_, _, _, _, _) -> filledModule(s, flattenedOutline)
         else -> s.declaration
       }
     }

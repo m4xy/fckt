@@ -1,0 +1,5 @@
+import fckt.parser.SourceFile
+
+// A file's text, read: parsed, and each run of names joined by dots in it, which may name a package
+// in full. Loader.prepare makes it.
+type Prepared(file: SourceFile, dotted: List<List<String>>)
