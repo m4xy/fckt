@@ -407,7 +407,9 @@ Server Protocol can run. It checks the project of each file that's opened, chang
 what's open as it is in the editor, and says what's wrong with each of the project's files; it
 shows a function's type, with what it does, `printError: @Channel (String) -> Unit`, on hover, and
 goes to where it's declared, for the function declared there or the one function of that name; it
-outlines a file, its modules with what they declare; and it lays a file out as `fckt --format` does. A project is the folder with `build.fk` above the file, with
+outlines a file, its modules with what they declare; it completes a name, after `Module.` with
+what the module declares, and otherwise with the file's functions, the project's top-level ones and
+modules; and it lays a file out as `fckt --format` does. A project is the folder with `build.fk` above the file, with
 the folders and libraries kiln last wrote to `.kiln/paths`, so it's checked against its libraries'
 interfaces, as kiln compiles it, and a test, in a folder `.kiln/scopes` names, with what its tests
 are written with too; without kiln's, the file's folder is checked with the standard

@@ -60,6 +60,7 @@ module LanguageServer {
           ("hoverProvider", JsonBoolean(true)),
           ("definitionProvider", JsonBoolean(true)),
           ("documentSymbolProvider", JsonBoolean(true)),
+          ("completionProvider", JsonObject([("triggerCharacters", JsonArray([JsonString(".")]))])),
         ])),
         ("serverInfo", JsonObject([("name", JsonString("fckt"))])),
       ]))
@@ -99,6 +100,10 @@ module LanguageServer {
       "textDocument/definition" -> answer(
         id,
         uri.flatMap { u -> named(session, u, params) }.flatMap { definitionOf(it) }.getOrElse(JsonNull),
+      )
+      "textDocument/completion" -> answer(
+        id,
+        JsonArray(uri.map { u -> completions(session, u, params) }.getOrElse([])),
       )
       "textDocument/documentSymbol" -> answer(id, JsonArray(uri.map { u ->
         text = session.open.get(u).getOrElse(readOrEmpty(pathOf(u)))
@@ -210,6 +215,57 @@ module LanguageServer {
       ("uri", JsonString(uriOf(file))),
       ("range", range(at.line - 1, at.column - 1, at.line - 1, at.column - 1)),
     ])
+  }
+
+  // What the name being written at params' position could be, of the functions and values the
+  // project last checked has: after Module., what that module declares; otherwise those whose
+  // names start with what's written. Each with its type.
+  @FileSystem private completions(session: Session, uri: String, params: Json): List<Json> = {
+    position = params.field("position")
+    line = position.flatMap { it.field("line") }.flatMap { it.int }.getOrElse(0)
+    character = position.flatMap { it.field("character") }.flatMap { it.int }.getOrElse(0)
+    file = pathOf(uri)
+    text = session.open.get(uri).getOrElse(readOrEmpty(file))
+    before = text.split("\n").getOrNone(line).getOrElse("").take(character).toList()
+    isName = (c: Char) -> c.isLetterOrDigit() || c == '_'
+    prefix = before.reversed().takeWhile { isName(it) }.reversed()
+    rest = before.dropLast(prefix.size)
+    owner = when (rest.lastOrNone()) {
+      Some('.') -> Some(rest.dropLast(1).reversed().takeWhile { isName(it) }.reversed())
+      _ -> None
+    }
+    typed = prefix.map { it.toString() }.joinToString("")
+    functions = session.programs.getOrDefault(
+      projectOf(file).root.value,
+      [],
+    ).flatMap { it.functions }
+    candidates = functions.filter { f ->
+      name = f.function.declaration.name
+      inOwner = when (owner) {
+        Some(o) -> f.function.path.lastOrNone() == Some(o.map { it.toString() }.joinToString(""))
+        None -> f.function.path.isEmpty() || f.function.file.source.path == Some(file.value)
+      }
+      sameFile = f.function.file.source.path == Some(file.value)
+      visible = sameFile || f.function.declaration.visibility != Private
+      inOwner && visible && name.startsWith(typed) && !name.contains("__")
+    }
+    modules = if (owner.isSome()) []
+    else functions.mapNotNull { it.function.path.lastOrNone() }.filter { m ->
+      m.startsWith(typed) && m.getOrNone(0).map { it.isUpperCase() }.getOrElse(false) &&
+        !m.contains("__")
+    }.distinct().take(100).map { m -> JsonObject([("label", JsonString(m)), ("kind", number(9))]) }
+    modules + candidates.fold(
+      emptyMap(),
+    ) { m, f -> m.put(f.function.declaration.name, f) }.values.take(200).map { f ->
+      JsonObject([
+        ("label", JsonString(f.function.declaration.name)),
+        ("kind", number(when (f.function.declaration.definition) {
+          FunctionDefinition(_, _, Some(_), _, _, _, _) -> 3
+          else -> 6
+        })),
+        ("detail", JsonString(typeOf(f))),
+      ])
+    }
   }
 
   // A declaration, as an editor's outline shows it: its name, what kind it is, its line, and what
