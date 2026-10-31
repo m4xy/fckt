@@ -4,11 +4,14 @@
   <vendor>m4xy</vendor>
   <description><![CDATA[
     Support for fckt, a language with Kotlin's syntax that compiles to OCaml: highlighting that
-    colours each name by what it is, as Kotlin does, the compiler's errors as you type, and each
-    name's inferred type and effects on hover.
+    colours each name by what it is, as Kotlin does, and each name's inferred type and effects on
+    hover; and, from fckt's language server, the compiler's errors as you type with quick fixes,
+    completion, renaming, and hints of inferred types and effects.
   ]]></description>
 
   <depends>com.intellij.modules.platform</depends>
+  <!-- fckt's language server, through IntelliJ's own client. -->
+  <depends>com.intellij.modules.lsp</depends>
   <!-- fckt's colours fall back to Kotlin's. -->
   <depends>org.jetbrains.kotlin</depends>
 
@@ -18,7 +21,6 @@
     <lang.parserDefinition language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktParserDefinition"/>
     <lang.syntaxHighlighterFactory language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktSyntaxHighlighterFactory"/>
     <annotator language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktAnnotator"/>
-    <externalAnnotator language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktErrorAnnotator"/>
     <lang.commenter language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktCommenter"/>
     <lang.braceMatcher language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktBraceMatcher"/>
     <colorSettingsPage implementation="uk.m4xy.fckt.intellij.FcktColorSettingsPage"/>
@@ -27,6 +29,7 @@
     <langCodeStyleSettingsProvider implementation="uk.m4xy.fckt.intellij.FcktCodeStyleSettingsProvider"/>
     <lang.findUsagesProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktFindUsagesProvider"/>
     <iconProvider implementation="uk.m4xy.fckt.intellij.FcktIconProvider"/>
+    <platform.lsp.serverSupportProvider implementation="uk.m4xy.fckt.intellij.FcktLspServerSupportProvider"/>
     <lang.documentationProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktDocumentationProvider"/>
   </extensions>
 

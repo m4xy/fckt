@@ -1,0 +1,56 @@
+package uk.m4xy.fckt.intellij
+
+import com.intellij.execution.configurations.GeneralCommandLine
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.platform.lsp.api.LspServerSupportProvider
+import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
+import com.intellij.platform.lsp.api.customization.LspCustomization
+import com.intellij.platform.lsp.api.customization.LspFindReferencesCustomizer
+import com.intellij.platform.lsp.api.customization.LspFindReferencesDisabled
+import com.intellij.platform.lsp.api.customization.LspFormattingCustomizer
+import com.intellij.platform.lsp.api.customization.LspFormattingDisabled
+import com.intellij.platform.lsp.api.customization.LspGoToDefinitionCustomizer
+import com.intellij.platform.lsp.api.customization.LspGoToDefinitionDisabled
+import com.intellij.platform.lsp.api.customization.LspHoverCustomizer
+import com.intellij.platform.lsp.api.customization.LspHoverDisabled
+import com.intellij.platform.lsp.api.customization.LspSemanticTokensCustomizer
+import com.intellij.platform.lsp.api.customization.LspSemanticTokensDisabled
+import java.io.File
+
+/**
+ * Runs `fckt --language-server` for a project's fckt files: its errors and their quick fixes,
+ * completion, renaming, inlay hints and outlines. Hover, going to a declaration, finding usages,
+ * formatting and colouring are the plugin's own.
+ */
+class FcktLspServerSupportProvider : LspServerSupportProvider {
+    override fun fileOpened(project: Project, file: VirtualFile, serverStarter: LspServerSupportProvider.LspServerStarter) {
+        if (file.extension == "fk") serverStarter.ensureServerStarted(FcktLspServerDescriptor(project))
+    }
+}
+
+private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDescriptor(project, "fckt") {
+    override fun isSupportedFile(file: VirtualFile) = file.extension == "fk"
+
+    override fun createCommandLine(): GeneralCommandLine =
+        GeneralCommandLine(fcktExecutable(), "--language-server").withWorkDirectory(project.basePath)
+
+    override val lspCustomization = object : LspCustomization() {
+        override val hoverCustomizer: LspHoverCustomizer = LspHoverDisabled
+        override val goToDefinitionCustomizer: LspGoToDefinitionCustomizer = LspGoToDefinitionDisabled
+        override val findReferencesCustomizer: LspFindReferencesCustomizer = LspFindReferencesDisabled
+        override val formattingCustomizer: LspFormattingCustomizer = LspFormattingDisabled
+        override val semanticTokensCustomizer: LspSemanticTokensCustomizer = LspSemanticTokensDisabled
+    }
+}
+
+/**
+ * The fckt to run: FCKT if it's set, or the one kiln installs, in ~/.kiln/bin, or KILN_HOME's bin,
+ * which an IDE started from the dock doesn't have on its PATH; or whatever `fckt` the PATH has.
+ */
+internal fun fcktExecutable(): String {
+    System.getenv("FCKT")?.let { return it }
+    val home = System.getenv("KILN_HOME") ?: (System.getProperty("user.home") + "/.kiln")
+    val installed = File(home, "bin/fckt")
+    return if (installed.canExecute()) installed.path else "fckt"
+}
