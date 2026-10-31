@@ -183,7 +183,7 @@ fckt is built with OCaml 5.1 or newer, and nothing else:
 ```sh
 ./bootstrap.sh                                 # build/boot/bin/fckt
 build/boot/bin/fckt examples/orders.fk         # writes examples/orders.ml
-ocaml examples/orders.ml
+ocaml -I +unix unix.cma examples/orders.ml
 ```
 
 `boot/fckt.ml` is the seed: the compiler written in fckt, `compiler/`, as the OCaml it compiled
