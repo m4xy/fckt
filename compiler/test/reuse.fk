@@ -42,6 +42,8 @@ whatsSaid(checked: (Option<CheckedProgram>, List<Diagnostic>)): List<String> = {
         when (fact) {
           Means(file, at, length, symbol, _) -> "means ${file.getOrElse("")}:${at.line}:${at.column}+$length ${symbol.name}"
           Does(file, at, row) -> "does ${file.getOrElse("")}:${at.line}:${at.column}"
+          Binds(file, at, _, name, _, _) -> "binds ${file.getOrElse("")}:${at.line}:${at.column} $name"
+          Reads(file, at, _, name, _, _) -> "reads ${file.getOrElse("")}:${at.line}:${at.column} $name"
         }
       }
   }

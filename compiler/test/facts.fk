@@ -43,6 +43,10 @@ beeping = "effect Beeping {\n  beep(): Unit\n}\n"
         "${file.getOrElse("")}:${at.line}:${at.column}+$length means ${symbol.name}"
       Does(file, at, row) ->
         "${file.getOrElse("")}:${at.line}:${at.column} does ${row.labels.map { it.name }.joinToString(" ")}"
+      Binds(file, at, length, name, _, written) ->
+        "${file.getOrElse("")}:${at.line}:${at.column}+$length binds $name${if (written) " as written" else ""}"
+      Reads(file, at, length, name, bound, _) ->
+        "${file.getOrElse("")}:${at.line}:${at.column}+$length reads $name from ${bound.line}:${bound.column}"
     }
   }
 }
@@ -64,5 +68,23 @@ beeping = "effect Beeping {\n  beep(): Unit\n}\n"
       "main.fk:6:14 does a.Beeping",
     ],
     facts.filter { it.startsWith("main.fk") },
+  )
+}
+
+@Test @FileSystem aLocalIsNotedWhereItsBoundAndRead() = {
+  facts = noted(
+    "count(n: Int): Int = {\n  doubled = n * 2\n  [doubled].map { x -> x + n }.size\n}\n",
+  )
+  assertEquals(
+    [
+      "main.fk:1:7+1 binds n as written",
+      "main.fk:2:13+1 reads n from 1:7",
+      "main.fk:2:3+7 binds doubled",
+      "main.fk:3:4+7 reads doubled from 2:3",
+      "main.fk:3:19+1 binds x",
+      "main.fk:3:24+1 reads x from 3:19",
+      "main.fk:3:28+1 reads n from 1:7",
+    ],
+    facts.filter { it.startsWith("main.fk") && (it.contains(" binds ") || it.contains(" reads ")) },
   )
 }

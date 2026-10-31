@@ -21,6 +21,12 @@ module Facts {
           done = resolvedRowFully(row)
           if (done.labels.isEmpty()) [] else [Does(file, at, done)]
         }
+        Binds(file, at, length, name, t, written) -> [
+          Binds(file, at, length, name, resolvedFully(t), written),
+        ]
+        Reads(file, at, length, name, bound, t) -> [
+          Reads(file, at, length, name, bound, resolvedFully(t)),
+        ]
       }
     }
   }
@@ -28,5 +34,7 @@ module Facts {
   private keyOf(fact: Fact): String = when (fact) {
     Means(file, at, _, symbol, _) -> "m ${file.getOrElse("")} ${at.line} ${at.column} ${symbol.name}"
     Does(file, at, _) -> "d ${file.getOrElse("")} ${at.line} ${at.column}"
+    Binds(file, at, _, name, _, _) -> "b ${file.getOrElse("")} ${at.line} ${at.column} $name"
+    Reads(file, at, _, name, _, _) -> "r ${file.getOrElse("")} ${at.line} ${at.column} $name"
   }
 }

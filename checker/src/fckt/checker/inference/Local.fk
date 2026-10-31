@@ -1,3 +1,4 @@
+import fckt.parser.Position
 import fckt.checker.types.Type
 
 // A name bound where code is, by a function's parameters, a block or a pattern: its type; for a
@@ -8,4 +9,6 @@ type Local(
   region: Option<Type> = None,
   narrowed: Option<Narrowing> = None,
   hides: Boolean = false,
+  // Where it's bound, if it's written there.
+  at: Option<Position> = None,
 )

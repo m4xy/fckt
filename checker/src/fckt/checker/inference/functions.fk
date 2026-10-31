@@ -478,7 +478,7 @@ private allows(effects: List<String>): String = {
         FunctionOf(parameterTypes, result, _) -> {
           scope = parameters.zip(parameterTypes).fold(Scopes.empty) { scope, entry ->
             (p, t) = entry
-            Scopes.bind(scope, p.name, Local(t))
+            Bindings.bound(scope, p.name, Local(t), p.at, p.parameterType.isSome(), context)
           }
           Some(CoreFunction(parameters.map { it.name }, check(body, result, scope, context)))
         }

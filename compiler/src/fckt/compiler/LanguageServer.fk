@@ -117,27 +117,46 @@ module LanguageServer {
           if (laid == text) None else Some(whole(text, laid))
         }
       }.toList()))
-      "textDocument/hover" -> answer(
-        id,
-        uri.flatMap { u -> hover(session, u, params) }.getOrElse(JsonNull),
-      )
-      "textDocument/definition" -> answer(
-        id,
-        uri.flatMap { u -> symbolAt(session, u, params) }.flatMap { locationOf(it) }.getOrElse(JsonNull),
-      )
+      "textDocument/hover" -> answer(id, uri.flatMap { u ->
+        localAt(session, u, params).map { l ->
+          said = "```fckt\n${l.name}: ${Solutions.solving { TypeText.shown(l.t) }}\n```"
+          JsonObject(
+            [
+              ("contents", JsonObject([("kind", JsonString("markdown")), ("value", JsonString(said))])),
+            ],
+          )
+        }.orElse { hover(session, u, params) }
+      }.getOrElse(JsonNull))
+      "textDocument/definition" -> answer(id, uri.flatMap { u ->
+        localAt(session, u, params).map { l ->
+          location(l.file, l.bound.line - 1, l.bound.column - 1, l.name.length)
+        }.orElse { symbolAt(session, u, params).flatMap { locationOf(it) } }
+      }.getOrElse(JsonNull))
       "textDocument/references" -> answer(id, JsonArray(uri.map { u ->
         whole = params.field("context").flatMap { it.field("includeDeclaration") }
         withDeclaration = whole.map { it == JsonBoolean(true) }.getOrElse(true)
-        symbolAt(session, u, params).map { s ->
+        localAt(session, u, params).map { l ->
+          localUses(session, l).filter { at -> withDeclaration || at != l.bound }.map { at ->
+            location(l.file, at.line - 1, at.column - 1, l.name.length)
+          }
+        }.orElse { symbolAt(session, u, params).map { s ->
           (if (withDeclaration) locationOf(s).toList() else []) + usesOf(session, u, s).map { use ->
             (file, at, length) = use
             location(file, at.line - 1, at.column - 1, length)
           }
-        }.getOrElse([])
+        } }.getOrElse([])
       }.getOrElse([])))
       "textDocument/rename" -> answer(id, uri.flatMap { u ->
         newName = params.field("newName").flatMap { it.text }.getOrElse("")
-        symbolAt(session, u, params).map { s -> renamed(session, u, s, newName) }
+        localAt(session, u, params).map { l ->
+          changes = localUses(session, l).map { at ->
+            JsonObject([
+              ("range", range(at.line - 1, at.column - 1, at.line - 1, at.column - 1 + l.name.length)),
+              ("newText", JsonString(newName)),
+            ])
+          }
+          JsonObject([("changes", JsonObject([(uriOf(l.file), JsonArray(changes))]))])
+        }.orElse { symbolAt(session, u, params).map { s -> renamed(session, u, s, newName) } }
       }.getOrElse(JsonNull))
       "textDocument/inlayHint" -> answer(
         id,
@@ -307,6 +326,8 @@ module LanguageServer {
       (file, key) = when (fact) {
         Means(f, at, _, symbol, _) -> (f.getOrElse(""), "m ${at.line} ${at.column} ${symbol.name}")
         Does(f, at, _) -> (f.getOrElse(""), "d ${at.line} ${at.column}")
+        Binds(f, at, _, name, _, _) -> (f.getOrElse(""), "b ${at.line} ${at.column} $name")
+        Reads(f, at, _, name, _, _) -> (f.getOrElse(""), "r ${at.line} ${at.column} $name")
       }
       whole = "$file $key"
       if (keys.containsKey(whole)) seen
@@ -340,6 +361,35 @@ module LanguageServer {
       uri,
       params,
     ).map { it.symbol }.orElse { named(session, uri, params).map { it.function } }
+
+  // A local: the file it's in, where it's bound, its name and its type.
+  private type LocalName(file: String, bound: Position, name: String, t: Type)
+
+  // The local named, or bound, at params' position.
+  @FileSystem private localAt(session: Session, uri: String, params: Json): Option<LocalName> = {
+    (line, character) = positionOf(params)
+    file = pathOf(uri).value
+    under = (at: Position, length: Int) ->
+      at.line == line + 1 && character + 1 >= at.column && character + 1 <= at.column + length
+    factsIn(session, pathOf(uri)).flatMap { f ->
+      when (f) {
+        Binds(_, at, length, name, t, _) if under(at, length) -> [LocalName(file, at, name, t)]
+        Reads(_, at, length, name, bound, t) if under(at, length) -> [
+          LocalName(file, bound, name, t),
+        ]
+        else -> []
+      }
+    }.firstOrNone()
+  }
+
+  // Where the local is bound, and each place it's read or changed.
+  @FileSystem private localUses(session: Session, l: LocalName): List<Position> =
+    [l.bound] + factsIn(session, path(l.file)).flatMap { f ->
+      when (f) {
+        Reads(_, at, _, _, bound, _) if bound == l.bound -> [at]
+        else -> []
+      }
+    }
 
   private type Meaning(at: Position, length: Int, symbol: Symbol, t: Option<Type>)
 
@@ -493,7 +543,15 @@ module LanguageServer {
     ).flatMap { it.functions }.filter {
       it.function.file.source.path == Some(file)
     }
-    own.fold(emptyMap()) { m, f -> m.put(f.function.name, f) }.values.flatMap { f ->
+    locals = factsIn(session, pathOf(uri)).flatMap { fact ->
+      when (fact) {
+        Binds(_, at, length, _, t, false) -> [
+          hint(at.line - 1, at.column - 1 + length, ": ${Solutions.solving { TypeText.shown(t) }}"),
+        ]
+        else -> []
+      }
+    }
+    locals + own.fold(emptyMap()) { m, f -> m.put(f.function.name, f) }.values.flatMap { f ->
       d = f.function.declaration
       written = d.annotations.map { it.name }
       when ((d.definition, nameOf(session, f.function))) {

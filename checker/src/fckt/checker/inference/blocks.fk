@@ -218,6 +218,7 @@ private isBind(s: Statement): Boolean = when (s) {
   changed = if (!variable && parameters.isNone() && valueType.isNone()) existing.flatMap { local -> local.region.map { r -> (local, r) } } else None
   when (changed) {
     Some((local, region)) -> {
+      Bindings.read(name, local, at, context)
       core = check(value, local.t, inner, context)
       perform(mutating(region), at)
       withScope(soFar, inner, true).copy(lines = soFar.lines + [RunStep(VarWritten(name, core))])
@@ -242,7 +243,11 @@ private isBind(s: Statement): Boolean = when (s) {
             NameMatcher(name),
             typed.core,
           )
-          withScope(soFar, Scopes.bind(inner, name, Local(typed.t, region)), false).copy(
+          withScope(
+            soFar,
+            Bindings.bound(inner, name, Local(typed.t, region), at, valueType.isSome(), context),
+            false,
+          ).copy(
             lines = soFar.lines + [step],
           )
         }
@@ -252,10 +257,17 @@ private isBind(s: Statement): Boolean = when (s) {
           parameterTypes = ps.map { p -> p.parameterType.map { parameterType(it, row, context) }.getOrElse(Variable(fresh())) }
           result = valueType.map { t -> Conversion.typeOf(t, Globals.typeContext(context), context.environment.definitions) }.getOrElse(Variable(fresh()))
           // Bound before its body is checked, so it can call itself.
-          withFunction = Scopes.bind(inner, name, Local(FunctionOf(parameterTypes, result, row)))
+          withFunction = Bindings.bound(
+            inner,
+            name,
+            Local(FunctionOf(parameterTypes, result, row)),
+            at,
+            true,
+            context,
+          )
           body = ps.zip(parameterTypes).fold(Scopes.inside(withFunction)) { s, entry ->
             (p, t) = entry
-            Scopes.bind(s, p.name, Local(t))
+            Bindings.bound(s, p.name, Local(t), p.at, p.parameterType.isSome(), context)
           }
           core = doingIn(row, context) { check(value, result, body, context) }
           withScope(soFar, withFunction, false).copy(

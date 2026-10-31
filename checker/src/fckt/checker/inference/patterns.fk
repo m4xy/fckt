@@ -25,7 +25,11 @@ import fckt.parser.*
     if (Scopes.bindsHere(scope, name)) abandon(
       Globals.problem(context, at, "'$name' is bound twice in this pattern"),
     )
-    else CheckedPattern(Scopes.bind(scope, name, Local(t)), [Coverage.anything], NameMatcher(name))
+    else CheckedPattern(
+      Bindings.bound(scope, name, Local(t), at, false, context),
+      [Coverage.anything],
+      NameMatcher(name),
+    )
   ConstantPattern(_, e) -> {
     core = check(e, t, scope, context)
     CheckedPattern(scope, [constantMatches(e)], ConstantMatcher(literalOf(core)))
@@ -304,7 +308,8 @@ private literalOf(core: Core): Literal = when (core) {
             isShared(c.owner.name, context),
           ),
         ),
-        existing.hides))
+        existing.hides,
+        existing.at))
       None -> scope
     }
     else -> scope
@@ -362,7 +367,7 @@ isShared(
       Some(existing) -> Scopes.bind(
         scope,
         local,
-        Local(narrowed, existing.region, None, existing.hides),
+        Local(narrowed, existing.region, None, existing.hides, existing.at),
       )
       None -> scope
     }

@@ -113,7 +113,7 @@ import fckt.parser.*
   inner = written.zip(parts).fold(Scopes.inside(scope)) { s, entry ->
     (p, part) = entry
     p.parameterType.forEach { declared -> expect(part, parameterType(declared, row, context), p.at, context) }
-    Scopes.bind(s, p.name, Local(part))
+    Bindings.bound(s, p.name, Local(part), p.at, p.parameterType.isSome(), context)
   }
   (core, drops) = doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
   Typed(
@@ -151,7 +151,7 @@ import fckt.parser.*
   }
   inner = written.zip(types).fold(Scopes.inside(scope)) { s, entry ->
     (p, t) = entry
-    Scopes.bind(s, p.name, Local(t))
+    Bindings.bound(s, p.name, Local(t), p.at, p.parameterType.isSome(), context)
   }
   result = hintedResult.getOrElse(Variable(fresh()))
   (core, drops) = doingIn(row, context) { checkLambdaBody(body, result, inner, context) }

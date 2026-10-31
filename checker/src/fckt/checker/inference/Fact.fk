@@ -10,4 +10,9 @@ type Fact {
   Means(file: Option<String>, at: Position, length: Int, symbol: Symbol, t: Option<Type>),
   // The call in file at does row.
   Does(file: Option<String>, at: Position, row: Row),
+  // The local name bound in file at, as long as length, of type t, whether it's written there.
+  Binds(file: Option<String>, at: Position, length: Int, name: String, t: Type, written: Boolean),
+  // The local name read or changed in file at, as long as length: the one bound at bound, of
+  // type t.
+  Reads(file: Option<String>, at: Position, length: Int, name: String, bound: Position, t: Type),
 }

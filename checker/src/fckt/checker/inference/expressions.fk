@@ -348,7 +348,10 @@ private joined(parts: List<Core>): Core = when (parts) {
           "this block's 'it' hides the 'it' outside it: name this block's parameter, { x -> ... }",
         ),
       )
-      else Typed(local.t, None, LocalRead(name, local.region.isSome()))
+      else {
+        Bindings.read(name, local, at, context)
+        Typed(local.t, None, LocalRead(name, local.region.isSome()))
+      }
     None -> when (Globals.findOrRefuse(name, at, context)) {
       Some(global) -> Typed(
         Globals.typeOf(global, at, context),
