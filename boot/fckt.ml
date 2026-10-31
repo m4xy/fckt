@@ -1162,7 +1162,7 @@ module Fckt = struct
           (let rec mk p = if not (Sys.file_exists p) then (let d = Filename.dirname p in if d <> p then mk d; (try Sys.mkdir p 0o755 with Sys_error _ when Sys.is_directory p -> ())) in fun p -> try Ok (mk p) with Sys_error e -> Error e) (path : path).value
 
         let try_delete (path : path) : (unit, string) result =
-          (let rec rm p = if Sys.is_directory p then (Array.iter (fun n -> rm (Filename.concat p n)) (Sys.readdir p); Sys.rmdir p) else Sys.remove p in fun p -> try Ok (if Sys.file_exists p then rm p) with Sys_error e -> Error e) (path : path).value
+          (let rec rm p = if (Unix.lstat p).Unix.st_kind = Unix.S_DIR then (Array.iter (fun n -> rm (Filename.concat p n)) (Sys.readdir p); Sys.rmdir p) else Sys.remove p in fun p -> try Ok (match Unix.lstat p with _ -> rm p | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()) with Sys_error e -> Error e | Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)) (path : path).value
 
         let try_open_for_reading (path : path) : ((in_channel), string) result =
           (fun p -> try Ok (open_in_bin p) with Sys_error e -> Error e) (path : path).value
@@ -3254,6 +3254,11 @@ module Fckt = struct
         | ModuleFile r -> "ModuleFile(" ^ "name=" ^ Fun.id r.name ^ ")"
         | DeclarationsFile -> "DeclarationsFile"
 
+      type prepared = { file : Parser.source_file; dotted : string list list }
+
+      let rec show_prepared (v : prepared) =
+        "Prepared(" ^ "file=" ^ Parser.show_source_file v.file ^ ", dotted=" ^ fk_show_list (fk_show_list Fun.id) v.dotted ^ ")"
+
       type project =
         | ProgramProject
         | CoreProject
@@ -3265,10 +3270,10 @@ module Fckt = struct
         | CoreProject -> "CoreProject"
         | OtherProject r -> "OtherProject(" ^ "root=" ^ Fun.id r.root ^ ")"
 
-      type source_text = { path : string option; project : project; text : string; compiled_in : string option; interface : bool; trusted : bool }
+      type source_text = { path : string option; project : project; text : string; compiled_in : string option; interface : bool; trusted : bool; prepared : prepared option }
 
       let rec show_source_text (v : source_text) =
-        "SourceText(" ^ "path=" ^ fk_show_option Fun.id v.path ^ ", project=" ^ show_project v.project ^ ", text=" ^ Fun.id v.text ^ ", compiledIn=" ^ fk_show_option Fun.id v.compiled_in ^ ", interface=" ^ string_of_bool v.interface ^ ", trusted=" ^ string_of_bool v.trusted ^ ")"
+        "SourceText(" ^ "path=" ^ fk_show_option Fun.id v.path ^ ", project=" ^ show_project v.project ^ ", text=" ^ Fun.id v.text ^ ", compiledIn=" ^ fk_show_option Fun.id v.compiled_in ^ ", interface=" ^ string_of_bool v.interface ^ ", trusted=" ^ string_of_bool v.trusted ^ ", prepared=" ^ fk_show_option show_prepared v.prepared ^ ")"
 
       type loaded_file = { source : source_text; package : string list; role : file_role; imports : Parser.import list; declarations : Parser.declaration list }
 
@@ -3301,11 +3306,19 @@ module Fckt = struct
           | Parser.ModuleDefinition { declarations = inner; spec = spec; parameters = parameters; application = application; type_parameters = type_parameters } -> { (d : Parser.declaration) with Parser.definition = (Parser.ModuleDefinition { declarations = List.map (fun it -> trusting it) inner; spec = spec; parameters = parameters; application = application; type_parameters = type_parameters } : Parser.definition) }
           | _ -> d
 
-        let parsed (source : source_text) : Parser.source_file option =
+        let trusted_as_said (source : source_text) (file : Parser.source_file) : Parser.source_file =
+          if (source : source_text).trusted then { (file : Parser.source_file) with Parser.declarations = List.map (fun it -> trusting it) (file : Parser.source_file).Parser.declarations } else file
+
+        let parsed_now (source : source_text) : Parser.source_file option =
           match if (source : source_text).interface then Parser.Parser.parse_interface (source : source_text).text else Parser.Parser.parse (source : source_text).text with
-          | Ok file -> Some (if (source : source_text).trusted then { (file : Parser.source_file) with Parser.declarations = List.map (fun it -> trusting it) (file : Parser.source_file).Parser.declarations } else file)
+          | Ok file -> Some (trusted_as_said source file)
           | Error errors -> List.iter (fun it -> Effect.perform (Diagnostics.Reporting_report ({ Diagnostics.file = (source : source_text).path; at = (it : Parser.syntax_error).Parser.at; message = (it : Parser.syntax_error).Parser.message } : Diagnostics.diagnostic))) errors;
               None
+
+        let parsed (source : source_text) : Parser.source_file option =
+          match (source : source_text).prepared with
+          | Some prepared -> Some (trusted_as_said source (prepared : prepared).file)
+          | None -> parsed_now source
 
         let as_import (written : string) : Parser.import =
           let fk_arg1 = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (Lang.Strings.string_remove_suffix written ".*") "." in
@@ -3396,10 +3409,16 @@ module Fckt = struct
               dotted_runs after (if List.length run > 1 then runs @ [run] else runs)
           | _ :: rest -> dotted_runs rest runs
 
-        let named_in_full (tree : source_tree) (text : string) : string list list =
+        let dotted_in (text : string) : string list list =
           match Parser.Lexer.tokens text (Parser.Lexer.tokens_default_from ()) with
           | Error _ -> []
-          | Ok tokens -> Lang.Lists.list_distinct (Lang.Lists.list_map_not_null (List.filter (fun run -> List.length run > 1 && Collections.Maps.map_contains_key (tree : source_tree).packages (List.take 1 run)) (dotted_runs tokens [])) (fun run -> package_of tree run))
+          | Ok tokens -> dotted_runs tokens []
+
+        let named_in_full (tree : source_tree) (source : source_text) : string list list =
+          let dotted = match (source : source_text).prepared with
+            | Some prepared -> (prepared : prepared).dotted
+            | None -> dotted_in (source : source_text).text in
+          Lang.Lists.list_distinct (Lang.Lists.list_map_not_null (List.filter (fun run -> Collections.Maps.map_contains_key (tree : source_tree).packages (List.take 1 run)) dotted) (fun run -> package_of tree run))
 
         let rec follow (loading : loading) (files : loaded_file list) : unit =
           List.iter (fun file -> List.iter (fun i -> let before = List.length (loading : loading).files in
@@ -3407,7 +3426,7 @@ module Fckt = struct
                 follow loading (List.drop before (loading : loading).files)) (file : loaded_file).imports;
              List.iter (fun pkg -> let before = List.length (loading : loading).files in
                 load_package loading pkg;
-                follow loading (List.drop before (loading : loading).files)) (named_in_full (loading : loading).tree ((file : loaded_file).source : source_text).text)) files
+                follow loading (List.drop before (loading : loading).files)) (named_in_full (loading : loading).tree (file : loaded_file).source)) files
 
         let load (entry : source_text) (tree : source_tree) : workspace =
           let loading = ({ tree = tree; entry = entry; packages = []; files = []; apart = Collections.Maps.empty_map () } : loading) in
@@ -3419,6 +3438,11 @@ module Fckt = struct
                follow loading ([own] @ List.drop before (loading : loading).files)
            | None -> ());
           ({ files = (loading : loading).files; apart = (loading : loading).apart; borrowed = workspace_default_borrowed () } : workspace)
+
+        let prepare (source : source_text) : prepared option =
+          match if (source : source_text).interface then Parser.Parser.parse_interface (source : source_text).text else Parser.Parser.parse (source : source_text).text with
+          | Ok file -> Some ({ file = file; dotted = dotted_in (source : source_text).text } : prepared)
+          | Error _ -> None
       end
 
       let source_text_default_compiled_in () : string option =
@@ -3429,6 +3453,9 @@ module Fckt = struct
 
       let source_text_default_trusted () : bool =
         false
+
+      let source_text_default_prepared () : prepared option =
+        None
 
       let source_tree_default_imports () : string list =
         []
@@ -3671,12 +3698,15 @@ module Fckt = struct
       end
 
       module Solutions = struct
-        let solving (block : unit -> _) : _ =
-          let made = ref 0 in
+        let solving (from : int) (block : unit -> _) : _ =
+          let made = ref from in
           let solutions = ref (Collections.Maps.empty_map ()) in
           handle_solving ({ fresh = (fun k -> k ((fun () -> made := ! made + 1;
                  ({ id = ! made } : type_variable)) ())); solution_of = (fun x0 k -> k ((fun variable -> Collections.Maps.map_get (! solutions) variable) x0)); solve = (fun x0 x1 k -> k ((fun variable t -> solutions := Collections.Maps.map_put (! solutions) variable t;
                  ()) x0 x1)) } : _ solving_handler) (fun () -> block ())
+
+        let solving_default_from () : int =
+          0
       end
 
       let type_module_value_default_own_types () : string list =
@@ -3826,27 +3856,6 @@ module Fckt = struct
         let rec show_type_tables (v : type_tables) =
           "TypeTables(" ^ "records=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_symbol) v.records ^ ", caseTypes=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_symbol) v.case_types ^ ", aliases=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_symbol) v.aliases ^ ", annotationTypes=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_symbol) v.annotation_types ^ ")"
 
-        let last_part (name : string) : string =
-          Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) name ".")) ~default:name
-
-        let rec mangled (t : Parser.type_ref) (type_parameters : string list) : string =
-          match t with
-          | Parser.NamedType { at = _; name = name; arguments = arguments } -> if List.mem name type_parameters then "" else (let fk_arg1 = last_part name in
-                 let fk_arg2 = String.concat "" (List.map Fun.id (List.map (fun it -> mangled it type_parameters) arguments)) in
-                 fk_arg1 ^ fk_arg2)
-          | Parser.TupleType { at = _; elements = elements } -> "Tuple" ^ String.concat "" (List.map Fun.id (List.map (fun it -> mangled it type_parameters) elements))
-          | Parser.FunctionType { at = _; parameters = _; result = _; effects = _ } -> "Function"
-          | Parser.EffectsType { at = _; effects = _ } -> ""
-          | Parser.GivenType { at = _; name = _; given = given } -> mangled given type_parameters
-
-        let own_name (d : Parser.declaration) : string =
-          match (d : Parser.declaration).Parser.definition with
-          | Parser.FunctionDefinition { type_parameters = type_parameters; receiver = Some receiver; parameters = _; result = _; body = _; external_ = _; operator = _ } -> mangled receiver type_parameters ^ "$" ^ (d : Parser.declaration).Parser.name
-          | _ -> (d : Parser.declaration).Parser.name
-
-        let path_of (name : string) : string list =
-          Lang.Lists.list_drop_last ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) name ".") 1
-
         let file_name (path : string) : string =
           Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) path "/")) ~default:path
 
@@ -3875,6 +3884,27 @@ module Fckt = struct
           match (workspace : Sources.workspace).Sources.files with
           | [] -> []
           | own :: others -> others @ [own]
+
+        let last_part (name : string) : string =
+          Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) name ".")) ~default:name
+
+        let rec mangled (t : Parser.type_ref) (type_parameters : string list) : string =
+          match t with
+          | Parser.NamedType { at = _; name = name; arguments = arguments } -> if List.mem name type_parameters then "" else (let fk_arg1 = last_part name in
+                 let fk_arg2 = String.concat "" (List.map Fun.id (List.map (fun it -> mangled it type_parameters) arguments)) in
+                 fk_arg1 ^ fk_arg2)
+          | Parser.TupleType { at = _; elements = elements } -> "Tuple" ^ String.concat "" (List.map Fun.id (List.map (fun it -> mangled it type_parameters) elements))
+          | Parser.FunctionType { at = _; parameters = _; result = _; effects = _ } -> "Function"
+          | Parser.EffectsType { at = _; effects = _ } -> ""
+          | Parser.GivenType { at = _; name = _; given = given } -> mangled given type_parameters
+
+        let own_name (d : Parser.declaration) : string =
+          match (d : Parser.declaration).Parser.definition with
+          | Parser.FunctionDefinition { type_parameters = type_parameters; receiver = Some receiver; parameters = _; result = _; body = _; external_ = _; operator = _ } -> mangled receiver type_parameters ^ "$" ^ (d : Parser.declaration).Parser.name
+          | _ -> (d : Parser.declaration).Parser.name
+
+        let path_of (name : string) : string list =
+          Lang.Lists.list_drop_last ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) name ".") 1
 
         let rec symbols_in (declarations : Parser.declaration list) (prefix : string) (file : Sources.loaded_file) (borrowed : (string, Sources.loaded_file) Collections.Maps.map) : symbol list =
           List.concat_map (fun d -> let name = prefix ^ own_name d in
@@ -4281,6 +4311,9 @@ module Fckt = struct
 
     module Expansion = struct
       module Expansion = struct
+        let outline (workspace : Sources.workspace) : (string, Symbols.symbol) Collections.Maps.map =
+          Collections.Maps.list_tuple_to_map (List.map (fun s -> ((s : Symbols.symbol).Symbols.name, s)) (List.filter (fun s -> not (Symbols.Symbols.is_function s)) (Symbols.Symbols.declarations workspace)))
+
         let rec map_in (declarations : Parser.declaration list) (prefix : string) (file : Sources.loaded_file) (f : Symbols.symbol -> Parser.declaration) : Parser.declaration list =
           List.map (fun d -> let name = prefix ^ Symbols.Symbols.own_name d in
              let inner = match (d : Parser.declaration).Parser.definition with
@@ -4321,9 +4354,6 @@ module Fckt = struct
                | _ -> match Effect.perform (Diagnostics.Abandoning_abandon not_effect) with
                    | _ -> (assert false))
           | _ -> (s : Symbols.symbol).Symbols.declaration
-
-        let outline (workspace : Sources.workspace) : (string, Symbols.symbol) Collections.Maps.map =
-          Collections.Maps.list_tuple_to_map (List.map (fun s -> ((s : Symbols.symbol).Symbols.name, s)) (List.filter (fun s -> not (Symbols.Symbols.is_function s)) (Symbols.Symbols.declarations workspace)))
 
         let spec_types (d : Parser.declaration) : Parser.spec_type list =
           match (d : Parser.declaration).Parser.definition with
@@ -4428,14 +4458,17 @@ module Fckt = struct
               | _ -> []) (Symbols.Symbols.declarations workspace))
 
         let expanded (workspace : Sources.workspace) : Sources.workspace =
+          let whole = outline workspace in
           let copied = map_declarations workspace (fun s -> match ((s : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
-               | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = Some _; parents = _ } -> copied_effect s (outline workspace) []
+               | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = Some _; parents = _ } -> copied_effect s whole []
                | _ -> (s : Symbols.symbol).Symbols.declaration) in
+          let copied_outline = outline copied in
           let flattened = map_declarations copied (fun s -> match ((s : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
-               | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ :: _ } -> flattened_spec s (outline copied) []
+               | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ :: _ } -> flattened_spec s copied_outline []
                | _ -> (s : Symbols.symbol).Symbols.declaration) in
+          let flattened_outline = outline flattened in
           let filled = map_declarations flattened (fun s -> match ((s : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
-               | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> filled_module s (outline flattened)
+               | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> filled_module s flattened_outline
                | _ -> (s : Symbols.symbol).Symbols.declaration) in
           ({ Sources.files = (filled : Sources.workspace).Sources.files; apart = (filled : Sources.workspace).Sources.apart; borrowed = borrowed_defaults flattened } : Sources.workspace)
       end
@@ -6712,6 +6745,19 @@ module Fckt = struct
       let rec show_default_handler (v : default_handler) =
         "DefaultHandler(" ^ "effect=" ^ Symbols.show_symbol v.effect_ ^ ", handler=" ^ Symbols.show_symbol v.handler ^ ")"
 
+      type fact =
+        | Means of { file : string option; at : Parser.position; length : int; symbol : Symbols.symbol; t : Types.type_ option }
+        | Does of { file : string option; at : Parser.position; row : Types.row }
+        | Binds of { file : string option; at : Parser.position; length : int; name : string; t : Types.type_; written : bool }
+        | Reads of { file : string option; at : Parser.position; length : int; name : string; bound : Parser.position; t : Types.type_ }
+
+      let rec show_fact (v : fact) =
+        match v with
+        | Means r -> "Means(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", symbol=" ^ Symbols.show_symbol r.symbol ^ ", t=" ^ fk_show_option Types.show_type r.t ^ ")"
+        | Does r -> "Does(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", row=" ^ Types.show_row r.row ^ ")"
+        | Binds r -> "Binds(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", name=" ^ Fun.id r.name ^ ", t=" ^ Types.show_type r.t ^ ", written=" ^ string_of_bool r.written ^ ")"
+        | Reads r -> "Reads(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", name=" ^ Fun.id r.name ^ ", bound=" ^ Parser.show_position r.bound ^ ", t=" ^ Types.show_type r.t ^ ")"
+
       type function_group = { functions : Symbols.symbol list; recursive : bool }
 
       let rec show_function_group (v : function_group) =
@@ -6747,10 +6793,10 @@ module Fckt = struct
         | NarrowedField r -> "NarrowedField(" ^ "narrowing=" ^ show_narrowing r.narrowing ^ ", t=" ^ Types.show_type r.t ^ ")"
         | ModuleMember r -> "ModuleMember(" ^ "spec=" ^ Symbols.show_symbol r.spec ^ ", value=" ^ Parser.show_spec_value r.value ^ ", t=" ^ Types.show_type r.t ^ ")"
 
-      type local = { t : Types.type_; region : Types.type_ option; narrowed : narrowing option; hides : bool }
+      type local = { t : Types.type_; region : Types.type_ option; narrowed : narrowing option; hides : bool; at : Parser.position option }
 
       let rec show_local (v : local) =
-        "Local(" ^ "t=" ^ Types.show_type v.t ^ ", region=" ^ fk_show_option Types.show_type v.region ^ ", narrowed=" ^ fk_show_option show_narrowing v.narrowed ^ ", hides=" ^ string_of_bool v.hides ^ ")"
+        "Local(" ^ "t=" ^ Types.show_type v.t ^ ", region=" ^ fk_show_option Types.show_type v.region ^ ", narrowed=" ^ fk_show_option show_narrowing v.narrowed ^ ", hides=" ^ string_of_bool v.hides ^ ", at=" ^ fk_show_option Parser.show_position v.at ^ ")"
 
       type operation = { effect_ : Symbols.symbol; value : Parser.spec_value }
 
@@ -6761,6 +6807,16 @@ module Fckt = struct
 
       let rec show_pending_when (v : pending_when) =
         "PendingWhen(" ^ "file=" ^ fk_show_option Fun.id v.file ^ ", at=" ^ Parser.show_position v.at ^ ", patterns=" ^ fk_show_list Coverage.show_matches v.patterns ^ ", subject=" ^ Types.show_type v.subject ^ ")"
+
+      type remembered = { files : (string, string) Collections.Maps.map; uses : (string, string) Collections.Maps.map; schemes : (string, Types.scheme) Collections.Maps.map; outside : (string, Types.scheme) Collections.Maps.map; type_parameter_variables : (string, (string, Types.type_variable) Collections.Maps.map) Collections.Maps.map; bodies : (string, Core.core_function) Collections.Maps.map; facts : fact list }
+
+      let rec show_remembered (v : remembered) =
+        "Remembered(" ^ "files=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Fun.id) v.files ^ ", uses=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Fun.id) v.uses ^ ", schemes=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_scheme) v.schemes ^ ", outside=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_scheme) v.outside ^ ", typeParameterVariables=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_type_variable)) v.type_parameter_variables ^ ", bodies=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Core.show_core_function) v.bodies ^ ", facts=" ^ fk_show_list show_fact v.facts ^ ")"
+
+      type reuse = { shape : string; groups : (string, remembered) Collections.Maps.map; highest : int }
+
+      let rec show_reuse (v : reuse) =
+        "Reuse(" ^ "shape=" ^ Fun.id v.shape ^ ", groups=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_remembered) v.groups ^ ", highest=" ^ string_of_int v.highest ^ ")"
 
       type scope = { own : (string, local) Collections.Maps.map; outer : scope option }
 
@@ -6797,10 +6853,10 @@ module Fckt = struct
       let rec show_context (v : context) =
         "Context(" ^ "environment=" ^ show_environment v.environment ^ ", place=" ^ Resolution.show_place v.place ^ ", typeParameters=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_type) v.type_parameters ^ ", valueParameters=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_type) v.value_parameters ^ ")"
 
-      type inferred = { environment : environment; known : known; functions : checked_function list; meta_types : (string, Definitions.meta_type list) Collections.Maps.map; groups : function_group list }
+      type inferred = { environment : environment; known : known; functions : checked_function list; meta_types : (string, Definitions.meta_type list) Collections.Maps.map; groups : function_group list; reuse : reuse option }
 
       let rec show_inferred (v : inferred) =
-        "Inferred(" ^ "environment=" ^ show_environment v.environment ^ ", known=" ^ show_known v.known ^ ", functions=" ^ fk_show_list show_checked_function v.functions ^ ", metaTypes=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Definitions.show_meta_type)) v.meta_types ^ ", groups=" ^ fk_show_list show_function_group v.groups ^ ")"
+        "Inferred(" ^ "environment=" ^ show_environment v.environment ^ ", known=" ^ show_known v.known ^ ", functions=" ^ fk_show_list show_checked_function v.functions ^ ", metaTypes=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Definitions.show_meta_type)) v.meta_types ^ ", groups=" ^ fk_show_list show_function_group v.groups ^ ", reuse=" ^ fk_show_option show_reuse v.reuse ^ ")"
 
       type typed = { t : Types.type_; spelled : Symbols.case_symbol option; core : Core.core }
 
@@ -6845,6 +6901,16 @@ module Fckt = struct
         match f () with
         | v -> v
         | effect (Doing_perform (x0, x1)), k -> h.perform x0 x1 (fun v -> Effect.Deep.continue k v)
+
+      type _ Effect.t +=
+        | Noting_note : fact -> unit Effect.t
+
+      type 'fk_answer noting_handler = { note : fact -> (unit -> 'fk_answer) -> 'fk_answer }
+
+      let handle_noting (h : 'fk_answer noting_handler) (f : unit -> 'fk_answer) : 'fk_answer =
+        match f () with
+        | v -> v
+        | effect (Noting_note x0), k -> h.note x0 (fun v -> Effect.Deep.continue k v)
 
       module Defaults = struct
         let marker =
@@ -6916,6 +6982,12 @@ module Fckt = struct
 
         let is_default (s : Symbols.symbol) : bool =
           Lang.Strings.string_contains (s : Symbols.symbol).Symbols.name marker
+
+        let by_owner (functions : Symbols.symbol list) : (string, Symbols.symbol list) Collections.Maps.map =
+          let fk_arg1 = List.rev (List.filter (fun it -> is_default it) functions) in
+          let fk_arg2 = Collections.Maps.empty_map () in
+          List.fold_left (fun m f -> let owner = Lang.Strings.string_substring_before (f : Symbols.symbol).Symbols.name marker in
+             Collections.Maps.map_put m owner ([f] @ Collections.Maps.map_get_or_default m owner [])) fk_arg2 fk_arg1
       end
 
       let context_default_value_parameters () : (string, Types.type_) Collections.Maps.map =
@@ -7025,7 +7097,8 @@ module Fckt = struct
 
         let find_or_refuse (name : string) (at : Parser.position) (context : context) : Symbols.symbol option =
           match find name context (Resolution.Refusing : Resolution.strictness) with
-          | Resolution.Found { value = s } -> Some s
+          | Resolution.Found { value = s } -> Effect.perform (Noting_note (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; symbol = s; t = None } : fact));
+              Some s
           | Resolution.Refused { message = why } -> (match Effect.perform (Diagnostics.Abandoning_abandon (problem context at why)) with
                | _ -> (assert false))
           | Resolution.NotFound -> None
@@ -7349,7 +7422,7 @@ module Fckt = struct
         let rec show_name_uses (v : name_uses) =
           "NameUses(" ^ "functions=" ^ fk_show_list Symbols.show_symbol v.functions ^ ", guessed=" ^ fk_show_list Symbols.show_symbol v.guessed ^ ", named=" ^ fk_show_list Symbols.show_symbol v.named ^ ")"
 
-        let defaults_used (name : string) (context : context) : Symbols.symbol list =
+        let defaults_used (name : string) (context : context) (defaults : (string, Symbols.symbol list) Collections.Maps.map) : Symbols.symbol list =
           let namespace = (((context : context).environment : environment).definitions : Definitions.definitions).Definitions.namespace in
           let last_part = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) name ".")) ~default:name in
           let owners = let fk_arg1 = let fk_arg1 = let fk_arg1 = Option.to_list (Option.map (fun it -> (it : Symbols.symbol).Symbols.name) (Resolution.Lookups.found (Globals.find name context (Resolution.Skipping : Resolution.strictness)))) in
@@ -7359,7 +7432,7 @@ module Fckt = struct
               fk_arg1 @ fk_arg2 in
             let fk_arg2 = List.map (fun c -> ((c : Symbols.case_symbol).Symbols.owner : Symbols.symbol).Symbols.name ^ "$" ^ ((c : Symbols.case_symbol).Symbols.definition : Parser.case_definition).Parser.name) (Collections.Maps.map_get_or_default ((context : context).environment : environment).cases_by_name last_part []) in
             fk_arg1 @ fk_arg2 in
-          List.concat_map (fun owner -> List.filter (fun f -> String.starts_with ~prefix:(Defaults.name_of owner "") (f : Symbols.symbol).Symbols.name) ((context : context).environment : environment).ordered_functions) owners
+          List.concat_map (fun owner -> Collections.Maps.map_get_or_default defaults owner []) owners
 
         let is_only_package_mates (f : Symbols.symbol) (context : context) : bool =
           Globals.only_as_package_mate f context = Some true
@@ -7382,31 +7455,31 @@ module Fckt = struct
                     let fk_arg2 = Option.value (Lang.Lists.list_last_or_none parts) ~default:name in
                     fk_arg1 ^ "." ^ fk_arg2))) (fun it -> Globals.visible it context))
 
-        let uses (name : string) (context : context) : name_uses =
+        let uses (name : string) (context : context) (defaults : (string, Symbols.symbol list) Collections.Maps.map) : name_uses =
           if String.starts_with ~prefix:"." name then (let method_ = (fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in String.sub s i (String.length s - i)) name 1 in
              let found = let fk_arg1 = Globals.extensions_named method_ context in
-               let fk_arg2 = defaults_used method_ context in
+               let fk_arg2 = defaults_used method_ context defaults in
                fk_arg1 @ fk_arg2 in
              ({ functions = found; guessed = List.filter (fun f -> Symbols.Signatures.is_extension f && is_only_package_mates f context) found; named = [] } : name_uses)) else if String.starts_with ~prefix:"operator " name then (let found = List.filter (fun it -> Symbols.Signatures.is_operator it) (Globals.extensions_named (Lang.Strings.string_remove_prefix name "operator ") context) in
                ({ functions = found; guessed = List.filter (fun it -> is_only_package_mates it context) found; named = [] } : name_uses)) else (let found = let fk_arg1 = let fk_arg1 = module_functions name context in
                    let fk_arg2 = Option.to_list (declared_or_member name context) in
                    fk_arg1 @ fk_arg2 in
-                 let fk_arg2 = defaults_used name context in
+                 let fk_arg2 = defaults_used name context defaults in
                  fk_arg1 @ fk_arg2 in
                ({ functions = found; guessed = []; named = found } : name_uses))
 
         let lifted_uses (body : Parser.expression) (f : Symbols.symbol) (environment : environment) : Symbols.symbol list =
           let lifted = ((((environment : environment).definitions : Definitions.definitions).Definitions.namespace : Resolution.namespace).Resolution.modules : Resolution.modules).Resolution.lifted in
           let made = Lang.Lists.list_map_not_null (Symbols.Calls.of_ body) (fun call -> Collections.Maps.map_get lifted ({ Resolution.file = (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = (call : Symbols.call_in).Symbols.at } : Resolution.call_site)) in
-          List.filter (fun g -> List.mem (String.concat "." (List.map Fun.id (g : Symbols.symbol).Symbols.path)) made) (List.map (fun (_, g) -> g) (Collections.Maps.map_to_list (environment : environment).functions))
+          if List.is_empty made then [] else List.filter (fun g -> List.mem (String.concat "." (List.map Fun.id (g : Symbols.symbol).Symbols.path)) made) (List.map (fun (_, g) -> g) (Collections.Maps.map_to_list (environment : environment).functions))
 
-        let uses_of (f : Symbols.symbol) (environment : environment) : uses =
+        let uses_in (f : Symbols.symbol) (environment : environment) (defaults : (string, Symbols.symbol list) Collections.Maps.map) : uses =
           let context = let fk_arg1 = Collections.Maps.empty_map () in
             let fk_arg2 = context_default_value_parameters () in
             ({ environment = environment; place = ({ Resolution.file = (f : Symbols.symbol).Symbols.file; path = (f : Symbols.symbol).Symbols.path } : Resolution.place); type_parameters = fk_arg1; value_parameters = fk_arg2 } : context) in
           let bound = List.map (fun it -> (it : Parser.parameter).Parser.name) (Option.value (Symbols.Signatures.parameters_of f) ~default:[]) in
           let names = Option.value (Option.map (fun body -> Symbols.References.of_ body bound) (Symbols.Signatures.body_of f)) ~default:[] in
-          let each = List.map (fun name -> uses name context) names in
+          let each = List.map (fun name -> uses name context defaults) names in
           let named = List.map (fun it -> (it : Symbols.symbol).Symbols.name) (List.concat_map (fun it -> (it : name_uses).named) each) in
           let lifted = Option.value (Option.map (fun body -> lifted_uses body f environment) (Symbols.Signatures.body_of f)) ~default:[] in
           let fk_arg1 = Lang.Lists.list_distinct_by (List.concat_map (fun it -> (it : name_uses).functions) each @ lifted) (fun it -> (it : Symbols.symbol).Symbols.name) in
@@ -7416,7 +7489,8 @@ module Fckt = struct
         let ordered (all : Symbols.symbol list) (environment : environment) : function_group list =
           let is_parameter_member = fun f -> List.mem (f : Symbols.symbol).Symbols.name ((((environment : environment).definitions : Definitions.definitions).Definitions.namespace : Resolution.namespace).Resolution.modules : Resolution.modules).Resolution.parameter_members in
           let functions = List.filter (fun f -> not (is_parameter_member f)) all in
-          let uses = Collections.Maps.list_tuple_to_map (List.map (fun f -> let found = uses_of f environment in
+          let defaults = Defaults.by_owner (environment : environment).ordered_functions in
+          let uses = Collections.Maps.list_tuple_to_map (List.map (fun f -> let found = uses_in f environment defaults in
                 ((f : Symbols.symbol).Symbols.name, ({ functions = List.filter (fun u -> not (is_parameter_member u)) (found : uses).functions; guessed = (found : uses).guessed } : uses))) functions) in
           let used_by = fun f -> Option.value (Option.map (fun u -> (u : uses).functions) (Collections.Maps.map_get uses (f : Symbols.symbol).Symbols.name)) ~default:[] in
           let certainly_used_by = fun f -> Option.value (Option.map (fun u -> List.filter (fun used -> not (List.mem (used : Symbols.symbol).Symbols.name (u : uses).guessed) || (used : Symbols.symbol).Symbols.path = (f : Symbols.symbol).Symbols.path) (u : uses).functions) (Collections.Maps.map_get uses (f : Symbols.symbol).Symbols.name)) ~default:[] in
@@ -7430,6 +7504,9 @@ module Fckt = struct
                    | _ -> (assert false))
               | _ -> ());
              ({ functions = component; recursive = recursive } : function_group)) components
+
+        let uses_of (f : Symbols.symbol) (environment : environment) : uses =
+          uses_in f environment (Defaults.by_owner (environment : environment).ordered_functions)
       end
 
       let context_of (f : Symbols.symbol) (type_variables : (string * Types.type_variable) list) (environment : environment) (value_parameters : (string, Types.type_) Collections.Maps.map) : context =
@@ -7573,7 +7650,8 @@ module Fckt = struct
 
         let doing (row : Types.row) (file : string option) (block : unit -> _) : _ =
           let included = ref [] in
-          let result = handle_doing ({ perform = (fun x0 x1 k -> k ((fun performed at -> let flat = Types.Types.flattened performed in
+          let result = handle_doing ({ perform = (fun x0 x1 k -> k ((fun performed at -> Effect.perform (Noting_note (Does { file = file; at = at; row = performed } : fact));
+                   let flat = Types.Types.flattened performed in
                    let own = (Types.Types.flattened row : Types.row).Types.rest in
                    match (flat : Types.row).Types.rest with
                    | Some rest when Some rest <> own -> included := ! included @ [(rest, at)];
@@ -7664,6 +7742,17 @@ module Fckt = struct
              bind s name local) scope bindings
       end
 
+      module Bindings = struct
+        let bound (scope : scope) (name : string) (local : local) (at : Parser.position) (written : bool) (context : context) : scope =
+          Effect.perform (Noting_note (Binds { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; name = name; t = (local : local).t; written = written } : fact));
+          Scopes.bind scope name { (local : local) with at = Some at }
+
+        let read (name : string) (local : local) (at : Parser.position) (context : context) : unit =
+          match (local : local).at with
+          | Some bound -> Effect.perform (Noting_note (Reads { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; name = name; bound = bound; t = (local : local).t } : fact))
+          | None -> ()
+      end
+
       let local_default_region () : Types.type_ option =
         None
 
@@ -7672,6 +7761,9 @@ module Fckt = struct
 
       let local_default_hides () : bool =
         false
+
+      let local_default_at () : Parser.position option =
+        None
 
       let typed_default_spelled () : Symbols.case_symbol option =
         None
@@ -7728,7 +7820,8 @@ module Fckt = struct
                    let own = List.filter (fun (s, _) -> (((s : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.project <> (Sources.CoreProject : Sources.project)) tied in
                    let chosen = if List.is_empty own then tied else own in
                    match chosen with
-                   | [(s, _)] -> Some s
+                   | [(s, _)] -> Effect.perform (Noting_note (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; symbol = s; t = None } : fact));
+                       Some s
                    | _ -> match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at ((let fk_arg1 = "can't tell which '" ^ name ^ "' this is: " ^ generic_text receiver ^ " fits " in
                            let fk_arg2 = String.concat " and " (List.map Fun.id (List.map (fun (s, _) -> generic_text (Globals.receiver_type s context) ^ "." ^ name) chosen)) in
                            fk_arg1 ^ fk_arg2) ^ "; annotate its type"))) with
@@ -7879,7 +7972,8 @@ module Fckt = struct
         Option.bind (module_named_by target scope context) (fun m -> Option.map (fun s -> match Resolution.Visibility.why_hidden s (context : context).place ((((context : context).environment : environment).definitions : Definitions.definitions).Definitions.namespace : Resolution.namespace).Resolution.table with
               | Some why -> (match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at why)) with
                    | _ -> (assert false))
-              | None -> s) (Collections.Maps.map_get ((context : context).environment : environment).functions (Symbols.Symbols.module_name m ^ "." ^ name)))
+              | None -> Effect.perform (Noting_note (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; symbol = s; t = None } : fact));
+                  s) (Collections.Maps.map_get ((context : context).environment : environment).functions (Symbols.Symbols.module_name m ^ "." ^ name)))
 
       let declared_callee (callee : Parser.expression) (scope : scope) (context : context) : Symbols.symbol option =
         match callee with
@@ -8341,7 +8435,8 @@ module Fckt = struct
       let infer_name (at : Parser.position) (name : string) (expected : Types.type_ option) (scope : scope) (context : context) : typed =
         match Scopes.lookup scope name with
         | Some local -> if (local : local).hides then (match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at "this block's 'it' hides the 'it' outside it: name this block's parameter, { x -> ... }")) with
-               | _ -> (assert false)) else ({ t = (local : local).t; spelled = None; core = (Core.LocalRead { name = name; is_var = Option.is_some (local : local).region } : Core.core) } : typed)
+               | _ -> (assert false)) else (Bindings.read name local at context;
+               ({ t = (local : local).t; spelled = None; core = (Core.LocalRead { name = name; is_var = Option.is_some (local : local).region } : Core.core) } : typed))
         | None -> match Globals.find_or_refuse name at context with
             | Some global -> let fk_arg1 = Globals.type_of global at context in
                 let fk_arg2 = if Symbols.Signatures.is_external global then (Core.ExternalRead { function_ = global } : Core.core) else (Core.GlobalRead { function_ = global } : Core.core) in
@@ -8544,7 +8639,7 @@ module Fckt = struct
            | _ -> (assert false)) else ();
         let narrowed_scope = match subject with
           | Some (Parser.Name { at = _; name = local }) -> (match Scopes.lookup scope local with
-               | Some existing -> Scopes.bind scope local ({ t = narrowed; region = (existing : local).region; narrowed = None; hides = (existing : local).hides } : local)
+               | Some existing -> Scopes.bind scope local ({ t = narrowed; region = (existing : local).region; narrowed = None; hides = (existing : local).hides; at = (existing : local).at } : local)
                | None -> scope)
           | _ -> scope in
         let fk_arg1 = List.map (fun c -> ({ Coverage.shape = Some (Coverage.CaseShape { owner = ((c : Definitions.case_info).Definitions.origin : Symbols.symbol).Symbols.name; name = ((c : Definitions.case_info).Definitions.definition : Parser.case_definition).Parser.name } : Coverage.shape); fields = List.map (fun it -> Coverage.Coverage.anything) ((c : Definitions.case_info).Definitions.definition : Parser.case_definition).Parser.fields } : Coverage.matches)) (Collections.Maps.map_get_or_default all_cases (target : Symbols.symbol).Symbols.name []) in
@@ -8584,7 +8679,7 @@ module Fckt = struct
         | (true, Core.CaseConstructor { c = c }, Some (Parser.Name { at = _; name = local })) when Lang.Lists.list_is_not_empty (shape : constructor_shape).field_types -> (match Scopes.lookup scope local with
              | Some existing -> Scopes.bind scope local ({ t = (existing : local).t; region = (existing : local).region; narrowed = Some (let fk_arg1 = Collections.Maps.list_tuple_to_map (Lang.Lists.list_zip (shape : constructor_shape).field_names (shape : constructor_shape).field_types) in
                   let fk_arg2 = is_shared ((c : Symbols.case_symbol).Symbols.owner : Symbols.symbol).Symbols.name context in
-                  ({ case_name = ((c : Symbols.case_symbol).Symbols.definition : Parser.case_definition).Parser.name; case_type = ((c : Symbols.case_symbol).Symbols.owner : Symbols.symbol).Symbols.name; fields = ((c : Symbols.case_symbol).Symbols.definition : Parser.case_definition).Parser.fields; types = fk_arg1; shared = fk_arg2 } : narrowing)); hides = (existing : local).hides } : local)
+                  ({ case_name = ((c : Symbols.case_symbol).Symbols.definition : Parser.case_definition).Parser.name; case_type = ((c : Symbols.case_symbol).Symbols.owner : Symbols.symbol).Symbols.name; fields = ((c : Symbols.case_symbol).Symbols.definition : Parser.case_definition).Parser.fields; types = fk_arg1; shared = fk_arg2 } : narrowing)); hides = (existing : local).hides; at = (existing : local).at } : local)
              | None -> scope)
         | _ -> scope
 
@@ -8812,7 +8907,8 @@ module Fckt = struct
         let existing = Scopes.lookup inner name in
         let changed = if (not variable && Option.is_none parameters) && Option.is_none value_type then Option.bind existing (fun local -> Option.map (fun r -> (local, r)) (local : local).region) else None in
         match changed with
-        | Some (local, region) -> let core = check value (local : local).t inner context in
+        | Some (local, region) -> Bindings.read name local at context;
+            let core = check value (local : local).t inner context in
             Effect.perform (Doing_perform (mutating region, at));
             { (with_scope so_far inner true : block_so_far) with lines = (so_far : block_so_far).lines @ [(RunStep { core = (Core.VarWritten { name = name; value = core } : Core.core) } : block_step)] }
         | None -> if Scopes.binds_here inner name then (match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at ("'" ^ name ^ "' is already defined in this block; to change it, declare it with var " ^ name ^ " = ..."))) with
@@ -8823,9 +8919,12 @@ module Fckt = struct
                 Option.iter (fun d -> assign value typed d context) declared;
                 let region = if variable then Some (Types.Variable { variable = Effect.perform (Types.Solving_fresh ()) } : Types.type_) else None in
                 let step = if variable then (VarStep { name = name; value = (typed : typed).core } : block_step) else (BindStep { pattern = (Core.NameMatcher { name = name } : Core.matcher); value = (typed : typed).core } : block_step) in
-                { (with_scope so_far (Scopes.bind inner name (let fk_arg1 = local_default_narrowed () in
-                  let fk_arg2 = local_default_hides () in
-                  ({ t = (typed : typed).t; region = region; narrowed = fk_arg1; hides = fk_arg2 } : local))) false : block_so_far) with lines = (so_far : block_so_far).lines @ [step] }
+                { (with_scope so_far (let fk_arg1 = let fk_arg1 = local_default_narrowed () in
+                   let fk_arg2 = local_default_hides () in
+                   let fk_arg3 = local_default_at () in
+                   ({ t = (typed : typed).t; region = region; narrowed = fk_arg1; hides = fk_arg2; at = fk_arg3 } : local) in
+                 let fk_arg2 = Option.is_some value_type in
+                 Bindings.bound inner name fk_arg1 at fk_arg2 context) false : block_so_far) with lines = (so_far : block_so_far).lines @ [step] }
             | Some ps -> check_distinct (List.map (fun p -> ((p : Parser.parameter).Parser.name, (p : Parser.parameter).Parser.at)) ps) context;
                 let row = ({ Types.labels = []; rest = Some (Effect.perform (Types.Solving_fresh ())) } : Types.row) in
                 let parameter_types = List.map (fun p -> let fk_arg1 = Option.map (fun it -> parameter_type it row context) (p : Parser.parameter).Parser.parameter_type in
@@ -8834,17 +8933,21 @@ module Fckt = struct
                 let result = let fk_arg1 = Option.map (fun t -> Definitions.Conversion.type_of t (Globals.type_context context) ((context : context).environment : environment).definitions) value_type in
                   let fk_arg2 = (Types.Variable { variable = Effect.perform (Types.Solving_fresh ()) } : Types.type_) in
                   Option.value fk_arg1 ~default:fk_arg2 in
-                let with_function = Scopes.bind inner name (let fk_arg1 = local_default_region () in
+                let with_function = Bindings.bound inner name (let fk_arg1 = local_default_region () in
                    let fk_arg2 = local_default_narrowed () in
                    let fk_arg3 = local_default_hides () in
-                   ({ t = (Types.FunctionOf { parameters = parameter_types; result = result; effects = row } : Types.type_); region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local)) in
+                   let fk_arg4 = local_default_at () in
+                   ({ t = (Types.FunctionOf { parameters = parameter_types; result = result; effects = row } : Types.type_); region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local)) at true context in
                 let body = let fk_arg1 = Lang.Lists.list_zip ps parameter_types in
                   let fk_arg2 = Scopes.inside with_function in
                   List.fold_left (fun s entry -> let (p, t) = entry in
-                     Scopes.bind s (p : Parser.parameter).Parser.name (let fk_arg1 = local_default_region () in
-                      let fk_arg2 = local_default_narrowed () in
-                      let fk_arg3 = local_default_hides () in
-                      ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local))) fk_arg2 fk_arg1 in
+                     let fk_arg1 = let fk_arg1 = local_default_region () in
+                       let fk_arg2 = local_default_narrowed () in
+                       let fk_arg3 = local_default_hides () in
+                       let fk_arg4 = local_default_at () in
+                       ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
+                     let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
+                     Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) fk_arg2 fk_arg1 in
                 let core = doing_in row context (fun () -> check value result body context) in
                 let fk_arg1 = with_scope so_far with_function false in
                 let fk_arg2 = (so_far : block_so_far).lines @ [(FunctionStep { name = name; parameters = List.map (fun p -> (Core.NameMatcher { name = (p : Parser.parameter).Parser.name } : Core.matcher)) ps; body = core } : block_step)] in
@@ -9034,11 +9137,13 @@ module Fckt = struct
             let sides = let fk_arg1 = Scopes.bind scope "fk_left" (let fk_arg1 = local_default_region () in
                  let fk_arg2 = local_default_narrowed () in
                  let fk_arg3 = local_default_hides () in
-                 ({ t = (left_typed : typed).t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local)) in
+                 let fk_arg4 = local_default_at () in
+                 ({ t = (left_typed : typed).t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local)) in
               let fk_arg2 = let fk_arg1 = local_default_region () in
                 let fk_arg2 = local_default_narrowed () in
                 let fk_arg3 = local_default_hides () in
-                ({ t = (right_typed : typed).t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local) in
+                let fk_arg4 = local_default_at () in
+                ({ t = (right_typed : typed).t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
               Scopes.bind fk_arg1 "fk_right" fk_arg2 in
             let compared = check (Parser.Binary { at = at; operator = operator; left = (Parser.Name { at = at; name = "fk_left" } : Parser.expression); right = (Parser.Name { at = at; name = "fk_right" } : Parser.expression) } : Parser.expression) Types.Types.boolean sides context in
             let shown = List.concat_map (fun (_, written, local, t) -> [("operand", text written); ("value", (Core.Shown { value = (Core.LocalRead { name = local; is_var = false } : Core.core); t = t } : Core.core))]) (List.filter (fun (e, _, _, _) -> not (is_constant e)) [(left, left_text, "fk_left", (left_typed : typed).t); (right, right_text, "fk_right", (right_typed : typed).t)]) in
@@ -9369,7 +9474,9 @@ module Fckt = struct
                  let fk_arg2 = (Types.Variable { variable = Effect.perform (Types.Solving_fresh ()) } : Types.type_) in
                  Option.value fk_arg1 ~default:fk_arg2 in
                let inner = let fk_arg1 = Scopes.inside scope in
-                 let fk_arg2 = ({ t = t; region = None; narrowed = None; hides = Option.is_some (Scopes.lookup scope "it") } : local) in
+                 let fk_arg2 = let fk_arg1 = Option.is_some (Scopes.lookup scope "it") in
+                   let fk_arg2 = local_default_at () in
+                   ({ t = t; region = None; narrowed = None; hides = fk_arg1; at = fk_arg2 } : local) in
                  Scopes.bind fk_arg1 "it" fk_arg2 in
                let (core, drops) = doing_in row context (fun () -> check_lambda_body body result inner context) in
                ({ t = (Types.FunctionOf { parameters = [t]; result = result; effects = row } : Types.type_); spelled = None; core = (Core.FunctionValue { parameters = [(Core.NameMatcher { name = "it" } : Core.matcher)]; body = core; drops_result = drops } : Core.core) } : typed)
@@ -9407,10 +9514,13 @@ module Fckt = struct
           let fk_arg2 = Scopes.inside scope in
           List.fold_left (fun s entry -> let (p, part) = entry in
              Option.iter (fun declared -> expect part (parameter_type declared row context) (p : Parser.parameter).Parser.at context) (p : Parser.parameter).Parser.parameter_type;
-             Scopes.bind s (p : Parser.parameter).Parser.name (let fk_arg1 = local_default_region () in
-              let fk_arg2 = local_default_narrowed () in
-              let fk_arg3 = local_default_hides () in
-              ({ t = part; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local))) fk_arg2 fk_arg1 in
+             let fk_arg1 = let fk_arg1 = local_default_region () in
+               let fk_arg2 = local_default_narrowed () in
+               let fk_arg3 = local_default_hides () in
+               let fk_arg4 = local_default_at () in
+               ({ t = part; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
+             let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
+             Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) fk_arg2 fk_arg1 in
         let (core, drops) = doing_in row context (fun () -> check_lambda_body body result inner context) in
         ({ t = (Types.FunctionOf { parameters = [tuple]; result = result; effects = row } : Types.type_); spelled = None; core = (Core.FunctionValue { parameters = [(Core.TupleMatcher { parts = List.map (fun it -> matcher_of it) written } : Core.matcher)]; body = core; drops_result = drops } : Core.core) } : typed)
       and with_parameters (written : Parser.parameter list) (expected_function : Types.type_ option) (row : Types.row) (body : Parser.expression) (scope : scope) (context : context) : typed =
@@ -9430,10 +9540,13 @@ module Fckt = struct
         let inner = let fk_arg1 = Lang.Lists.list_zip written types in
           let fk_arg2 = Scopes.inside scope in
           List.fold_left (fun s entry -> let (p, t) = entry in
-             Scopes.bind s (p : Parser.parameter).Parser.name (let fk_arg1 = local_default_region () in
-              let fk_arg2 = local_default_narrowed () in
-              let fk_arg3 = local_default_hides () in
-              ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local))) fk_arg2 fk_arg1 in
+             let fk_arg1 = let fk_arg1 = local_default_region () in
+               let fk_arg2 = local_default_narrowed () in
+               let fk_arg3 = local_default_hides () in
+               let fk_arg4 = local_default_at () in
+               ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
+             let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
+             Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) fk_arg2 fk_arg1 in
         let result = Option.value hinted_result ~default:(Types.Variable { variable = Effect.perform (Types.Solving_fresh ()) } : Types.type_) in
         let (core, drops) = doing_in row context (fun () -> check_lambda_body body result inner context) in
         ({ t = (Types.FunctionOf { parameters = types; result = result; effects = row } : Types.type_); spelled = None; core = (Core.FunctionValue { parameters = List.map (fun it -> matcher_of it) written; body = core; drops_result = drops } : Core.core) } : typed)
@@ -9655,10 +9768,11 @@ module Fckt = struct
         match p with
         | Parser.Wildcard { at = _ } -> ({ scope = scope; matches = [Coverage.Coverage.anything]; matcher = (Core.AnyMatcher : Core.matcher) } : checked_pattern)
         | Parser.NamePattern { at = at; name = name } -> if Scopes.binds_here scope name then (match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at ("'" ^ name ^ "' is bound twice in this pattern"))) with
-               | _ -> (assert false)) else ({ scope = Scopes.bind scope name (let fk_arg1 = local_default_region () in
+               | _ -> (assert false)) else ({ scope = Bindings.bound scope name (let fk_arg1 = local_default_region () in
                let fk_arg2 = local_default_narrowed () in
                let fk_arg3 = local_default_hides () in
-               ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local)); matches = [Coverage.Coverage.anything]; matcher = (Core.NameMatcher { name = name } : Core.matcher) } : checked_pattern)
+               let fk_arg4 = local_default_at () in
+               ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local)) at false context; matches = [Coverage.Coverage.anything]; matcher = (Core.NameMatcher { name = name } : Core.matcher) } : checked_pattern)
         | Parser.ConstantPattern { at = _; expression = e } -> let core = check e t scope context in
             let fk_arg1 = [constant_matches e] in
             let fk_arg2 = (Core.ConstantMatcher { literal = literal_of core } : Core.matcher) in
@@ -9795,10 +9909,13 @@ module Fckt = struct
              | Some body -> doing_in (s : signature).row context (fun () -> let parameters = Option.value (Symbols.Signatures.parameters_of f) ~default:[] in
                     match (s : signature).t with
                     | Types.FunctionOf { parameters = parameter_types; result = result; effects = _ } -> let scope = List.fold_left (fun scope entry -> let (p, t) = entry in
-                             Scopes.bind scope (p : Parser.parameter).Parser.name (let fk_arg1 = local_default_region () in
-                              let fk_arg2 = local_default_narrowed () in
-                              let fk_arg3 = local_default_hides () in
-                              ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3 } : local))) Scopes.empty (Lang.Lists.list_zip parameters parameter_types) in
+                             let fk_arg1 = let fk_arg1 = local_default_region () in
+                               let fk_arg2 = local_default_narrowed () in
+                               let fk_arg3 = local_default_hides () in
+                               let fk_arg4 = local_default_at () in
+                               ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
+                             let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
+                             Bindings.bound scope (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) Scopes.empty (Lang.Lists.list_zip parameters parameter_types) in
                         Some (let fk_arg1 = List.map (fun it -> (it : Parser.parameter).Parser.name) parameters in
                          let fk_arg2 = check body result scope context in
                          ({ Core.parameters = fk_arg1; body = fk_arg2 } : Core.core_function))
@@ -10254,6 +10371,27 @@ module Fckt = struct
             | Error d -> match Effect.perform (Diagnostics.Abandoning_abandon (in_application made d environment)) with
                 | _ -> (assert false)
 
+      module Facts = struct
+        let key_of (fact : fact) : string =
+          match fact with
+          | Means { file = file; at = at; length = _; symbol = symbol; t = _ } -> "m " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ (symbol : Symbols.symbol).Symbols.name
+          | Does { file = file; at = at; row = _ } -> "d " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
+          | Binds { file = file; at = at; length = _; name = name; t = _; written = _ } -> "b " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name
+          | Reads { file = file; at = at; length = _; name = name; bound = _; t = _ } -> "r " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name
+
+        let settled (noted : fact list) : fact list =
+          let unique = List.fold_left (fun seen fact -> let (keys, kept) = seen in
+               let key = key_of fact in
+               if Collections.Maps.map_contains_key keys key then seen else (Collections.Maps.map_put keys key true, [fact] @ kept)) (Collections.Maps.empty_map (), []) noted in
+          let (_, kept) = unique in
+          List.concat_map (fun fact -> match fact with
+             | Means { file = file; at = at; length = length; symbol = symbol; t = t } -> [(Means { file = file; at = at; length = length; symbol = symbol; t = Option.map (fun it -> Types.Types.resolved_fully it) t } : fact)]
+             | Does { file = file; at = at; row = row } -> let done_ = Types.Types.resolved_row_fully row in
+                 if List.is_empty (done_ : Types.row).Types.labels then [] else [(Does { file = file; at = at; row = done_ } : fact)]
+             | Binds { file = file; at = at; length = length; name = name; t = t; written = written } -> [(Binds { file = file; at = at; length = length; name = name; t = Types.Types.resolved_fully t; written = written } : fact)]
+             | Reads { file = file; at = at; length = length; name = name; bound = bound; t = t } -> [(Reads { file = file; at = at; length = length; name = name; bound = bound; t = Types.Types.resolved_fully t } : fact)]) kept
+      end
+
       let failed (group : function_group) (known : known) : known =
         let fk_arg1 = List.fold_left (fun schemes f -> let t = match Symbols.Signatures.parameters_of f with
                | Some ps -> let fk_arg1 = List.map (fun it -> (Types.Variable { variable = Effect.perform (Types.Solving_fresh ()) } : Types.type_)) ps in
@@ -10382,24 +10520,97 @@ module Fckt = struct
                     ()) includes
              | _ -> ()) (table : Symbols.symbol_table).Symbols.declarations
 
+        let shape_of (environment : environment) : string =
+          let others = Lang.Lists.list_distinct (List.map (fun s -> (Option.value (((s : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path ~default:"", (((s : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.text)) (List.filter (fun s -> match ((s : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
+                 | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = _; result = _; body = _; external_ = _; operator = _ } -> false
+                 | _ -> true) ((((environment : environment).definitions : Definitions.definitions).Definitions.namespace : Resolution.namespace).Resolution.table : Symbols.symbol_table).Symbols.declarations)) in
+          let names = Lang.Lists.list_sorted (List.map (fun it -> (it : Symbols.symbol).Symbols.name) (environment : environment).ordered_functions) in
+          let texts = String.concat "" (List.map Fun.id (Lang.Lists.list_sorted (List.map (fun (path, text) -> "\n" ^ path ^ "\n" ^ text) others))) in
+          (fun t -> Digest.to_hex (Digest.string t)) (String.concat " " (List.map Fun.id names) ^ texts)
+
+        let put_all (into : (string, _) Collections.Maps.map) (more : (string, _) Collections.Maps.map) : (string, _) Collections.Maps.map =
+          List.fold_left (fun m entry -> let (name, value) = entry in
+             Collections.Maps.map_put m name value) into (Collections.Maps.map_entries more)
+
+        let remembering (group : function_group) (checked : known) (found : fact list) (files : (string, string) Collections.Maps.map) (text_of : string -> known -> string) : remembered option =
+          let names = List.map (fun it -> (it : Symbols.symbol).Symbols.name) (group : function_group).functions in
+          let own = Collections.Maps.list_tuple_to_map (Lang.Lists.list_map_not_null names (fun n -> Option.map (fun it -> (n, it)) (Collections.Maps.map_get (checked : known).schemes n))) in
+          let closed = List.for_all (fun scheme -> List.for_all (fun it -> List.mem it (scheme : Types.scheme).Types.variables) (Types.Types.variables_in (scheme : Types.scheme).Types.template)) (Collections.Maps.map_values own) in
+          if not closed then None else (let uses = Collections.Maps.list_tuple_to_map (List.map (fun name -> (name, text_of name checked)) (Lang.Lists.list_distinct (List.concat_map (fun fact -> match fact with
+                     | Means { file = _; at = _; length = _; symbol = symbol; t = _ } when not (List.mem (symbol : Symbols.symbol).Symbols.name names) -> [(symbol : Symbols.symbol).Symbols.name]
+                     | _ -> []) found))) in
+             Some (let fk_arg1 = Collections.Maps.list_tuple_to_map (Lang.Lists.list_map_not_null names (fun n -> Option.map (fun it -> (n, it)) (Collections.Maps.map_get (checked : known).outside n))) in
+              let fk_arg2 = Collections.Maps.list_tuple_to_map (Lang.Lists.list_map_not_null names (fun n -> Option.map (fun it -> (n, it)) (Collections.Maps.map_get (checked : known).type_parameter_variables n))) in
+              let fk_arg3 = Collections.Maps.list_tuple_to_map (Lang.Lists.list_map_not_null names (fun n -> Option.map (fun it -> (n, it)) (Collections.Maps.map_get (checked : known).bodies n))) in
+              ({ files = files; uses = uses; schemes = own; outside = fk_arg1; type_parameter_variables = fk_arg2; bodies = fk_arg3; facts = found } : remembered)))
+
         let reporting_abandoned (block : unit -> unit) : unit =
           Diagnostics.Diagnostics.recovering block;
           ()
 
-        let function_types (definitions : Definitions.definitions) (coverage : bool) : inferred =
+        let highest_in (remembered : (string, remembered) Collections.Maps.map) : int =
+          Option.value (Lang.Lists.list_max_or_none (List.map (fun it -> (it : Types.type_variable).Types.id) (List.concat_map (fun r -> let fk_arg1 = let fk_arg1 = List.concat_map (fun it -> Types.Types.variables_in (it : Types.scheme).Types.template) (Collections.Maps.map_values (r : remembered).schemes) in
+                  let fk_arg2 = List.concat_map (fun it -> Types.Types.variables_in (it : Types.scheme).Types.template) (Collections.Maps.map_values (r : remembered).outside) in
+                  fk_arg1 @ fk_arg2 in
+                let fk_arg2 = List.concat_map (fun it -> Collections.Maps.map_values it) (Collections.Maps.map_values (r : remembered).type_parameter_variables) in
+                fk_arg1 @ fk_arg2) (Collections.Maps.map_values remembered)))) ~default:0
+
+        let function_types (definitions : Definitions.definitions) (coverage : bool) (earlier : reuse option) : inferred =
           check_type_declarations definitions;
           let meta_types = Definitions.MetaTypes.all definitions in
           let environment = Environments.of_ definitions in
           check_modules_define environment;
           check_arguments_define environment;
           let groups = Groups.ordered (environment : environment).ordered_functions environment in
+          let shape = shape_of environment in
+          let usable = Lang.Options.option_filter earlier (fun it -> (it : reuse).shape = shape) in
+          let digests = ref (Collections.Maps.empty_map ()) in
+          let texts = ref (Collections.Maps.empty_map ()) in
+          let remembered = ref (Collections.Maps.empty_map ()) in
+          let digest_of = fun file text -> match Collections.Maps.map_get (! digests) file with
+              | Some d -> d
+              | None -> let d = (fun t -> Digest.to_hex (Digest.string t)) text in
+                  digests := Collections.Maps.map_put (! digests) file d;
+                  d in
+          let text_of = fun name k -> match Collections.Maps.map_get (! texts) name with
+              | Some t -> t
+              | None -> let t = Option.value (Option.map (fun it -> Types.TypeText.shown (it : Types.scheme).Types.template) (Collections.Maps.map_get (k : known).schemes name)) ~default:"" in
+                  texts := Collections.Maps.map_put (! texts) name t;
+                  t in
           let known = List.fold_left (fun k group -> let checking = ({ definitions = (environment : environment).definitions; functions = (environment : environment).functions; ordered_functions = (environment : environment).ordered_functions; extensions = (environment : environment).extensions; cases_by_name = (environment : environment).cases_by_name; module_specs = (environment : environment).module_specs; spec_types = (environment : environment).spec_types; operations = (environment : environment).operations; known = k } : environment) in
-               match Diagnostics.Diagnostics.attempting (fun () -> check_group group checking coverage) with
-               | Ok checked -> checked
-               | Error diagnostic -> Effect.perform (Diagnostics.Reporting_report diagnostic);
-                   failed group k) (environment : environment).known groups in
+               let key = String.concat " " (List.map Fun.id (List.map (fun it -> (it : Symbols.symbol).Symbols.name) (group : function_group).functions)) in
+               let files = Collections.Maps.list_tuple_to_map (List.map (fun f -> let path = Option.value (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path ~default:"" in
+                     (path, digest_of path (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.text)) (group : function_group).functions) in
+               let still = Lang.Options.option_filter (Option.bind usable (fun it -> Collections.Maps.map_get (it : reuse).groups key)) (fun r -> (r : remembered).files = files && Collections.Maps.map_all (r : remembered).uses (fun name t -> text_of name k = t)) in
+               match still with
+               | Some r -> List.iter (fun it -> Effect.perform (Noting_note it)) (r : remembered).facts;
+                   remembered := Collections.Maps.map_put (! remembered) key r;
+                   let fk_arg1 = put_all (k : known).schemes (r : remembered).schemes in
+                   let fk_arg2 = put_all (k : known).outside (r : remembered).outside in
+                   let fk_arg3 = put_all (k : known).type_parameter_variables (r : remembered).type_parameter_variables in
+                   let fk_arg4 = put_all (k : known).bodies (r : remembered).bodies in
+                   { (k : known) with schemes = fk_arg1; outside = fk_arg2; type_parameter_variables = fk_arg3; bodies = fk_arg4 }
+               | None -> let noted = ref [] in
+                   let outcome = handle_noting ({ note = (fun x0 k -> k ((fun fact -> noted := [fact] @ ! noted;
+                            ()) x0)) } : _ noting_handler) (fun () -> Diagnostics.Diagnostics.attempting (fun () -> check_group group checking coverage)) in
+                   let found = Facts.settled (! noted) in
+                   List.iter (fun it -> Effect.perform (Noting_note it)) found;
+                   match outcome with
+                   | Ok checked -> if Option.is_some earlier then remembered := (let fk_arg1 = Option.map (fun r -> Collections.Maps.map_put (! remembered) key r) (remembering group checked found files text_of) in
+                          let fk_arg2 = ! remembered in
+                          Option.value fk_arg1 ~default:fk_arg2) else ();
+                       checked
+                   | Error diagnostic -> Effect.perform (Diagnostics.Reporting_report diagnostic);
+                       failed group k) (environment : environment).known groups in
           reporting_abandoned (fun () -> check_exposure environment known);
-          ({ environment = environment; known = known; functions = Lang.Lists.list_map_not_null (environment : environment).ordered_functions (fun f -> Option.map (fun s -> ({ function_ = f; scheme = s; body = Collections.Maps.map_get (known : known).bodies (f : Symbols.symbol).Symbols.name } : checked_function)) (Collections.Maps.map_get (known : known).schemes (f : Symbols.symbol).Symbols.name)); meta_types = meta_types; groups = groups } : inferred)
+          let fk_arg1 = Lang.Lists.list_map_not_null (environment : environment).ordered_functions (fun f -> Option.map (fun s -> ({ function_ = f; scheme = s; body = Collections.Maps.map_get (known : known).bodies (f : Symbols.symbol).Symbols.name } : checked_function)) (Collections.Maps.map_get (known : known).schemes (f : Symbols.symbol).Symbols.name)) in
+          let fk_arg2 = Option.map (fun _ -> let fk_arg1 = ! remembered in
+               let fk_arg2 = highest_in (! remembered) in
+               ({ shape = shape; groups = fk_arg1; highest = fk_arg2 } : reuse)) earlier in
+          ({ environment = environment; known = known; functions = fk_arg1; meta_types = meta_types; groups = groups; reuse = fk_arg2 } : inferred)
+
+        let function_types_default_earlier () : reuse option =
+          None
 
         let check_main (environment : environment) (known : known) : unit =
           match let fk_arg1 = Collections.Maps.map_get (environment : environment).functions "main" in
@@ -10416,6 +10627,9 @@ module Fckt = struct
 
       let inferred_default_groups () : function_group list =
         []
+
+      let inferred_default_reuse () : reuse option =
+        None
 
       let checked_function_default_body () : Core.core_function option =
         None
@@ -10483,10 +10697,10 @@ module Fckt = struct
         | ModuleMember { spec = _; value = _; t = t } -> t
     end
 
-    type checked_program = { workspace : Sources.workspace; functions : Inference.checked_function list; default_handlers : Inference.default_handler list; groups : Inference.function_group list; types : Core.type_declaration list; to_strings : (string, Symbols.symbol) Collections.Maps.map; effects : Core.declared_effect list; specs : Core.declared_spec list; environment : Inference.environment option }
+    type checked_program = { workspace : Sources.workspace; functions : Inference.checked_function list; default_handlers : Inference.default_handler list; groups : Inference.function_group list; types : Core.type_declaration list; to_strings : (string, Symbols.symbol) Collections.Maps.map; effects : Core.declared_effect list; specs : Core.declared_spec list; environment : Inference.environment option; facts : Inference.fact list; reuse : Inference.reuse option }
 
     let rec show_checked_program (v : checked_program) =
-      "CheckedProgram(" ^ "workspace=" ^ Sources.show_workspace v.workspace ^ ", functions=" ^ fk_show_list Inference.show_checked_function v.functions ^ ", defaultHandlers=" ^ fk_show_list Inference.show_default_handler v.default_handlers ^ ", groups=" ^ fk_show_list Inference.show_function_group v.groups ^ ", types=" ^ fk_show_list Core.show_type_declaration v.types ^ ", toStrings=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Symbols.show_symbol) v.to_strings ^ ", effects=" ^ fk_show_list Core.show_declared_effect v.effects ^ ", specs=" ^ fk_show_list Core.show_declared_spec v.specs ^ ", environment=" ^ fk_show_option Inference.show_environment v.environment ^ ")"
+      "CheckedProgram(" ^ "workspace=" ^ Sources.show_workspace v.workspace ^ ", functions=" ^ fk_show_list Inference.show_checked_function v.functions ^ ", defaultHandlers=" ^ fk_show_list Inference.show_default_handler v.default_handlers ^ ", groups=" ^ fk_show_list Inference.show_function_group v.groups ^ ", types=" ^ fk_show_list Core.show_type_declaration v.types ^ ", toStrings=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Symbols.show_symbol) v.to_strings ^ ", effects=" ^ fk_show_list Core.show_declared_effect v.effects ^ ", specs=" ^ fk_show_list Core.show_declared_spec v.specs ^ ", environment=" ^ fk_show_option Inference.show_environment v.environment ^ ", facts=" ^ fk_show_list Inference.show_fact v.facts ^ ", reuse=" ^ fk_show_option Inference.show_reuse v.reuse ^ ")"
 
     let checked_program_default_default_handlers () : Inference.default_handler list =
       []
@@ -10495,6 +10709,12 @@ module Fckt = struct
       []
 
     let checked_program_default_environment () : Inference.environment option =
+      None
+
+    let checked_program_default_facts () : Inference.fact list =
+      []
+
+    let checked_program_default_reuse () : Inference.reuse option =
       None
 
     module Metadata = struct
@@ -10777,15 +10997,16 @@ module Fckt = struct
                 List.map (fun file -> ({ Resolution.file = file; types = Resolution.Resolution.resolved_types file namespace (workspace : Sources.workspace).Sources.borrowed } : Resolution.resolved_file)) (workspace : Sources.workspace).Sources.files) in
            Option.value resolved ~default:[])
 
-      let checking (entry : Sources.source_text) (tree : Sources.source_tree) (coverage : bool) : checked_program option * Diagnostics.diagnostic list =
-        Diagnostics.Diagnostics.collecting (fun () -> Types.Solutions.solving (fun () -> Diagnostics.Diagnostics.recovering (fun () -> let workspace = Expansion.Expansion.expanded (Sources.Loader.load entry tree) in
+      let checking (entry : Sources.source_text) (tree : Sources.source_tree) (coverage : bool) (facts : bool) (earlier : Inference.reuse option) : checked_program option * Diagnostics.diagnostic list =
+        Diagnostics.Diagnostics.collecting (fun () -> Types.Solutions.solving (Option.value (Option.map (fun it -> (it : Inference.reuse).Inference.highest) earlier) ~default:0) (fun () -> Diagnostics.Diagnostics.recovering (fun () -> let workspace = Expansion.Expansion.expanded (Sources.Loader.load entry tree) in
                  let namespace = Functors.Functors.applied (Resolution.Resolution.namespace workspace tree) in
                  let definitions = let fk_arg1 = Definitions.Cases.all namespace in
                    let fk_arg2 = Definitions.Regions.regioned namespace in
                    ({ Definitions.namespace = namespace; cases = fk_arg1; regioned = fk_arg2 } : Definitions.definitions) in
-                 let (inferred, errors) = Diagnostics.Diagnostics.collecting (fun () -> let inferred = Inference.Inference.function_types definitions coverage in
-                      Diagnostics.Diagnostics.recovering (fun () -> Metadata.AnnotationChecks.check_all inferred);
-                      inferred) in
+                 let noted = ref [] in
+                 let (inferred, errors) = Inference.handle_noting ({ note = (fun x0 k -> k ((fun fact -> if facts then noted := [fact] @ ! noted else ()) x0)) } : _ Inference.noting_handler) (fun () -> Diagnostics.Diagnostics.collecting (fun () -> let inferred = Inference.Inference.function_types definitions coverage earlier in
+                         Diagnostics.Diagnostics.recovering (fun () -> Metadata.AnnotationChecks.check_all inferred);
+                         inferred)) in
                  List.iter (fun it -> Effect.perform (Diagnostics.Reporting_report it)) errors;
                  if List.is_empty errors then Inference.Inference.check_main (inferred : Inference.inferred).Inference.environment (inferred : Inference.inferred).Inference.known else ();
                  let fk_arg1 = Inference.default_handlers (inferred : Inference.inferred).Inference.environment (inferred : Inference.inferred).Inference.known in
@@ -10793,11 +11014,18 @@ module Fckt = struct
                  let fk_arg3 = Definitions.TypeDeclarations.to_strings definitions in
                  let fk_arg4 = Inference.declared_effects (inferred : Inference.inferred).Inference.environment in
                  let fk_arg5 = Inference.declared_specs (inferred : Inference.inferred).Inference.environment in
-                 ({ workspace = workspace; functions = (inferred : Inference.inferred).Inference.functions; default_handlers = fk_arg1; groups = (inferred : Inference.inferred).Inference.groups; types = fk_arg2; to_strings = fk_arg3; effects = fk_arg4; specs = fk_arg5; environment = Some (inferred : Inference.inferred).Inference.environment } : checked_program))))
+                 let fk_arg6 = Inference.Facts.settled (! noted) in
+                 ({ workspace = workspace; functions = (inferred : Inference.inferred).Inference.functions; default_handlers = fk_arg1; groups = (inferred : Inference.inferred).Inference.groups; types = fk_arg2; to_strings = fk_arg3; effects = fk_arg4; specs = fk_arg5; environment = Some (inferred : Inference.inferred).Inference.environment; facts = fk_arg6; reuse = (inferred : Inference.inferred).Inference.reuse } : checked_program))))
 
-      let check (entry : Sources.source_text) (tree : Sources.source_tree) (coverage : bool) : checked_program option * Diagnostics.diagnostic list =
-        let (checked, errors) = checking entry tree coverage in
+      let check (entry : Sources.source_text) (tree : Sources.source_tree) (coverage : bool) (facts : bool) (earlier : Inference.reuse option) : checked_program option * Diagnostics.diagnostic list =
+        let (checked, errors) = checking entry tree coverage facts earlier in
         (checked, Diagnostics.Diagnostics.ordered errors)
+
+      let check_default_facts () : bool =
+        false
+
+      let check_default_earlier () : Inference.reuse option =
+        None
     end
   end
 
@@ -12974,7 +13202,8 @@ module Fckt = struct
         let files = List.map (fun f -> let fk_arg1 = Some (prefix ^ String.concat "/" (List.map Fun.id (pkg @ [Io.Paths.path_name f]))) in
              let fk_arg2 = Io.Files.path_read_text f in
              let fk_arg3 = Checker.Sources.source_text_default_trusted () in
-             ({ Checker.Sources.path = fk_arg1; project = project; text = fk_arg2; compiled_in = compiled_in; interface = interface; trusted = fk_arg3 } : Checker.Sources.source_text)) (List.filter (fun it -> Io.Paths.path_extension it = extension && not (Io.Files.path_is_directory it)) entries) in
+             let fk_arg4 = Checker.Sources.source_text_default_prepared () in
+             ({ Checker.Sources.path = fk_arg1; project = project; text = fk_arg2; compiled_in = compiled_in; interface = interface; trusted = fk_arg3; prepared = fk_arg4 } : Checker.Sources.source_text)) (List.filter (fun it -> Io.Paths.path_extension it = extension && not (Io.Files.path_is_directory it)) entries) in
         let inner = List.concat_map (fun d -> packages_in d (pkg @ [Io.Paths.path_name d]) project prefix compiled_in interface) (List.filter (fun it -> Io.Files.path_is_directory it && is_package_name (Io.Paths.path_name it)) entries) in
         (pkg, files) :: inner
 
@@ -13009,15 +13238,25 @@ module Fckt = struct
     end
 
     module LanguageServer = struct
-      type session = { mutable open_ : (string, string) Collections.Maps.map; mutable said : (string, string list) Collections.Maps.map; mutable programs : (string, Checker.checked_program list) Collections.Maps.map; mutable stopping : bool; mutable changed : string list }
+      type session = { mutable open_ : (string, string) Collections.Maps.map; mutable said : (string, string list) Collections.Maps.map; mutable programs : (string, Checker.checked_program list) Collections.Maps.map; mutable stopping : bool; mutable changed : string list; mutable reuses : (string, Checker.Inference.reuse) Collections.Maps.map; mutable facts : (string, (string, Checker.Inference.fact list) Collections.Maps.map) Collections.Maps.map; mutable prepared : (string, string * Checker.Sources.prepared) Collections.Maps.map }
 
       let rec show_session (v : session) =
-        "Session(" ^ "open=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Fun.id) v.open_ ^ ", said=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Fun.id)) v.said ^ ", programs=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Checker.show_checked_program)) v.programs ^ ", stopping=" ^ string_of_bool v.stopping ^ ", changed=" ^ fk_show_list Fun.id v.changed ^ ")"
+        "Session(" ^ "open=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Fun.id) v.open_ ^ ", said=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Fun.id)) v.said ^ ", programs=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Checker.show_checked_program)) v.programs ^ ", stopping=" ^ string_of_bool v.stopping ^ ", changed=" ^ fk_show_list Fun.id v.changed ^ ", reuses=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Checker.Inference.show_reuse) v.reuses ^ ", facts=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fun v -> Collections.Maps.map_to_string v Fun.id (fk_show_list Checker.Inference.show_fact))) v.facts ^ ", prepared=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fun (x0, x1) -> "(" ^ Fun.id x0 ^ ", " ^ Checker.Sources.show_prepared x1 ^ ")")) v.prepared ^ ")"
 
       type project = { root : Io.path; folders : Io.path list; libraries : Io.path list }
 
       let rec show_project (v : project) =
         "Project(" ^ "root=" ^ Io.show_path v.root ^ ", folders=" ^ fk_show_list Io.show_path v.folders ^ ", libraries=" ^ fk_show_list Io.show_path v.libraries ^ ")"
+
+      type local_name = { file : string; bound : Parser.position; name : string; t : Checker.Types.type_ }
+
+      let rec show_local_name (v : local_name) =
+        "LocalName(" ^ "file=" ^ Fun.id v.file ^ ", bound=" ^ Parser.show_position v.bound ^ ", name=" ^ Fun.id v.name ^ ", t=" ^ Checker.Types.show_type v.t ^ ")"
+
+      type meaning = { at : Parser.position; length : int; symbol : Checker.Symbols.symbol; t : Checker.Types.type_ option }
+
+      let rec show_meaning (v : meaning) =
+        "Meaning(" ^ "at=" ^ Parser.show_position v.at ^ ", length=" ^ string_of_int v.length ^ ", symbol=" ^ Checker.Symbols.show_symbol v.symbol ^ ", t=" ^ fk_show_option Checker.Types.show_type v.t ^ ")"
 
       let rec headers (length : int option) : int option =
         match Effect.perform (Io.Channel_readLineFrom stdin) with
@@ -13049,6 +13288,12 @@ module Fckt = struct
         let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
         (JsonObject { fields = [("range", range 0 0 (List.length lines) 0); ("newText", (JsonString { value = laid } : json))] } : json)
 
+      let position_of (params : json) : int * int =
+        let position = Jsons.json_field params "position" in
+        let fk_arg1 = Option.value (Option.bind (Option.bind position (fun it -> Jsons.json_field it "line")) (fun it -> Jsons.json_int it)) ~default:0 in
+        let fk_arg2 = Option.value (Option.bind (Option.bind position (fun it -> Jsons.json_field it "character")) (fun it -> Jsons.json_int it)) ~default:0 in
+        (fk_arg1, fk_arg2)
+
       let hex_digit (c : int) : int option =
         if Lang.Strings.char_is_digit c then Some (Fun.id c - 48) else if c >= 97 && c <= 102 then Some (Fun.id c - 87) else if c >= 65 && c <= 70 then Some (Fun.id c - 55) else None
 
@@ -13066,16 +13311,6 @@ module Fckt = struct
 
       let path_of (uri : string) : Io.path =
         Io.Paths.path (unescaped ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) (Lang.Strings.string_remove_prefix uri "file://")))
-
-      let read_or_empty (file : Io.path) : string =
-        if Io.Files.path_exists file then Io.Files.path_read_text file else ""
-
-      let word_at (line : string) (column : int) : string =
-        let cs = (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) line in
-        let is_name = fun c -> Lang.Strings.char_is_letter_or_digit c || c = 95 in
-        let start = List.length (Lang.Lists.list_take_while (List.rev (List.take column cs)) (fun it -> is_name it)) in
-        let end_ = List.length (Lang.Lists.list_take_while (List.drop column cs) (fun it -> is_name it)) in
-        String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) (List.take (start + end_) (List.drop (column - start) cs))))
 
       let rec root_above (folder : Io.path) : Io.path option =
         if Io.Files.path_exists (Io.Paths.path_resolve folder "build.fk") then Some folder else (match Io.Paths.path_parent folder with
@@ -13098,6 +13333,43 @@ module Fckt = struct
            let fk_arg2 = Lang.Lists.list_distinct (List.map (fun it -> Io.Paths.path (Lang.Strings.string_remove_prefix it "library ")) (List.filter (fun it -> String.starts_with ~prefix:"library " it) (lines @ scoped))) in
            ({ root = root; folders = fk_arg1; libraries = fk_arg2 } : project)) else ({ root = root; folders = List.filter (fun it -> Io.Files.path_is_directory it) [Io.Paths.path_resolve root "src"]; libraries = [] } : project)
 
+      let facts_in (session : session) (file : Io.path) : Checker.Inference.fact list =
+        Collections.Maps.map_get_or_default (let fk_arg1 = ((project_of file : project).root : Io.path).Io.value in
+         let fk_arg2 = Collections.Maps.empty_map () in
+         Collections.Maps.map_get_or_default (session : session).facts fk_arg1 fk_arg2) (file : Io.path).Io.value []
+
+      let local_at (session : session) (uri : string) (params : json) : local_name option =
+        let (line, character) = position_of params in
+        let file = (path_of uri : Io.path).Io.value in
+        let under = fun at length -> ((at : Parser.position).Parser.line = line + 1 && character + 1 >= (at : Parser.position).Parser.column) && character + 1 <= (at : Parser.position).Parser.column + length in
+        List.nth_opt (List.concat_map (fun f -> match f with
+            | Checker.Inference.Binds { file = _; at = at; length = length; name = name; t = t; written = _ } when under at length -> [({ file = file; bound = at; name = name; t = t } : local_name)]
+            | Checker.Inference.Reads { file = _; at = at; length = length; name = name; bound = bound; t = t } when under at length -> [({ file = file; bound = bound; name = name; t = t } : local_name)]
+            | _ -> []) (facts_in session (path_of uri))) 0
+
+      let means_at (session : session) (uri : string) (params : json) : meaning option =
+        let (line, character) = position_of params in
+        let file = (path_of uri : Io.path).Io.value in
+        List.nth_opt (List.concat_map (fun f -> match f with
+            | Checker.Inference.Means { file = in_; at = at; length = length; symbol = symbol; t = t } -> if ((in_ = Some file && (at : Parser.position).Parser.line = line + 1) && character + 1 >= (at : Parser.position).Parser.column) && character + 1 <= (at : Parser.position).Parser.column + length then [({ at = at; length = length; symbol = symbol; t = t } : meaning)] else []
+            | _ -> []) (facts_in session (path_of uri))) 0
+
+      let checked_of (session : session) (uri : string) (s : Checker.Symbols.symbol) : Checker.Inference.checked_function option =
+        List.find_opt (fun it -> ((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.name = (s : Checker.Symbols.symbol).Checker.Symbols.name) (List.concat_map (fun it -> (it : Checker.checked_program).Checker.functions) (Collections.Maps.map_get_or_default (session : session).programs ((project_of (path_of uri) : project).root : Io.path).Io.value []))
+
+      let type_of (f : Checker.Inference.checked_function) : string =
+        Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown ((f : Checker.Inference.checked_function).Checker.Inference.scheme : Checker.Types.scheme).Checker.Types.template)
+
+      let read_or_empty (file : Io.path) : string =
+        if Io.Files.path_exists file then Io.Files.path_read_text file else ""
+
+      let word_at (line : string) (column : int) : string =
+        let cs = (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) line in
+        let is_name = fun c -> Lang.Strings.char_is_letter_or_digit c || c = 95 in
+        let start = List.length (Lang.Lists.list_take_while (List.rev (List.take column cs)) (fun it -> is_name it)) in
+        let end_ = List.length (Lang.Lists.list_take_while (List.drop column cs) (fun it -> is_name it)) in
+        String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) (List.take (start + end_) (List.drop (column - start) cs))))
+
       let named (session : session) (uri : string) (params : json) : Checker.Inference.checked_function option =
         let position = Jsons.json_field params "position" in
         let line = Option.value (Option.bind (Option.bind position (fun it -> Jsons.json_field it "line")) (fun it -> Jsons.json_int it)) ~default:0 in
@@ -13115,17 +13387,145 @@ module Fckt = struct
            | Some found -> Some found
            | None -> if List.length distinct = 1 then List.nth_opt distinct 0 else None)
 
-      let type_of (f : Checker.Inference.checked_function) : string =
-        Checker.Types.Solutions.solving (fun () -> Checker.Types.TypeText.shown ((f : Checker.Inference.checked_function).Checker.Inference.scheme : Checker.Types.scheme).Checker.Types.template)
+      let hover (session : session) (uri : string) (params : json) : json option =
+        Lang.Options.option_or_else (Option.map (fun m -> let file = (path_of uri : Io.path).Io.value in
+            let t = Lang.Options.option_or_else (Option.map (fun it -> Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown it)) (m : meaning).t) (fun () -> Option.map (fun it -> type_of it) (checked_of session uri (m : meaning).symbol)) in
+            let does = List.concat_map (fun f -> match f with
+                 | Checker.Inference.Does { file = Some in_; at = at; row = row } when (in_ = file && (at : Parser.position).Parser.line = ((m : meaning).at : Parser.position).Parser.line) && (at : Parser.position).Parser.column = ((m : meaning).at : Parser.position).Parser.column + (m : meaning).length -> List.map (fun it -> (it : Checker.Types.effect_label).Checker.Types.name) (row : Checker.Types.row).Checker.Types.labels
+                 | _ -> []) (facts_in session (path_of uri)) in
+            let shown_type = Option.value (Option.map (fun it -> ": " ^ it) t) ~default:"" in
+            let said = ("```fckt\n" ^ (((m : meaning).symbol : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ^ shown_type ^ "\n```") ^ (if List.is_empty does then "" else "\n\nThis call does " ^ Checker.Inference.Doings.shown does ^ ".") in
+            (JsonObject { fields = [("contents", (JsonObject { fields = [("kind", (JsonString { value = "markdown" } : json)); ("value", (JsonString { value = said } : json))] } : json))] } : json)) (means_at session uri params)) (fun () -> Option.map (fun f -> (JsonObject { fields = [("contents", (JsonObject { fields = [("kind", (JsonString { value = "markdown" } : json)); ("value", (JsonString { value = "```fckt\n" ^ (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ^ ": " ^ type_of f ^ "\n```" } : json))] } : json))] } : json)) (named session uri params))
 
       let uri_of (file : string) : string =
         "file://" ^ String.concat "" (List.map Fun.id (List.map (fun c -> if c = 32 then "%20" else fk_show_char c) ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) file)))
 
-      let definition_of (f : Checker.Inference.checked_function) : json option =
-        Option.map (fun file -> let at = (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at in
-           (JsonObject { fields = (let fk_arg1 = ("uri", (JsonString { value = uri_of file } : json)) in
-            let fk_arg2 = ("range", range ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1) ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1)) in
-            [fk_arg1; fk_arg2]) } : json)) ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path
+      let location (file : string) (line : int) (column : int) (length : int) : json =
+        (JsonObject { fields = (let fk_arg1 = ("uri", (JsonString { value = uri_of file } : json)) in
+         let fk_arg2 = ("range", range line column line (column + length)) in
+         [fk_arg1; fk_arg2]) } : json)
+
+      let symbol_at (session : session) (uri : string) (params : json) : Checker.Symbols.symbol option =
+        Lang.Options.option_or_else (Option.map (fun it -> (it : meaning).symbol) (means_at session uri params)) (fun () -> Option.map (fun it -> (it : Checker.Inference.checked_function).Checker.Inference.function_) (named session uri params))
+
+      let location_of (s : Checker.Symbols.symbol) : json option =
+        Option.map (fun file -> let at = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at in
+           location file ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1) 0) (((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path
+
+      let local_uses (session : session) (l : local_name) : Parser.position list =
+        [(l : local_name).bound] @ List.concat_map (fun f -> match f with
+           | Checker.Inference.Reads { file = _; at = at; length = _; name = _; bound = bound; t = _ } when bound = (l : local_name).bound -> [at]
+           | _ -> []) (facts_in session (Io.Paths.path (l : local_name).file))
+
+      let facts_of (session : session) (file : Io.path) : Checker.Inference.fact list =
+        List.concat_map (fun it -> it) (Collections.Maps.map_values (let fk_arg1 = ((project_of file : project).root : Io.path).Io.value in
+          let fk_arg2 = Collections.Maps.empty_map () in
+          Collections.Maps.map_get_or_default (session : session).facts fk_arg1 fk_arg2))
+
+      let uses_of (session : session) (uri : string) (s : Checker.Symbols.symbol) : (string * Parser.position * int) list =
+        List.concat_map (fun f -> match f with
+           | Checker.Inference.Means { file = Some file; at = at; length = length; symbol = symbol; t = _ } when (symbol : Checker.Symbols.symbol).Checker.Symbols.name = (s : Checker.Symbols.symbol).Checker.Symbols.name -> [(file, at, length)]
+           | _ -> []) (facts_of session (path_of uri))
+
+      let rec word_in (line : string) (name : string) (column : int) : int option =
+        let found = (fun s t -> let n = String.length s and m = String.length t in let rec find i = if i + m > n then -1 else if String.sub s i m = t then i else find (i + 1) in let rec count i k = if i >= k then 0 else 1 + count (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) k in let i = find 0 in if i < 0 then -1 else count 0 i) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in String.sub s i (String.length s - i)) line column) name in
+        let i = if found < 0 then (-1) else found + column in
+        let is_name = fun c -> Option.value (Option.map (fun it -> Lang.Strings.char_is_letter_or_digit it || it = 95) c) ~default:false in
+        if i < 0 then None else if is_name (Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) line) (i - 1)) || is_name (let fk_arg1 = (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) line in
+           let fk_arg2 = i + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name in
+           Lang.Lists.list_get_or_none fk_arg1 fk_arg2) then word_in line name (i + 1) else Some i
+
+      let name_of (session : session) (s : Checker.Symbols.symbol) : (string * int * int) option =
+        Option.bind (((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path (fun file -> let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ (uri_of file) in
+             let fk_arg2 = read_or_empty (Io.Paths.path file) in
+             Option.value fk_arg1 ~default:fk_arg2 in
+           let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
+           let name = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ".")) ~default:((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name in
+           let start = (((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at : Parser.position).Parser.line - 1 in
+           Option.map (fun found -> let (n, column) = found in
+              (file, n, column)) (List.nth_opt (List.concat_map (fun n -> let from = if n = start then (((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at : Parser.position).Parser.column - 1 else 0 in
+                List.concat_map (fun line -> Option.to_list (Option.map (fun it -> (n, it)) (word_in line name from))) (Option.to_list (Lang.Lists.list_get_or_none lines n))) [start; start + 1; start + 2; start + 3]) 0))
+
+      let renamed (session : session) (uri : string) (s : Checker.Symbols.symbol) (new_name : string) : json =
+        if (((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.project <> (Checker.Sources.ProgramProject : Checker.Sources.project) then (JsonNull : json) else (let uses = List.map (fun use -> let (file, at, length) = use in
+                (file, (at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length)) (uses_of session uri s) in
+           let declared = Option.to_list (Option.map (fun found -> let (file, line, column) = found in
+                 (file, line, column, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ".")) ~default:""))) (name_of session s)) in
+           let edits = let fk_arg1 = Lang.Lists.list_distinct (declared @ uses) in
+             let fk_arg2 = Collections.Maps.empty_map () in
+             List.fold_left (fun by_file edit -> let (file, line, column, length) = edit in
+                let change = (JsonObject { fields = [("range", range line column line (column + length)); ("newText", (JsonString { value = new_name } : json))] } : json) in
+                let fk_arg1 = uri_of file in
+                let fk_arg2 = Collections.Maps.map_get_or_default by_file (uri_of file) [] @ [change] in
+                Collections.Maps.map_put by_file fk_arg1 fk_arg2) fk_arg2 fk_arg1 in
+           (JsonObject { fields = [("changes", (JsonObject { fields = List.map (fun (u, changes) -> (u, (JsonArray { items = changes } : json))) (Collections.Maps.map_entries edits) } : json))] } : json))
+
+      let fix (title : string) (diagnostic : json) (uri : string) (line : int) (character : int) (inserted : string) : json =
+        (JsonObject { fields = [("title", (JsonString { value = title } : json)); ("kind", (JsonString { value = "quickfix" } : json)); ("diagnostics", (JsonArray { items = [diagnostic] } : json)); ("edit", (JsonObject { fields = [("changes", (JsonObject { fields = [(uri, (JsonArray { items = [(JsonObject { fields = [("range", range line character line character); ("newText", (JsonString { value = inserted } : json))] } : json)] } : json))] } : json))] } : json))] } : json)
+
+      let imported_at (text : string) : int =
+        Option.value (Option.map (fun entry -> let (i, _) = entry in
+            i + 1) (Lang.Lists.list_last_or_none (List.filter (fun (_, l) -> String.starts_with ~prefix:"import " l) (List.mapi (fun i l -> (i, l)) ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n"))))) ~default:0
+
+      let fixes (session : session) (uri : string) (diagnostic : json) : json list =
+        let message = Option.value (Option.bind (Jsons.json_field diagnostic "message") (fun it -> Jsons.json_text it)) ~default:"" in
+        let start = Option.bind (Jsons.json_field diagnostic "range") (fun it -> Jsons.json_field it "start") in
+        let line = Option.value (Option.bind (Option.bind start (fun it -> Jsons.json_field it "line")) (fun it -> Jsons.json_int it)) ~default:0 in
+        let character = Option.value (Option.bind (Option.bind start (fun it -> Jsons.json_field it "character")) (fun it -> Jsons.json_int it)) ~default:0 in
+        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
+          let fk_arg2 = read_or_empty (path_of uri) in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let imports = if not (Lang.Strings.string_contains message " has one") then [] else List.filter (fun it -> Lang.Strings.string_is_not_empty it) (List.map (fun part -> String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) (Lang.Lists.list_take_while ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) part) (fun it -> it <> 44 && it <> 32))))) (List.drop 1 ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (Lang.Strings.string_substring_after message ";") "import "))) in
+        let importing = List.map (fun name -> fix ("Import " ^ name) diagnostic uri (imported_at text) 0 ("import " ^ name ^ "\n")) imports in
+        let said = Lang.Lists.list_take_while ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) (Lang.Strings.string_substring_after message " does @")) (fun it -> Lang.Strings.char_is_letter_or_digit it || it = 46) in
+        let e = String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) said)) in
+        let effect_ = if not (Lang.Strings.string_contains message ", so it must say so") || String.equal "" e then [] else [fix ("Say it does @" ^ e) diagnostic uri line character ("@" ^ e ^ " ")] in
+        importing @ effect_
+
+      let hint (line : int) (column : int) (label : string) : json =
+        (JsonObject { fields = [("position", (JsonObject { fields = (let fk_arg1 = ("line", Jsons.number line) in
+         let fk_arg2 = ("character", Jsons.number column) in
+         [fk_arg1; fk_arg2]) } : json)); ("label", (JsonString { value = label } : json))] } : json)
+
+      let rec closing_from (lines : string list) (line : int) (column : int) (depth : int) (opened : bool) : (int * int) option =
+        match Lang.Lists.list_get_or_none lines line with
+        | None -> None
+        | Some text -> match Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) text) column with
+            | None -> closing_from lines (line + 1) 0 depth opened
+            | Some 40 -> closing_from lines line (column + 1) (depth + 1) true
+            | Some 41 -> if depth = 1 then Some (line, column + 1) else closing_from lines line (column + 1) (depth - 1) opened
+            | Some _ -> if (not opened && column > 0) && Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) text) column = Some 61 then None else closing_from lines line (column + 1) depth opened
+
+      let closing (lines : string list) (line : int) (column : int) : (int * int) option =
+        closing_from lines line column 0 false
+
+      let hints (session : session) (uri : string) : json list =
+        let file = (path_of uri : Io.path).Io.value in
+        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
+          let fk_arg2 = read_or_empty (path_of uri) in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
+        let own = List.filter (fun it -> ((((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path = Some file) (List.concat_map (fun it -> (it : Checker.checked_program).Checker.functions) (Collections.Maps.map_get_or_default (session : session).programs ((project_of (path_of uri) : project).root : Io.path).Io.value [])) in
+        let locals = List.concat_map (fun fact -> match fact with
+             | Checker.Inference.Binds { file = _; at = at; length = length; name = _; t = t; written = false } -> [hint ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1 + length) (": " ^ Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown t))]
+             | _ -> []) (facts_in session (path_of uri)) in
+        locals @ List.concat_map (fun f -> let d = ((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration in
+           let written = List.map (fun it -> (it : Parser.annotation).Parser.name) (d : Parser.declaration).Parser.annotations in
+           match ((d : Parser.declaration).Parser.definition, name_of session (f : Checker.Inference.checked_function).Checker.Inference.function_) with
+           | (Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = parameters; result = result; body = _; external_ = None; operator = _ }, Some found) -> let (_, line, column) = found in
+               let name = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (d : Parser.declaration).Parser.name ".")) ~default:(d : Parser.declaration).Parser.name in
+               let (results, does) = Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> match ((f : Checker.Inference.checked_function).Checker.Inference.scheme : Checker.Types.scheme).Checker.Types.template with
+                    | Checker.Types.FunctionOf { parameters = _; result = r; effects = row } -> let fk_arg1 = Checker.Types.TypeText.shown r in
+                        let fk_arg2 = List.map (fun it -> (it : Checker.Types.effect_label).Checker.Types.name) (row : Checker.Types.row).Checker.Types.labels in
+                        (fk_arg1, fk_arg2)
+                    | other -> (Checker.Types.TypeText.shown other, [])) in
+               let unsaid = List.filter (fun e -> not (List.mem (Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) e ".")) ~default:e) written)) does in
+               let effects = if List.is_empty unsaid then [] else [hint line column (Checker.Inference.Doings.shown unsaid ^ " ")] in
+               let after = if Option.is_some parameters then closing lines line (column + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name) else Some (line, column + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name) in
+               let gives = if Option.is_some result then [] else Option.to_list (Option.map (fun end_ -> let (l, c) = end_ in
+                       hint l c (": " ^ results)) after) in
+               effects @ gives
+           | _ -> []) (Collections.Maps.map_values (List.fold_left (fun m f -> Collections.Maps.map_put m ((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.name f) (Collections.Maps.empty_map ()) own))
 
       let completions (session : session) (uri : string) (params : json) : json list =
         let position = Jsons.json_field params "position" in
@@ -13195,7 +13595,7 @@ module Fckt = struct
         let params = Option.value (Jsons.json_field message "params") ~default:(JsonNull : json) in
         let uri = Option.bind (Option.bind (Jsons.json_field params "textDocument") (fun it -> Jsons.json_field it "uri")) (fun it -> Jsons.json_text it) in
         match Option.value (Option.bind (Jsons.json_field message "method") (fun it -> Jsons.json_text it)) ~default:"" with
-        | "initialize" -> answer id (JsonObject { fields = [("capabilities", (JsonObject { fields = [("textDocumentSync", Jsons.number 1); ("documentFormattingProvider", (JsonBoolean { value = true } : json)); ("hoverProvider", (JsonBoolean { value = true } : json)); ("definitionProvider", (JsonBoolean { value = true } : json)); ("documentSymbolProvider", (JsonBoolean { value = true } : json)); ("completionProvider", (JsonObject { fields = [("triggerCharacters", (JsonArray { items = [(JsonString { value = "." } : json)] } : json))] } : json))] } : json)); ("serverInfo", (JsonObject { fields = [("name", (JsonString { value = "fckt" } : json))] } : json))] } : json)
+        | "initialize" -> answer id (JsonObject { fields = [("capabilities", (JsonObject { fields = [("textDocumentSync", Jsons.number 1); ("documentFormattingProvider", (JsonBoolean { value = true } : json)); ("hoverProvider", (JsonBoolean { value = true } : json)); ("definitionProvider", (JsonBoolean { value = true } : json)); ("documentSymbolProvider", (JsonBoolean { value = true } : json)); ("referencesProvider", (JsonBoolean { value = true } : json)); ("renameProvider", (JsonBoolean { value = true } : json)); ("inlayHintProvider", (JsonBoolean { value = true } : json)); ("codeActionProvider", (JsonBoolean { value = true } : json)); ("completionProvider", (JsonObject { fields = [("triggerCharacters", (JsonArray { items = [(JsonString { value = "." } : json)] } : json))] } : json))] } : json)); ("serverInfo", (JsonObject { fields = [("name", (JsonString { value = "fckt" } : json))] } : json))] } : json)
         | "shutdown" -> session.stopping <- true;
             answer id (JsonNull : json)
         | "exit" -> (match Effect.perform (Io.Process_exit (if (session : session).stopping then 0 else 1)) with
@@ -13210,8 +13610,21 @@ module Fckt = struct
         | "textDocument/didClose" -> Option.iter (fun u -> session.open_ <- Collections.Maps.map_remove (session : session).open_ u) uri
         | "textDocument/formatting" -> answer id (JsonArray { items = Option.to_list (Option.bind uri (fun u -> Option.bind (Collections.Maps.map_get (session : session).open_ u) (fun text -> let laid = Layout.formatted text in
                    if laid = text then None else Some (whole text laid)))) } : json)
-        | "textDocument/hover" -> answer id (Option.value (Option.map (fun f -> (JsonObject { fields = [("contents", (JsonObject { fields = [("kind", (JsonString { value = "markdown" } : json)); ("value", (JsonString { value = "```fckt\n" ^ (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ^ ": " ^ type_of f ^ "\n```" } : json))] } : json))] } : json)) (Option.bind uri (fun u -> named session u params))) ~default:(JsonNull : json))
-        | "textDocument/definition" -> answer id (Option.value (Option.bind (Option.bind uri (fun u -> named session u params)) (fun it -> definition_of it)) ~default:(JsonNull : json))
+        | "textDocument/hover" -> answer id (Option.value (Option.bind uri (fun u -> Lang.Options.option_or_else (Option.map (fun l -> let said = "```fckt\n" ^ (l : local_name).name ^ ": " ^ Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown (l : local_name).t) ^ "\n```" in
+                     (JsonObject { fields = [("contents", (JsonObject { fields = [("kind", (JsonString { value = "markdown" } : json)); ("value", (JsonString { value = said } : json))] } : json))] } : json)) (local_at session u params)) (fun () -> hover session u params))) ~default:(JsonNull : json))
+        | "textDocument/definition" -> answer id (Option.value (Option.bind uri (fun u -> Lang.Options.option_or_else (Option.map (fun l -> location (l : local_name).file (((l : local_name).bound : Parser.position).Parser.line - 1) (((l : local_name).bound : Parser.position).Parser.column - 1) ((fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (l : local_name).name)) (local_at session u params)) (fun () -> Option.bind (symbol_at session u params) (fun it -> location_of it)))) ~default:(JsonNull : json))
+        | "textDocument/references" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let whole = Option.bind (Jsons.json_field params "context") (fun it -> Jsons.json_field it "includeDeclaration") in
+                let with_declaration = Option.value (Option.map (fun it -> it = (JsonBoolean { value = true } : json)) whole) ~default:true in
+                Option.value (Lang.Options.option_or_else (Option.map (fun l -> List.map (fun at -> location (l : local_name).file ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1) ((fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (l : local_name).name)) (List.filter (fun at -> with_declaration || at <> (l : local_name).bound) (local_uses session l))) (local_at session u params)) (fun () -> Option.map (fun s -> let fk_arg1 = if with_declaration then Option.to_list (location_of s) else [] in
+                       let fk_arg2 = List.map (fun use -> let (file, at, length) = use in
+                            location file ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1) length) (uses_of session u s) in
+                       fk_arg1 @ fk_arg2) (symbol_at session u params))) ~default:[]) uri) ~default:[] } : json)
+        | "textDocument/rename" -> answer id (Option.value (Option.bind uri (fun u -> let new_name = Option.value (Option.bind (Jsons.json_field params "newName") (fun it -> Jsons.json_text it)) ~default:"" in
+                 Lang.Options.option_or_else (Option.map (fun l -> let changes = List.map (fun at -> (JsonObject { fields = [("range", range ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1) ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1 + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (l : local_name).name)); ("newText", (JsonString { value = new_name } : json))] } : json)) (local_uses session l) in
+                     (JsonObject { fields = [("changes", (JsonObject { fields = [(uri_of (l : local_name).file, (JsonArray { items = changes } : json))] } : json))] } : json)) (local_at session u params)) (fun () -> Option.map (fun s -> renamed session u s new_name) (symbol_at session u params)))) ~default:(JsonNull : json))
+        | "textDocument/codeAction" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let said = Option.value (Option.map (fun it -> Jsons.json_items it) (Option.bind (Jsons.json_field params "context") (fun it -> Jsons.json_field it "diagnostics"))) ~default:[] in
+                List.concat_map (fun d -> fixes session u d) said) uri) ~default:[] } : json)
+        | "textDocument/inlayHint" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> hints session u) uri) ~default:[] } : json)
         | "textDocument/completion" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> completions session u params) uri) ~default:[] } : json)
         | "textDocument/documentSymbol" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ u in
                   let fk_arg2 = read_or_empty (path_of u) in
@@ -13224,10 +13637,43 @@ module Fckt = struct
       let editing (session : session) (source : Checker.Sources.source_text) : string =
         Option.value (Collections.Maps.map_get (session : session).open_ (uri_of (Option.value (source : Checker.Sources.source_text).Checker.Sources.path ~default:""))) ~default:(source : Checker.Sources.source_text).Checker.Sources.text
 
+      let with_parsed (session : session) (source : Checker.Sources.source_text) : Checker.Sources.source_text =
+        let key = Option.value (source : Checker.Sources.source_text).Checker.Sources.path ~default:"" ^ " " ^ string_of_bool (source : Checker.Sources.source_text).Checker.Sources.interface in
+        match Collections.Maps.map_get (session : session).prepared key with
+        | Some (text, prepared) when text = (source : Checker.Sources.source_text).Checker.Sources.text -> { (source : Checker.Sources.source_text) with Checker.Sources.prepared = Some prepared }
+        | _ -> match Checker.Sources.Loader.prepare source with
+            | Some prepared -> session.prepared <- Collections.Maps.map_put (session : session).prepared key ((source : Checker.Sources.source_text).Checker.Sources.text, prepared);
+                { (source : Checker.Sources.source_text) with Checker.Sources.prepared = Some prepared }
+            | None -> source
+
       let declares_main (text : string) : bool =
         match Parser.Parser.parse text with
         | Ok file -> List.exists (fun it -> (it : Parser.declaration).Parser.name = "main") (file : Parser.source_file).Parser.declarations
         | Error _ -> false
+
+      let checked_from (session : session) (project : project) (tree : Checker.Sources.source_tree) (entry : Checker.Sources.source_text) : Checker.checked_program option * Checker.Diagnostics.diagnostic list =
+        let key = ((project : project).root : Io.path).Io.value ^ " " ^ Option.value (entry : Checker.Sources.source_text).Checker.Sources.path ~default:"" in
+        let earlier = let fk_arg1 = Collections.Maps.map_get (session : session).reuses key in
+          let fk_arg2 = ({ Checker.Inference.shape = ""; groups = Collections.Maps.empty_map (); highest = 0 } : Checker.Inference.reuse) in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let (program, problems) = Checker.Checker.check entry tree true true (Some earlier) in
+        Option.iter (fun r -> session.reuses <- Collections.Maps.map_put (session : session).reuses key r) (Option.bind program (fun it -> (it : Checker.checked_program).Checker.reuse));
+        (program, problems)
+
+      let by_file (facts : Checker.Inference.fact list) : (string, Checker.Inference.fact list) Collections.Maps.map =
+        let (_, found) = List.fold_left (fun seen fact -> let (keys, files) = seen in
+             let (file, key) = match fact with
+               | Checker.Inference.Means { file = f; at = at; length = _; symbol = symbol; t = _ } -> (Option.value f ~default:"", "m " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ (symbol : Checker.Symbols.symbol).Checker.Symbols.name)
+               | Checker.Inference.Does { file = f; at = at; row = _ } -> (Option.value f ~default:"", "d " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
+               | Checker.Inference.Binds { file = f; at = at; length = _; name = name; t = _; written = _ } -> (Option.value f ~default:"", "b " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name)
+               | Checker.Inference.Reads { file = f; at = at; length = _; name = name; bound = _; t = _ } -> (Option.value f ~default:"", "r " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name) in
+             let whole = file ^ " " ^ key in
+             if Collections.Maps.map_contains_key keys whole then seen else (let fk_arg1 = Collections.Maps.map_put keys whole true in
+                let fk_arg2 = Collections.Maps.map_put files file ([fact] @ Collections.Maps.map_get_or_default files file []) in
+                (fk_arg1, fk_arg2))) (let fk_arg1 = Collections.Maps.empty_map () in
+           let fk_arg2 = Collections.Maps.empty_map () in
+           (fk_arg1, fk_arg2)) facts in
+        found
 
       let publish (uri : string) (diagnostics : json list) : unit =
         sent (JsonObject { fields = [("jsonrpc", (JsonString { value = "2.0" } : json)); ("method", (JsonString { value = "textDocument/publishDiagnostics" } : json)); ("params", (JsonObject { fields = [("uri", (JsonString { value = uri } : json)); ("diagnostics", (JsonArray { items = diagnostics } : json))] } : json))] } : json)
@@ -13250,18 +13696,26 @@ module Fckt = struct
               Sources.packages_in dir [] (Checker.Sources.ProgramProject : Checker.Sources.project) ((dir : Io.path).Io.value ^ "/") fk_arg1 fk_arg2)) folders in
         let libraries = List.concat_map (fun it -> Sources.interfaces_in it) (List.filter (fun it -> Io.Files.path_exists (Io.Paths.path_resolve it "unit")) (project : project).libraries) in
         let std = if List.is_empty libraries then Sources.standard (Sources.home ()) else [] in
-        let imported = Lang.Lists.list_distinct (List.map (fun (pkg, _) -> "import " ^ String.concat "." (List.map Fun.id pkg) ^ ".*\n") (List.filter (fun (pkg, sources) -> Lang.Lists.list_is_not_empty pkg && Lang.Lists.list_is_not_empty sources) own)) in
-        let tree = let fk_arg1 = Sources.merged (((Sources.core (Sources.home ()) @ std) @ own) @ libraries) in
+        let tree = let fk_arg1 = Collections.Maps.map_map_values (Sources.merged (((Sources.core (Sources.home ()) @ std) @ own) @ libraries)) (fun _ sources -> List.map (fun it -> with_parsed session it) sources) in
           let fk_arg2 = Checker.Sources.source_tree_default_imports () in
           ({ Checker.Sources.packages = fk_arg1; imports = fk_arg2 } : Checker.Sources.source_tree) in
         let mains = List.filter (fun it -> declares_main (it : Checker.Sources.source_text).Checker.Sources.text) (List.concat_map (fun (_, sources) -> sources) (List.filter (fun (pkg, _) -> List.is_empty pkg) own)) in
-        let entries = [(let fk_arg1 = String.concat "" (List.map Fun.id imported) in
-           let fk_arg2 = Checker.Sources.source_text_default_compiled_in () in
-           let fk_arg3 = Checker.Sources.source_text_default_interface () in
-           let fk_arg4 = Checker.Sources.source_text_default_trusted () in
-           ({ Checker.Sources.path = None; project = (Checker.Sources.ProgramProject : Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4 } : Checker.Sources.source_text))] @ mains in
-        let results = List.map (fun entry -> Checker.Checker.check entry tree true) entries in
+        let from_mains = List.map (fun it -> checked_from session project tree it) mains in
+        let reached = let fk_arg1 = List.concat_map (fun (program, _) -> List.concat_map (fun p -> Lang.Lists.list_map_not_null ((p : Checker.checked_program).Checker.workspace : Checker.Sources.workspace).Checker.Sources.files (fun it -> ((it : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path)) (Option.to_list program)) from_mains in
+          let fk_arg2 = Collections.Maps.empty_map () in
+          List.fold_left (fun m path -> Collections.Maps.map_put m path true) fk_arg2 fk_arg1 in
+        let unreached = List.filter (fun (pkg, sources) -> Lang.Lists.list_is_not_empty pkg && List.exists (fun s -> not (Collections.Maps.map_contains_key reached (Option.value (s : Checker.Sources.source_text).Checker.Sources.path ~default:""))) sources) own in
+        let imported = Lang.Lists.list_distinct (List.map (fun (pkg, _) -> "import " ^ String.concat "." (List.map Fun.id pkg) ^ ".*\n") unreached) in
+        let all_reached = Lang.Lists.list_is_not_empty from_mains && List.for_all (fun (program, _) -> Option.is_some program) from_mains in
+        let rest = if all_reached && List.is_empty imported then [] else [checked_from session project tree (let fk_arg1 = String.concat "" (List.map Fun.id imported) in
+             let fk_arg2 = Checker.Sources.source_text_default_compiled_in () in
+             let fk_arg3 = Checker.Sources.source_text_default_interface () in
+             let fk_arg4 = Checker.Sources.source_text_default_trusted () in
+             let fk_arg5 = Checker.Sources.source_text_default_prepared () in
+             ({ Checker.Sources.path = None; project = (Checker.Sources.ProgramProject : Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4; prepared = fk_arg5 } : Checker.Sources.source_text))] in
+        let results = from_mains @ rest in
         let problems = Lang.Lists.list_distinct (List.concat_map (fun (_, found) -> found) results) in
+        session.facts <- Collections.Maps.map_put (session : session).facts ((project : project).root : Io.path).Io.value (by_file (List.concat_map (fun (program, _) -> List.concat_map (fun it -> (it : Checker.checked_program).Checker.facts) (Option.to_list program)) results));
         session.programs <- Collections.Maps.map_put (session : session).programs ((project : project).root : Io.path).Io.value (List.concat_map (fun (program, _) -> Option.to_list program) results);
         let found = List.filter (fun it -> Option.is_some (it : Checker.Diagnostics.diagnostic).Checker.Diagnostics.file) problems in
         let by_file = List.fold_left (fun m d -> let key = uri_of (Option.value (d : Checker.Diagnostics.diagnostic).Checker.Diagnostics.file ~default:"") in
@@ -13293,7 +13747,16 @@ module Fckt = struct
         served (let fk_arg1 = Collections.Maps.empty_map () in
          let fk_arg2 = Collections.Maps.empty_map () in
          let fk_arg3 = Collections.Maps.empty_map () in
-         ({ open_ = fk_arg1; said = fk_arg2; programs = fk_arg3; stopping = false; changed = [] } : session))
+         let fk_arg4 = Collections.Maps.empty_map () in
+         let fk_arg5 = Collections.Maps.empty_map () in
+         let fk_arg6 = Collections.Maps.empty_map () in
+         ({ open_ = fk_arg1; said = fk_arg2; programs = fk_arg3; stopping = false; changed = []; reuses = fk_arg4; facts = fk_arg5; prepared = fk_arg6 } : session))
+
+      let definition_of (f : Checker.Inference.checked_function) : json option =
+        Option.map (fun file -> let at = (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at in
+           (JsonObject { fields = (let fk_arg1 = ("uri", (JsonString { value = uri_of file } : json)) in
+            let fk_arg2 = ("range", range ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1) ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1)) in
+            [fk_arg1; fk_arg2]) } : json)) ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path
     end
 
     module Symbols = struct
@@ -13818,7 +14281,9 @@ let shown (e : Fckt.Checker.Diagnostics.diagnostic) (file : string) : string =
   Option.value (e : Fckt.Checker.Diagnostics.diagnostic).Fckt.Checker.Diagnostics.file ~default:file ^ ":" ^ string_of_int ((e : Fckt.Checker.Diagnostics.diagnostic).Fckt.Checker.Diagnostics.at : Fckt.Parser.position).Fckt.Parser.line ^ ":" ^ string_of_int ((e : Fckt.Checker.Diagnostics.diagnostic).Fckt.Checker.Diagnostics.at : Fckt.Parser.position).Fckt.Parser.column ^ ": error: " ^ (e : Fckt.Checker.Diagnostics.diagnostic).Fckt.Checker.Diagnostics.message
 
 let checked_program (entry : Fckt.Checker.Sources.source_text) (file : string) (tree : Fckt.Checker.Sources.source_tree) (use : Fckt.Checker.checked_program -> unit) : unit =
-  let (program, errors) = Fckt.Checker.Checker.check entry tree true in
+  let (program, errors) = let fk_arg1 = Fckt.Checker.Checker.check_default_facts () in
+    let fk_arg2 = Fckt.Checker.Checker.check_default_earlier () in
+    Fckt.Checker.Checker.check entry tree true fk_arg1 fk_arg2 in
   match (program, errors) with
   | (Some p, []) -> use p
   | _ -> failing (List.map (fun it -> shown it file) errors)
@@ -13835,7 +14300,8 @@ let core_unit (out : string) : unit =
   let entry = let fk_arg1 = Fckt.Checker.Sources.source_text_default_compiled_in () in
     let fk_arg2 = Fckt.Checker.Sources.source_text_default_interface () in
     let fk_arg3 = Fckt.Checker.Sources.source_text_default_trusted () in
-    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = ""; compiled_in = fk_arg1; interface = fk_arg2; trusted = fk_arg3 } : Fckt.Checker.Sources.source_text) in
+    let fk_arg4 = Fckt.Checker.Sources.source_text_default_prepared () in
+    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = ""; compiled_in = fk_arg1; interface = fk_arg2; trusted = fk_arg3; prepared = fk_arg4 } : Fckt.Checker.Sources.source_text) in
   checked entry "the core" (let fk_arg1 = Fckt.Compiler.Sources.merged (Fckt.Compiler.Sources.core (Fckt.Compiler.Sources.home ())) in
    let fk_arg2 = Fckt.Checker.Sources.source_tree_default_imports () in
    ({ Fckt.Checker.Sources.packages = fk_arg1; imports = fk_arg2 } : Fckt.Checker.Sources.source_tree)) true (fun ml -> write_output out ml)
@@ -13865,7 +14331,8 @@ let compile (file : string) (out : string) (folders : string list) (whole : bool
     let fk_arg2 = Fckt.Checker.Sources.source_text_default_compiled_in () in
     let fk_arg3 = Fckt.Checker.Sources.source_text_default_interface () in
     let fk_arg4 = Fckt.Checker.Sources.source_text_default_trusted () in
-    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4 } : Fckt.Checker.Sources.source_text) in
+    let fk_arg5 = Fckt.Checker.Sources.source_text_default_prepared () in
+    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4; prepared = fk_arg5 } : Fckt.Checker.Sources.source_text) in
   checked entry file tree whole (fun ml -> Fckt.Io.Files.path_write_text (Fckt.Io.Paths.path out) ml)
 
 let rec options (args : string list) (o : options) : options option =
@@ -13954,12 +14421,14 @@ let tests (o : options) (dir : string) : unit =
     let fk_arg2 = Fckt.Checker.Sources.source_text_default_compiled_in () in
     let fk_arg3 = Fckt.Checker.Sources.source_text_default_interface () in
     let fk_arg4 = Fckt.Checker.Sources.source_text_default_trusted () in
-    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4 } : Fckt.Checker.Sources.source_text) in
+    let fk_arg5 = Fckt.Checker.Sources.source_text_default_prepared () in
+    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4; prepared = fk_arg5 } : Fckt.Checker.Sources.source_text) in
   checked_program stub dir tree (fun stubbed -> match Fckt.Compiler.Tests.plan stubbed files marks with
      | Ok main -> if Fckt.Lang.Lists.list_is_not_empty problems then failing (List.map (fun it -> shown it dir) problems) else checked (let fk_arg1 = Fckt.Checker.Sources.source_text_default_compiled_in () in
             let fk_arg2 = Fckt.Checker.Sources.source_text_default_interface () in
             let fk_arg3 = Fckt.Checker.Sources.source_text_default_trusted () in
-            ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = main; compiled_in = fk_arg1; interface = fk_arg2; trusted = fk_arg3 } : Fckt.Checker.Sources.source_text)) dir tree false (fun ml -> write_output (Option.value (o : options).output ~default:(dir ^ "/tests.ml")) ml)
+            let fk_arg4 = Fckt.Checker.Sources.source_text_default_prepared () in
+            ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = main; compiled_in = fk_arg1; interface = fk_arg2; trusted = fk_arg3; prepared = fk_arg4 } : Fckt.Checker.Sources.source_text)) dir tree false (fun ml -> write_output (Option.value (o : options).output ~default:(dir ^ "/tests.ml")) ml)
      | Error found -> failing (List.map (fun it -> shown it dir) (problems @ found)))
 
 let declares_main (file : Fckt.Parser.source_file) : bool =
@@ -13983,10 +14452,14 @@ let symbols (o : options) (out : string) (packages : string list) : unit =
      let entry = let fk_arg1 = Fckt.Checker.Sources.source_text_default_compiled_in () in
        let fk_arg2 = Fckt.Checker.Sources.source_text_default_interface () in
        let fk_arg3 = Fckt.Checker.Sources.source_text_default_trusted () in
-       ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = imports; compiled_in = fk_arg1; interface = fk_arg2; trusted = fk_arg3 } : Fckt.Checker.Sources.source_text) in
-     let (program, errors) = Fckt.Checker.Checker.check entry (tree o own) false in
+       let fk_arg4 = Fckt.Checker.Sources.source_text_default_prepared () in
+       ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = imports; compiled_in = fk_arg1; interface = fk_arg2; trusted = fk_arg3; prepared = fk_arg4 } : Fckt.Checker.Sources.source_text) in
+     let (program, errors) = let fk_arg1 = tree o own in
+       let fk_arg2 = Fckt.Checker.Checker.check_default_facts () in
+       let fk_arg3 = Fckt.Checker.Checker.check_default_earlier () in
+       Fckt.Checker.Checker.check entry fk_arg1 false fk_arg2 fk_arg3 in
      match (program, errors) with
-     | (Some p, []) -> (let (written, problems) = Fckt.Checker.Diagnostics.Diagnostics.collecting (fun () -> Fckt.Checker.Types.Solutions.solving (fun () -> Fckt.Checker.Diagnostics.Diagnostics.recovering (fun () -> Fckt.Compiler.Symbols.write p paths))) in
+     | (Some p, []) -> (let (written, problems) = Fckt.Checker.Diagnostics.Diagnostics.collecting (fun () -> Fckt.Checker.Types.Solutions.solving (Fckt.Checker.Types.Solutions.solving_default_from ()) (fun () -> Fckt.Checker.Diagnostics.Diagnostics.recovering (fun () -> Fckt.Compiler.Symbols.write p paths))) in
           match (written, problems) with
           | (Some text, []) -> write_output out text
           | _ -> failing (List.map (fun it -> shown it "the symbols") problems))
@@ -14004,7 +14477,8 @@ let library (o : options) (interface : Fckt.Io.path) (packages : string list) : 
     let fk_arg2 = Fckt.Checker.Sources.source_text_default_compiled_in () in
     let fk_arg3 = Fckt.Checker.Sources.source_text_default_interface () in
     let fk_arg4 = Fckt.Checker.Sources.source_text_default_trusted () in
-    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4 } : Fckt.Checker.Sources.source_text) in
+    let fk_arg5 = Fckt.Checker.Sources.source_text_default_prepared () in
+    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4; prepared = fk_arg5 } : Fckt.Checker.Sources.source_text) in
   checked entry "the library" (tree o own) false (fun ml -> let files = List.concat_map (fun (pkg, sources) -> Fckt.Lang.Lists.list_map_not_null sources (fun source -> match Fckt.Parser.Parser.parse (source : Fckt.Checker.Sources.source_text).Fckt.Checker.Sources.text with
              | Ok parsed when not (declares_main parsed) -> Some (pkg, source, parsed)
              | _ -> None)) (List.filter (fun (p, _) -> List.mem (String.concat "." (List.map Fun.id p)) packages) own) in
@@ -14032,7 +14506,8 @@ let program (o : options) (file : string) : unit =
     let fk_arg2 = Fckt.Checker.Sources.source_text_default_compiled_in () in
     let fk_arg3 = Fckt.Checker.Sources.source_text_default_interface () in
     let fk_arg4 = Fckt.Checker.Sources.source_text_default_trusted () in
-    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4 } : Fckt.Checker.Sources.source_text) in
+    let fk_arg5 = Fckt.Checker.Sources.source_text_default_prepared () in
+    ({ Fckt.Checker.Sources.path = None; project = (Fckt.Checker.Sources.ProgramProject : Fckt.Checker.Sources.project); text = fk_arg1; compiled_in = fk_arg2; interface = fk_arg3; trusted = fk_arg4; prepared = fk_arg5 } : Fckt.Checker.Sources.source_text) in
   checked entry file (tree with_folder (own_packages with_folder)) whole (fun ml -> write_output (Option.value (o : options).output ~default:(Fckt.Lang.Strings.string_remove_suffix file ".fk" ^ ".ml")) ml)
 
 let unknown (args : string list) : unit =
