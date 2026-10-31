@@ -404,13 +404,21 @@ project. A line that's long for another reason, as a long string, is left as it 
 
 `fckt --language-server` is fckt's language server, which any editor that speaks the Language
 Server Protocol can run. It checks the project of each file that's opened, changed or saved, with
-what's open as it is in the editor, and says what's wrong with each of the project's files; it
-shows a function's type, with what it does, `printError: @Channel (String) -> Unit`, on hover, and
-goes to where it's declared, for the function declared there or the one function of that name; it
-outlines a file, its modules with what they declare; it completes a name, after `Module.` with
-what the module declares, and otherwise with the file's functions, the project's top-level ones and
-modules; and it lays a file out as `fckt --format` does. A project is the folder with `build.fk` above the file, with
-the folders and libraries kiln last wrote to `.kiln/paths`, so it's checked against its libraries'
+what's open as it is in the editor, and says what's wrong with each of the project's files. What
+the checker works out as it checks is kept: what each name written means, local or declared, with
+its type, and what each call does. So hovering over a name shows its type, and over a call what
+the call does, `This call does @Console.`; going to a name's definition goes to where it's
+declared or bound; finding its references finds every use of it in the project; and renaming it
+renames it in each of those places, if it's the project's own. Hints in the code show what it
+doesn't say: the type of a local, or of what a function gives, and the effects a function does,
+`@Console main(): Unit`. An error that names an import, `import fckt.io.Console has one`, offers to
+add it; and one about an effect a function must say it does offers to say so. It also outlines a
+file, completes names, and lays a file out as `fckt --format` does.
+
+Only what's changed is checked again: a group of functions whose files are as they were, and
+whose callees' types are too, keeps what it was found to be, so a change is checked in about half
+a second in fckt's own compiler. A project is the folder with `build.fk` above the file, with the
+folders and libraries kiln last wrote to `.kiln/paths`, so it's checked against its libraries'
 interfaces, as kiln compiles it, and a test, in a folder `.kiln/scopes` names, with what its tests
 are written with too; without kiln's, the file's folder is checked with the standard
 library. In Neovim:
