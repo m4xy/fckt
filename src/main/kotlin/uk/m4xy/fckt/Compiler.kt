@@ -303,12 +303,15 @@ fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<Fil
         }.filter { (_, _, parsed) -> parsed.decls.none { it is Decl.Function && it.name == "main" } }
     }
     CompileErrors.throwIfAny(files.flatMap { (_, _, parsed) -> Interfaces.untyped(parsed) })
+    val hidden = files.flatMap { (path, _, parsed) ->
+        parsed.decls.filter { it.isPrivate || it.isInternal }.map { (path + it.name).joinToString(".") }
+    }.toSet()
     interfaceDir.deleteRecursively()
     // A file with nothing other projects see, an internal module's, has no interface.
     for ((path, f, parsed) in files.filter { (_, _, parsed) -> parsed.decls.any { !it.isPrivate && !it.isInternal } }) {
         val target = File(interfaceDir, path.joinToString("/") + "/" + f.nameWithoutExtension + ".fki")
         target.parentFile.mkdirs()
-        target.writeText(Interfaces.write(parsed, f.path, f.readText()))
+        target.writeText(Interfaces.write(parsed, f.path, f.readText(), hidden))
     }
     File(interfaceDir, Library.UNIT_FILE).writeText(unit + "\n")
     return ocaml

@@ -1,0 +1,16 @@
+import uk.m4xy.fktests.api.Test
+import fckt.compiler.Interfaces
+import fckt.parser.*
+
+// A library's interface imports what its declarations' types name, but not what the library hides:
+// a program that uses it couldn't find that.
+@Test whatsHiddenIsntImported() = {
+  text = "import a.Inner\nimport a.Inner.f\nimport b.Shown\n\nmodule Outer {\n  g(): Int = 1\n}\n"
+  written = when (Parser.parse(text)) {
+    Ok(file) -> Interfaces.write(file, "a/Outer.fk", text, ["a.Inner"])
+    Error(_) -> "unparsed"
+  }
+  assert(!written.contains("import a.Inner"))
+  assert(written.contains("import b.Shown\n"))
+  assert(written.contains("  g(): Int\n"))
+}

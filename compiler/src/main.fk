@@ -282,12 +282,15 @@ version: String = "0.1.0-SNAPSHOT"
       }
     }
     if (untyped.isNotEmpty()) failing(untyped)
+    hidden = files.flatMap { pkg, _, parsed ->
+      parsed.declarations.filter { it.visibility != Public }.map { (pkg + [it.name]).joinToString(".") }
+    }
     interface.delete()
     files.filter { _, _, parsed -> Interfaces.seesAny(parsed) }.forEach { pkg, source, parsed ->
       sourcePath = source.path.getOrElse("")
       folder = interface.resolve(pkg.joinToString("/"))
       folder.makeDirs()
-      written = Interfaces.write(parsed, sourcePath, source.text)
+      written = Interfaces.write(parsed, sourcePath, source.text, hidden)
       folder.resolve(Loader.fileName(source) + ".fki").writeText(written)
     }
     interface.makeDirs()
