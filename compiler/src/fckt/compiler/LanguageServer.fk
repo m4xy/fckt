@@ -14,6 +14,12 @@ import fckt.checker.inference.CheckedFunction
 import fckt.checker.inference.Fact
 import fckt.checker.inference.Reuse
 import fckt.checker.inference.Doings
+import fckt.checker.inference.Context
+import fckt.checker.inference.Globals
+import fckt.checker.resolution.Place
+import fckt.checker.symbols.Signatures
+import fckt.checker.core.TypeDeclaration
+import fckt.checker.diagnostics.Diagnostics
 import fckt.checker.symbols.Symbol
 import fckt.checker.types.Type
 import fckt.checker.types.TypeText
@@ -41,13 +47,24 @@ module LanguageServer {
     var reuses: Map<String, Reuse>,
     var facts: Map<String, Map<String, List<Fact>>>,
     var prepared: Map<String, (String, Prepared)>,
+    var unparsed: Map<String, List<Diagnostic>>,
   )
 
   // A project: the folders of its own packages, and the libraries' interfaces.
   private type Project(root: Path, folders: List<Path>, libraries: List<Path>)
 
   @FileSystem @Channel @Process serve(): Unit = served(
-    Session(emptyMap(), emptyMap(), emptyMap(), false, [], emptyMap(), emptyMap(), emptyMap()),
+    Session(
+      emptyMap(),
+      emptyMap(),
+      emptyMap(),
+      false,
+      [],
+      emptyMap(),
+      emptyMap(),
+      emptyMap(),
+      emptyMap(),
+    ),
   )
 
   @FileSystem @Channel @Process private served(session: Session): Unit = when (received()) {
@@ -221,8 +238,13 @@ module LanguageServer {
     })
     // A file with main is a program of its own, checked from it; the packages none of them reaches,
     // from what imports them.
-    mains = own.filter { pkg, _ -> pkg.isEmpty() }.flatMap { _, sources -> sources }.filter {
-      declaresMain(it.text)
+    mains = own.filter { pkg, _ -> pkg.isEmpty() }.flatMap { _, sources -> sources }.map {
+      withParsed(session, it)
+    }.filter { source ->
+      when (source.prepared) {
+        Some(prepared) -> prepared.file.declarations.any { it.name == "main" }
+        None -> declaresMain(source.text)
+      }
     }
     fromMains = mains.map { checkedFrom(session, project, tree, it) }
     reached = fromMains.flatMap { program, _ ->
@@ -244,14 +266,20 @@ module LanguageServer {
     ]
     results = fromMains + rest
     problems = results.flatMap { _, found -> found }.distinct()
-    session.facts = session.facts.put(project.root.value, byFile(results.flatMap { program, _ ->
-      program.toList().flatMap { it.facts }
-    }))
-    session.programs = session.programs.put(
-      project.root.value,
-      results.flatMap { program, _ -> program.toList() },
-    )
-    found = problems.filter { it.file.isSome() }
+    checked = results.flatMap { program, _ -> program.toList() }
+    // What a check that couldn't read the code found is nothing; what the last that could did is
+    // kept, for what's asked while the code's half written.
+    if (checked.isNotEmpty()) {
+      session.facts = session.facts.put(project.root.value, byFile(checked.flatMap { it.facts }))
+      session.programs = session.programs.put(project.root.value, checked)
+    }
+    else Unit
+    // A file that can't be read is checked as it last could be, and only what's wrong with how it's
+    // written is said of it.
+    paths = own.flatMap { _, sources -> sources.mapNotNull { it.path } }
+    unread = paths.filter { session.unparsed.containsKey(it) }
+    found = problems.filter { d -> d.file.isSome() && !unread.contains(d.file.getOrElse("")) } +
+      unread.flatMap { session.unparsed.getOrDefault(it, []) }
     byFile = found.fold(emptyMap()) { m, d ->
       key = uriOf(d.file.getOrElse(""))
       m.put(key, m.getOrDefault(key, []) + [d])
@@ -265,17 +293,33 @@ module LanguageServer {
     session.said = session.said.put(project.root.value, byFile.keys)
   }
 
-  // The source, read: as it was when its text was last the same, or now.
+  // The source, read: as it was when its text was last the same, or now; or, if it can't be read
+  // as it is, as it last could be, with why it can't be kept for saying.
   @Mutating private withParsed(session: Session, source: SourceText): SourceText = {
     key = "${source.path.getOrElse("")} ${source.interface}"
+    path = source.path.getOrElse("")
     when (session.prepared.get(key)) {
-      Some((text, prepared)) if text == source.text -> source.copy(prepared = Some(prepared))
-      _ -> when (Loader.prepare(source)) {
+      Some((text, prepared)) if text == source.text -> {
+        session.unparsed = session.unparsed.remove(path)
+        source.copy(prepared = Some(prepared))
+      }
+      before -> when (Loader.prepare(source)) {
         Some(prepared) -> {
           session.prepared = session.prepared.put(key, (source.text, prepared))
+          session.unparsed = session.unparsed.remove(path)
           source.copy(prepared = Some(prepared))
         }
-        None -> source
+        None -> {
+          errors = when (if (source.interface) Parser.parseInterface(source.text) else Parser.parse(source.text)) {
+            Ok(_) -> []
+            Error(found) -> found.map { Diagnostic(source.path, it.at, it.message) }
+          }
+          session.unparsed = session.unparsed.put(path, errors)
+          when (before) {
+            Some((text, prepared)) -> source.copy(text = text, prepared = Some(prepared))
+            None -> source
+          }
+        }
       }
     }
   }
@@ -368,6 +412,212 @@ module LanguageServer {
       uri,
       params,
     ).map { it.symbol }.orElse { named(session, uri, params).map { it.function } }
+
+  // What can follow value., where value is a local or a value named name, written at line and
+  // column: the extensions its type fits, and its record's fields.
+  @FileSystem private members(
+    session: Session,
+    uri: String,
+    line: Int,
+    column: Int,
+    name: String,
+    typed: String,
+  ): List<Json> = {
+    file = pathOf(uri)
+    programs = session.programs.getOrDefault(projectOf(file).root.value, [])
+    found = programs.flatMap { p ->
+      p.environment.toList().flatMap { environment ->
+        p.workspace.files.find { it.source.path == Some(file.value) }.map { loaded -> (p, environment, loaded) }.toList()
+      }
+    }.firstOrNone()
+    when ((receiverOf(session, file, line, column, name, programs), found)) {
+      (Some(receiver), Some((program, environment, loaded))) -> {
+        context = Context(environment, Place(loaded, []), emptyMap())
+        fitting = Solutions.solving {
+          environment.extensions.keys.filter { it.startsWith(typed) }.flatMap { n ->
+            Globals.extensionsNamed(n, context)
+          }.filter { s ->
+            when (Diagnostics.attempting { Globals.fit(Globals.receiverType(s, context), receiver) }) {
+              Ok(Some(_)) -> true
+              _ -> false
+            }
+          }
+        }
+        extensions = fitting.fold(emptyMap()) { m, s -> m.put(s.name, s) }.values.map { s ->
+          label = s.declaration.name.split(".").lastOrNone().getOrElse(s.declaration.name)
+          detail = program.functions.find { it.function.name == s.name }.map { typeOf(it) }.getOrElse("")
+          item(label, if (Signatures.isProperty(s)) 10 else 2, detail, [])
+        }
+        fields = when (receiver) {
+          Named(n, _, _) -> program.types.flatMap { t ->
+            when (t) {
+              DeclaredRecord(record, _, declared) if record.name == n -> declared
+              else -> []
+            }
+          }
+          else -> []
+        }.filter { it.name.startsWith(typed) }.map { f ->
+          item(f.name, 5, Solutions.solving { TypeText.shown(f.t) }, [])
+        }
+        fields + extensions.take(200)
+      }
+      _ -> []
+    }
+  }
+
+  // The type of the local or value named name, written at line and column: as the checker found
+  // it there, or as the nearest binding of it above has it, or a top-level value's.
+  @FileSystem private receiverOf(
+    session: Session,
+    file: Path,
+    line: Int,
+    column: Int,
+    name: String,
+    programs: List<CheckedProgram>,
+  ): Option<Type> = {
+    facts = factsIn(session, file)
+    there = facts.flatMap { f ->
+      when (f) {
+        Reads(_, at, _, n, _, t) if n == name && at.line == line + 1 && at.column == column + 1 -> [
+          t,
+        ]
+        Binds(_, at, _, n, t, _) if n == name && at.line == line + 1 && at.column == column + 1 -> [
+          t,
+        ]
+        else -> []
+      }
+    }.firstOrNone()
+    above = facts.flatMap { f ->
+      when (f) {
+        Binds(_, at, _, n, t, _) if n == name && at.line <= line + 1 -> [(at.line, t)]
+        else -> []
+      }
+    }.fold(None) { best, entry ->
+      (l, t) = entry
+      when (best) {
+        Some((bestLine, _)) if bestLine > l -> best
+        _ -> Some((l, t))
+      }
+    }.map { entry ->
+      (_, t) = entry
+      t
+    }
+    value = programs.flatMap { it.functions }.find { f ->
+      f.function.declaration.name == name && !Signatures.isFunction(f.function)
+    }.map { it.scheme.template }
+    there.orElse { above }.orElse { value }
+  }
+
+  // The locals bound above line in the function it's in, whose names start with typed, each once.
+  @FileSystem private localsAbove(
+    session: Session,
+    uri: String,
+    line: Int,
+    typed: String,
+  ): List<Json> = {
+    file = pathOf(uri)
+    start = session.programs.getOrDefault(
+      projectOf(file).root.value,
+      [],
+    ).flatMap { it.functions }.filter { f ->
+      f.function.file.source.path == Some(file.value) && f.function.declaration.at.line <= line + 1
+    }.map { it.function.declaration.at.line }.maxOrNone().getOrElse(1)
+    factsIn(session, file).flatMap { f ->
+      when (f) {
+        Binds(
+          _,
+          at,
+          _,
+          name,
+          t,
+          _,
+        ) if at.line >= start && at.line <= line + 1 && name.startsWith(typed) -> [
+          (name, t),
+        ]
+        else -> []
+      }
+    }.fold(emptyMap()) { m, entry ->
+      (name, t) = entry
+      m.put(name, t)
+    }.entries.map { name, t -> item(name, 6, Solutions.solving { TypeText.shown(t) }, []) }
+  }
+
+  // What the file doesn't import yet whose name starts with typed: each package's public types,
+  // modules, effects and specs, and each effect's operations; with the import it needs.
+  @FileSystem private importable(
+    session: Session,
+    uri: String,
+    typed: String,
+    text: String,
+  ): List<Json> =
+    if (typed.isEmpty()) []
+    else {
+      file = pathOf(uri)
+      programs = session.programs.getOrDefault(projectOf(file).root.value, [])
+      found = programs.flatMap { p ->
+        p.environment.toList().flatMap { environment ->
+          p.workspace.files.find { it.source.path == Some(file.value) }.map { loaded -> (environment, loaded) }.toList()
+        }
+      }.firstOrNone()
+      when (found) {
+        Some((environment, loaded)) -> {
+          imported = (full: String, pkg: List<String>) ->
+            pkg == loaded.package || loaded.imports.any { i ->
+              i.path.joinToString(".") == full || (i.wildcard && i.path == pkg)
+            }
+          line = importedAt(text)
+          withImport = (full: String) -> [JsonObject([
+            ("range", range(line, 0, line, 0)),
+            ("newText", JsonString("import $full\n")),
+          ])]
+          declared = environment.definitions.namespace.table.declarations.filter { s ->
+            s.declaration.visibility == Public && s.path == s.file.package && s.declaration.name.startsWith(
+              typed,
+            ) &&
+              s.file.package.isNotEmpty() && !imported(s.name, s.file.package)
+          }.map { s ->
+            kind = when (s.declaration.definition) {
+              ModuleDefinition(_, _, _, _, _) -> 9
+              RecordDefinition(_, _, _, _, _) -> 7
+              CasesDefinition(_, _, _, _) -> 13
+              SpecDefinition(_, _, _, _, _) -> 8
+              FunctionDefinition(_, _, _, _, _, _, _) -> 3
+              else -> 7
+            }
+            item(s.declaration.name, kind, s.name, withImport(s.name))
+          }
+          operations = environment.operations.entries.filter { name, _ -> name.startsWith(typed) }.flatMap { name, ops ->
+            ops.filter { op ->
+              !imported(
+                op.effect.name,
+                op.effect.file.package,
+              ) && op.effect.declaration.visibility == Public
+            }.map { op -> item(name, 3, "@${op.effect.declaration.name}, from ${op.effect.name}", withImport(op.effect.name)) }
+          }
+          // A module's functions, through import module.*.
+          members = environment.orderedFunctions.filter { f ->
+            f.declaration.visibility == Public && f.path.isNotEmpty() && f.path.size > f.file.package.size &&
+              f.declaration.name.startsWith(typed) && !Signatures.isExtension(
+                f,
+              ) && !f.declaration.name.contains(
+                "$",
+              ) &&
+              !imported(f.path.joinToString(".") + ".*", f.file.package) &&
+              !loaded.imports.any { i -> i.wildcard && i.path == f.path }
+          }.map { f ->
+            module = f.path.joinToString(".")
+            item(f.declaration.name, 3, "from $module", withImport("$module.*"))
+          }
+          (declared + operations + members).take(100)
+        }
+        None -> []
+      }
+    }
+
+  private item(label: String, kind: Int, detail: String, edits: List<Json>): Json = JsonObject(
+    [("label", JsonString(label)), ("kind", number(kind)), ("detail", JsonString(detail))] +
+      (if (edits.isEmpty()) [] else [("additionalTextEdits", JsonArray(edits))]),
+  )
 
   // What would put right what the diagnostic says is wrong: an import it names, or an effect a
   // function must say it does.
@@ -700,6 +950,31 @@ module LanguageServer {
       _ -> None
     }
     typed = prefix.map { it.toString() }.joinToString("")
+    ownerName = owner.map { o -> o.map { it.toString() }.joinToString("") }.getOrElse("")
+    // A value's members after value.; otherwise what's declared, bound, or importable.
+    isValue = ownerName.isNotEmpty() && !ownerName.toList().getOrNone(
+      0,
+    ).map { it.isUpperCase() }.getOrElse(false)
+    if (isValue) members(
+      session,
+      uri,
+      line,
+      character - prefix.size - 1 - ownerName.length,
+      ownerName,
+      typed,
+    )
+    else declaredOrBound(session, uri, line, file, text, owner, typed)
+  }
+
+  @FileSystem private declaredOrBound(
+    session: Session,
+    uri: String,
+    line: Int,
+    file: Path,
+    text: String,
+    owner: Option<List<Char>>,
+    typed: String,
+  ): List<Json> = {
     functions = session.programs.getOrDefault(
       projectOf(file).root.value,
       [],
@@ -719,7 +994,9 @@ module LanguageServer {
       m.startsWith(typed) && m.getOrNone(0).map { it.isUpperCase() }.getOrElse(false) &&
         !m.contains("__")
     }.distinct().take(100).map { m -> JsonObject([("label", JsonString(m)), ("kind", number(9))]) }
-    modules + candidates.fold(
+    own = if (owner.isSome()) [] else localsAbove(session, uri, line, typed)
+    more = if (owner.isSome()) [] else importable(session, uri, typed, text)
+    own + modules + more + candidates.fold(
       emptyMap(),
     ) { m, f -> m.put(f.function.declaration.name, f) }.values.take(200).map { f ->
       JsonObject([
