@@ -25,28 +25,45 @@ import fckt.compiler.Jsons.*
 // as fckt --format lays it out. A project is the folder with build.fk above the file, its folders
 // and libraries as kiln last wrote them, in .kiln/paths; or, without kiln's, the file's folder.
 module LanguageServer {
-  // What's open, by URI, and the URIs said to have something wrong, by the project they're in.
+  // What's open, by URI; the URIs said to have something wrong, and what was checked, by the
+  // project they're in; and the files changed since their projects were last checked.
   private type Session(
     var open: Map<String, String>,
     var said: Map<String, List<String>>,
     var programs: Map<String, List<CheckedProgram>>,
     var stopping: Boolean,
+    var changed: List<String>,
   )
 
   // A project: the folders of its own packages, and the libraries' interfaces.
   private type Project(root: Path, folders: List<Path>, libraries: List<Path>)
 
   @FileSystem @Channel @Process serve(): Unit = served(
-    Session(emptyMap(), emptyMap(), emptyMap(), false),
+    Session(emptyMap(), emptyMap(), emptyMap(), false, []),
   )
 
   @FileSystem @Channel @Process private served(session: Session): Unit = when (received()) {
     None -> exit(if (session.stopping) 0 else 1)
     Some(message) -> {
       handled(session, message)
+      // As someone types, a change comes with each key: their projects are checked once nothing's
+      // come for a moment, once each, as the files are then.
+      if (session.changed.isNotEmpty() && !waiting(0.15)) {
+        changed = session.changed
+        session.changed = []
+        changed.fold(
+          emptyMap(),
+        ) { byRoot, u -> byRoot.put(projectOf(pathOf(u)).root.value, u) }.values
+          .forEach { checked(session, it) }
+      }
+      else Unit
       served(session)
     }
   }
+
+  // Whether something's come to read within seconds.
+  private external waiting(seconds: Float): Boolean =
+    "(fun s -> try let (r, _, _) = Unix.select [Unix.stdin] [] [] s in r <> [] with Unix.Unix_error _ -> false) seconds"
 
   @FileSystem @Channel @Process private handled(session: Session, message: Json): Unit = {
     id = message.field("id")
@@ -72,16 +89,16 @@ module LanguageServer {
       "textDocument/didOpen" -> uri.forEach { u ->
         text = params.field("textDocument").flatMap { it.field("text") }.flatMap { it.text }
         session.open = session.open.put(u, text.getOrElse(""))
-        checked(session, u)
+        session.changed = session.changed + [u]
       }
       "textDocument/didChange" -> uri.forEach { u ->
         changes = params.field("contentChanges").map { it.items }.getOrElse([])
         changes.lastOrNone().flatMap { it.field("text") }.flatMap { it.text }.forEach { text ->
           session.open = session.open.put(u, text)
         }
-        checked(session, u)
+        session.changed = session.changed + [u]
       }
-      "textDocument/didSave" -> uri.forEach { checked(session, it) }
+      "textDocument/didSave" -> uri.forEach { u -> session.changed = session.changed + [u] }
       "textDocument/didClose" -> uri.forEach { u -> session.open = session.open.remove(u) }
       "textDocument/formatting" -> answer(id, JsonArray(uri.flatMap { u ->
         session.open.get(u).flatMap { text ->
