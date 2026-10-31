@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <defs>
+    <clipPath id="around"><path clip-rule="evenodd" d="M0 0H16V16H0ZM9.6 8.5H17L15.9 17H8.4Z"/></clipPath>
+    <linearGradient id="block" x1="9.6" y1="9.5" x2="16" y2="16" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#8FF0BE"/><stop offset="0.3" stop-color="#1FBFAE"/><stop offset="0.58" stop-color="#3A8FD6"/><stop offset="0.8" stop-color="#9A8AE0"/><stop offset="1" stop-color="#D97BC8"/></linearGradient>
+  </defs>
+  <g clip-path="url(#around)">
+    <circle cx="7.5" cy="7.5" r="6" fill="#253627" stroke="#57965C"/>
+    <path d="M9.6 5.6C9.2 5 8.5 4.6 7.5 4.6C6.3 4.6 5.5 5.2 5.5 6.1C5.5 8.2 9.7 6.9 9.7 9C9.7 9.9 8.8 10.5 7.5 10.5C6.4 10.5 5.6 10.1 5.2 9.4" fill="none" stroke="#57965C" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <path d="M10.6 9.5H16L15.05 16H9.65Z" fill="url(#block)"/>
+</svg>

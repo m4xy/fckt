@@ -2,7 +2,6 @@ package uk.m4xy.fckt.intellij
 
 import com.intellij.extapi.psi.ASTWrapperPsiElement
 import com.intellij.extapi.psi.PsiFileBase
-import com.intellij.icons.AllIcons
 import com.intellij.lang.ASTNode
 import com.intellij.lang.Language
 import com.intellij.lang.ParserDefinition
@@ -28,7 +27,7 @@ class FcktFileType private constructor() : LanguageFileType(FcktLanguage) {
     override fun getName() = "fckt"
     override fun getDescription() = "fckt source"
     override fun getDefaultExtension() = "fk"
-    override fun getIcon(): Icon = AllIcons.FileTypes.Text
+    override fun getIcon(): Icon = FcktIcons.FILE
 
     companion object {
         @JvmField val INSTANCE = FcktFileType()
