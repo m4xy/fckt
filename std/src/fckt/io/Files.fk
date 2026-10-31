@@ -27,7 +27,8 @@ module Files {
   @FileSystem Path.listFiles(): List<Path> = orFail(tryListFiles(this))
   // Makes the folder, and those it's in, if they aren't there.
   @FileSystem Path.makeDirs(): Unit = orFail(tryMakeDirs(this))
-  // Deletes the file, or the folder and everything in it, if it's there.
+  // Deletes the file, or the folder and everything in it, if it's there: a link, not what it
+  // links to.
   @FileSystem Path.delete(): Unit = orFail(tryDelete(this))
   // Copies the file to target, a little at a time.
   @FileSystem Path.copyTo(target: Path): Unit = orFail(tryCopy(this, target))
@@ -111,7 +112,7 @@ module Files {
     private external mkdirs(path: String): Result<Unit, String> =
       "(let rec mk p = if not (Sys.file_exists p) then (let d = Filename.dirname p in if d <> p then mk d; (try Sys.mkdir p 0o755 with Sys_error _ when Sys.is_directory p -> ())) in fun p -> try Ok (mk p) with Sys_error e -> Error e) path"
     private external remove(path: String): Result<Unit, String> =
-      "(let rec rm p = if Sys.is_directory p then (Array.iter (fun n -> rm (Filename.concat p n)) (Sys.readdir p); Sys.rmdir p) else Sys.remove p in fun p -> try Ok (if Sys.file_exists p then rm p) with Sys_error e -> Error e) path"
+      "(let rec rm p = if (Unix.lstat p).Unix.st_kind = Unix.S_DIR then (Array.iter (fun n -> rm (Filename.concat p n)) (Sys.readdir p); Sys.rmdir p) else Sys.remove p in fun p -> try Ok (match Unix.lstat p with _ -> rm p | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()) with Sys_error e -> Error e | Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)) path"
     private external openIn(path: String): Result<InputHandle, String> =
       "(fun p -> try Ok (open_in_bin p) with Sys_error e -> Error e) path"
     private external openOut(path: String, append: Boolean): Result<OutputHandle, String> =
