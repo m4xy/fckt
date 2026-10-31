@@ -1,0 +1,68 @@
+import uk.m4xy.fktests.api.Test
+import fckt.collections.Maps.*
+import fckt.checker.Checker
+import fckt.checker.sources.*
+import fckt.checker.inference.*
+import fckt.compiler.Sources
+import fckt.io.FileSystem
+import fckt.io.Paths.*
+
+// What the checker notes of a program, as it checks it for a tool: what each name written means,
+// and what each call does.
+
+shapes = "module Shapes {\n  area(w: Int, h: Int): Int = w * h\n  @Beeping loud(): Unit = beep()\n}\n"
+
+beeping = "effect Beeping {\n  beep(): Unit\n}\n"
+
+// What's noted of main, with the core, from the fckt repository, and package a beside it, each as
+// file:line:column+length and what it is.
+@FileSystem noted(main: String): List<String> = {
+  core = Sources.core(path("..")).fold(emptyMap()) { m, entry ->
+    (pkg, files) = entry
+    m.put(pkg, files)
+  }
+  tree = SourceTree(
+    core.put(
+      ["a"],
+      [
+        SourceText(Some("a/Shapes.fk"), ProgramProject, shapes),
+        SourceText(Some("a/Beeping.fk"), ProgramProject, beeping),
+      ],
+    ),
+  )
+  (program, problems) = Checker.check(
+    SourceText(Some("main.fk"), ProgramProject, main),
+    tree,
+    false,
+    true,
+  )
+  assertEquals([], problems.map { it.message })
+  program.map { it.facts }.getOrElse([]).map { f ->
+    when (f) {
+      Means(file, at, length, symbol, _) ->
+        "${file.getOrElse("")}:${at.line}:${at.column}+$length means ${symbol.name}"
+      Does(file, at, row) ->
+        "${file.getOrElse("")}:${at.line}:${at.column} does ${row.labels.map { it.name }.joinToString(" ")}"
+    }
+  }
+}
+
+@Test @FileSystem aModulesFunctionIsNotedWhereItsNamed() = {
+  facts = noted("import a.Shapes\n\nsize(): Int = Shapes.area(2, 3)\n")
+  assertEquals(["main.fk:3:22+4 means a.Shapes.area"], facts.filter { it.startsWith("main.fk") })
+}
+
+@Test @FileSystem whatACallDoesIsNoted() = {
+  facts = noted(
+    "import a.Shapes\nimport a.Beeping\n\n@Beeping twice(): Unit = {\n  Shapes.loud()\n  Shapes.loud()\n}\n",
+  )
+  assertEquals(
+    [
+      "main.fk:5:10+4 means a.Shapes.loud",
+      "main.fk:5:14 does a.Beeping",
+      "main.fk:6:10+4 means a.Shapes.loud",
+      "main.fk:6:14 does a.Beeping",
+    ],
+    facts.filter { it.startsWith("main.fk") },
+  )
+}

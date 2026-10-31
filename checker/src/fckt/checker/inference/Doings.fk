@@ -11,9 +11,10 @@ module Doings {
   // which must have room for it. What's someone else's to say, as a parameter's effects, an E, are,
   // is added once the code is checked, as the rest of its own, so the code does what it does itself
   // and E, rather than E being made to hold all it does. Errors are in the file given.
-  @Solving @Abandoning doing<A>(row: Row, file: Option<String>, block: @Doing () -> A): A = {
+  @Solving @Abandoning @Noting doing<A>(row: Row, file: Option<String>, block: @Doing () -> A): A = {
     var included: List<(TypeVariable, Position)> = []
     result = Doing(perform = (performed, at) -> {
+      note(Does(file, at, performed))
       flat = flattened(performed)
       own = flattened(row).rest
       when (flat.rest) {

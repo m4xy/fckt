@@ -288,7 +288,7 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
 // The extension a method or property call is to: of those with its name, the one whose receiver's
 // type fits, or the most specific, as List<Int>.sum is over List<A>.sum. Of several as specific,
 // one's own come before what's imported, and the core's, which every file has, last.
-@Solving @Abandoning extensionFor(
+@Solving @Abandoning @Noting extensionFor(
   at: Position,
   name: String,
   receiver: Type,
@@ -307,7 +307,10 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
           own = tied.filter { s, _ -> s.file.source.project != fckt.checker.sources.CoreProject }
           chosen = if (own.isEmpty()) tied else own
           when (chosen) {
-            [(s, _)] -> Some(s)
+            [(s, _)] -> {
+              note(Means(context.place.file.source.path, at, name.length, s, None))
+              Some(s)
+            }
             else -> abandon(Globals.problem(context, at,
               "can't tell which '$name' this is: ${genericText(receiver)} fits " +
                 chosen.map { s, _ -> "${genericText(Globals.receiverType(s, context))}.$name" }.joinToString(" and ") + "; annotate its type"))

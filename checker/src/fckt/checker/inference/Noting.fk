@@ -1,0 +1,5 @@
+// What the checker finds as it goes, for tools that show it: what a name written in the code means,
+// and what a call does.
+effect Noting {
+  note(fact: Fact): Unit
+}

@@ -26,12 +26,15 @@ module Globals {
   }
 
   // The function or value, if the name means one.
-  @Abandoning findOrRefuse(
+  @Abandoning @Noting findOrRefuse(
     name: String,
     at: Position,
     context: Context,
   ): Option<Symbol> = when (find(name, context, Refusing)) {
-    Found(s) -> Some(s)
+    Found(s) -> {
+      note(Means(context.place.file.source.path, at, name.length, s, None))
+      Some(s)
+    }
     Refused(why) -> abandon(problem(context, at, why))
     NotFound -> None
   }

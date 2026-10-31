@@ -1,0 +1,13 @@
+import fckt.parser.Position
+import fckt.checker.symbols.Symbol
+import fckt.checker.types.Row
+import fckt.checker.types.Type
+
+// What the checker found, as Noting notes it.
+type Fact {
+  // The name written in file at, as long as length, is symbol; where it's read as a value, of
+  // type t.
+  Means(file: Option<String>, at: Position, length: Int, symbol: Symbol, t: Option<Type>),
+  // The call in file at does row.
+  Does(file: Option<String>, at: Position, row: Row),
+}

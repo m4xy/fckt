@@ -20,7 +20,7 @@ import fckt.parser.*
 
 // What's known after the group is checked, with each when in it checked for covering every value,
 // if coverage is wanted.
-@Solving @Abandoning checkGroup(
+@Solving @Abandoning @Noting checkGroup(
   group: FunctionGroup,
   environment: Environment,
   coverage: Boolean,

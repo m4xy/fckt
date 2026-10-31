@@ -304,7 +304,7 @@ dottedUnbound(e: Expression, scope: Scope): Option<String> = References.dotted(e
 }
 
 // Ratios.make: a function or value in a module, named through it.
-@Abandoning moduleMember(
+@Abandoning @Noting moduleMember(
   at: Position,
   target: Expression,
   name: String,
@@ -315,7 +315,10 @@ dottedUnbound(e: Expression, scope: Scope): Option<String> = References.dotted(e
     context.environment.functions.get("${Symbols.moduleName(m)}.$name").map { s ->
       when (Visibility.whyHidden(s, context.place, context.environment.definitions.namespace.table)) {
         Some(why) -> abandon(Globals.problem(context, at, why))
-        None -> s
+        None -> {
+          note(Means(context.place.file.source.path, at, name.length, s, None))
+          s
+        }
       }
     }
   }

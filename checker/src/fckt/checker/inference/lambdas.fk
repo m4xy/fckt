@@ -180,7 +180,7 @@ private matcherOf(p: Parameter): Matcher = if (p.name == "_") AnyMatcher else Na
   )
 
 // What block gives, checked as code that does the row.
-@Solving @Abandoning doingIn<A>(
+@Solving @Abandoning @Noting doingIn<A>(
   row: Row,
   context: Context,
   block: @Doing () -> A,

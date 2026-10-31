@@ -8,6 +8,7 @@ import fckt.checker.inference.CheckedFunction
 import fckt.checker.inference.DefaultHandler
 import fckt.checker.inference.FunctionGroup
 import fckt.checker.inference.Environment
+import fckt.checker.inference.Fact
 
 // A program, checked: the files it's checked with; the type of each of its functions and values,
 // and its code, in the order they're written; each handled effect's default handler, which main is
@@ -25,4 +26,6 @@ type CheckedProgram(
   effects: List<DeclaredEffect> = [],
   specs: List<DeclaredSpec> = [],
   environment: Option<Environment> = None,
+  // What each name written means and what each call does, if they were asked for.
+  facts: List<Fact> = [],
 )

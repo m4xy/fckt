@@ -7,6 +7,7 @@ import fckt.checker.functors.*
 import fckt.checker.metadata.*
 import fckt.checker.inference.*
 import fckt.checker.types.*
+import fckt.checker.types.Types.*
 
 // Checking a program: reading the files it uses, filling in what its declarations say, working out
 // what its names mean, then what type everything is, each stage from what the one before found. Each error is reported, and checking goes as far as it can.
@@ -27,13 +28,15 @@ module Checker {
 
   // The program, checked, as far as it can be, and every error found. With coverage, each when
   // must cover every value of its subject, as it must for a program to compile; tools that only
-  // want to know what names mean needn't ask.
+  // want to know what names mean needn't ask. With facts, what each name written means and what
+  // each call does are kept, for tools that show them.
   check(
     entry: SourceText,
     tree: SourceTree,
     coverage: Boolean,
+    facts: Boolean = false,
   ): (Option<CheckedProgram>, List<Diagnostic>) = {
-    (checked, errors) = checking(entry, tree, coverage)
+    (checked, errors) = checking(entry, tree, coverage, facts)
     (checked, Diagnostics.ordered(errors))
   }
 
@@ -41,6 +44,7 @@ module Checker {
     entry: SourceText,
     tree: SourceTree,
     coverage: Boolean,
+    facts: Boolean,
   ): (Option<CheckedProgram>, List<Diagnostic>) = Diagnostics.collecting {
     Solutions.solving {
       Diagnostics.recovering {
@@ -48,10 +52,13 @@ module Checker {
         namespace = Functors.applied(Resolution.namespace(workspace, tree))
         definitions = Definitions(namespace, Cases.all(namespace), Regions.regioned(namespace))
         // main is checked once nothing else is wrong.
-        (inferred, errors) = Diagnostics.collecting {
-          inferred = Inference.functionTypes(definitions, coverage)
-          Diagnostics.recovering { AnnotationChecks.checkAll(inferred) }
-          inferred
+        var noted: List<Fact> = []
+        (inferred, errors) = Noting(note = fact -> { if (facts) noted = [fact] + noted }) {
+          Diagnostics.collecting {
+            inferred = Inference.functionTypes(definitions, coverage)
+            Diagnostics.recovering { AnnotationChecks.checkAll(inferred) }
+            inferred
+          }
         }
         errors.forEach { report(it) }
         if (errors.isEmpty()) Inference.checkMain(inferred.environment, inferred.known) else Unit
@@ -61,7 +68,23 @@ module Checker {
           ), declaredSpecs(
             inferred.environment,
           ),
-          Some(inferred.environment))
+          Some(inferred.environment), settled(noted))
+      }
+    }
+  }
+
+  // What was noted, in the order it was, once, with its types as they were worked out to be; a
+  // call that does nothing isn't.
+  @Solving private settled(
+    noted: List<Fact>,
+  ): List<Fact> = noted.reversed().distinct().flatMap { fact ->
+    when (fact) {
+      Means(file, at, length, symbol, t) -> [
+        Means(file, at, length, symbol, t.map { resolvedFully(it) }),
+      ]
+      Does(file, at, row) -> {
+        done = resolvedRowFully(row)
+        if (done.labels.isEmpty()) [] else [Does(file, at, done)]
       }
     }
   }

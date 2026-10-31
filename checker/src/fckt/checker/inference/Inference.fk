@@ -14,7 +14,7 @@ module Inference {
   // Each function's and value's type, in the order they're written, and every error found. Where a
   // group can't be checked, its functions may be anything, so what uses them is checked without
   // more errors about them. With coverage, each when must cover every value of its subject.
-  @Solving @Reporting @Abandoning functionTypes(
+  @Solving @Reporting @Abandoning @Noting functionTypes(
     definitions: Definitions,
     coverage: Boolean,
   ): Inferred = {
