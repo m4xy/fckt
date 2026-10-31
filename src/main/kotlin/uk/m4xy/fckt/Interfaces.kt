@@ -25,12 +25,17 @@ import uk.m4xy.fckt.types.EFFECT_NAME
 internal object Interfaces {
     /**
      * [file]'s interface, with its imports, as its declarations' types name what they import. A spec
-     * is as [text] has it, with its defaults' code, as a module that follows it has that code.
+     * is as [text] has it, with its defaults' code, as a module that follows it has that code. An
+     * import of what's [hidden], the library's own declarations that aren't public, by their full
+     * names, or of what's in one, is left out, as what it names isn't in any interface.
      */
-    fun write(file: SourceFile, path: String, text: String): String {
+    fun write(file: SourceFile, path: String, text: String, hidden: Set<String> = emptySet()): String {
         source = text
         val out = StringBuilder("// The interface of $path, which fckt --library wrote: its declarations, without their code.\n")
-        val imports = file.imports[path].orEmpty()
+        val imports = file.imports[path].orEmpty().filter { i ->
+            val full = i.path.joinToString(".")
+            hidden.none { full == it || full.startsWith("$it.") }
+        }
         if (imports.isNotEmpty()) out.append('\n')
         for (i in imports) {
             out.append("import ").append(i.path.joinToString("."))

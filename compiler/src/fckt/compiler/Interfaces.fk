@@ -8,10 +8,16 @@ module Interfaces {
   // The file's interface, with its imports, as its declarations' types name what they import. A
   // spec is as the text has it, with its defaults' code, as a module that follows it has that code;
   // and a functor, as each module a program makes with it is a copy of it.
-  write(file: SourceFile, path: String, text: String): String = {
+  // An import of what's hidden, the library's own declarations that aren't public, by their full
+  // names, or of what's in one, is left out, as what it names isn't in any interface.
+  write(file: SourceFile, path: String, text: String, hidden: List<String> = []): String = {
     header = "// The interface of $path, which fckt --library wrote: " +
       "its declarations, without their code.\n"
-    imports = file.imports.map { i -> importLine(i) }.joinToString("")
+    shown = file.imports.filter { i ->
+      full = i.path.joinToString(".")
+      !hidden.any { full == it || full.startsWith("$it.") }
+    }
+    imports = shown.map { i -> importLine(i) }.joinToString("")
     declarations = seen(file.declarations).map { d -> "\n" + declaration(d, "", text) }
     header + (if (imports.isEmpty()) "" else "\n" + imports) + declarations.joinToString("")
   }
