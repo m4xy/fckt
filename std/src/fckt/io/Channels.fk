@@ -66,10 +66,12 @@ module Channels {
     private external inputLine(input: InputHandle): Option<String> = "In_channel.input_line input"
     private external inputBytes(input: InputHandle, count: Int): Bytes =
       "(fun c n -> if n < 0 then In_channel.input_all c else match In_channel.really_input_string c n with Some s -> s | None -> In_channel.input_all c) input count"
+    // What's written to standard error is written out then, as a program's errors are seen as
+    // they happen, though it keeps running, as println's are.
     private external outputBytes(
       output: OutputHandle,
       bytes: Bytes,
-    ): Unit = "Out_channel.output_string output bytes"
+    ): Unit = "(fun o b -> Out_channel.output_string o b; if o == stderr then Out_channel.flush o) output bytes"
     private external closeIn(input: InputHandle): Unit = "In_channel.close input"
     private external closeOut(output: OutputHandle): Unit = "Out_channel.close output"
     readLineFrom(input: InputHandle): Option<String> = inputLine(input)
