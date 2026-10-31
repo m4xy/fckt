@@ -17,6 +17,9 @@ import fckt.checker.inference.Doings
 import fckt.checker.inference.Context
 import fckt.checker.inference.Globals
 import fckt.checker.resolution.Place
+import fckt.checker.resolution.Lookups
+import fckt.checker.resolution.Strictness
+import fckt.checker.symbols.ModuleSymbol
 import fckt.checker.symbols.Signatures
 import fckt.checker.core.TypeDeclaration
 import fckt.checker.diagnostics.Diagnostics
@@ -219,7 +222,11 @@ module LanguageServer {
 
   // The project the file at uri is in, checked, and what's wrong with each of its files said: none,
   // for those it said something of before that are right now.
-  @FileSystem @Channel @Process private check(session: Session, uri: String): Unit = {
+  @FileSystem @Channel @Process private check(
+    session: Session,
+    uri: String,
+    publishing: Boolean = true,
+  ): Unit = {
     file = pathOf(uri)
     project = projectOf(file)
     folders = if (project.folders.any { file.value.startsWith(it.value + "/") }) project.folders
@@ -270,7 +277,13 @@ module LanguageServer {
     // What a check that couldn't read the code found is nothing; what the last that could did is
     // kept, for what's asked while the code's half written.
     if (checked.isNotEmpty()) {
-      session.facts = session.facts.put(project.root.value, byFile(checked.flatMap { it.facts }))
+      session.facts = session.facts.put(project.root.value, when (checked) {
+        // One program's are noted once each already.
+        [one] -> one.facts.fold(
+          emptyMap(),
+        ) { m, fact -> m.put(fileOf(fact), [fact] + m.getOrDefault(fileOf(fact), [])) }
+        else -> byFile(checked.flatMap { it.facts })
+      })
       session.programs = session.programs.put(project.root.value, checked)
     }
     else Unit
@@ -284,6 +297,16 @@ module LanguageServer {
       key = uriOf(d.file.getOrElse(""))
       m.put(key, m.getOrDefault(key, []) + [d])
     }
+    if (publishing) said(session, project, byFile) else Unit
+  }
+
+  // What's wrong with each file said, and that nothing is of those said to have something wrong
+  // before that don't now.
+  @FileSystem @Channel private said(
+    session: Session,
+    project: Project,
+    byFile: Map<String, List<Diagnostic>>,
+  ): Unit = {
     before = session.said.getOrDefault(project.root.value, [])
     before.filter { !byFile.containsKey(it) }.forEach { publish(it, []) }
     byFile.entries.forEach { key, diagnostics ->
@@ -370,6 +393,14 @@ module LanguageServer {
     }
   }
 
+  private fileOf(fact: Fact): String = when (fact) {
+    Means(f, _, _, _, _) -> f.getOrElse("")
+    Does(f, _, _) -> f.getOrElse("")
+    Gives(f, _, _) -> f.getOrElse("")
+    Binds(f, _, _, _, _, _) -> f.getOrElse("")
+    Reads(f, _, _, _, _, _) -> f.getOrElse("")
+  }
+
   // What's noted of each file, once each, as each of the programs it's in noted it.
   private byFile(facts: List<Fact>): Map<String, List<Fact>> = {
     (_, found) = facts.fold((emptyMap(), emptyMap())) { seen, fact ->
@@ -377,6 +408,7 @@ module LanguageServer {
       (file, key) = when (fact) {
         Means(f, at, _, symbol, _) -> (f.getOrElse(""), "m ${at.line} ${at.column} ${symbol.name}")
         Does(f, at, _) -> (f.getOrElse(""), "d ${at.line} ${at.column}")
+        Gives(f, at, _) -> (f.getOrElse(""), "g ${at.line} ${at.column}")
         Binds(f, at, _, name, _, _) -> (f.getOrElse(""), "b ${at.line} ${at.column} $name")
         Reads(f, at, _, name, _, _) -> (f.getOrElse(""), "r ${at.line} ${at.column} $name")
       }
@@ -418,9 +450,7 @@ module LanguageServer {
   @FileSystem private members(
     session: Session,
     uri: String,
-    line: Int,
-    column: Int,
-    name: String,
+    receiver: Type,
     typed: String,
   ): List<Json> = {
     file = pathOf(uri)
@@ -430,8 +460,8 @@ module LanguageServer {
         p.workspace.files.find { it.source.path == Some(file.value) }.map { loaded -> (p, environment, loaded) }.toList()
       }
     }.firstOrNone()
-    when ((receiverOf(session, file, line, column, name, programs), found)) {
-      (Some(receiver), Some((program, environment, loaded))) -> {
+    when (found) {
+      Some((program, environment, loaded)) -> {
         context = Context(environment, Place(loaded, []), emptyMap())
         fitting = Solutions.solving {
           environment.extensions.keys.filter { it.startsWith(typed) }.flatMap { n ->
@@ -935,36 +965,155 @@ module LanguageServer {
   // What the name being written at params' position could be, of the functions and values the
   // project last checked has: after Module., what that module declares; otherwise those whose
   // names start with what's written. Each with its type.
-  @FileSystem private completions(session: Session, uri: String, params: Json): List<Json> = {
-    position = params.field("position")
-    line = position.flatMap { it.field("line") }.flatMap { it.int }.getOrElse(0)
-    character = position.flatMap { it.field("character") }.flatMap { it.int }.getOrElse(0)
+  @FileSystem @Channel @Process private completions(
+    session: Session,
+    uri: String,
+    params: Json,
+  ): List<Json> = {
+    (line, character) = positionOf(params)
     file = pathOf(uri)
     text = session.open.get(uri).getOrElse(readOrEmpty(file))
-    before = text.split("\n").getOrNone(line).getOrElse("").take(character).toList()
-    isName = (c: Char) -> c.isLetterOrDigit() || c == '_'
-    prefix = before.reversed().takeWhile { isName(it) }.reversed()
+    written = text.split("\n").getOrNone(line).getOrElse("")
+    before = written.take(character).toList()
+    prefix = before.reversed().takeWhile { isNameChar(it) }.reversed()
     rest = before.dropLast(prefix.size)
-    owner = when (rest.lastOrNone()) {
-      Some('.') -> Some(rest.dropLast(1).reversed().takeWhile { isName(it) }.reversed())
+    typed = prefix.map { it.toString() }.joinToString("")
+    if (rest.lastOrNone() != Some('.')) declaredOrBound(session, uri, line, file, text, None, typed)
+    else {
+      dot = rest.size - 1
+      when (receiverIn(rest.dropLast(1))) {
+        ModuleNamed(name) -> declaredOrBound(session, uri, line, file, text, Some(name), typed)
+        NoReceiver -> []
+        receiver -> {
+          known = typeOfReceiver(session, file, line, receiver)
+          t = if (known.isSome()) known
+          else {
+            // What's before the dot hasn't been checked as it's written: it's checked now, without
+            // the dot, so the code can be read.
+            lines = text.split("\n")
+            trimmed = lines.mapIndexed { i, l -> if (i == line) written.take(dot) + written.drop(character) else l }
+            session.open = session.open.put(uri, trimmed.joinToString("\n"))
+            attempt { check(session, uri, false) }
+            session.open = session.open.put(uri, text)
+            typeOfReceiver(session, file, line, receiver)
+          }
+          t.map { members(session, uri, it, typed) }.getOrElse([])
+        }
+      }
+    }
+  }
+
+  private isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
+
+  // What's before a dot: a module, by its name; a local or value, by its name and column; or a
+  // call, an index or a member, at its ( or [ or its name; or nothing that has members.
+  private type Receiver {
+    ModuleNamed(name: String),
+    NameAt(name: String, column: Int),
+    ExpressionAt(column: Int),
+    // Brackets, open and close, around what's in them.
+    GroupAt(open: Int, close: Int),
+    NoReceiver,
+  }
+
+  private receiverIn(chars: List<Char>): Receiver = when (chars.lastOrNone()) {
+    Some(')') -> openerOf(chars, '(', ')').map { open ->
+      // A call's ( follows what's called; otherwise the brackets only group what's in them.
+      called = chars.take(open).reversed().dropWhile { it == ' ' }.firstOrNone().map { c ->
+        isNameChar(c) || c == ')' || c == ']' || c == '}' || c == '>'
+      }.getOrElse(false)
+      if (called) ExpressionAt(open) else GroupAt(open, chars.size - 1)
+    }.getOrElse(NoReceiver)
+    Some(']') -> openerOf(chars, '[', ']').map { ExpressionAt(it) }.getOrElse(NoReceiver)
+    Some('"') -> openingQuote(chars, chars.size - 2).map { ExpressionAt(it) }.getOrElse(NoReceiver)
+    Some('}') -> openerOf(chars, '{', '}').map { ExpressionAt(it) }.getOrElse(NoReceiver)
+    Some(c) if isNameChar(c) -> {
+      name = chars.reversed().takeWhile { isNameChar(it) }.reversed()
+      start = chars.size - name.size
+      text = name.map { it.toString() }.joinToString("")
+      if (chars.getOrNone(start - 1) == Some('.')) ExpressionAt(start)
+      else if (name.firstOrNone().map { it.isUpperCase() }.getOrElse(false)) ModuleNamed(text)
+      else NameAt(text, start)
+    }
+    _ -> NoReceiver
+  }
+
+  // Where the string that ends before i, its closing quote, opens.
+  private openingQuote(chars: List<Char>, i: Int): Option<Int> = when (chars.getOrNone(i)) {
+    None -> None
+    Some('"') -> if (chars.getOrNone(i - 1) == Some('\\')) openingQuote(chars, i - 1) else Some(i)
+    Some(_) -> openingQuote(chars, i - 1)
+  }
+
+  // Where the bracket that the one chars ends with closes opens, on the same line.
+  private openerOf(chars: List<Char>, open: Char, close: Char): Option<Int> =
+    openerFrom(chars, chars.size - 1, open, close, 0)
+
+  private openerFrom(chars: List<Char>, i: Int, open: Char, close: Char, depth: Int): Option<Int> =
+    when (chars.getOrNone(i)) {
+      None -> None
+      Some(c) if c == close -> openerFrom(chars, i - 1, open, close, depth + 1)
+      Some(c) if c == open -> if (depth == 1) Some(i) else openerFrom(
+        chars,
+        i - 1,
+        open,
+        close,
+        depth - 1,
+      )
+      Some(_) -> openerFrom(chars, i - 1, open, close, depth)
+    }
+
+  // The receiver's type, as the project was last checked.
+  @FileSystem private typeOfReceiver(
+    session: Session,
+    file: Path,
+    line: Int,
+    receiver: Receiver,
+  ): Option<Type> =
+    when (receiver) {
+      NameAt(name, column) -> receiverOf(
+        session,
+        file,
+        line,
+        column,
+        name,
+        session.programs.getOrDefault(projectOf(file).root.value, []),
+      )
+      ExpressionAt(column) -> factsIn(session, file).flatMap { f ->
+        when (f) {
+          Gives(_, at, t) if at.line == line + 1 && at.column == column + 1 -> [t]
+          else -> []
+        }
+      }.firstOrNone()
+      // What's in the brackets is what was noted last in them, as each is noted after what's in it.
+      GroupAt(open, close) -> factsIn(session, file).flatMap { f ->
+        when (f) {
+          Gives(
+            _,
+            at,
+            t,
+          ) if at.line == line + 1 && at.column > open + 1 && at.column < close + 1 -> [
+            t,
+          ]
+          else -> []
+        }
+      }.firstOrNone()
       _ -> None
     }
-    typed = prefix.map { it.toString() }.joinToString("")
-    ownerName = owner.map { o -> o.map { it.toString() }.joinToString("") }.getOrElse("")
-    // A value's members after value.; otherwise what's declared, bound, or importable.
-    isValue = ownerName.isNotEmpty() && !ownerName.toList().getOrNone(
-      0,
-    ).map { it.isUpperCase() }.getOrElse(false)
-    if (isValue) members(
-      session,
-      uri,
-      line,
-      character - prefix.size - 1 - ownerName.length,
-      ownerName,
-      typed,
-    )
-    else declaredOrBound(session, uri, line, file, text, owner, typed)
-  }
+
+  // The module name means where the file is: as its imports and package say.
+  @FileSystem private moduleOf(session: Session, file: Path, name: String): Option<String> =
+    session.programs.getOrDefault(projectOf(file).root.value, []).flatMap { p ->
+      p.workspace.files.find { it.source.path == Some(file.value) }.toList().flatMap { loaded ->
+        namespace = p.environment.map { it.definitions.namespace }
+        namespace.toList().flatMap { n ->
+          when (Lookups.found(Lookups.moduleNamed(name, Place(loaded, []), n, Skipping))) {
+            Some(DeclaredModule(m)) -> [m.name]
+            _ -> []
+          }
+        }
+      }
+    }.firstOrNone()
 
   @FileSystem private declaredOrBound(
     session: Session,
@@ -972,9 +1121,10 @@ module LanguageServer {
     line: Int,
     file: Path,
     text: String,
-    owner: Option<List<Char>>,
+    owner: Option<String>,
     typed: String,
   ): List<Json> = {
+    module = owner.flatMap { name -> moduleOf(session, file, name) }
     functions = session.programs.getOrDefault(
       projectOf(file).root.value,
       [],
@@ -982,7 +1132,10 @@ module LanguageServer {
     candidates = functions.filter { f ->
       name = f.function.declaration.name
       inOwner = when (owner) {
-        Some(o) -> f.function.path.lastOrNone() == Some(o.map { it.toString() }.joinToString(""))
+        Some(o) -> when (module) {
+          Some(m) -> f.function.path.joinToString(".") == m
+          None -> f.function.path.lastOrNone() == Some(o)
+        }
         None -> f.function.path.isEmpty() || f.function.file.source.path == Some(file.value)
       }
       sameFile = f.function.file.source.path == Some(file.value)

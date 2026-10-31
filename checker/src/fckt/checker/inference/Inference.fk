@@ -34,6 +34,8 @@ module Inference {
     var digests: Map<String, String> = emptyMap()
     var texts: Map<String, String> = emptyMap()
     var remembered: Map<String, Remembered> = emptyMap()
+    // What's noted of each group, settled, the last first.
+    var facts: List<List<Fact>> = []
     digestOf = (file: String, text: String) -> when (digests.get(file)) {
       Some(d) -> d
       None -> {
@@ -63,7 +65,7 @@ module Inference {
       }
       when (still) {
         Some(r) -> {
-          r.facts.forEach { note(it) }
+          facts = [r.facts] + facts
           remembered = remembered.put(key, r)
           k.copy(
             schemes = putAll(k.schemes, r.schemes),
@@ -78,7 +80,7 @@ module Inference {
             Diagnostics.attempting { checkGroup(group, checking, coverage) }
           }
           found = Facts.settled(noted)
-          found.forEach { note(it) }
+          facts = [found] + facts
           when (outcome) {
             Ok(checked) -> {
               if (earlier.isSome()) remembered = remembering(
@@ -109,6 +111,7 @@ module Inference {
       metaTypes,
       groups,
       earlier.map { _ -> Reuse(shape, remembered, highestIn(remembered)) },
+      facts.reversed().flatMap { it },
     )
   }
 

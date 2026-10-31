@@ -12,6 +12,8 @@ type Fact {
   Does(file: Option<String>, at: Position, row: Row),
   // The local name bound in file at, as long as length, of type t, whether it's written there.
   Binds(file: Option<String>, at: Position, length: Int, name: String, t: Type, written: Boolean),
+  // The call or member in file at, its ( or [ or its member's name, gives a t.
+  Gives(file: Option<String>, at: Position, t: Type),
   // The local name read or changed in file at, as long as length: the one bound at bound, of
   // type t.
   Reads(file: Option<String>, at: Position, length: Int, name: String, bound: Position, t: Type),

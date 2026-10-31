@@ -19,6 +19,20 @@ import fckt.parser.*
     core = Pending(kindOf(e)),
   ) else inner
   when (e) {
+    Call(at, _, _, _) -> note(Gives(context.place.file.source.path, at, typed.t))
+    Member(at, _, _) -> note(Gives(context.place.file.source.path, at, typed.t))
+    Binary(at, _, _, _) -> note(Gives(context.place.file.source.path, at, typed.t))
+    Unary(at, _, _) -> note(Gives(context.place.file.source.path, at, typed.t))
+    ListOf(at, _) -> note(Gives(context.place.file.source.path, at, typed.t))
+    StringTemplate(at, _) -> note(Gives(context.place.file.source.path, at, typed.t))
+    Tuple(at, _) -> note(Gives(context.place.file.source.path, at, typed.t))
+    // A method given a block, path.reading { ... }: at the block.
+    Handle(_, _, block, _) -> note(
+      Gives(context.place.file.source.path, Positions.of(block), typed.t),
+    )
+    else -> Unit
+  }
+  when (e) {
     // A call that gives Nothing never returns, so it fits wherever it is.
     Call(_, _, _, _) if isNamed(resolved(typed.t), "Nothing") -> Typed(
       Variable(fresh()),

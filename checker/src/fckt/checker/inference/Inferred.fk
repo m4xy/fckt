@@ -11,4 +11,6 @@ type Inferred(
   metaTypes: Map<String, List<MetaType>>,
   groups: List<FunctionGroup> = [],
   reuse: Option<Reuse> = None,
+  // What was noted of its groups, settled, in the order they were checked.
+  facts: List<Fact> = [],
 )

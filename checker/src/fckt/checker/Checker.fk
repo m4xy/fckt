@@ -72,7 +72,7 @@ module Checker {
           ), declaredSpecs(
             inferred.environment,
           ),
-          Some(inferred.environment), Facts.settled(noted), inferred.reuse)
+          Some(inferred.environment), inferred.facts + Facts.settled(noted), inferred.reuse)
       }
     }
   }
