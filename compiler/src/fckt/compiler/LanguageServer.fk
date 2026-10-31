@@ -39,13 +39,14 @@ module LanguageServer {
     var stopping: Boolean,
     var changed: List<String>,
     var reuses: Map<String, Reuse>,
+    var facts: Map<String, Map<String, List<Fact>>>,
   )
 
   // A project: the folders of its own packages, and the libraries' interfaces.
   private type Project(root: Path, folders: List<Path>, libraries: List<Path>)
 
   @FileSystem @Channel @Process serve(): Unit = served(
-    Session(emptyMap(), emptyMap(), emptyMap(), false, [], emptyMap()),
+    Session(emptyMap(), emptyMap(), emptyMap(), false, [], emptyMap(), emptyMap()),
   )
 
   @FileSystem @Channel @Process private served(session: Session): Unit = when (received()) {
@@ -188,24 +189,35 @@ module LanguageServer {
       interfacesIn(it)
     }
     std = if (libraries.isEmpty()) standard(home()) else []
-    imported = own.filter { pkg, sources -> pkg.isNotEmpty() && sources.isNotEmpty() }.map { pkg, _ ->
-      "import ${pkg.joinToString(".")}.*\n"
-    }.distinct()
     tree = SourceTree(merged(core(home()) + std + own + libraries))
-    // A file with main is a program of its own, checked from it; the rest, from what imports them.
+    // A file with main is a program of its own, checked from it; the packages none of them reaches,
+    // from what imports them.
     mains = own.filter { pkg, _ -> pkg.isEmpty() }.flatMap { _, sources -> sources }.filter {
       declaresMain(it.text)
     }
-    entries = [SourceText(None, ProgramProject, imported.joinToString(""))] + mains
-    // What checking each before found, so what hasn't changed since isn't checked again.
-    results = entries.map { entry ->
-      key = "${project.root.value} ${entry.path.getOrElse("")}"
-      earlier = session.reuses.get(key).getOrElse(Reuse("", emptyMap(), 0))
-      (program, problems) = Checker.check(entry, tree, true, true, Some(earlier))
-      program.flatMap { it.reuse }.forEach { r -> session.reuses = session.reuses.put(key, r) }
-      (program, problems)
+    fromMains = mains.map { checkedFrom(session, project, tree, it) }
+    reached = fromMains.flatMap { program, _ ->
+      program.toList().flatMap { p -> p.workspace.files.mapNotNull { it.source.path } }
+    }.fold(emptyMap()) { m, path -> m.put(path, true) }
+    unreached = own.filter { pkg, sources ->
+      pkg.isNotEmpty() && sources.any { s -> !reached.containsKey(s.path.getOrElse("")) }
     }
+    imported = unreached.map { pkg, _ -> "import ${pkg.joinToString(".")}.*\n" }.distinct()
+    allReached = fromMains.isNotEmpty() && fromMains.all { program, _ -> program.isSome() }
+    rest = if (allReached && imported.isEmpty()) []
+    else [
+      checkedFrom(
+        session,
+        project,
+        tree,
+        SourceText(None, ProgramProject, imported.joinToString("")),
+      ),
+    ]
+    results = fromMains + rest
     problems = results.flatMap { _, found -> found }.distinct()
+    session.facts = session.facts.put(project.root.value, byFile(results.flatMap { program, _ ->
+      program.toList().flatMap { it.facts }
+    }))
     session.programs = session.programs.put(
       project.root.value,
       results.flatMap { program, _ -> program.toList() },
@@ -222,6 +234,21 @@ module LanguageServer {
       publish(key, diagnostics.map { shown(it, text) })
     }
     session.said = session.said.put(project.root.value, byFile.keys)
+  }
+
+  // The program checked from entry, with what checking it before found, so what hasn't changed
+  // since isn't checked again.
+  @Mutating private checkedFrom(
+    session: Session,
+    project: Project,
+    tree: SourceTree,
+    entry: SourceText,
+  ): (Option<CheckedProgram>, List<Diagnostic>) = {
+    key = "${project.root.value} ${entry.path.getOrElse("")}"
+    earlier = session.reuses.get(key).getOrElse(Reuse("", emptyMap(), 0))
+    (program, problems) = Checker.check(entry, tree, true, true, Some(earlier))
+    program.flatMap { it.reuse }.forEach { r -> session.reuses = session.reuses.put(key, r) }
+    (program, problems)
   }
 
   private declaresMain(text: String): Boolean = when (Parser.parse(text)) {
@@ -255,9 +282,28 @@ module LanguageServer {
     }
   }
 
-  // What's noted of what the project the file is in was last checked as, once each.
+  // What's noted of each file, once each, as each of the programs it's in noted it.
+  private byFile(facts: List<Fact>): Map<String, List<Fact>> = {
+    (_, found) = facts.fold((emptyMap(), emptyMap())) { seen, fact ->
+      (keys, files) = seen
+      (file, key) = when (fact) {
+        Means(f, at, _, symbol, _) -> (f.getOrElse(""), "m ${at.line} ${at.column} ${symbol.name}")
+        Does(f, at, _) -> (f.getOrElse(""), "d ${at.line} ${at.column}")
+      }
+      whole = "$file $key"
+      if (keys.containsKey(whole)) seen
+      else (keys.put(whole, true), files.put(file, [fact] + files.getOrDefault(file, [])))
+    }
+    found
+  }
+
+  // What's noted of the file, as the project it's in was last checked.
+  @FileSystem private factsIn(session: Session, file: Path): List<Fact> =
+    session.facts.getOrDefault(projectOf(file).root.value, emptyMap()).getOrDefault(file.value, [])
+
+  // What's noted of every file of the project the file is in.
   @FileSystem private factsOf(session: Session, file: Path): List<Fact> =
-    session.programs.getOrDefault(projectOf(file).root.value, []).flatMap { it.facts }.distinct()
+    session.facts.getOrDefault(projectOf(file).root.value, emptyMap()).values.flatMap { it }
 
   // The zero-based line and character params says.
   private positionOf(params: Json): (Int, Int) = {
@@ -282,7 +328,7 @@ module LanguageServer {
   @FileSystem private meansAt(session: Session, uri: String, params: Json): Option<Meaning> = {
     (line, character) = positionOf(params)
     file = pathOf(uri).value
-    factsOf(session, pathOf(uri)).flatMap { f ->
+    factsIn(session, pathOf(uri)).flatMap { f ->
       when (f) {
         Means(in, at, length, symbol, t) ->
           if (in == Some(file) && at.line == line + 1 && character + 1 >= at.column && character + 1 <= at.column + length)
@@ -313,7 +359,7 @@ module LanguageServer {
       t = m.t.map { Solutions.solving { TypeText.shown(it) } }.orElse {
         checkedOf(session, uri, m.symbol).map { typeOf(it) }
       }
-      does = factsOf(session, pathOf(uri)).flatMap { f ->
+      does = factsIn(session, pathOf(uri)).flatMap { f ->
         when (f) {
           Does(
             Some(in),
