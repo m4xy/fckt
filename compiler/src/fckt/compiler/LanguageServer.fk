@@ -300,8 +300,10 @@ module LanguageServer {
   }
 
   // check, which, if it can't be done, as the core can't be found, is let be, and said.
+  // A library's interface isn't checked: it's in no project, and its library was checked already.
   @FileSystem @Channel @Process private checked(session: Session, uri: String): Unit =
-    when (attempt { check(session, uri) }) {
+    if (uri.endsWith(".fki")) Unit
+    else when (attempt { check(session, uri) }) {
       Ok(_) -> Unit
       Error(why) -> printError("fckt: can't check $uri: $why")
     }
@@ -886,7 +888,8 @@ module LanguageServer {
       (line, column, length, kind, modifiers) = token
       moved(line).toList().map { now -> (now, column, length, kind, modifiers) }
     }
-    declared = when (Parser.parse(text)) {
+    declared = if (file.value.endsWith(".fki")) interfaceTokens(text, lines)
+    else when (Parser.parse(text)) {
       Ok(parsed) -> declarationTokens(parsed.declarations, lines)
       Error(_) -> []
     }
@@ -909,6 +912,76 @@ module LanguageServer {
       (line, column, [[line - lastLine, start, length, kind, modifiers]] + out)
     }
     encoded.reversed().flatMap { it }
+  }
+
+  // A library's interface's names, as its text alone says them, as nothing checks it: what it
+  // declares, its functions' parameters, and the types its declarations are written with, the
+  // language's own, type parameters, and the rest declared ones.
+  private interfaceTokens(text: String, lines: List<String>): List<(Int, Int, Int, Int, Int)> =
+    when (Parser.parseInterface(text)) {
+      Ok(parsed) -> declarationTokens(parsed.declarations, lines) + writtenTypesIn(
+        parsed.declarations,
+        [],
+      )
+      Error(_) -> []
+    }
+
+  private builtinTypes: List<String> = [
+    "Int", "Float", "String", "Char", "Boolean", "Unit", "Nothing", "Byte", "List", "Map", "Option",
+    "Result", "Lazy", "Array",
+  ]
+
+  private writtenTypesIn(
+    declarations: List<Declaration>,
+    outer: List<String>,
+  ): List<(Int, Int, Int, Int, Int)> =
+    declarations.flatMap { d ->
+      when (d.definition) {
+        FunctionDefinition(typeParameters, receiver, parameters, result, _, _, _) -> {
+          own = outer + typeParameters
+          receiver.toList().flatMap { typeTokens(it, own) } + parameters.getOrElse([]).flatMap { p ->
+            [
+              (p.at.line - 1, p.at.column - 1, p.name.length, 6, 1),
+            ] + p.parameterType.toList().flatMap { typeTokens(it, own) }
+          } + result.toList().flatMap { typeTokens(it, own) }
+        }
+        RecordDefinition(typeParameters, fields, _, _, _) -> fields.flatMap { typeTokens(it.fieldType, outer + typeParameters) }
+        CasesDefinition(typeParameters, cases, _, _) ->
+          cases.flatMap { c -> c.fields.flatMap { typeTokens(it.fieldType, outer + typeParameters) } }
+        AliasDefinition(typeParameters, target) -> typeTokens(target, outer + typeParameters)
+        SpecDefinition(_, values, typeParameters, _, _) -> values.flatMap { v ->
+          own = outer + typeParameters + v.typeParameters
+          [(v.at.line - 1, v.at.column - 1, v.name.length, 10, 1)] + v.parameters.getOrElse(
+            [],
+          ).flatMap { p ->
+            [
+              (p.at.line - 1, p.at.column - 1, p.name.length, 6, 1),
+            ] + p.parameterType.toList().flatMap { typeTokens(it, own) }
+          } + typeTokens(v.valueType, own)
+        }
+        ModuleDefinition(inner, _, _, _, typeParameters) -> writtenTypesIn(
+          inner,
+          outer + typeParameters,
+        )
+        _ -> []
+      }
+    }
+
+  private typeTokens(
+    t: TypeRef,
+    parameters: List<String>,
+  ): List<(Int, Int, Int, Int, Int)> = when (t) {
+    NamedType(at, name, arguments) -> {
+      own = name.split(".").lastOrNone().getOrElse(name)
+      kind = if (parameters.contains(name)) 5 else if (builtinTypes.contains(own)) 2 else 4
+      [
+        (at.line - 1, at.column - 1 + name.length - own.length, own.length, kind, 0),
+      ] + arguments.flatMap { typeTokens(it, parameters) }
+    }
+    FunctionType(_, ps, result, _) -> ps.flatMap { typeTokens(it, parameters) } + typeTokens(result, parameters)
+    TupleType(_, elements) -> elements.flatMap { typeTokens(it, parameters) }
+    GivenType(_, _, given) -> typeTokens(given, parameters)
+    _ -> []
   }
 
   // Where each line of before is in after, from 0: those before the first that changed, and those

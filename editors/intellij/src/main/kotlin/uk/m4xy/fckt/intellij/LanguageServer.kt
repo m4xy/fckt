@@ -26,12 +26,13 @@ import java.io.File
  */
 class FcktLspServerSupportProvider : LspServerSupportProvider {
     override fun fileOpened(project: Project, file: VirtualFile, serverStarter: LspServerSupportProvider.LspServerStarter) {
-        if (file.extension == "fk") serverStarter.ensureServerStarted(FcktLspServerDescriptor(project))
+        if (file.extension == "fk" || file.extension == "fki") serverStarter.ensureServerStarted(FcktLspServerDescriptor(project))
     }
 }
 
 private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDescriptor(project, "fckt") {
-    override fun isSupportedFile(file: VirtualFile) = file.extension == "fk"
+    // A library's interface too, which the server colours as its text says.
+    override fun isSupportedFile(file: VirtualFile) = file.extension == "fk" || file.extension == "fki"
 
     override val lsp4jServerClass: Class<out LanguageServer> = FcktLanguageServer::class.java
 
