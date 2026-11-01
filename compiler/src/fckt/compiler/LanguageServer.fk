@@ -325,8 +325,9 @@ module LanguageServer {
     libraries = project.libraries.filter { it.resolve("unit").exists() }.flatMap {
       interfacesIn(it)
     }
-    std = if (libraries.isEmpty()) standard(home()) else []
-    tree = SourceTree(merged(core(home()) + std + own + libraries).mapValues { _, sources ->
+    fckt = home()
+    std = if (libraries.isEmpty()) whereTheyAre(standard(fckt), fckt) else []
+    tree = SourceTree(merged(whereTheyAre(core(fckt), fckt) + std + own + libraries).mapValues { _, sources ->
       sources.map { withParsed(session, it) }
     })
     session.checkedTexts = tree.packages.values.flatMap { it }.filter { it.project == ProgramProject }.fold(session.checkedTexts) { m, source ->
@@ -410,6 +411,24 @@ module LanguageServer {
     }
     session.said = session.said.put(project.root.value, byFile.keys)
   }
+
+  // The core's and the standard library's files, named where they are, as the compiler names them
+  // otherwise, core:fckt/lang/Lists.fk and std/src/...: so an editor can go to them.
+  @FileSystem private whereTheyAre(
+    packages: List<(List<String>, List<SourceText>)>,
+    home: Path,
+  ): List<(List<String>, List<SourceText>)> = packages.map { pkg, sources ->
+    (pkg, sources.map { source -> source.copy(path = source.path.map { p -> realPath(p, home) }) })
+  }
+
+  @FileSystem private realPath(written: String, home: Path): String =
+    if (written.startsWith("core:")) {
+      installed = home.resolve("core")
+      folder = if (installed.isDirectory()) installed else home.resolve("src/main/resources/std")
+      folder.resolve(written.removePrefix("core:")).canonical().value
+    }
+    else if (written.startsWith("/")) written
+    else home.resolve(written).canonical().value
 
   // The source, read: as it was when its text was last the same, or now; or, if it can't be read
   // as it is, as it last could be, with why it can't be kept for saying.
