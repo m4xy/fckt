@@ -6764,6 +6764,7 @@ module Fckt = struct
         | Means of { file : string option; at : Parser.position; length : int; symbol : Symbols.symbol; t : Types.type_ option }
         | Does of { file : string option; at : Parser.position; row : Types.row }
         | Binds of { file : string option; at : Parser.position; length : int; name : string; t : Types.type_; written : bool; parameter : bool }
+        | BuiltinCaseName of { file : string option; at : Parser.position; length : int }
         | TypeName of { file : string option; at : Parser.position; length : int; builtin : bool }
         | Gives of { file : string option; at : Parser.position; t : Types.type_ }
         | Reads of { file : string option; at : Parser.position; length : int; name : string; bound : Parser.position; t : Types.type_ }
@@ -6773,6 +6774,7 @@ module Fckt = struct
         | Means r -> "Means(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", symbol=" ^ Symbols.show_symbol r.symbol ^ ", t=" ^ fk_show_option Types.show_type r.t ^ ")"
         | Does r -> "Does(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", row=" ^ Types.show_row r.row ^ ")"
         | Binds r -> "Binds(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", name=" ^ Fun.id r.name ^ ", t=" ^ Types.show_type r.t ^ ", written=" ^ string_of_bool r.written ^ ", parameter=" ^ string_of_bool r.parameter ^ ")"
+        | BuiltinCaseName r -> "BuiltinCaseName(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ")"
         | TypeName r -> "TypeName(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", builtin=" ^ string_of_bool r.builtin ^ ")"
         | Gives r -> "Gives(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", t=" ^ Types.show_type r.t ^ ")"
         | Reads r -> "Reads(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", name=" ^ Fun.id r.name ^ ", bound=" ^ Parser.show_position r.bound ^ ", t=" ^ Types.show_type r.t ^ ")"
@@ -8361,7 +8363,7 @@ module Fckt = struct
            | Core.CaseConstructor { c = c } -> Effect.perform (Noting_note (let fk_arg1 = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name in
                  let fk_arg2 = Symbols.Symbols.of_case c in
                  (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = fk_arg1; symbol = fk_arg2; t = None } : fact)))
-           | Core.BuiltinCase { name = _ } -> ()) found;
+           | Core.BuiltinCase { name = _ } -> Effect.perform (Noting_note (BuiltinCaseName { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name } : fact))) found;
         found
 
       let spelled_case (shape : constructor_shape) : Symbols.case_symbol option =
@@ -8705,7 +8707,7 @@ module Fckt = struct
                let fk_arg2 = Symbols.Symbols.of_case c in
                (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = fk_arg1; symbol = fk_arg2; t = None } : fact)))
          | Core.RecordConstructor { record = record } -> Effect.perform (Noting_note (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; symbol = record; t = None } : fact))
-         | Core.BuiltinCase { name = _ } -> ());
+         | Core.BuiltinCase { name = _ } -> Effect.perform (Noting_note (BuiltinCaseName { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name } : fact)));
         shape
 
       let subject_case (at : Parser.position) (name : string) (qualifier : string option) (st : Symbols.symbol) (type_arguments : Types.type_ list) (region : Types.type_ option) (context : context) : constructor_shape =
@@ -10449,6 +10451,7 @@ module Fckt = struct
           | Means { file = file; at = at; length = _; symbol = symbol; t = _ } -> "m " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ (symbol : Symbols.symbol).Symbols.name
           | Does { file = file; at = at; row = _ } -> "d " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
           | Gives { file = file; at = at; t = _ } -> "g " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
+          | BuiltinCaseName { file = file; at = at; length = _ } -> "c " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
           | TypeName { file = file; at = at; length = _; builtin = _ } -> "t " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
           | Binds { file = file; at = at; length = _; name = name; t = _; written = _; parameter = _ } -> "b " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name
           | Reads { file = file; at = at; length = _; name = name; bound = _; t = _ } -> "r " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name
@@ -10464,6 +10467,7 @@ module Fckt = struct
                  if List.is_empty (done_ : Types.row).Types.labels then [] else [(Does { file = file; at = at; row = done_ } : fact)]
              | Gives { file = file; at = at; t = t } -> [(Gives { file = file; at = at; t = Types.Types.resolved_fully t } : fact)]
              | TypeName { file = file; at = at; length = length; builtin = builtin } -> [(TypeName { file = file; at = at; length = length; builtin = builtin } : fact)]
+             | BuiltinCaseName { file = file; at = at; length = length } -> [(BuiltinCaseName { file = file; at = at; length = length } : fact)]
              | Binds { file = file; at = at; length = length; name = name; t = t; written = written; parameter = parameter } -> [(Binds { file = file; at = at; length = length; name = name; t = Types.Types.resolved_fully t; written = written; parameter = parameter } : fact)]
              | Reads { file = file; at = at; length = length; name = name; bound = bound; t = t } -> [(Reads { file = file; at = at; length = length; name = name; bound = bound; t = Types.Types.resolved_fully t } : fact)]) kept
       end
@@ -14059,6 +14063,7 @@ module Fckt = struct
              | Checker.Inference.Binds { file = _; at = at; length = length; name = _; t = _; written = _; parameter = parameter } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if parameter then 6 else 7), 1)]
              | Checker.Inference.Reads { file = _; at = at; length = length; name = _; bound = bound; t = _ } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, local bound, 0)]
              | Checker.Inference.TypeName { file = _; at = at; length = length; builtin = builtin } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if builtin then 2 else 5), 0)]
+             | Checker.Inference.BuiltinCaseName { file = _; at = at; length = length } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, 9, 0)]
              | _ -> []) facts in
         let used_now = List.concat_map (fun token -> let (line, column, length, kind, modifiers) = token in
              List.map (fun now -> (now, column, length, kind, modifiers)) (Option.to_list (moved line))) used in
@@ -14136,6 +14141,7 @@ module Fckt = struct
         | Checker.Inference.Does { file = f; at = _; row = _ } -> Option.value f ~default:""
         | Checker.Inference.Gives { file = f; at = _; t = _ } -> Option.value f ~default:""
         | Checker.Inference.TypeName { file = f; at = _; length = _; builtin = _ } -> Option.value f ~default:""
+        | Checker.Inference.BuiltinCaseName { file = f; at = _; length = _ } -> Option.value f ~default:""
         | Checker.Inference.Binds { file = f; at = _; length = _; name = _; t = _; written = _; parameter = _ } -> Option.value f ~default:""
         | Checker.Inference.Reads { file = f; at = _; length = _; name = _; bound = _; t = _ } -> Option.value f ~default:""
 
@@ -14146,6 +14152,7 @@ module Fckt = struct
                | Checker.Inference.Does { file = f; at = at; row = _ } -> (Option.value f ~default:"", "d " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
                | Checker.Inference.Gives { file = f; at = at; t = _ } -> (Option.value f ~default:"", "g " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
                | Checker.Inference.TypeName { file = f; at = at; length = _; builtin = _ } -> (Option.value f ~default:"", "t " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
+               | Checker.Inference.BuiltinCaseName { file = f; at = at; length = _ } -> (Option.value f ~default:"", "c " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
                | Checker.Inference.Binds { file = f; at = at; length = _; name = name; t = _; written = _; parameter = _ } -> (Option.value f ~default:"", "b " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name)
                | Checker.Inference.Reads { file = f; at = at; length = _; name = name; bound = _; t = _ } -> (Option.value f ~default:"", "r " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name) in
              let whole = file ^ " " ^ key in
