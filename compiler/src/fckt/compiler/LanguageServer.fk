@@ -233,9 +233,12 @@ module LanguageServer {
         ).flatMap { it.field("diagnostics") }.map { it.items }.getOrElse([])
         said.flatMap { d -> fixes(session, u, d) }
       }.getOrElse([])))
-      "textDocument/semanticTokens/full" -> answer(id, JsonObject([
-        ("data", JsonArray(uri.map { u -> tokensOf(session, u) }.getOrElse([]).map { number(it) })),
-      ]))
+      "textDocument/semanticTokens/full" -> {
+        uri.forEach { u -> checkedAsItIs(session, u) }
+        answer(id, JsonObject([
+          ("data", JsonArray(uri.map { u -> tokensOf(session, u) }.getOrElse([]).map { number(it) })),
+        ]))
+      }
       // What implements the spec or spec's value at the position.
       "textDocument/implementation" -> answer(id, JsonArray(uri.map { u ->
         (line, character) = positionOf(params)
@@ -267,10 +270,10 @@ module LanguageServer {
         id,
         uri.flatMap { u -> signatureHelp(session, u, params) }.getOrElse(JsonNull),
       )
-      "textDocument/inlayHint" -> answer(
-        id,
-        JsonArray(uri.map { u -> hints(session, u) }.getOrElse([])),
-      )
+      "textDocument/inlayHint" -> {
+        uri.forEach { u -> checkedAsItIs(session, u) }
+        answer(id, JsonArray(uri.map { u -> hints(session, u) }.getOrElse([])))
+      }
       "textDocument/completion" -> answer(
         id,
         JsonArray(uri.map { u -> completions(session, u, params) }.getOrElse([])),
@@ -300,6 +303,19 @@ module LanguageServer {
   }
 
   // check, which, if it can't be done, as the core can't be found, is let be, and said.
+  // The file's project checked now, if the file's changed since it last was: so what's said of it,
+  // its colours and hints, is of it as it is, rather than as it was, or not yet.
+  @FileSystem @Channel @Process private checkedAsItIs(session: Session, uri: String): Unit = {
+    file = pathOf(uri).value
+    text = session.open.get(uri).getOrElse(readOrEmpty(pathOf(uri)))
+    if (session.checkedTexts.get(file) != Some(text) && !uri.endsWith(".fki")) {
+      root = projectOf(pathOf(uri)).root.value
+      session.changed = session.changed.filter { u -> projectOf(pathOf(u)).root.value != root }
+      checked(session, uri)
+    }
+    else Unit
+  }
+
   // A library's interface isn't checked: it's in no project, and its library was checked already.
   @FileSystem @Channel @Process private checked(session: Session, uri: String): Unit =
     if (uri.endsWith(".fki")) Unit
