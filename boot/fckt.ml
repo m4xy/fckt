@@ -6763,7 +6763,8 @@ module Fckt = struct
       type fact =
         | Means of { file : string option; at : Parser.position; length : int; symbol : Symbols.symbol; t : Types.type_ option }
         | Does of { file : string option; at : Parser.position; row : Types.row }
-        | Binds of { file : string option; at : Parser.position; length : int; name : string; t : Types.type_; written : bool }
+        | Binds of { file : string option; at : Parser.position; length : int; name : string; t : Types.type_; written : bool; parameter : bool }
+        | TypeName of { file : string option; at : Parser.position; length : int; builtin : bool }
         | Gives of { file : string option; at : Parser.position; t : Types.type_ }
         | Reads of { file : string option; at : Parser.position; length : int; name : string; bound : Parser.position; t : Types.type_ }
 
@@ -6771,7 +6772,8 @@ module Fckt = struct
         match v with
         | Means r -> "Means(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", symbol=" ^ Symbols.show_symbol r.symbol ^ ", t=" ^ fk_show_option Types.show_type r.t ^ ")"
         | Does r -> "Does(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", row=" ^ Types.show_row r.row ^ ")"
-        | Binds r -> "Binds(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", name=" ^ Fun.id r.name ^ ", t=" ^ Types.show_type r.t ^ ", written=" ^ string_of_bool r.written ^ ")"
+        | Binds r -> "Binds(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", name=" ^ Fun.id r.name ^ ", t=" ^ Types.show_type r.t ^ ", written=" ^ string_of_bool r.written ^ ", parameter=" ^ string_of_bool r.parameter ^ ")"
+        | TypeName r -> "TypeName(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", builtin=" ^ string_of_bool r.builtin ^ ")"
         | Gives r -> "Gives(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", t=" ^ Types.show_type r.t ^ ")"
         | Reads r -> "Reads(" ^ "file=" ^ fk_show_option Fun.id r.file ^ ", at=" ^ Parser.show_position r.at ^ ", length=" ^ string_of_int r.length ^ ", name=" ^ Fun.id r.name ^ ", bound=" ^ Parser.show_position r.bound ^ ", t=" ^ Types.show_type r.t ^ ")"
 
@@ -7760,8 +7762,8 @@ module Fckt = struct
       end
 
       module Bindings = struct
-        let bound (scope : scope) (name : string) (local : local) (at : Parser.position) (written : bool) (context : context) : scope =
-          Effect.perform (Noting_note (Binds { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; name = name; t = (local : local).t; written = written } : fact));
+        let bound (scope : scope) (name : string) (local : local) (at : Parser.position) (written : bool) (parameter : bool) (context : context) : scope =
+          Effect.perform (Noting_note (Binds { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; name = name; t = (local : local).t; written = written; parameter = parameter } : fact));
           Scopes.bind scope name { (local : local) with at = Some at }
 
         let read (name : string) (local : local) (at : Parser.position) (context : context) : unit =
@@ -8966,7 +8968,7 @@ module Fckt = struct
                    let fk_arg3 = local_default_at () in
                    ({ t = (typed : typed).t; region = region; narrowed = fk_arg1; hides = fk_arg2; at = fk_arg3 } : local) in
                  let fk_arg2 = Option.is_some value_type in
-                 Bindings.bound inner name fk_arg1 at fk_arg2 context) false : block_so_far) with lines = (so_far : block_so_far).lines @ [step] }
+                 Bindings.bound inner name fk_arg1 at fk_arg2 false context) false : block_so_far) with lines = (so_far : block_so_far).lines @ [step] }
             | Some ps -> check_distinct (List.map (fun p -> ((p : Parser.parameter).Parser.name, (p : Parser.parameter).Parser.at)) ps) context;
                 let row = ({ Types.labels = []; rest = Some (Effect.perform (Types.Solving_fresh ())) } : Types.row) in
                 let parameter_types = List.map (fun p -> let fk_arg1 = Option.map (fun it -> parameter_type it row context) (p : Parser.parameter).Parser.parameter_type in
@@ -8979,7 +8981,7 @@ module Fckt = struct
                    let fk_arg2 = local_default_narrowed () in
                    let fk_arg3 = local_default_hides () in
                    let fk_arg4 = local_default_at () in
-                   ({ t = (Types.FunctionOf { parameters = parameter_types; result = result; effects = row } : Types.type_); region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local)) at true context in
+                   ({ t = (Types.FunctionOf { parameters = parameter_types; result = result; effects = row } : Types.type_); region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local)) at true false context in
                 let body = let fk_arg1 = Lang.Lists.list_zip ps parameter_types in
                   let fk_arg2 = Scopes.inside with_function in
                   List.fold_left (fun s entry -> let (p, t) = entry in
@@ -8989,7 +8991,7 @@ module Fckt = struct
                        let fk_arg4 = local_default_at () in
                        ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
                      let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
-                     Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) fk_arg2 fk_arg1 in
+                     Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 true context) fk_arg2 fk_arg1 in
                 let core = doing_in row context (fun () -> check value result body context) in
                 let fk_arg1 = with_scope so_far with_function false in
                 let fk_arg2 = (so_far : block_so_far).lines @ [(FunctionStep { name = name; parameters = List.map (fun p -> (Core.NameMatcher { name = (p : Parser.parameter).Parser.name } : Core.matcher)) ps; body = core } : block_step)] in
@@ -9572,7 +9574,7 @@ module Fckt = struct
                let fk_arg4 = local_default_at () in
                ({ t = part; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
              let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
-             Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) fk_arg2 fk_arg1 in
+             Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 true context) fk_arg2 fk_arg1 in
         let (core, drops) = doing_in row context (fun () -> check_lambda_body body result inner context) in
         ({ t = (Types.FunctionOf { parameters = [tuple]; result = result; effects = row } : Types.type_); spelled = None; core = (Core.FunctionValue { parameters = [(Core.TupleMatcher { parts = List.map (fun it -> matcher_of it) written } : Core.matcher)]; body = core; drops_result = drops } : Core.core) } : typed)
       and with_parameters (written : Parser.parameter list) (expected_function : Types.type_ option) (row : Types.row) (body : Parser.expression) (scope : scope) (context : context) : typed =
@@ -9598,7 +9600,7 @@ module Fckt = struct
                let fk_arg4 = local_default_at () in
                ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
              let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
-             Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) fk_arg2 fk_arg1 in
+             Bindings.bound s (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 true context) fk_arg2 fk_arg1 in
         let result = Option.value hinted_result ~default:(Types.Variable { variable = Effect.perform (Types.Solving_fresh ()) } : Types.type_) in
         let (core, drops) = doing_in row context (fun () -> check_lambda_body body result inner context) in
         ({ t = (Types.FunctionOf { parameters = types; result = result; effects = row } : Types.type_); spelled = None; core = (Core.FunctionValue { parameters = List.map (fun it -> matcher_of it) written; body = core; drops_result = drops } : Core.core) } : typed)
@@ -9824,7 +9826,7 @@ module Fckt = struct
                let fk_arg2 = local_default_narrowed () in
                let fk_arg3 = local_default_hides () in
                let fk_arg4 = local_default_at () in
-               ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local)) at false context; matches = [Coverage.Coverage.anything]; matcher = (Core.NameMatcher { name = name } : Core.matcher) } : checked_pattern)
+               ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local)) at false false context; matches = [Coverage.Coverage.anything]; matcher = (Core.NameMatcher { name = name } : Core.matcher) } : checked_pattern)
         | Parser.ConstantPattern { at = _; expression = e } -> let core = check e t scope context in
             let fk_arg1 = [constant_matches e] in
             let fk_arg2 = (Core.ConstantMatcher { literal = literal_of core } : Core.matcher) in
@@ -9967,7 +9969,7 @@ module Fckt = struct
                                let fk_arg4 = local_default_at () in
                                ({ t = t; region = fk_arg1; narrowed = fk_arg2; hides = fk_arg3; at = fk_arg4 } : local) in
                              let fk_arg2 = Option.is_some (p : Parser.parameter).Parser.parameter_type in
-                             Bindings.bound scope (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 context) Scopes.empty (Lang.Lists.list_zip parameters parameter_types) in
+                             Bindings.bound scope (p : Parser.parameter).Parser.name fk_arg1 (p : Parser.parameter).Parser.at fk_arg2 true context) Scopes.empty (Lang.Lists.list_zip parameters parameter_types) in
                         Some (let fk_arg1 = List.map (fun it -> (it : Parser.parameter).Parser.name) parameters in
                          let fk_arg2 = check body result scope context in
                          ({ Core.parameters = fk_arg1; body = fk_arg2 } : Core.core_function))
@@ -10429,7 +10431,8 @@ module Fckt = struct
           | Means { file = file; at = at; length = _; symbol = symbol; t = _ } -> "m " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ (symbol : Symbols.symbol).Symbols.name
           | Does { file = file; at = at; row = _ } -> "d " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
           | Gives { file = file; at = at; t = _ } -> "g " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
-          | Binds { file = file; at = at; length = _; name = name; t = _; written = _ } -> "b " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name
+          | TypeName { file = file; at = at; length = _; builtin = _ } -> "t " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column
+          | Binds { file = file; at = at; length = _; name = name; t = _; written = _; parameter = _ } -> "b " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name
           | Reads { file = file; at = at; length = _; name = name; bound = _; t = _ } -> "r " ^ Option.value file ~default:"" ^ " " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name
 
         let settled (noted : fact list) : fact list =
@@ -10442,7 +10445,8 @@ module Fckt = struct
              | Does { file = file; at = at; row = row } -> let done_ = Types.Types.resolved_row_fully row in
                  if List.is_empty (done_ : Types.row).Types.labels then [] else [(Does { file = file; at = at; row = done_ } : fact)]
              | Gives { file = file; at = at; t = t } -> [(Gives { file = file; at = at; t = Types.Types.resolved_fully t } : fact)]
-             | Binds { file = file; at = at; length = length; name = name; t = t; written = written } -> [(Binds { file = file; at = at; length = length; name = name; t = Types.Types.resolved_fully t; written = written } : fact)]
+             | TypeName { file = file; at = at; length = length; builtin = builtin } -> [(TypeName { file = file; at = at; length = length; builtin = builtin } : fact)]
+             | Binds { file = file; at = at; length = length; name = name; t = t; written = written; parameter = parameter } -> [(Binds { file = file; at = at; length = length; name = name; t = Types.Types.resolved_fully t; written = written; parameter = parameter } : fact)]
              | Reads { file = file; at = at; length = length; name = name; bound = bound; t = t } -> [(Reads { file = file; at = at; length = length; name = name; bound = bound; t = Types.Types.resolved_fully t } : fact)]) kept
       end
 
@@ -11089,6 +11093,8 @@ module Fckt = struct
         let (types, _) = Diagnostics.Diagnostics.collecting (fun () -> Resolution.Resolution.resolved_types file namespace (workspace : Sources.workspace).Sources.borrowed) in
         let typed = List.concat_map (fun r -> match (r : Resolution.resolved_type).Resolution.meaning with
              | Resolution.DeclaredType { symbol = s } -> [(Inference.Means { file = path; at = ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.name; symbol = s; t = None } : Inference.fact)]
+             | Resolution.BuiltinType { name = _ } -> [(Inference.TypeName { file = path; at = ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.name; builtin = true } : Inference.fact)]
+             | Resolution.TypeParameterType { name = _ } -> [(Inference.TypeName { file = path; at = ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.name; builtin = false } : Inference.fact)]
              | _ -> []) types in
         let place = ({ Resolution.file = file; path = [] } : Resolution.place) in
         let annotated = List.concat_map (fun a -> let found = Lang.Options.option_or_else (Resolution.Lookups.found (Resolution.Lookups.spec (a : Parser.annotation).Parser.name place namespace (Resolution.Skipping : Resolution.strictness))) (fun () -> Resolution.Lookups.found (Resolution.Lookups.annotation_type (a : Parser.annotation).Parser.name place namespace (Resolution.Skipping : Resolution.strictness))) in
@@ -13642,6 +13648,9 @@ module Fckt = struct
       let answer (id : json option) (result : json) : unit =
         sent (JsonObject { fields = [("jsonrpc", (JsonString { value = "2.0" } : json)); ("id", Option.value id ~default:(JsonNull : json)); ("result", result)] } : json)
 
+      let token_types =
+        ["namespace"; "type"; "class"; "interface"; "struct"; "typeParameter"; "parameter"; "variable"; "property"; "enumMember"; "function"; "decorator"]
+
       let range (start_line : int) (start_column : int) (end_line : int) (end_column : int) : json =
         (JsonObject { fields = (let fk_arg1 = ("start", (JsonObject { fields = (let fk_arg1 = ("line", Jsons.number start_line) in
             let fk_arg2 = ("character", Jsons.number start_column) in
@@ -13710,7 +13719,7 @@ module Fckt = struct
         let file = (path_of uri : Io.path).Io.value in
         let under = fun at length -> ((at : Parser.position).Parser.line = line + 1 && character + 1 >= (at : Parser.position).Parser.column) && character + 1 <= (at : Parser.position).Parser.column + length in
         List.nth_opt (List.concat_map (fun f -> match f with
-            | Checker.Inference.Binds { file = _; at = at; length = length; name = name; t = t; written = _ } when under at length -> [({ file = file; bound = at; name = name; t = t } : local_name)]
+            | Checker.Inference.Binds { file = _; at = at; length = length; name = name; t = t; written = _; parameter = _ } when under at length -> [({ file = file; bound = at; name = name; t = t } : local_name)]
             | Checker.Inference.Reads { file = _; at = at; length = length; name = name; bound = bound; t = t } when under at length -> [({ file = file; bound = bound; name = name; t = t } : local_name)]
             | _ -> []) (facts_in session (path_of uri))) 0
 
@@ -13882,6 +13891,73 @@ module Fckt = struct
         let effect_ = if not (Lang.Strings.string_contains message ", so it must say so") || String.equal "" e then [] else [fix ("Say it does @" ^ e) diagnostic uri line character ("@" ^ e ^ " ")] in
         importing @ effect_
 
+      let token_kind_of (s : Checker.Symbols.symbol) : int option =
+        let owner = Option.value (Option.map (fun o -> Option.value (Option.map (fun it -> Lang.Strings.char_is_upper_case it) (Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) o) 0)) ~default:false) (Lang.Lists.list_last_or_none (Lang.Lists.list_drop_last ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (s : Checker.Symbols.symbol).Checker.Symbols.name ".") 1))) ~default:false in
+        match ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
+        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> Some 10
+        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> Some 8
+        | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> if owner && List.exists (fun it -> (it : Parser.field).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) fields then Some 8 else if annotation then Some 11 else Some 4
+        | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> if List.exists (fun it -> (it : Parser.case_definition).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) cases then Some 9 else Some 3
+        | Parser.AliasDefinition { type_parameters = _; target = _ } -> Some 1
+        | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> Some 3
+        | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> Some 0
+        | _ -> None
+
+      let rec declaration_tokens (declarations : Parser.declaration list) (lines : string list) : (int * int * int * int * int) list =
+        List.concat_map (fun d -> let name = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (d : Parser.declaration).Parser.name ".")) ~default:(d : Parser.declaration).Parser.name in
+           let at = fun p written kind -> Option.to_list (Option.bind (Lang.Lists.list_get_or_none lines ((p : Parser.position).Parser.line - 1)) (fun line -> Option.map (fun column -> ((p : Parser.position).Parser.line - 1, column, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) written, kind, 1)) (word_in line written ((p : Parser.position).Parser.column - 1)))) in
+           match (d : Parser.declaration).Parser.definition with
+           | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> at (d : Parser.declaration).Parser.at name 10
+           | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> at (d : Parser.declaration).Parser.at name 8
+           | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name (if annotation then 11 else 4) in
+               let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) fields in
+               fk_arg1 @ fk_arg2
+           | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name 3 in
+               let fk_arg2 = List.concat_map (fun c -> let fk_arg1 = at (c : Parser.case_definition).Parser.at (c : Parser.case_definition).Parser.name 9 in
+                    let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) (c : Parser.case_definition).Parser.fields in
+                    fk_arg1 @ fk_arg2) cases in
+               fk_arg1 @ fk_arg2
+           | Parser.AliasDefinition { type_parameters = _; target = _ } -> at (d : Parser.declaration).Parser.at name 1
+           | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> at (d : Parser.declaration).Parser.at name 3
+           | Parser.ModuleDefinition { declarations = inner; spec = _; parameters = _; application = _; type_parameters = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name 0 in
+               let fk_arg2 = declaration_tokens inner lines in
+               fk_arg1 @ fk_arg2
+           | _ -> []) declarations
+
+      let tokens_of (session : session) (uri : string) : int list =
+        let file = path_of uri in
+        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
+          let fk_arg2 = read_or_empty file in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
+        let facts = facts_in session file in
+        let parameters = List.fold_left (fun m f -> match f with
+             | Checker.Inference.Binds { file = _; at = at; length = _; name = _; t = _; written = _; parameter = parameter } -> Collections.Maps.map_put m (string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column) parameter
+             | _ -> m) (Collections.Maps.empty_map ()) facts in
+        let local = fun bound -> if Collections.Maps.map_get_or_default parameters (string_of_int (bound : Parser.position).Parser.line ^ " " ^ string_of_int (bound : Parser.position).Parser.column) false then 6 else 7 in
+        let used = List.concat_map (fun f -> match f with
+             | Checker.Inference.Means { file = _; at = at; length = length; symbol = symbol; t = _ } -> List.map (fun kind -> let annotated = Option.bind (Lang.Lists.list_get_or_none lines ((at : Parser.position).Parser.line - 1)) (fun it -> Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) it) ((at : Parser.position).Parser.column - 2)) = Some 64 in
+                    if annotated then ((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 2, length + 1, 11, 0) else ((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, kind, 0)) (Option.to_list (token_kind_of symbol))
+             | Checker.Inference.Binds { file = _; at = at; length = length; name = _; t = _; written = _; parameter = parameter } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if parameter then 6 else 7), 1)]
+             | Checker.Inference.Reads { file = _; at = at; length = length; name = _; bound = bound; t = _ } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, local bound, 0)]
+             | Checker.Inference.TypeName { file = _; at = at; length = length; builtin = builtin } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if builtin then 2 else 5), 0)]
+             | _ -> []) facts in
+        let declared = match Parser.Parser.parse text with
+          | Ok parsed -> declaration_tokens (parsed : Parser.source_file).Parser.declarations lines
+          | Error _ -> [] in
+        let ordered = List.fold_left (fun seen token -> let (keys, kept) = seen in
+             let (line, column, _, _, _) = token in
+             let key = string_of_int line ^ " " ^ string_of_int column in
+             if Collections.Maps.map_contains_key keys key then seen else (Collections.Maps.map_put keys key true, [token] @ kept)) (Collections.Maps.empty_map (), []) (declared @ used) in
+        let (_, kept) = ordered in
+        let sorted = Lang.Lists.list_sorted_by kept (fun token -> let (line, column, _, _, _) = token in
+             line * 100000 + column) in
+        let (_, _, encoded) = List.fold_left (fun state token -> let (last_line, last_column, out) = state in
+             let (line, column, length, kind, modifiers) = token in
+             let start = if line = last_line then column - last_column else column in
+             (line, column, [[line - last_line; start; length; kind; modifiers]] @ out)) (0, 0, []) sorted in
+        List.concat_map (fun it -> it) (List.rev encoded)
+
       let hint (line : int) (column : int) (label : string) : json =
         (JsonObject { fields = [("position", (JsonObject { fields = (let fk_arg1 = ("line", Jsons.number line) in
          let fk_arg2 = ("character", Jsons.number column) in
@@ -13907,7 +13983,7 @@ module Fckt = struct
         let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
         let own = List.filter (fun it -> ((((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path = Some file) (List.concat_map (fun it -> (it : Checker.checked_program).Checker.functions) (Collections.Maps.map_get_or_default (session : session).programs ((project_of (path_of uri) : project).root : Io.path).Io.value [])) in
         let locals = List.concat_map (fun fact -> match fact with
-             | Checker.Inference.Binds { file = _; at = at; length = length; name = _; t = t; written = false } -> [hint ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1 + length) (": " ^ Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown t))]
+             | Checker.Inference.Binds { file = _; at = at; length = length; name = _; t = t; written = false; parameter = _ } -> [hint ((at : Parser.position).Parser.line - 1) ((at : Parser.position).Parser.column - 1 + length) (": " ^ Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown t))]
              | _ -> []) (facts_in session (path_of uri)) in
         locals @ List.concat_map (fun f -> let d = ((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration in
            let written = List.map (fun it -> (it : Parser.annotation).Parser.name) (d : Parser.declaration).Parser.annotations in
@@ -13945,7 +14021,7 @@ module Fckt = struct
         let file = path_of uri in
         let start = Option.value (Lang.Lists.list_max_or_none (List.map (fun it -> ((((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at : Parser.position).Parser.line) (List.filter (fun f -> ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path = Some (file : Io.path).Io.value && ((((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.at : Parser.position).Parser.line <= line + 1) (List.concat_map (fun it -> (it : Checker.checked_program).Checker.functions) (Collections.Maps.map_get_or_default (session : session).programs ((project_of file : project).root : Io.path).Io.value []))))) ~default:1 in
         List.map (fun (name, t) -> item name 6 (Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown t)) []) (Collections.Maps.map_entries (let fk_arg1 = List.concat_map (fun f -> match f with
-               | Checker.Inference.Binds { file = _; at = at; length = _; name = name; t = t; written = _ } when ((at : Parser.position).Parser.line >= start && (at : Parser.position).Parser.line <= line + 1) && String.starts_with ~prefix:typed name -> [(name, t)]
+               | Checker.Inference.Binds { file = _; at = at; length = _; name = name; t = t; written = _; parameter = _ } when ((at : Parser.position).Parser.line >= start && (at : Parser.position).Parser.line <= line + 1) && String.starts_with ~prefix:typed name -> [(name, t)]
                | _ -> []) (facts_in session file) in
           let fk_arg2 = Collections.Maps.empty_map () in
           List.fold_left (fun m entry -> let (name, t) = entry in
@@ -14054,14 +14130,14 @@ module Fckt = struct
         let facts = facts_in session file in
         let there = List.nth_opt (List.concat_map (fun f -> match f with
               | Checker.Inference.Reads { file = _; at = at; length = _; name = n; bound = _; t = t } when (n = name && (at : Parser.position).Parser.line = line + 1) && (at : Parser.position).Parser.column = column + 1 -> [t]
-              | Checker.Inference.Binds { file = _; at = at; length = _; name = n; t = t; written = _ } when (n = name && (at : Parser.position).Parser.line = line + 1) && (at : Parser.position).Parser.column = column + 1 -> [t]
+              | Checker.Inference.Binds { file = _; at = at; length = _; name = n; t = t; written = _; parameter = _ } when (n = name && (at : Parser.position).Parser.line = line + 1) && (at : Parser.position).Parser.column = column + 1 -> [t]
               | _ -> []) facts) 0 in
         let above = Option.map (fun entry -> let (_, t) = entry in
              t) (List.fold_left (fun best entry -> let (l, t) = entry in
               match best with
               | Some (best_line, _) when best_line > l -> best
               | _ -> Some (l, t)) None (List.concat_map (fun f -> match f with
-               | Checker.Inference.Binds { file = _; at = at; length = _; name = n; t = t; written = _ } when n = name && (at : Parser.position).Parser.line <= line + 1 -> [((at : Parser.position).Parser.line, t)]
+               | Checker.Inference.Binds { file = _; at = at; length = _; name = n; t = t; written = _; parameter = _ } when n = name && (at : Parser.position).Parser.line <= line + 1 -> [((at : Parser.position).Parser.line, t)]
                | _ -> []) facts)) in
         let value = Option.map (fun it -> ((it : Checker.Inference.checked_function).Checker.Inference.scheme : Checker.Types.scheme).Checker.Types.template) (List.find_opt (fun f -> (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name = name && not (Checker.Symbols.Signatures.is_function (f : Checker.Inference.checked_function).Checker.Inference.function_)) (List.concat_map (fun it -> (it : Checker.checked_program).Checker.functions) programs)) in
         Lang.Options.option_or_else (Lang.Options.option_or_else there (fun () -> above)) (fun () -> value)
@@ -14122,7 +14198,8 @@ module Fckt = struct
         | Checker.Inference.Means { file = f; at = _; length = _; symbol = _; t = _ } -> Option.value f ~default:""
         | Checker.Inference.Does { file = f; at = _; row = _ } -> Option.value f ~default:""
         | Checker.Inference.Gives { file = f; at = _; t = _ } -> Option.value f ~default:""
-        | Checker.Inference.Binds { file = f; at = _; length = _; name = _; t = _; written = _ } -> Option.value f ~default:""
+        | Checker.Inference.TypeName { file = f; at = _; length = _; builtin = _ } -> Option.value f ~default:""
+        | Checker.Inference.Binds { file = f; at = _; length = _; name = _; t = _; written = _; parameter = _ } -> Option.value f ~default:""
         | Checker.Inference.Reads { file = f; at = _; length = _; name = _; bound = _; t = _ } -> Option.value f ~default:""
 
       let by_file (facts : Checker.Inference.fact list) : (string, Checker.Inference.fact list) Collections.Maps.map =
@@ -14131,7 +14208,8 @@ module Fckt = struct
                | Checker.Inference.Means { file = f; at = at; length = _; symbol = symbol; t = _ } -> (Option.value f ~default:"", "m " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ (symbol : Checker.Symbols.symbol).Checker.Symbols.name)
                | Checker.Inference.Does { file = f; at = at; row = _ } -> (Option.value f ~default:"", "d " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
                | Checker.Inference.Gives { file = f; at = at; t = _ } -> (Option.value f ~default:"", "g " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
-               | Checker.Inference.Binds { file = f; at = at; length = _; name = name; t = _; written = _ } -> (Option.value f ~default:"", "b " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name)
+               | Checker.Inference.TypeName { file = f; at = at; length = _; builtin = _ } -> (Option.value f ~default:"", "t " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column)
+               | Checker.Inference.Binds { file = f; at = at; length = _; name = name; t = _; written = _; parameter = _ } -> (Option.value f ~default:"", "b " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name)
                | Checker.Inference.Reads { file = f; at = at; length = _; name = name; bound = _; t = _ } -> (Option.value f ~default:"", "r " ^ string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column ^ " " ^ name) in
              let whole = file ^ " " ^ key in
              if Collections.Maps.map_contains_key keys whole then seen else (let fk_arg1 = Collections.Maps.map_put keys whole true in
@@ -14161,6 +14239,9 @@ module Fckt = struct
              Option.value fk_arg1 ~default:fk_arg2 in
            publish key (List.map (fun it -> shown it text) diagnostics)) (Collections.Maps.map_entries by_file);
         session.said <- Collections.Maps.map_put (session : session).said ((project : project).root : Io.path).Io.value (Collections.Maps.map_keys by_file)
+
+      let asked (method_ : string) : unit =
+        sent (JsonObject { fields = [("jsonrpc", (JsonString { value = "2.0" } : json)); ("id", (JsonString { value = method_ } : json)); ("method", (JsonString { value = method_ } : json))] } : json)
 
       let check (session : session) (uri : string) (publishing : bool) : unit =
         let file = path_of uri in
@@ -14206,7 +14287,9 @@ module Fckt = struct
           fk_arg1 @ fk_arg2 in
         let by_file = List.fold_left (fun m d -> let key = uri_of (Option.value (d : Checker.Diagnostics.diagnostic).Checker.Diagnostics.file ~default:"") in
              Collections.Maps.map_put m key (Collections.Maps.map_get_or_default m key [] @ [d])) (Collections.Maps.empty_map ()) found in
-        if publishing then said session project by_file else ()
+        if publishing then (said session project by_file;
+           asked "workspace/semanticTokens/refresh";
+           asked "workspace/inlayHint/refresh") else ()
 
       let members (session : session) (uri : string) (receiver : Checker.Types.type_) (typed : string) : json list =
         let file = path_of uri in
@@ -14303,7 +14386,9 @@ module Fckt = struct
         let params = Option.value (Jsons.json_field message "params") ~default:(JsonNull : json) in
         let uri = Option.bind (Option.bind (Jsons.json_field params "textDocument") (fun it -> Jsons.json_field it "uri")) (fun it -> Jsons.json_text it) in
         match Option.value (Option.bind (Jsons.json_field message "method") (fun it -> Jsons.json_text it)) ~default:"" with
-        | "initialize" -> answer id (JsonObject { fields = [("capabilities", (JsonObject { fields = [("textDocumentSync", Jsons.number 1); ("documentFormattingProvider", (JsonBoolean { value = true } : json)); ("hoverProvider", (JsonBoolean { value = true } : json)); ("definitionProvider", (JsonBoolean { value = true } : json)); ("documentSymbolProvider", (JsonBoolean { value = true } : json)); ("referencesProvider", (JsonBoolean { value = true } : json)); ("documentHighlightProvider", (JsonBoolean { value = true } : json)); ("renameProvider", (JsonBoolean { value = true } : json)); ("inlayHintProvider", (JsonBoolean { value = true } : json)); ("codeActionProvider", (JsonBoolean { value = true } : json)); ("completionProvider", (JsonObject { fields = [("triggerCharacters", (JsonArray { items = [(JsonString { value = "." } : json)] } : json))] } : json))] } : json)); ("serverInfo", (JsonObject { fields = [("name", (JsonString { value = "fckt" } : json))] } : json))] } : json)
+        | "initialize" -> answer id (JsonObject { fields = [("capabilities", (JsonObject { fields = (let fk_arg1 = ("textDocumentSync", Jsons.number 1) in
+             let fk_arg2 = ("semanticTokensProvider", (JsonObject { fields = [("legend", (JsonObject { fields = [("tokenTypes", (JsonArray { items = List.map (fun it -> (JsonString { value = it } : json)) token_types } : json)); ("tokenModifiers", (JsonArray { items = [(JsonString { value = "declaration" } : json)] } : json))] } : json)); ("full", (JsonBoolean { value = true } : json))] } : json)) in
+             [fk_arg1; ("documentFormattingProvider", (JsonBoolean { value = true } : json)); ("hoverProvider", (JsonBoolean { value = true } : json)); ("definitionProvider", (JsonBoolean { value = true } : json)); ("documentSymbolProvider", (JsonBoolean { value = true } : json)); ("referencesProvider", (JsonBoolean { value = true } : json)); ("documentHighlightProvider", (JsonBoolean { value = true } : json)); ("renameProvider", (JsonBoolean { value = true } : json)); ("inlayHintProvider", (JsonBoolean { value = true } : json)); ("codeActionProvider", (JsonBoolean { value = true } : json)); fk_arg2; ("completionProvider", (JsonObject { fields = [("triggerCharacters", (JsonArray { items = [(JsonString { value = "." } : json)] } : json))] } : json))]) } : json)); ("serverInfo", (JsonObject { fields = [("name", (JsonString { value = "fckt" } : json))] } : json))] } : json)
         | "shutdown" -> session.stopping <- true;
             answer id (JsonNull : json)
         | "exit" -> (match Effect.perform (Io.Process_exit (if (session : session).stopping then 0 else 1)) with
@@ -14342,6 +14427,7 @@ module Fckt = struct
                      (JsonObject { fields = [("changes", (JsonObject { fields = [(uri_of (l : local_name).file, (JsonArray { items = changes } : json))] } : json))] } : json)) (local_at session u params)) (fun () -> Option.map (fun s -> renamed session u s new_name) (symbol_at session u params)))) ~default:(JsonNull : json))
         | "textDocument/codeAction" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let said = Option.value (Option.map (fun it -> Jsons.json_items it) (Option.bind (Jsons.json_field params "context") (fun it -> Jsons.json_field it "diagnostics"))) ~default:[] in
                 List.concat_map (fun d -> fixes session u d) said) uri) ~default:[] } : json)
+        | "textDocument/semanticTokens/full" -> answer id (JsonObject { fields = [("data", (JsonArray { items = List.map (fun it -> Jsons.number it) (Option.value (Option.map (fun u -> tokens_of session u) uri) ~default:[]) } : json))] } : json)
         | "textDocument/inlayHint" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> hints session u) uri) ~default:[] } : json)
         | "textDocument/completion" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> completions session u params) uri) ~default:[] } : json)
         | "textDocument/documentSymbol" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ u in
@@ -14350,7 +14436,7 @@ module Fckt = struct
                 match Parser.Parser.parse text with
                 | Ok file -> List.map (fun it -> symbol_of it text) (file : Parser.source_file).Parser.declarations
                 | Error _ -> []) uri) ~default:[] } : json)
-        | method_ -> if Option.is_some id && not (String.starts_with ~prefix:"$/" method_) then refuse id method_ else ()
+        | method_ -> if (Option.is_some id && Lang.Strings.string_is_not_empty method_) && not (String.starts_with ~prefix:"$/" method_) then refuse id method_ else ()
 
       let checked (session : session) (uri : string) : unit =
         match Effects.Failure.attempt (fun () -> check session uri (check_default_publishing ())) with
