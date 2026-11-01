@@ -254,7 +254,7 @@ module AnnotationChecks {
         None -> wrong()
       }
       MetaSpec -> when (Lookups.spec(name(), context.place, namespace, Refusing)) {
-        Found(_) -> Unit
+        Found(s) -> notedLast(s, name(), at, context)
         Refused(why) -> abandon(Globals.problem(context, at, why))
         NotFound -> abandon(Globals.problem(context, at, "unknown spec '${name()}'"))
       }
@@ -267,6 +267,7 @@ module AnnotationChecks {
       }
       MetaModule(spec) -> when (Lookups.moduleNamed(name(), context.place, namespace, Refusing)) {
         Found(DeclaredModule(m)) -> {
+          notedLast(m, name(), at, context)
           own = Symbols.simpleName(m)
           if (functorParameters(m).isNotEmpty()) abandon(
             Globals.problem(
@@ -297,7 +298,10 @@ module AnnotationChecks {
         Reference(_, n, None, arguments) -> {
           found = Lookups.found(Lookups.annotationType(n, context.place, namespace, Refusing))
           if (found.map { it.name } != Some(wanted.name)) wrongArgument(meta, at, context)
-          else checkAnnotation(
+          else {
+            found.forEach { s -> notedLast(s, n, at, context) }
+          }
+          checkAnnotation(
             Annotation(at, n, arguments.getOrElse([]), []),
             context.place,
             inferred,
@@ -351,6 +355,42 @@ module AnnotationChecks {
     if (!found) abandon(
       Globals.problem(context, at, "'$name' isn't a case of ${TypeText.shown(caseType)}"),
     ) else Unit
+    qualifying.forEach { q -> notedFirst(q, name, at, context) }
+    when (resolved(caseType)) {
+      Named(n, _, _) -> definitions.cases.getOrDefault(
+        n,
+        [],
+      ).find { it.definition.name == caseName }.forEach { c ->
+        notedLast(Symbols.caseOf(c.origin, c.definition), name, at, context)
+      }
+      _ -> Unit
+    }
+  }
+
+  // What the first of a dotted name, written at, means: its type, as User in User.email.
+  @Noting private notedFirst(s: Symbol, name: String, at: Position, context: Context): Unit =
+    note(
+      Means(
+        context.place.file.source.path,
+        at,
+        name.split(".").firstOrNone().getOrElse(name).length,
+        s,
+        None,
+      ),
+    )
+
+  // What the last of a dotted name, written at, means: a case of a type, as Circle in Shape.Circle.
+  @Noting private notedLast(s: Symbol, name: String, at: Position, context: Context): Unit = {
+    last = name.split(".").lastOrNone().getOrElse(name)
+    note(
+      Means(
+        context.place.file.source.path,
+        Position(at.line, at.column + name.length - last.length),
+        last.length,
+        s,
+        None,
+      ),
+    )
   }
 
   // A field of the record type, by its type and its name, User.name, of the type, unless any will do.
@@ -392,6 +432,10 @@ module AnnotationChecks {
     if (index < 0) abandon(
       Globals.problem(context, at, "${Symbols.simpleName(declared)} has no field '$fieldName'"),
     ) else Unit
+    notedFirst(declared, name, at, context)
+    fields.getOrNone(
+      index,
+    ).forEach { f -> notedLast(Symbols.ofField(declared, f), name, at, context) }
     actual = Conversion.recordFields(declared, arguments, None, definitions).getOrNone(
       index,
     ).getOrElse(

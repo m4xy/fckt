@@ -6,22 +6,16 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspServerSupportProvider
 import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
 import com.intellij.platform.lsp.api.customization.LspCustomization
-import com.intellij.platform.lsp.api.customization.LspFindReferencesCustomizer
-import com.intellij.platform.lsp.api.customization.LspFindReferencesDisabled
 import com.intellij.platform.lsp.api.customization.LspFormattingCustomizer
 import com.intellij.platform.lsp.api.customization.LspFormattingDisabled
-import com.intellij.platform.lsp.api.customization.LspGoToDefinitionCustomizer
-import com.intellij.platform.lsp.api.customization.LspGoToDefinitionDisabled
-import com.intellij.platform.lsp.api.customization.LspHoverCustomizer
-import com.intellij.platform.lsp.api.customization.LspHoverDisabled
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensCustomizer
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensDisabled
 import java.io.File
 
 /**
  * Runs `fckt --language-server` for a project's fckt files: its errors and their quick fixes,
- * completion, renaming, inlay hints and outlines. Hover, going to a declaration, finding usages,
- * formatting and colouring are the plugin's own.
+ * completion, hover, going to a declaration, finding usages, renaming, inlay hints and outlines.
+ * Formatting and colouring are the plugin's own.
  */
 class FcktLspServerSupportProvider : LspServerSupportProvider {
     override fun fileOpened(project: Project, file: VirtualFile, serverStarter: LspServerSupportProvider.LspServerStarter) {
@@ -36,9 +30,6 @@ private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDe
         GeneralCommandLine(fcktExecutable(), "--language-server").withWorkDirectory(project.basePath)
 
     override val lspCustomization = object : LspCustomization() {
-        override val hoverCustomizer: LspHoverCustomizer = LspHoverDisabled
-        override val goToDefinitionCustomizer: LspGoToDefinitionCustomizer = LspGoToDefinitionDisabled
-        override val findReferencesCustomizer: LspFindReferencesCustomizer = LspFindReferencesDisabled
         override val formattingCustomizer: LspFormattingCustomizer = LspFormattingDisabled
         override val semanticTokensCustomizer: LspSemanticTokensCustomizer = LspSemanticTokensDisabled
     }

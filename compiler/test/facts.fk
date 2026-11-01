@@ -55,7 +55,11 @@ beeping = "effect Beeping {\n  beep(): Unit\n}\n"
 @Test @FileSystem aModulesFunctionIsNotedWhereItsNamed() = {
   facts = noted("import a.Shapes\n\nsize(): Int = Shapes.area(2, 3)\n")
   assertEquals(
-    ["main.fk:3:22+4 means a.Shapes.area"],
+    [
+      "main.fk:3:15+6 means a.Shapes",
+      "main.fk:3:22+4 means a.Shapes.area",
+      "main.fk:1:10+6 means a.Shapes",
+    ],
     facts.filter { it.startsWith("main.fk") && !it.endsWith(" gives") },
   )
 }
@@ -66,10 +70,15 @@ beeping = "effect Beeping {\n  beep(): Unit\n}\n"
   )
   assertEquals(
     [
+      "main.fk:5:3+6 means a.Shapes",
       "main.fk:5:10+4 means a.Shapes.loud",
       "main.fk:5:14 does a.Beeping",
+      "main.fk:6:3+6 means a.Shapes",
       "main.fk:6:10+4 means a.Shapes.loud",
       "main.fk:6:14 does a.Beeping",
+      "main.fk:4:2+7 means a.Beeping",
+      "main.fk:1:10+6 means a.Shapes",
+      "main.fk:2:10+7 means a.Beeping",
     ],
     facts.filter { it.startsWith("main.fk") && !it.endsWith(" gives") },
   )

@@ -25,19 +25,11 @@ import com.intellij.util.IncorrectOperationException
 import java.io.File
 
 /**
- * A name in a fckt file. Where it's used, its reference resolves to where it's declared; where
- * it's declared, it's what Find Usages looks for.
+ * A name in a fckt file. What it means, where it's declared and where it's used are the language
+ * server's to say, through IntelliJ's own client, so it has no reference of its own.
  */
-class FcktName(node: ASTNode) : ASTWrapperPsiElement(node), PsiNameIdentifierOwner {
+class FcktName(node: ASTNode) : ASTWrapperPsiElement(node) {
     override fun getName(): String = text
-    override fun setName(name: String): PsiElement = throw IncorrectOperationException("fckt names can't be renamed yet")
-    override fun getNameIdentifier(): PsiElement? = firstChild
-    override fun getTextOffset() = textRange.startOffset
-    override fun getReference(): PsiReference = FcktReference(this)
-    override fun getReferences(): Array<PsiReference> = arrayOf(reference)
-
-    // A declaration in the standard library is used across the project.
-    override fun getUseScope(): SearchScope = GlobalSearchScope.allScope(project)
 }
 
 /** Where a name is declared: one place, or several when it can't tell which. */

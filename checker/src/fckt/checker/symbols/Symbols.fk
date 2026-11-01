@@ -356,4 +356,23 @@ module Symbols {
     symbol: Symbol,
     message: String,
   ): Diagnostic = Diagnostic(symbol.file.source.path, symbol.declaration.at, message)
+
+  // A case as a symbol of its own, which tools can find and go to: its owner's name and its own,
+  // declared where it's written in its owner's file.
+  ofCase(c: CaseSymbol): Symbol = caseOf(c.owner, c.definition)
+
+  caseOf(owner: Symbol, definition: CaseDefinition): Symbol = Symbol(
+    "${owner.name}.${definition.name}",
+    owner.path,
+    Declaration(definition.at, definition.name, owner.declaration.definition),
+    owner.file,
+  )
+
+  // A record's field as a symbol of its own, declared where it's written in the record.
+  ofField(record: Symbol, field: Field): Symbol = Symbol(
+    "${record.name}.${field.name}",
+    record.path,
+    Declaration(field.at, field.name, record.declaration.definition),
+    record.file,
+  )
 }

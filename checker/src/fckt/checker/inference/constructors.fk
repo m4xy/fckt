@@ -14,7 +14,33 @@ import fckt.parser.*
 // that several types use is told apart by what's wanted. Building is false in patterns, which may
 // take apart a record they couldn't build.
 
+// The record or case name, written at, makes, noted as what it means.
 @Inferring constructorShape(
+  name: String,
+  hint: Option<Type>,
+  at: Position,
+  asValue: Boolean,
+  qualifier: Option<String>,
+  building: Boolean,
+  scope: Scope,
+  context: Context,
+): Option<ConstructorShape> = {
+  found = shapeOf(name, hint, at, asValue, qualifier, building, scope, context)
+  found.forEach { shape ->
+    when (shape.constructor) {
+      RecordConstructor(record) -> note(
+        Means(context.place.file.source.path, at, name.length, record, None),
+      )
+      CaseConstructor(c) -> note(
+        Means(context.place.file.source.path, at, name.length, Symbols.ofCase(c), None),
+      )
+      BuiltinCase(_) -> Unit
+    }
+  }
+  found
+}
+
+@Inferring private shapeOf(
   name: String,
   hint: Option<Type>,
   at: Position,
@@ -312,6 +338,11 @@ dottedUnbound(e: Expression, scope: Scope): Option<String> = References.dotted(e
   context: Context,
 ): Option<Symbol> =
   moduleNamedBy(target, scope, context).flatMap { m ->
+    when ((target, m)) {
+      (Name(written, module), DeclaredModule(symbol)) ->
+        note(Means(context.place.file.source.path, written, module.length, symbol, None))
+      _ -> Unit
+    }
     context.environment.functions.get("${Symbols.moduleName(m)}.$name").map { s ->
       when (Visibility.whyHidden(s, context.place, context.environment.definitions.namespace.table)) {
         Some(why) -> abandon(Globals.problem(context, at, why))

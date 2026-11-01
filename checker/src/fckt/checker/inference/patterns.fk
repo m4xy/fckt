@@ -185,7 +185,7 @@ private literalOf(core: Core): Literal = when (core) {
     )
     None -> {
       shape = when (subjectType) {
-        Some((st, typeArguments, region)) -> subjectCase(
+        Some((st, typeArguments, region)) -> notedShape(subjectCase(
           at,
           name,
           qualifier,
@@ -193,7 +193,7 @@ private literalOf(core: Core): Literal = when (core) {
           typeArguments,
           region,
           context,
-        )
+        ), name, at, context)
         None -> when (constructorShape(name, Some(t), at, false, qualifier, false, scope, context)) {
           Some(s) -> {
             expect(s.result, t, at, context)
@@ -418,4 +418,23 @@ irrefutable(p: Pattern): Boolean = when (p) {
   Wildcard(_) -> true
   TuplePattern(_, elements) -> elements.all { irrefutable(it) }
   else -> false
+}
+
+// The shape a case in a pattern makes, with what its name means noted.
+@Noting private notedShape(
+  shape: ConstructorShape,
+  name: String,
+  at: Position,
+  context: Context,
+): ConstructorShape = {
+  when (shape.constructor) {
+    CaseConstructor(c) -> note(
+      Means(context.place.file.source.path, at, name.length, Symbols.ofCase(c), None),
+    )
+    RecordConstructor(record) -> note(
+      Means(context.place.file.source.path, at, name.length, record, None),
+    )
+    BuiltinCase(_) -> Unit
+  }
+  shape
 }

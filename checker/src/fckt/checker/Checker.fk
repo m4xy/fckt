@@ -1,4 +1,8 @@
+import fckt.collections.Maps.*
+import fckt.text.Digests.*
 import fckt.checker.diagnostics.*
+import fckt.parser.*
+import fckt.checker.symbols.*
 import fckt.checker.sources.*
 import fckt.checker.resolution.*
 import fckt.checker.definitions.*
@@ -64,6 +68,12 @@ module Checker {
             inferred
           }
         }
+        named = if (facts) namesWritten(
+          workspace,
+          namespace,
+          earlier,
+          inferred.reuse,
+        ) else emptyMap()
         errors.forEach { report(it) }
         if (errors.isEmpty()) Inference.checkMain(inferred.environment, inferred.known) else Unit
         CheckedProgram(workspace, inferred.functions, defaultHandlers(inferred.environment, inferred.known), inferred.groups, TypeDeclarations.all(definitions),
@@ -72,9 +82,96 @@ module Checker {
           ), declaredSpecs(
             inferred.environment,
           ),
-          Some(inferred.environment), inferred.facts + Facts.settled(noted), inferred.reuse)
+          Some(inferred.environment), inferred.facts + Facts.settled(
+            noted,
+          ) + named.values.flatMap { _, found -> found },
+          inferred.reuse.map { r -> r.copy(named = named) })
       }
     }
   }
 
+
+  // What each type's and annotation's name written in the program's own files means, by each
+  // file's path, with its text's digest: as checking it before found, for a file whose text and
+  // the program's shape are as they were then.
+  private namesWritten(
+    workspace: Workspace,
+    namespace: Namespace,
+    earlier: Option<Reuse>,
+    now: Option<Reuse>,
+  ): Map<String, (String, List<Fact>)> = {
+    same = when ((earlier, now)) {
+      (Some(e), Some(n)) -> e.shape == n.shape
+      _ -> false
+    }
+    workspace.files.filter { it.source.project == ProgramProject }.fold(emptyMap()) { found, file ->
+      key = file.source.path.getOrElse("")
+      digest = file.source.text.md5()
+      before = earlier.flatMap { it.named.get(key) }.filter { entry ->
+        (was, _) = entry
+        same && was == digest
+      }
+      found.put(key, when (before) {
+        Some(kept) -> kept
+        None -> (digest, namesIn(file, workspace, namespace))
+      })
+    }
+  }
+
+  private namesIn(file: LoadedFile, workspace: Workspace, namespace: Namespace): List<Fact> = {
+      path = file.source.path
+      // Their errors are said where they're checked.
+      (types, _) = Diagnostics.collecting { Resolution.resolvedTypes(file, namespace, workspace.borrowed) }
+      typed = types.flatMap { r ->
+        when (r.meaning) {
+          DeclaredType(s) -> [Means(path, r.written.at, r.written.name.length, s, None)]
+          else -> []
+        }
+      }
+      place = Place(file, [])
+      annotated = annotationsIn(file.declarations).flatMap { a ->
+        found = Lookups.found(Lookups.spec(a.name, place, namespace, Skipping)).orElse {
+          Lookups.found(Lookups.annotationType(a.name, place, namespace, Skipping))
+        }
+        // An annotation is written from its @.
+        found.map { s -> Means(path, Position(a.at.line, a.at.column + 1), a.name.length, s, None) }.toList()
+      }
+      imported = file.imports.flatMap { i ->
+        full = i.path.joinToString(".")
+        table = namespace.table
+        found = table.records.get(
+          full,
+        ).orElse { table.caseTypes.get(full) }.orElse { table.aliases.get(full) }
+          .orElse { table.specs.get(full) }.orElse { table.annotationTypes.get(full) }.orElse { table.functions.get(full) }
+          .orElse {
+            when (table.modules.get(full)) {
+              Some(DeclaredModule(s)) -> Some(s)
+              _ -> None
+            }
+          }
+        // On the import's line, its last name.
+        last = i.path.lastOrNone().getOrElse("")
+        line = file.source.text.lines().getOrNone(i.at.line - 1).getOrElse("")
+        written = line.drop(i.at.column - 1).indexOf(full)
+        found.filter { _ -> written >= 0 }.map { s ->
+          Means(
+            path,
+            Position(i.at.line, i.at.column + written + full.length - last.length),
+            last.length,
+            s,
+            None,
+          )
+        }.toList()
+      }
+      typed + annotated + imported
+  }
+
+  private annotationsIn(
+    declarations: List<Declaration>,
+  ): List<Annotation> = declarations.flatMap { d ->
+    d.annotations + when (d.definition) {
+      ModuleDefinition(inner, _, _, _, _) -> annotationsIn(inner)
+      else -> []
+    }
+  }
 }

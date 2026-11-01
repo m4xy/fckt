@@ -2,5 +2,11 @@ import fckt.collections.Maps.*
 
 // What a check of a program found that checking it again can use: each group it checked without an
 // error, by its functions' names; the program's shape, which must be the same for any of it to be;
-// and the highest unknown any of it has, so those made checking again are new.
-type Reuse(shape: String, groups: Map<String, Remembered>, highest: Int)
+// the highest unknown any of it has, so those made checking again are new; and what each file's
+// types and annotations were found to mean, by its path, with its text's digest.
+type Reuse(
+  shape: String,
+  groups: Map<String, Remembered>,
+  highest: Int,
+  named: Map<String, (String, List<Fact>)> = emptyMap(),
+)

@@ -277,6 +277,17 @@ private valuesCore(qualifier: String, t: Type, context: Context): Core = {
               Some(context.place),
             )
             index = recordFieldsOf(record).indexOfFirst { it.name == name }
+            recordFieldsOf(record).getOrNone(index).forEach { field ->
+              note(
+                Means(
+                  context.place.file.source.path,
+                  at,
+                  name.length,
+                  Symbols.ofField(record, field),
+                  None,
+                ),
+              )
+            }
             types.getOrNone(index).map { t -> RecordField(record, t) }
           }
       }
