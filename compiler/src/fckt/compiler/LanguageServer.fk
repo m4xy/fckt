@@ -109,6 +109,7 @@ module LanguageServer {
           ("documentSymbolProvider", JsonBoolean(true)),
           ("referencesProvider", JsonBoolean(true)),
           ("documentHighlightProvider", JsonBoolean(true)),
+          ("implementationProvider", JsonBoolean(true)),
           ("renameProvider", JsonBoolean(true)),
           ("inlayHintProvider", JsonBoolean(true)),
           ("codeActionProvider", JsonBoolean(true)),
@@ -228,6 +229,29 @@ module LanguageServer {
       "textDocument/semanticTokens/full" -> answer(id, JsonObject([
         ("data", JsonArray(uri.map { u -> tokensOf(session, u) }.getOrElse([]).map { number(it) })),
       ]))
+      // What implements the spec or spec's value at the position.
+      "textDocument/implementation" -> answer(id, JsonArray(uri.map { u ->
+        (line, character) = positionOf(params)
+        specMarkers(session, u).filter { m ->
+          (l, column, length, kind, _) = m
+          kind == "implemented" && l == line && character >= column && character <= column + length
+        }.flatMap { m ->
+          (_, _, _, _, targets) = m
+          targets
+        }
+      }.getOrElse([])))
+      // fckt's own: each spec, module, and value of them, in the file, with what implements it or
+      // what it implements, for an editor to mark.
+      "fckt/specMarkers" -> answer(id, JsonArray(uri.map { u ->
+        specMarkers(session, u).map { m ->
+          (line, column, length, kind, targets) = m
+          JsonObject([
+            ("range", range(line, column, line, column + length)),
+            ("kind", JsonString(kind)),
+            ("targets", JsonArray(targets)),
+          ])
+        }
+      }.getOrElse([])))
       "textDocument/inlayHint" -> answer(
         id,
         JsonArray(uri.map { u -> hints(session, u) }.getOrElse([])),
@@ -880,6 +904,90 @@ module LanguageServer {
       ModuleDefinition(inner, _, _, _, _) -> at(d.at, name, 0) + declarationTokens(inner, lines)
       else -> []
     }
+  }
+
+  // Each spec declared in the file, and each of its values, with what implements it, the modules
+  // that follow it and their functions of its values' names; and each module declared in the file
+  // that follows a spec, and each of its functions the spec has, with what it implements: as the
+  // line and column of its name, what it is to them, and where they are.
+  @FileSystem private specMarkers(
+    session: Session,
+    uri: String,
+  ): List<(Int, Int, Int, String, List<Json>)> = {
+    file = pathOf(uri).value
+    programs = session.programs.getOrDefault(projectOf(pathOf(uri)).root.value, [])
+    programs.flatMap { p -> p.environment.toList() }.firstOrNone().map { environment ->
+      table = environment.definitions.namespace.table
+      following = environment.moduleSpecs
+      here = (s: Symbol) -> s.file.source.path == Some(file)
+      modules = table.modules.values.flatMap { m ->
+        when (m) {
+          DeclaredModule(s) -> [s]
+          _ -> []
+        }
+      }
+      valuesOf = (spec: Symbol) -> when (spec.declaration.definition) {
+        SpecDefinition(_, values, _, _, _) -> values
+        _ -> []
+      }
+      named = (s: Symbol) -> s.declaration.name.split(".").lastOrNone().getOrElse(
+        s.declaration.name,
+      )
+      at = (s: Symbol) -> nameOf(session, s).map { found ->
+        (_, line, column) = found
+        (line, column, named(s).length)
+      }
+      valueAt = (spec: Symbol, v: SpecValue) -> spec.file.source.text.lines().getOrNone(
+        v.at.line - 1,
+      ).flatMap { line ->
+        wordIn(
+          line,
+          v.name,
+          v.at.column - 1,
+        ).map { column -> (v.at.line - 1, column, v.name.length) }
+      }
+      implemented = table.specs.values.filter { here(it) }.flatMap { spec ->
+        followers = following.entries.filter { _, s -> s.name == spec.name }.flatMap { name, _ ->
+          modules.filter { it.name == name }
+        }
+        if (followers.isEmpty()) []
+        else {
+          own = at(spec).toList().map { place ->
+            (line, column, length) = place
+            (line, column, length, "implemented", followers.flatMap { locationOf(it).toList() })
+          }
+          own + valuesOf(spec).flatMap { v ->
+            targets = followers.flatMap { m -> environment.functions.get("${m.name}.${v.name}").toList() }
+            if (targets.isEmpty()) []
+            else valueAt(spec, v).toList().map { place ->
+              (line, column, length) = place
+              (line, column, length, "implemented", targets.flatMap { locationOf(it).toList() })
+            }
+          }
+        }
+      }
+      implementing = modules.filter { here(it) }.flatMap { module ->
+        following.get(module.name).toList().flatMap { spec ->
+          own = at(module).toList().map { place ->
+            (line, column, length) = place
+            (line, column, length, "implements", locationOf(spec).toList())
+          }
+          own + valuesOf(spec).flatMap { v ->
+            environment.functions.get("${module.name}.${v.name}").toList().flatMap { f ->
+              target = valueAt(spec, v).map { place ->
+                (line, column, length) = place
+                location(spec.file.source.path.getOrElse(""), line, column, length)
+              }
+              at(f).toList().map { place ->
+                (line, column, length) = place
+                (line, column, length, "implements", target.toList())
+              }
+            }
+          }
+        }
+      }
+      implemented + implementing
+    }.getOrElse([])
   }
 
   // What would put right what the diagnostic says is wrong: an import it names, or an effect a

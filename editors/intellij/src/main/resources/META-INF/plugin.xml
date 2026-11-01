@@ -29,6 +29,10 @@
     <langCodeStyleSettingsProvider implementation="uk.m4xy.fckt.intellij.FcktCodeStyleSettingsProvider"/>
     <iconProvider implementation="uk.m4xy.fckt.intellij.FcktIconProvider"/>
     <platform.lsp.serverSupportProvider implementation="uk.m4xy.fckt.intellij.FcktLspServerSupportProvider"/>
+    <codeInsight.lineMarkerProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktSpecLineMarkers"/>
+    <configurationType implementation="uk.m4xy.fckt.intellij.FcktRunConfigurationType"/>
+    <runConfigurationProducer implementation="uk.m4xy.fckt.intellij.FcktRunConfigurationProducer"/>
+    <runLineMarkerContributor language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktRunLineMarkers"/>
   </extensions>
 
   <!-- Uses only Kotlin's colours, which both of its modes have. -->

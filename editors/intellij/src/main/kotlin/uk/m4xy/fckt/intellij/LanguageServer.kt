@@ -11,6 +11,7 @@ import com.intellij.platform.lsp.api.customization.LspFormattingDisabled
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensCustomizer
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensSupport
 import com.intellij.openapi.editor.colors.TextAttributesKey
+import org.eclipse.lsp4j.services.LanguageServer
 import java.io.File
 
 /**
@@ -26,6 +27,8 @@ class FcktLspServerSupportProvider : LspServerSupportProvider {
 
 private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDescriptor(project, "fckt") {
     override fun isSupportedFile(file: VirtualFile) = file.extension == "fk"
+
+    override val lsp4jServerClass: Class<out LanguageServer> = FcktLanguageServer::class.java
 
     override fun createCommandLine(): GeneralCommandLine =
         GeneralCommandLine(fcktExecutable(), "--language-server").withWorkDirectory(project.basePath)

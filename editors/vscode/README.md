@@ -19,10 +19,12 @@ For quick edits to the grammar, you can instead symlink this folder into
 
 ## IntelliJ IDEA
 
-Use the plugin in `editors/intellij`, which colours names by what they are. This grammar also works
-as a TextMate bundle (Settings → Editor → TextMate Bundles → **+**, then pick this folder), but
-TextMate's colours in IntelliJ can't tell a type parameter or a type with cases from any other
-name.
+Use the plugin in `editors/intellij`, which runs the same language server through IntelliJ's own
+client, for everything above and for colouring each name by what it is; and adds a ▶ beside
+`main` and each test, which runs it with kiln, its tests' results in IntelliJ's test runner, and
+icons beside each spec and module, and their values, that go to what implements them or what they
+implement. Build it with `./gradlew :intellij:buildPlugin` and install
+`editors/intellij/build/distributions/fckt-0.1.0.zip` from disk.
 
 ## Changing the grammar
 
