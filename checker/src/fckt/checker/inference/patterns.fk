@@ -434,7 +434,7 @@ irrefutable(p: Pattern): Boolean = when (p) {
     RecordConstructor(record) -> note(
       Means(context.place.file.source.path, at, name.length, record, None),
     )
-    BuiltinCase(_) -> Unit
+    BuiltinCase(_) -> note(BuiltinCaseName(context.place.file.source.path, at, name.length))
   }
   shape
 }

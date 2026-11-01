@@ -245,7 +245,15 @@ private isBind(s: Statement): Boolean = when (s) {
           )
           withScope(
             soFar,
-            Bindings.bound(inner, name, Local(typed.t, region), at, valueType.isSome(), false, context),
+            Bindings.bound(
+              inner,
+              name,
+              Local(typed.t, region),
+              at,
+              valueType.isSome(),
+              false,
+              context,
+            ),
             false,
           ).copy(
             lines = soFar.lines + [step],

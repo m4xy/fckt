@@ -34,7 +34,7 @@ import fckt.parser.*
       CaseConstructor(c) -> note(
         Means(context.place.file.source.path, at, name.length, Symbols.ofCase(c), None),
       )
-      BuiltinCase(_) -> Unit
+      BuiltinCase(_) -> note(BuiltinCaseName(context.place.file.source.path, at, name.length))
     }
   }
   found

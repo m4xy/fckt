@@ -541,6 +541,7 @@ module LanguageServer {
     Does(f, _, _) -> f.getOrElse("")
     Gives(f, _, _) -> f.getOrElse("")
     TypeName(f, _, _, _) -> f.getOrElse("")
+    BuiltinCaseName(f, _, _) -> f.getOrElse("")
     Binds(f, _, _, _, _, _, _) -> f.getOrElse("")
     Reads(f, _, _, _, _, _) -> f.getOrElse("")
   }
@@ -554,6 +555,7 @@ module LanguageServer {
         Does(f, at, _) -> (f.getOrElse(""), "d ${at.line} ${at.column}")
         Gives(f, at, _) -> (f.getOrElse(""), "g ${at.line} ${at.column}")
         TypeName(f, at, _, _) -> (f.getOrElse(""), "t ${at.line} ${at.column}")
+        BuiltinCaseName(f, at, _) -> (f.getOrElse(""), "c ${at.line} ${at.column}")
         Binds(f, at, _, name, _, _, _) -> (f.getOrElse(""), "b ${at.line} ${at.column} $name")
         Reads(f, at, _, name, _, _) -> (f.getOrElse(""), "r ${at.line} ${at.column} $name")
       }
@@ -908,6 +910,7 @@ module LanguageServer {
         TypeName(_, at, length, builtin) -> [
           (at.line - 1, at.column - 1, length, if (builtin) 2 else 5, 0),
         ]
+        BuiltinCaseName(_, at, length) -> [(at.line - 1, at.column - 1, length, 9, 0)]
         else -> []
       }
     }

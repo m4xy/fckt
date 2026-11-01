@@ -23,6 +23,7 @@ module Facts {
         }
         Gives(file, at, t) -> [Gives(file, at, resolvedFully(t))]
         TypeName(file, at, length, builtin) -> [TypeName(file, at, length, builtin)]
+        BuiltinCaseName(file, at, length) -> [BuiltinCaseName(file, at, length)]
         Binds(file, at, length, name, t, written, parameter) -> [
           Binds(file, at, length, name, resolvedFully(t), written, parameter),
         ]
@@ -37,6 +38,7 @@ module Facts {
     Means(file, at, _, symbol, _) -> "m ${file.getOrElse("")} ${at.line} ${at.column} ${symbol.name}"
     Does(file, at, _) -> "d ${file.getOrElse("")} ${at.line} ${at.column}"
     Gives(file, at, _) -> "g ${file.getOrElse("")} ${at.line} ${at.column}"
+    BuiltinCaseName(file, at, _) -> "c ${file.getOrElse("")} ${at.line} ${at.column}"
     TypeName(file, at, _, _) -> "t ${file.getOrElse("")} ${at.line} ${at.column}"
     Binds(file, at, _, name, _, _, _) -> "b ${file.getOrElse("")} ${at.line} ${at.column} $name"
     Reads(file, at, _, name, _, _) -> "r ${file.getOrElse("")} ${at.line} ${at.column} $name"

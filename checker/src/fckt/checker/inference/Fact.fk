@@ -21,6 +21,8 @@ type Fact {
     written: Boolean,
     parameter: Boolean,
   ),
+  // One of the language's own cases, Some, None, Ok or Error, written in file at, as long as length.
+  BuiltinCaseName(file: Option<String>, at: Position, length: Int),
   // A type's name written in file at, as long as length, that's one of the language's own, or, if
   // not, a type parameter of what it's written in.
   TypeName(file: Option<String>, at: Position, length: Int, builtin: Boolean),
