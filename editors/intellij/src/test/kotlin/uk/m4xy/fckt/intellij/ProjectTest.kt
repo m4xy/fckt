@@ -26,6 +26,21 @@ class ProjectTest {
     """.trimIndent()
 
     @Test
+    fun `a library's module values imported with star are found in its interface`() {
+        write("cache/http/interface/unit", "Uk_m4xy_http")
+        write("cache/http/interface/uk/m4xy/http/Status.fki", "type Status(code: Int)")
+        write("cache/http/interface/uk/m4xy/http/Statuses.fki", "module Statuses {\n  ok: Status\n  notFound: Status\n}")
+        write("shop/build.fk", "project = Project(name = \"shop\")")
+        write("shop/.kiln/paths", "source src\nlibrary ${File(dir, "cache/http/interface").path}")
+        val text = "import uk.m4xy.http.Status\nimport uk.m4xy.http.Statuses.*\n\nanswer(found: Boolean): Status = if (found) ok else notFound\n"
+        write("shop/src/main.fk", text)
+        val file = File(dir, "shop/src/main.fk")
+        val found = declarations(text, file)
+        assertEquals(listOf("Statuses.fki:2"), found[text.indexOf("ok else")]?.map { "${File(it.file!!).name}:${it.pos.line}" })
+        assertEquals(listOf("Statuses.fki:3"), found[text.indexOf("notFound\n")]?.map { "${File(it.file!!).name}:${it.pos.line}" })
+    }
+
+    @Test
     fun `a library is seen through its interface`() {
         // A library kiln compiled, which has only its interface here.
         write("cache/units/interface/unit", "Uk_m4xy_units")

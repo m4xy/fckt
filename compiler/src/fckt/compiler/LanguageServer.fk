@@ -148,11 +148,11 @@ module LanguageServer {
           )
         }.orElse { hover(session, u, params) }
       }.getOrElse(JsonNull))
-      "textDocument/definition" -> answer(id, uri.flatMap { u ->
+      "textDocument/definition" -> answer(id, JsonArray(uri.flatMap { u ->
         localAt(session, u, params).map { l ->
           location(l.file, l.bound.line - 1, l.bound.column - 1, l.name.length)
         }.orElse { symbolAt(session, u, params).flatMap { locationOf(it) } }
-      }.getOrElse(JsonNull))
+      }.toList()))
       "textDocument/references" -> answer(id, JsonArray(uri.map { u ->
         whole = params.field("context").flatMap { it.field("includeDeclaration") }
         withDeclaration = whole.map { it == JsonBoolean(true) }.getOrElse(true)
