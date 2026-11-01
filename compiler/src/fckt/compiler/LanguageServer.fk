@@ -25,6 +25,8 @@ import fckt.checker.core.TypeDeclaration
 import fckt.checker.diagnostics.Diagnostics
 import fckt.checker.symbols.Symbol
 import fckt.checker.types.Type
+import fckt.checker.types.Types
+import fckt.checker.types.Row
 import fckt.checker.types.TypeText
 import fckt.checker.types.Solutions
 import fckt.parser.*
@@ -106,6 +108,7 @@ module LanguageServer {
           ("definitionProvider", JsonBoolean(true)),
           ("documentSymbolProvider", JsonBoolean(true)),
           ("referencesProvider", JsonBoolean(true)),
+          ("documentHighlightProvider", JsonBoolean(true)),
           ("renameProvider", JsonBoolean(true)),
           ("inlayHintProvider", JsonBoolean(true)),
           ("codeActionProvider", JsonBoolean(true)),
@@ -166,6 +169,36 @@ module LanguageServer {
             location(file, at.line - 1, at.column - 1, length)
           }
         } }.getOrElse([])
+      }.getOrElse([])))
+      "textDocument/documentHighlight" -> answer(id, JsonArray(uri.map { u ->
+        here = pathOf(u).value
+        places = localAt(session, u, params).map { l ->
+          localUses(session, l).map { at -> (at, l.name.length) }
+        }.orElse {
+          symbolAt(session, u, params).map { s ->
+            uses = usesOf(session, u, s).filter { use ->
+              (file, _, _) = use
+              file == here
+            }.map { use ->
+              (_, at, length) = use
+              (at, length)
+            }
+            declared = nameOf(session, s).toList().filter { found ->
+              (file, _, _) = found
+              file == here
+            }.map { found ->
+              (_, line, column) = found
+              (Position(line + 1, column + 1), s.declaration.name.split(".").lastOrNone().getOrElse("").length)
+            }
+            declared + uses
+          }
+        }.getOrElse([])
+        places.distinct().map { place ->
+          (at, length) = place
+          JsonObject(
+            [("range", range(at.line - 1, at.column - 1, at.line - 1, at.column - 1 + length))],
+          )
+        }
       }.getOrElse([])))
       "textDocument/rename" -> answer(id, uri.flatMap { u ->
         newName = params.field("newName").flatMap { it.text }.getOrElse("")
@@ -249,7 +282,7 @@ module LanguageServer {
       withParsed(session, it)
     }.filter { source ->
       when (source.prepared) {
-        Some(prepared) -> prepared.file.declarations.any { it.name == "main" }
+        Some(prepared) -> Tests.declaresMain(prepared.file)
         None -> declaresMain(source.text)
       }
     }
@@ -363,7 +396,7 @@ module LanguageServer {
   }
 
   private declaresMain(text: String): Boolean = when (Parser.parse(text)) {
-    Ok(file) -> file.declarations.any { it.name == "main" }
+    Ok(file) -> Tests.declaresMain(file)
     Error(_) -> false
   }
 
@@ -816,9 +849,7 @@ module LanguageServer {
   @FileSystem private hover(session: Session, uri: String, params: Json): Option<Json> =
     meansAt(session, uri, params).map { m ->
       file = pathOf(uri).value
-      t = m.t.map { Solutions.solving { TypeText.shown(it) } }.orElse {
-        checkedOf(session, uri, m.symbol).map { typeOf(it) }
-      }
+      checked = checkedOf(session, uri, m.symbol)
       does = factsIn(session, pathOf(uri)).flatMap { f ->
         when (f) {
           Does(
@@ -830,8 +861,12 @@ module LanguageServer {
           else -> []
         }
       }
-      shownType = t.map { ": $it" }.getOrElse("")
-      said = "```fckt\n${m.symbol.declaration.name}$shownType\n```" +
+      written = when (checked) {
+        Some(f) -> signatureOf(f)
+        None -> (m.symbol.declaration.name + m.t.map { t -> ": " + Solutions.solving { TypeText.shown(t) } }.getOrElse(""), None)
+      }
+      (signature, effects) = written
+      said = "```fckt\n$signature\n```" + effects.map { "\n\n$it" }.getOrElse("") +
         (if (does.isEmpty()) "" else "\n\nThis call does ${Doings.shown(does)}.")
       JsonObject(
         [("contents", JsonObject([("kind", JsonString("markdown")), ("value", JsonString(said))]))],
@@ -841,11 +876,67 @@ module LanguageServer {
         JsonObject([
           ("contents", JsonObject([
             ("kind", JsonString("markdown")),
-            ("value", JsonString("```fckt\n${f.function.declaration.name}: ${typeOf(f)}\n```")),
+            ("value", JsonString(hoverText(signatureOf(f)))),
           ])),
         ])
       }
     }
+
+  private hoverText(written: (String, Option<String>)): String = {
+    (signature, effects) = written
+    "```fckt\n$signature\n```" + effects.map { "\n\n$it" }.getOrElse("")
+  }
+
+  // A function as it's called, with its parameters' names and what it gives, its receiver's type
+  // first if it extends one; and, if it's a function, what calling it does: its effects, and those
+  // of the functions it's given that it calls, or nothing. A value as its name and type.
+  private signatureOf(f: CheckedFunction): (String, Option<String>) = Solutions.solving {
+    s = f.function
+    name = s.declaration.name.split(".").lastOrNone().getOrElse(s.declaration.name)
+    // Its unknowns named A, B, ... as they first come, as one signature, rather than each part
+    // numbered its own.
+    names = Types.variablesIn(f.scheme.template).fold(
+      [],
+    ) { seen, v -> if (seen.contains(v)) seen else seen + [v] }
+    named = names.mapIndexed { i, v -> (v, TypeParameter(letterName(i))) }.toMap()
+    // What it does is told from its own unknowns, which naming them for showing doesn't keep.
+    (row, written) = when (f.scheme.template) {
+      FunctionOf(own, _, does) -> (does, own)
+      _ -> (Row([], None), [])
+    }
+    when (Types.substitute(f.scheme.template, named)) {
+      FunctionOf(types, result, _) -> {
+        extending = Signatures.receiverOf(s).isSome()
+        receiver = if (extending) types.firstOrNone().map { TypeText.shown(it) + "." }.getOrElse("") else ""
+        given = if (extending) types.drop(1) else types
+        writtenParameters = Signatures.writtenParametersOf(s)
+        parameters = writtenParameters.map { ps ->
+          "(" + ps.zip(
+            given,
+          ).map { p, t -> "${p.name}: ${TypeText.shown(t)}" }.joinToString(", ") + ")"
+        }.getOrElse("")
+        labels = row.labels.map { it.name }
+        ownGiven = if (extending) written.drop(1) else written
+        carriers = writtenParameters.getOrElse([]).zip(ownGiven).filter { _, t ->
+          when (t) {
+            FunctionOf(_, _, theirs) -> row.rest.isSome() && theirs.rest == row.rest
+            else -> false
+          }
+        }.map { p, _ -> p.name }
+        theirs = "what ${carriers.joinToString(" and ")} does"
+        effects = if (labels.isEmpty() && carriers.isEmpty()) "pure"
+        else if (labels.isEmpty()) "does $theirs"
+        else if (carriers.isEmpty()) "does ${Doings.shown(labels)}"
+        else "does ${Doings.shown(labels)} and $theirs"
+        ("$receiver$name$parameters: ${TypeText.shown(result)}", Some(effects))
+      }
+      t -> ("$name: ${TypeText.shown(t)}", None)
+    }
+  }
+
+  // A, B, ..., Z, then A1, B1, ...
+  private letterName(i: Int): String =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".drop(i % 26).take(1) + (if (i < 26) "" else "${i / 26}")
 
   @FileSystem private checkedOf(session: Session, uri: String, s: Symbol): Option<CheckedFunction> =
     session.programs.getOrDefault(
