@@ -11,6 +11,7 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiManager
 import org.eclipse.lsp4j.Location
 import org.eclipse.lsp4j.Range
+import org.eclipse.lsp4j.SemanticTokens
 import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest
 import org.eclipse.lsp4j.services.LanguageServer
@@ -21,7 +22,13 @@ interface FcktLanguageServer : LanguageServer {
     /** Each spec, module, and value of them, in the file, with what implements it or what it implements. */
     @JsonRequest("fckt/specMarkers")
     fun specMarkers(params: SpecMarkersParams): CompletableFuture<List<SpecMarker>>
+
+    /** The colours of a file outside the project, which IntelliJ won't open with the server, from its text. */
+    @JsonRequest("fckt/tokens")
+    fun tokens(params: TokensParams): CompletableFuture<SemanticTokens>
 }
+
+class TokensParams(val textDocument: TextDocumentIdentifier, val text: String)
 
 class SpecMarkersParams(val textDocument: TextDocumentIdentifier)
 

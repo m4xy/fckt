@@ -30,6 +30,7 @@
     <iconProvider implementation="uk.m4xy.fckt.intellij.FcktIconProvider"/>
     <platform.lsp.serverSupportProvider implementation="uk.m4xy.fckt.intellij.FcktLspServerSupportProvider"/>
     <codeInsight.lineMarkerProvider language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktSpecLineMarkers"/>
+    <externalAnnotator language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktOutsideAnnotator"/>
     <configurationType implementation="uk.m4xy.fckt.intellij.FcktRunConfigurationType"/>
     <runConfigurationProducer implementation="uk.m4xy.fckt.intellij.FcktRunConfigurationProducer"/>
     <runLineMarkerContributor language="fckt" implementationClass="uk.m4xy.fckt.intellij.FcktRunLineMarkers"/>

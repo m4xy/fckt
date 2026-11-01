@@ -233,6 +233,16 @@ module LanguageServer {
         ).flatMap { it.field("diagnostics") }.map { it.items }.getOrElse([])
         said.flatMap { d -> fixes(session, u, d) }
       }.getOrElse([])))
+      // fckt's own: the colours of a file the editor gives the text of, as it can't open it with the
+      // server, being outside the project, as what kiln keeps is.
+      "fckt/tokens" -> answer(id, JsonObject([
+        ("data", JsonArray(uri.map { u ->
+          params.field(
+            "text",
+          ).flatMap { it.text }.forEach { text -> session.open = session.open.put(u, text) }
+          tokensOf(session, u)
+        }.getOrElse([]).map { number(it) })),
+      ]))
       "textDocument/semanticTokens/full" -> {
         uri.forEach { u -> checkedAsItIs(session, u) }
         answer(id, JsonObject([
