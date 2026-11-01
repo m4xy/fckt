@@ -42,7 +42,15 @@ import jetbrains.buildServer.messages.serviceMessages.TestSuiteFinished
 import jetbrains.buildServer.messages.serviceMessages.TestSuiteStarted
 import java.io.File
 import javax.swing.JComponent
-import javax.swing.JLabel
+import javax.swing.JComboBox
+import javax.swing.JTextField
+import com.intellij.util.ui.FormBuilder
+import com.intellij.execution.testframework.sm.runner.SMTestLocator
+import com.intellij.execution.Location
+import com.intellij.execution.PsiLocation
+import com.intellij.psi.search.FilenameIndex
+import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.PsiManager
 
 /** What a ▶ in the gutter runs: a program's main, with kiln run, or tests, with kiln test. */
 class FcktRunConfigurationType : ConfigurationType {
@@ -73,11 +81,7 @@ class FcktRunConfiguration(project: Project, factory: ConfigurationFactory, name
     RunConfigurationBase<FcktRunOptions>(project, factory, name) {
     public override fun getOptions(): FcktRunOptions = super.getOptions() as FcktRunOptions
 
-    override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration> = object : SettingsEditor<FcktRunConfiguration>() {
-        override fun resetEditorFrom(s: FcktRunConfiguration) {}
-        override fun applyEditorTo(s: FcktRunConfiguration) {}
-        override fun createEditor(): JComponent = JLabel("kiln ${options.task} in ${options.folder} ${options.selection}")
-    }
+    override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration> = FcktRunConfigurationEditor()
 
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState = object : CommandLineState(environment) {
         override fun startProcess(): ProcessHandler {
@@ -97,6 +101,31 @@ class FcktRunConfiguration(project: Project, factory: ConfigurationFactory, name
     }
 }
 
+/** The project's folder, the task, run or test, and, for tests, which: a file, file.fk::name, or a name. */
+class FcktRunConfigurationEditor : SettingsEditor<FcktRunConfiguration>() {
+    private val folder = JTextField()
+    private val task = JComboBox(arrayOf("run", "test"))
+    private val selection = JTextField()
+
+    override fun resetEditorFrom(s: FcktRunConfiguration) {
+        folder.text = s.options.folder
+        task.selectedItem = s.options.task
+        selection.text = s.options.selection
+    }
+
+    override fun applyEditorTo(s: FcktRunConfiguration) {
+        s.options.folder = folder.text
+        s.options.task = task.selectedItem as? String ?: "run"
+        s.options.selection = selection.text
+    }
+
+    override fun createEditor(): JComponent = FormBuilder.createFormBuilder()
+        .addLabeledComponent("Project folder:", folder)
+        .addLabeledComponent("kiln task:", task)
+        .addLabeledComponent("Tests to run:", selection)
+        .panel
+}
+
 /** kiln's, as fckt's is found: KILN, ~/.kiln/bin, or the PATH's. */
 internal fun kilnExecutable(): String {
     System.getenv("KILN")?.let { return it }
@@ -108,6 +137,22 @@ class FcktTestConsoleProperties(configuration: FcktRunConfiguration, executor: E
     SMTRunnerConsoleProperties(configuration, "fckt", executor), SMCustomMessagesParsing {
     override fun createTestEventsConverter(framework: String, properties: TestConsoleProperties): OutputToGeneralTestEventsConverter =
         KilnTestEvents(framework, properties)
+
+    override fun getTestLocator(): SMTestLocator = FcktTestLocator
+}
+
+/** Where a test in the runner's tree is: fckt://file.fk::name, the file found in the project by its name. */
+object FcktTestLocator : SMTestLocator {
+    override fun getLocation(protocol: String, path: String, project: Project, scope: GlobalSearchScope): List<Location<*>> {
+        if (protocol != "fckt") return emptyList()
+        val file = path.substringBefore("::")
+        val name = path.substringAfter("::", "")
+        return FilenameIndex.getVirtualFilesByName(file, scope).mapNotNull { found ->
+            val psi = PsiManager.getInstance(project).findFile(found) ?: return@mapNotNull null
+            val at = if (name.isEmpty()) 0 else Regex("\\b${Regex.escape(name)}\\(").find(psi.text)?.range?.first ?: return@mapNotNull null
+            psi.findElementAt(at)?.let { PsiLocation(it) }
+        }
+    }
 }
 
 /**
@@ -116,6 +161,8 @@ class FcktTestConsoleProperties(configuration: FcktRunConfiguration, executor: E
  */
 class KilnTestEvents(framework: String, properties: TestConsoleProperties) : OutputToGeneralTestEventsConverter(framework, properties) {
     private var suite: String? = null
+
+    private fun location(name: String) = suite?.let { "fckt://$it::$name" }
 
     override fun processServiceMessages(text: String, outputType: Key<*>, visitor: ServiceMessageVisitor): Boolean {
         fun endSuite() = suite?.let { visitor.visitTestSuiteFinished(TestSuiteFinished(it)); suite = null }
@@ -126,11 +173,11 @@ class KilnTestEvents(framework: String, properties: TestConsoleProperties) : Out
                 visitor.visitTestSuiteStarted(TestSuiteStarted(event.file))
             }
             is KilnTestEvent.Passed -> {
-                visitor.visitTestStarted(TestStarted(event.name, false, null))
+                visitor.visitTestStarted(TestStarted(event.name, false, location(event.name)))
                 visitor.visitTestFinished(TestFinished(event.name, 0))
             }
             is KilnTestEvent.Failed -> {
-                visitor.visitTestStarted(TestStarted(event.name, false, null))
+                visitor.visitTestStarted(TestStarted(event.name, false, location(event.name)))
                 visitor.visitTestFailed(TestFailed(event.name, event.why))
                 visitor.visitTestFinished(TestFinished(event.name, 0))
             }
@@ -207,6 +254,12 @@ fun runnable(element: PsiElement): Runnable? {
     val path = file.virtualFile?.path?.let(::File) ?: return null
     val project = generateSequence(path.parentFile) { it.parentFile }.firstOrNull { File(it, "build.fk").isFile } ?: return null
     val text = file.text
+    // The file itself, as its menu in the project's tree runs it: its tests, if it has any.
+    if (element is FcktFile) {
+        return if (Regex("""(^|\n)\s*(@[A-Za-z.]+(\([^)]*\))?\s+)*@Test\b""").containsMatchIn(text))
+            Runnable(project.path, "test", path.name, path.name, 0)
+        else null
+    }
     val offset = element.textRange.startOffset
     val run = runnableAt(text, offset) ?: return null
     val (name, at, isTest) = run

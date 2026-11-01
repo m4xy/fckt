@@ -411,7 +411,10 @@ the call does, `This call does @Console.`; going to a name's definition goes to 
 declared or bound; finding its references finds every use of it in the project; and renaming it
 renames it in each of those places, if it's the project's own. Hints in the code show what it
 doesn't say: the type of a local, or of what a function gives, and the effects a function does,
-`@Console main(): Unit`. An error that names an import, `import fckt.io.Console has one`, offers to
+`@Console main(): Unit`. A declaration's documentation is the `//` lines right above it, or
+above its annotations, with no blank line between, as a library's interface keeps them: hover and
+completion show it, under the signature. Writing a call shows its signature, the parameter being
+written marked; and any declaration of the project's can be found by name. An error that names an import, `import fckt.io.Console has one`, offers to
 add it; and one about an effect a function must say it does offers to say so. It also outlines a
 file, completes names, and lays a file out as `fckt --format` does.
 
