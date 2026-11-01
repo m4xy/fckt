@@ -110,6 +110,9 @@ module LanguageServer {
           ("referencesProvider", JsonBoolean(true)),
           ("documentHighlightProvider", JsonBoolean(true)),
           ("implementationProvider", JsonBoolean(true)),
+          ("signatureHelpProvider", JsonObject([
+            ("triggerCharacters", JsonArray([JsonString("("), JsonString(",")])),
+          ])),
           ("renameProvider", JsonBoolean(true)),
           ("inlayHintProvider", JsonBoolean(true)),
           ("codeActionProvider", JsonBoolean(true)),
@@ -252,6 +255,10 @@ module LanguageServer {
           ])
         }
       }.getOrElse([])))
+      "textDocument/signatureHelp" -> answer(
+        id,
+        uri.flatMap { u -> signatureHelp(session, u, params) }.getOrElse(JsonNull),
+      )
       "textDocument/inlayHint" -> answer(
         id,
         JsonArray(uri.map { u -> hints(session, u) }.getOrElse([])),
@@ -1002,6 +1009,105 @@ module LanguageServer {
       }
       implemented + implementing
     }.getOrElse([])
+  }
+
+  // The call the position is in: its function's signature, each parameter where it is in it, and
+  // which one is being written, as what's before the position, back to the call's (, says.
+  @FileSystem private signatureHelp(session: Session, uri: String, params: Json): Option<Json> = {
+    (line, character) = positionOf(params)
+    file = pathOf(uri)
+    text = session.open.get(uri).getOrElse(readOrEmpty(file))
+    lines = text.split("\n")
+    offset = lines.take(line).map { it.length + 1 }.sum() + character
+    chars = text.take(offset).toList()
+    callOpen(chars, chars.size - 1, 0, 0).flatMap { found ->
+      (open, commas) = found
+      name = chars.take(
+        open,
+      ).reversed().dropWhile { it == ' ' }.takeWhile { isNameChar(it) }.reversed()
+      start = open - (chars.take(open).reversed().takeWhile { it == ' ' }.size) - name.size
+      nameLine = chars.take(start).filter { it == '\n' }.size
+      nameColumn = chars.take(start).reversed().takeWhile { it != '\n' }.size
+      written = name.map { it.toString() }.joinToString("")
+      noted = factsIn(session, file).flatMap { f ->
+        when (f) {
+          Means(_, at, _, symbol, _) if at.line == nameLine + 1 && at.column == nameColumn + 1 -> [
+            symbol,
+          ]
+          else -> []
+        }
+      }.firstOrNone()
+      functions = session.programs.getOrDefault(
+        projectOf(file).root.value,
+        [],
+      ).flatMap { it.functions }
+      called = when (noted) {
+        Some(s) -> functions.filter { it.function.name == s.name }.take(1)
+        None -> functions.filter { f ->
+          f.function.declaration.name.split(".").lastOrNone() == Some(
+            written,
+          ) && Signatures.isFunction(
+            f.function,
+          )
+        }.fold(emptyMap()) { m, f -> m.put(f.function.name, f) }.values.take(5)
+      }
+      if (written.isEmpty() || called.isEmpty()) None
+      else Some(JsonObject([
+        ("signatures", JsonArray(called.map { f ->
+          (label, effects) = signatureOf(f)
+          JsonObject([
+            ("label", JsonString(label)),
+            ("documentation", JsonObject([
+              ("kind", JsonString("markdown")),
+              ("value", JsonString((effects.toList() + docsOf(f.function).toList()).joinToString("\n\n"))),
+            ])),
+            ("parameters", JsonArray(parameterRanges(label).map { r ->
+              (from, to) = r
+              JsonObject([("label", JsonArray([number(from), number(to)]))])
+            })),
+          ])
+        })),
+        ("activeSignature", number(0)),
+        ("activeParameter", number(commas)),
+      ]))
+    }
+  }
+
+  // Where the call that's open at i opens, its (, and how many of its arguments come before i.
+  private callOpen(chars: List<Char>, i: Int, depth: Int, commas: Int): Option<(Int, Int)> =
+    when (chars.getOrNone(i)) {
+      None -> None
+      Some(c) if c == ')' || c == ']' || c == '}' -> callOpen(chars, i - 1, depth + 1, commas)
+      Some(c) if c == '(' && depth == 0 -> Some((i, commas))
+      Some(c) if c == '(' || c == '[' || c == '{' ->
+        if (depth == 0) None else callOpen(chars, i - 1, depth - 1, commas)
+      Some(',') if depth == 0 -> callOpen(chars, i - 1, depth, commas + 1)
+      Some(_) -> callOpen(chars, i - 1, depth, commas)
+    }
+
+  // Where each parameter is in a signature, name(a: A, f: (B, C) -> D): R: from the first ( to
+  // its ), split at its commas, but those in brackets of their own.
+  private parameterRanges(label: String): List<(Int, Int)> = {
+    chars = label.toList()
+    open = chars.indexOfFirst { it == '(' }
+    if (open < 0) []
+    else rangesFrom(chars, open + 1, open + 1, 0, [])
+  }
+
+  private rangesFrom(
+    chars: List<Char>,
+    i: Int,
+    start: Int,
+    depth: Int,
+    found: List<(Int, Int)>,
+  ): List<(Int, Int)> = when (chars.getOrNone(i)) {
+    None -> found
+    Some(c) if (c == ')' || c == ']' || c == '>') && depth == 0 ->
+      if (i > start) found + [(start, i)] else found
+    Some(c) if c == '(' || c == '[' || c == '<' -> rangesFrom(chars, i + 1, start, depth + 1, found)
+    Some(c) if c == ')' || c == ']' || c == '>' -> rangesFrom(chars, i + 1, start, depth - 1, found)
+    Some(',') if depth == 0 -> rangesFrom(chars, i + 2, i + 2, depth, found + [(start, i)])
+    Some(_) -> rangesFrom(chars, i + 1, start, depth, found)
   }
 
   // What would put right what the diagnostic says is wrong: an import it names, or an effect a
