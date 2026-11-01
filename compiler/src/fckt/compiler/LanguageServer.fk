@@ -53,6 +53,8 @@ module LanguageServer {
     var facts: Map<String, Map<String, List<Fact>>>,
     var prepared: Map<String, (String, Prepared)>,
     var unparsed: Map<String, List<Diagnostic>>,
+    // Each file's text as it was last checked, which what was noted of it is where it is in.
+    var checkedTexts: Map<String, String>,
   )
 
   // A project: the folders of its own packages, and the libraries' interfaces.
@@ -65,6 +67,7 @@ module LanguageServer {
       emptyMap(),
       false,
       [],
+      emptyMap(),
       emptyMap(),
       emptyMap(),
       emptyMap(),
@@ -326,6 +329,9 @@ module LanguageServer {
     tree = SourceTree(merged(core(home()) + std + own + libraries).mapValues { _, sources ->
       sources.map { withParsed(session, it) }
     })
+    session.checkedTexts = tree.packages.values.flatMap { it }.filter { it.project == ProgramProject }.fold(session.checkedTexts) { m, source ->
+      source.path.map { path -> m.put(path, source.text) }.getOrElse(m)
+    }
     // A file with main is a program of its own, checked from it; the packages none of them reaches,
     // from what imports them.
     mains = own.filter { pkg, _ -> pkg.isEmpty() }.flatMap { _, sources -> sources }.map {
@@ -835,6 +841,9 @@ module LanguageServer {
       }
     }
     local = (bound: Position) -> if (parameters.getOrDefault("${bound.line} ${bound.column}", false)) 6 else 7
+    // What was noted is where it was in the text as it was checked: moved to where those lines are
+    // now, and left out where they've changed since.
+    moved = movedLines(session.checkedTexts.getOrDefault(file.value, text).split("\n"), lines)
     used = facts.flatMap { f ->
       when (f) {
         Means(_, at, length, symbol, _) -> tokenKindOf(symbol).toList().map { kind ->
@@ -854,12 +863,16 @@ module LanguageServer {
         else -> []
       }
     }
+    usedNow = used.flatMap { token ->
+      (line, column, length, kind, modifiers) = token
+      moved(line).toList().map { now -> (now, column, length, kind, modifiers) }
+    }
     declared = when (Parser.parse(text)) {
       Ok(parsed) -> declarationTokens(parsed.declarations, lines)
       Error(_) -> []
     }
     // Each place once, the first said of it, in order.
-    ordered = (declared + used).fold((emptyMap(), [])) { seen, token ->
+    ordered = (declared + usedNow).fold((emptyMap(), [])) { seen, token ->
       (keys, kept) = seen
       (line, column, _, _, _) = token
       key = "$line $column"
@@ -877,6 +890,19 @@ module LanguageServer {
       (line, column, [[line - lastLine, start, length, kind, modifiers]] + out)
     }
     encoded.reversed().flatMap { it }
+  }
+
+  // Where each line of before is in after, from 0: those before the first that changed, and those
+  // after the last, as they were; none of those between.
+  private movedLines(before: List<String>, after: List<String>): (Int) -> Option<Int> = {
+    same = before.zip(after).takeWhile { a, b -> a == b }.size
+    shorter = min(before.size, after.size) - same
+    end = before.reversed().zip(after.reversed()).take(shorter).takeWhile { a, b -> a == b }.size
+    shift = after.size - before.size
+    (line: Int) ->
+      if (line < same) Some(line)
+      else if (line >= before.size - end) Some(line + shift)
+      else None
   }
 
   // What a declared name is, as its kind of token: a function, a value, a type of each sort, a
@@ -1449,11 +1475,13 @@ module LanguageServer {
     ).flatMap { it.functions }.filter {
       it.function.file.source.path == Some(file)
     }
+    // Where the locals were bound when the file was checked, moved to where those lines are now.
+    moved = movedLines(session.checkedTexts.getOrDefault(file, text).split("\n"), lines)
     locals = factsIn(session, pathOf(uri)).flatMap { fact ->
       when (fact) {
-        Binds(_, at, length, _, t, false, _) -> [
-          hint(at.line - 1, at.column - 1 + length, ": ${Solutions.solving { TypeText.shown(t) }}"),
-        ]
+        Binds(_, at, length, _, t, false, _) -> moved(at.line - 1).toList().map { line ->
+          hint(line, at.column - 1 + length, ": ${Solutions.solving { TypeText.shown(t) }}")
+        }
         else -> []
       }
     }
