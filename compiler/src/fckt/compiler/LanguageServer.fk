@@ -110,6 +110,7 @@ module LanguageServer {
           ("referencesProvider", JsonBoolean(true)),
           ("documentHighlightProvider", JsonBoolean(true)),
           ("implementationProvider", JsonBoolean(true)),
+          ("workspaceSymbolProvider", JsonBoolean(true)),
           ("signatureHelpProvider", JsonObject([
             ("triggerCharacters", JsonArray([JsonString("("), JsonString(",")])),
           ])),
@@ -255,6 +256,10 @@ module LanguageServer {
           ])
         }
       }.getOrElse([])))
+      "workspace/symbol" -> answer(id, JsonArray(symbolsNamed(
+        session,
+        params.field("query").flatMap { it.text }.getOrElse(""),
+      )))
       "textDocument/signatureHelp" -> answer(
         id,
         uri.flatMap { u -> signatureHelp(session, u, params) }.getOrElse(JsonNull),
@@ -1009,6 +1014,46 @@ module LanguageServer {
       }
       implemented + implementing
     }.getOrElse([])
+  }
+
+  // What the projects last checked declare of their own whose names have query's letters in order,
+  // as LSP's workspace symbols: each with its kind, where it is, and what it's in.
+  @FileSystem private symbolsNamed(session: Session, query: String): List<Json> = {
+    wanted = query.lowercase().toList()
+    has = (name: String) -> wanted.fold(Some(name.lowercase().toList())) { left, c ->
+      left.flatMap { rest ->
+        i = rest.indexOfFirst { it == c }
+        if (i < 0) None else Some(rest.drop(i + 1))
+      }
+    }.isSome()
+    session.programs.values.flatMap { programs -> programs.flatMap { p -> p.environment.toList() }.take(1) }.flatMap { environment ->
+      environment.definitions.namespace.table.declarations.filter { s ->
+        s.file.source.project == ProgramProject && has(
+          s.declaration.name.split(".").lastOrNone().getOrElse(""),
+        )
+      }
+    }.fold(emptyMap()) { m, s -> m.put(s.name, s) }.values.take(200).flatMap { s ->
+      locationOf(s).toList().map { where ->
+        JsonObject([
+          ("name", JsonString(s.declaration.name.split(".").lastOrNone().getOrElse(s.declaration.name))),
+          ("kind", number(symbolKind(s.declaration.definition))),
+          ("location", where),
+          ("containerName", JsonString(s.name.split(".").dropLast(1).joinToString("."))),
+        ])
+      }
+    }
+  }
+
+  // LSP's symbol kind for what's declared: a function, a value, a type of each sort, a module.
+  private symbolKind(definition: Definition): Int = when (definition) {
+    FunctionDefinition(_, _, Some(_), _, _, _, _) -> 12
+    FunctionDefinition(_, _, None, _, _, _, _) -> 14
+    RecordDefinition(_, _, _, _, _) -> 23
+    CasesDefinition(_, _, _, _) -> 10
+    AliasDefinition(_, _) -> 5
+    SpecDefinition(_, _, _, _, _) -> 11
+    ModuleDefinition(_, _, _, _, _) -> 2
+    else -> 13
   }
 
   // The call the position is in: its function's signature, each parameter where it is in it, and
