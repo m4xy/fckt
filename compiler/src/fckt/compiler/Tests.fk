@@ -45,6 +45,28 @@ module Tests {
     markerPackage = marks.marker.substringBeforeLast(".")
     markerName = marks.marker.substringAfterLast(".")
     runnerPackage = marks.runner.substringBeforeLast(".")
+    // A program in the folder isn't a test's file; one with tests too would have them never run,
+    // and a value named main would be the main the tests are run from.
+    programs = files.flatMap { f ->
+      named = f.parsed.declarations.find { it.name == "main" }
+      when ((named, mainOf(f.parsed))) {
+        (Some(main), Some(_)) if hasTests(f.parsed.declarations, markerName) -> [
+          Diagnostic(
+            f.source.path,
+            main.at,
+            "a file with tests can't have main, which makes it a program of its own: move main to a file of its own",
+          ),
+        ]
+        (Some(main), None) -> [
+          Diagnostic(
+            f.source.path,
+            main.at,
+            "main is what the tests are run from, so a test's file can't declare it: name it something else",
+          ),
+        ]
+        _ -> []
+      }
+    }
     each = files.filter { !declaresMain(it.parsed) }.map { f ->
       at = (p: Position, message: String) -> Diagnostic(f.source.path, p, message)
       importing = f.parsed.imports.filter { i ->
@@ -64,7 +86,7 @@ module Tests {
       (named, problems) = walked(f.parsed.declarations, [], markerName, marks.marker, imported, at)
       (named, importing + problems)
     }
-    (each.flatMap { named, _ -> named }, each.flatMap { _, problems -> problems })
+    (each.flatMap { named, _ -> named }, programs + each.flatMap { _, problems -> problems })
   }
 
   private walked(
@@ -112,9 +134,12 @@ module Tests {
       }
     }
 
-  declaresMain(file: SourceFile): Boolean = file.declarations.any { d ->
+  // Whether the file is a program of its own: it has a function main, not just a value of that name.
+  declaresMain(file: SourceFile): Boolean = mainOf(file).isSome()
+
+  private mainOf(file: SourceFile): Option<Declaration> = file.declarations.find { d ->
     d.name == "main" && when (d.definition) {
-      FunctionDefinition(_, _, _, _, _, _, _) -> true
+      FunctionDefinition(_, _, Some(_), _, _, _, _) -> true
       else -> false
     }
   }

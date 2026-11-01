@@ -159,7 +159,7 @@ internal fun testsMain(dir: File, marker: String, runner: String, runnerTests: B
     for (file in files) {
         val parsed = Parser.parse(file.readText(), file.path)
         // A file with a main is a program of its own, as it is in a package.
-        if (parsed.decls.any { it is Decl.Function && it.name == "main" }) continue
+        if (parsed.decls.any { it is Decl.Function && it.name == "main" && it.params != null }) continue
         val fileImports = parsed.imports[file.path].orEmpty()
         for (i in fileImports) {
             val path = i.path.joinToString(".")
@@ -300,7 +300,7 @@ fun compileLibrary(packages: List<String>, dirs: List<File>, libraries: List<Fil
         sources.sourceFiles(path).filter { it.extension == "fk" }.map { f ->
             val parsed = Parser.parse(f.readText(), f.path)
             Triple(path, f, parsed)
-        }.filter { (_, _, parsed) -> parsed.decls.none { it is Decl.Function && it.name == "main" } }
+        }.filter { (_, _, parsed) -> parsed.decls.none { it is Decl.Function && it.name == "main" && it.params != null } }
     }
     CompileErrors.throwIfAny(files.flatMap { (_, _, parsed) -> Interfaces.untyped(parsed) })
     val hidden = files.flatMap { (path, _, parsed) ->
@@ -328,7 +328,7 @@ fun compileSymbols(packages: List<String>, dirs: List<File>, libraries: List<Fil
         if (!sources.isPackage(path) || sources.unitOf(path) != null) throw CompileError(null, "${path.joinToString(".")} isn't a package in ${dirs.joinToString(", ")}")
     }
     // A program's file, with a main, is a program apart, as a library's is.
-    val files = named.flatMap { sources.sourceFiles(it) }.filter { f -> Parser.parse(f.readText(), f.path).decls.none { it is Decl.Function && it.name == "main" } }
+    val files = named.flatMap { sources.sourceFiles(it) }.filter { f -> Parser.parse(f.readText(), f.path).decls.none { it is Decl.Function && it.name == "main" && it.params != null } }
     if (files.isEmpty()) return Symbols.write(Checker(SourceFile(emptyList())).check(), emptySet())
     val linked = link(named.joinToString("") { "import ${it.joinToString(".")}.*\n" }, sources)
     val paths = files.map { it.path }.toSet()
@@ -685,7 +685,7 @@ private fun link(text: String, packages: Packages, extraImports: List<String> = 
             } catch (e: CompileError) {
                 if (DECLARES_MAIN.containsMatchIn(code)) return@flatMap emptyList() else throw e
             }
-            if (parsed.decls.any { it is Decl.Function && it.name == "main" }) {
+            if (parsed.decls.any { it is Decl.Function && it.name == "main" && it.params != null }) {
                 if (pkg.isEmpty()) parsed.decls.forEach { apart.putIfAbsent(it.name, source.path ?: "a file") }
                 return@flatMap emptyList()
             }

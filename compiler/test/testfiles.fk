@@ -1,0 +1,41 @@
+import uk.m4xy.fktests.api.Test
+import fckt.compiler.Tests
+import fckt.compiler.Tests.*
+import fckt.checker.sources.*
+import fckt.parser.*
+
+// Which of a folder's files have tests to run, and what's wrong with how they're written.
+
+testMarks = Marks("uk.m4xy.fktests.api.Test", "uk.m4xy.fktests.runner.Runner", None, false)
+
+// What's said of the files, each a name and its text, as file:line and the start of the message.
+writtenOf(files: List<(String, String)>): (List<String>, List<String>) = {
+  read = files.flatMap { name, text ->
+    when (Parser.parse(text)) {
+      Ok(parsed) -> [TestFile(SourceText(Some("test/$name"), ProgramProject, text), name, parsed)]
+      Error(_) -> []
+    }
+  }
+  (names, problems) = Tests.written(read, testMarks)
+  (names, problems.map { "${it.file.getOrElse("")}:${it.at.line} ${it.message.take(30)}" })
+}
+
+header = "import uk.m4xy.fktests.api.Test\n\n"
+
+@Test aValueNamedMainIsSaid() = {
+  (_, problems) = writtenOf([("a.fk", header + "main = 1\n\n@Test one() = Unit\n")])
+  assertEquals(["test/a.fk:3 main is what the tests are run"], problems)
+}
+
+@Test aMainBesideTestsIsSaid() = {
+  (_, problems) = writtenOf([("a.fk", header + "main() = Unit\n\n@Test one() = Unit\n")])
+  assertEquals(["test/a.fk:3 a file with tests can't have m"], problems)
+}
+
+@Test aProgramWithoutTestsIsLeftOut() = {
+  (names, problems) = writtenOf(
+    [("a.fk", header + "@Test one() = Unit\n"), ("b.fk", "main() = Unit\n")],
+  )
+  assertEquals(["one"], names)
+  assertEquals([], problems)
+}

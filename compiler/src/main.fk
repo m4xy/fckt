@@ -299,12 +299,7 @@ version: String = "0.1.0-SNAPSHOT"
   }
 }
 
-private declaresMain(file: SourceFile): Boolean = file.declarations.any { d ->
-  d.name == "main" && when (d.definition) {
-    FunctionDefinition(_, _, _, _, _, _, _) -> true
-    else -> false
-  }
-}
+private declaresMain(file: SourceFile): Boolean = Tests.declaresMain(file)
 
 // The OCaml unit a file of OCaml is: its name, without its extension, starting with a capital.
 private unitName(file: String): String = Naming.moduleName(path(file).name.removeSuffix(".ml"))
@@ -377,6 +372,8 @@ private shown(e: Diagnostic, file: String): String =
   }.sortedBy { it.name }
   tree = tree(o, own)
   (names, problems) = Tests.written(files, marks)
+  // What's wrong with what's written is said before what's checked, which it may stop making sense.
+  if (problems.isNotEmpty()) failing(problems.map { shown(it, dir) }) else Unit
   stub = SourceText(None, ProgramProject, Tests.stub(marks, names))
   checkedProgram(stub, dir, tree) { stubbed ->
     when (Tests.plan(stubbed, files, marks)) {

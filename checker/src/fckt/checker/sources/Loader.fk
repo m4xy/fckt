@@ -256,8 +256,9 @@ module Loader {
     loading.files = loading.files + [file]
   }
 
+  // A function main: a value of that name doesn't make a file a program.
   private isMain(d: Declaration): Boolean = d.name == "main" && when (d.definition) {
-    FunctionDefinition(_, _, _, _, _, _, _) -> true
+    FunctionDefinition(_, _, Some(_), _, _, _, _) -> true
     else -> false
   }
 
