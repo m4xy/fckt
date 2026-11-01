@@ -13391,12 +13391,6 @@ module Fckt = struct
         let unit = String.trim (Io.Files.path_read_text (Io.Paths.path_resolve dir "unit")) in
         packages_in dir [] (Checker.Sources.OtherProject { root = (Io.Files.path_canonical dir : Io.path).Io.value } : Checker.Sources.project) ((dir : Io.path).Io.value ^ "/") (Some unit) true
 
-      let standard (home : Io.path) : (string list * Checker.Sources.source_text list) list =
-        let std = Io.Paths.path_resolve home "std/src" in
-        let fk_arg1 = (Checker.Sources.OtherProject { root = (Io.Files.path_canonical std : Io.path).Io.value } : Checker.Sources.project) in
-        let fk_arg2 = packages_in_default_interface () in
-        packages_in std [] fk_arg1 "std/src/" (Some "Fckt_std") fk_arg2
-
       let home () : Io.path =
         match Effect.perform (Io.Process_env "FCKT_HOME") with
         | Some given -> Io.Paths.path given
@@ -13404,6 +13398,12 @@ module Fckt = struct
             match installed with
             | Some lib when Io.Files.path_is_directory (Io.Paths.path_resolve lib "core") -> lib
             | _ -> Io.Paths.path "."
+
+      let standard (home : Io.path) : (string list * Checker.Sources.source_text list) list =
+        let std = Io.Paths.path_resolve home "std/src" in
+        let fk_arg1 = (Checker.Sources.OtherProject { root = (Io.Files.path_canonical std : Io.path).Io.value } : Checker.Sources.project) in
+        let fk_arg2 = packages_in_default_interface () in
+        packages_in std [] fk_arg1 "std/src/" (Some "Fckt_std") fk_arg2
 
       let merged (packages : (string list * Checker.Sources.source_text list) list) : (string list, Checker.Sources.source_text list) Collections.Maps.map =
         List.fold_left (fun m entry -> let (pkg, files) = entry in
@@ -14352,6 +14352,14 @@ module Fckt = struct
       let editing (session : session) (source : Checker.Sources.source_text) : string =
         Option.value (Collections.Maps.map_get (session : session).open_ (uri_of (Option.value (source : Checker.Sources.source_text).Checker.Sources.path ~default:""))) ~default:(source : Checker.Sources.source_text).Checker.Sources.text
 
+      let real_path (written : string) (home : Io.path) : string =
+        if String.starts_with ~prefix:"core:" written then (let installed = Io.Paths.path_resolve home "core" in
+           let folder = if Io.Files.path_is_directory installed then installed else Io.Paths.path_resolve home "src/main/resources/std" in
+           (Io.Files.path_canonical (Io.Paths.path_resolve folder (Lang.Strings.string_remove_prefix written "core:")) : Io.path).Io.value) else if String.starts_with ~prefix:"/" written then written else (Io.Files.path_canonical (Io.Paths.path_resolve home written) : Io.path).Io.value
+
+      let where_they_are (packages : (string list * Checker.Sources.source_text list) list) (home : Io.path) : (string list * Checker.Sources.source_text list) list =
+        List.map (fun (pkg, sources) -> (pkg, List.map (fun source -> { (source : Checker.Sources.source_text) with Checker.Sources.path = Option.map (fun p -> real_path p home) (source : Checker.Sources.source_text).Checker.Sources.path }) sources)) packages
+
       let with_parsed (session : session) (source : Checker.Sources.source_text) : Checker.Sources.source_text =
         let key = Option.value (source : Checker.Sources.source_text).Checker.Sources.path ~default:"" ^ " " ^ string_of_bool (source : Checker.Sources.source_text).Checker.Sources.interface in
         let path = Option.value (source : Checker.Sources.source_text).Checker.Sources.path ~default:"" in
@@ -14448,8 +14456,9 @@ module Fckt = struct
               let fk_arg2 = Sources.packages_in_default_interface () in
               Sources.packages_in dir [] (Checker.Sources.ProgramProject : Checker.Sources.project) ((dir : Io.path).Io.value ^ "/") fk_arg1 fk_arg2)) folders in
         let libraries = List.concat_map (fun it -> Sources.interfaces_in it) (List.filter (fun it -> Io.Files.path_exists (Io.Paths.path_resolve it "unit")) (project : project).libraries) in
-        let std = if List.is_empty libraries then Sources.standard (Sources.home ()) else [] in
-        let tree = let fk_arg1 = Collections.Maps.map_map_values (Sources.merged (((Sources.core (Sources.home ()) @ std) @ own) @ libraries)) (fun _ sources -> List.map (fun it -> with_parsed session it) sources) in
+        let fckt = Sources.home () in
+        let std = if List.is_empty libraries then where_they_are (Sources.standard fckt) fckt else [] in
+        let tree = let fk_arg1 = Collections.Maps.map_map_values (Sources.merged (((where_they_are (Sources.core fckt) fckt @ std) @ own) @ libraries)) (fun _ sources -> List.map (fun it -> with_parsed session it) sources) in
           let fk_arg2 = Checker.Sources.source_tree_default_imports () in
           ({ Checker.Sources.packages = fk_arg1; imports = fk_arg2 } : Checker.Sources.source_tree) in
         session.checked_texts <- List.fold_left (fun m source -> Option.value (Option.map (fun path -> Collections.Maps.map_put m path (source : Checker.Sources.source_text).Checker.Sources.text) (source : Checker.Sources.source_text).Checker.Sources.path) ~default:m) (session : session).checked_texts (List.filter (fun it -> (it : Checker.Sources.source_text).Checker.Sources.project = (Checker.Sources.ProgramProject : Checker.Sources.project)) (List.concat_map (fun it -> it) (Collections.Maps.map_values (tree : Checker.Sources.source_tree).Checker.Sources.packages)));
