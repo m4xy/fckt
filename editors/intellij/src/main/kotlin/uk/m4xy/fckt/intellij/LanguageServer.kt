@@ -4,7 +4,9 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.platform.lsp.api.LspServerSupportProvider
-import com.intellij.platform.lsp.api.ProjectWideLspServerDescriptor
+import com.intellij.platform.lsp.api.LspServerDescriptor
+import com.intellij.openapi.project.BaseProjectDirectories
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.platform.lsp.api.customization.LspCustomization
 import com.intellij.platform.lsp.api.customization.LspFormattingCustomizer
 import com.intellij.platform.lsp.api.customization.LspFormattingDisabled
@@ -30,7 +32,9 @@ class FcktLspServerSupportProvider : LspServerSupportProvider {
     }
 }
 
-private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDescriptor(project, "fckt") {
+// Its files are the project's, and what kiln keeps, ~/.kiln: libraries' interfaces, and the core and
+// standard library fckt is installed with, which going to a declaration opens.
+private class FcktLspServerDescriptor(project: Project) : LspServerDescriptor(project, "fckt", *rootsOf(project)) {
     // A library's interface too, which the server colours as its text says.
     override fun isSupportedFile(file: VirtualFile) = file.extension == "fk" || file.extension == "fki"
 
@@ -58,6 +62,13 @@ private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDe
                 FcktColors.ofToken(tokenType, modifiers)
         }
     }
+}
+
+private fun rootsOf(project: Project): Array<VirtualFile> {
+    val home = System.getenv("KILN_HOME") ?: (System.getProperty("user.home") + "/.kiln")
+    val kiln = LocalFileSystem.getInstance().findFileByIoFile(File(home))
+    val own = with(BaseProjectDirectories) { project.getBaseDirectories() }
+    return (own.toList() + listOfNotNull(kiln)).toTypedArray()
 }
 
 /**

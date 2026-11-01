@@ -308,7 +308,7 @@ module LanguageServer {
   @FileSystem @Channel @Process private checkedAsItIs(session: Session, uri: String): Unit = {
     file = pathOf(uri).value
     text = session.open.get(uri).getOrElse(readOrEmpty(pathOf(uri)))
-    if (session.checkedTexts.get(file) != Some(text) && !uri.endsWith(".fki")) {
+    if (session.checkedTexts.get(file) != Some(text) && !uri.endsWith(".fki") && !uri.contains("/.kiln/")) {
       root = projectOf(pathOf(uri)).root.value
       session.changed = session.changed.filter { u -> projectOf(pathOf(u)).root.value != root }
       checked(session, uri)
@@ -316,9 +316,10 @@ module LanguageServer {
     else Unit
   }
 
-  // A library's interface isn't checked: it's in no project, and its library was checked already.
+  // A library's interface isn't checked, nor what kiln keeps, the core and standard library fckt is
+  // installed with: they're in no project, and were checked already.
   @FileSystem @Channel @Process private checked(session: Session, uri: String): Unit =
-    if (uri.endsWith(".fki")) Unit
+    if (uri.endsWith(".fki") || uri.contains("/.kiln/")) Unit
     else when (attempt { check(session, uri) }) {
       Ok(_) -> Unit
       Error(why) -> printError("fckt: can't check $uri: $why")
@@ -904,9 +905,12 @@ module LanguageServer {
       (line, column, length, kind, modifiers) = token
       moved(line).toList().map { now -> (now, column, length, kind, modifiers) }
     }
+    // What kiln keeps isn't checked: its parameters and types are coloured as its text says them.
+    fromKiln = file.value.contains("/.kiln/")
     declared = if (file.value.endsWith(".fki")) interfaceTokens(text, lines)
     else when (Parser.parse(text)) {
-      Ok(parsed) -> declarationTokens(parsed.declarations, lines)
+      Ok(parsed) -> declarationTokens(parsed.declarations, lines) +
+        (if (fromKiln) writtenTypesIn(parsed.declarations, []) else [])
       Error(_) -> []
     }
     // Each place once, the first said of it, in order.
