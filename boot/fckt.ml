@@ -13943,6 +13943,144 @@ module Fckt = struct
         let effect_ = if not (Lang.Strings.string_contains message ", so it must say so") || String.equal "" e then [] else [fix ("Say it does @" ^ e) diagnostic uri line character ("@" ^ e ^ " ")] in
         importing @ effect_
 
+      let moved_lines (before : string list) (after : string list) : int -> int option =
+        let same = List.length (Lang.Lists.list_take_while (Lang.Lists.list_zip before after) (fun (a, b) -> a = b)) in
+        let shorter = (let fk_arg1 = List.length before in
+           let fk_arg2 = List.length after in
+           min fk_arg1 fk_arg2) - same in
+        let end_ = List.length (Lang.Lists.list_take_while (List.take shorter (let fk_arg1 = List.rev before in
+             let fk_arg2 = List.rev after in
+             Lang.Lists.list_zip fk_arg1 fk_arg2)) (fun (a, b) -> a = b)) in
+        let shift = let fk_arg1 = List.length after in
+          let fk_arg2 = List.length before in
+          fk_arg1 - fk_arg2 in
+        fun line -> if line < same then Some line else if line >= List.length before - end_ then Some (line + shift) else None
+
+      let token_kind_of (s : Checker.Symbols.symbol) : int option =
+        let owner = Option.value (Option.map (fun o -> Option.value (Option.map (fun it -> Lang.Strings.char_is_upper_case it) (Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) o) 0)) ~default:false) (Lang.Lists.list_last_or_none (Lang.Lists.list_drop_last ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (s : Checker.Symbols.symbol).Checker.Symbols.name ".") 1))) ~default:false in
+        match ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
+        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> Some 10
+        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> Some 8
+        | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> if owner && List.exists (fun it -> (it : Parser.field).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) fields then Some 8 else if annotation then Some 11 else Some 4
+        | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> if List.exists (fun it -> (it : Parser.case_definition).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) cases then Some 9 else Some 3
+        | Parser.AliasDefinition { type_parameters = _; target = _ } -> Some 1
+        | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> Some 3
+        | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> Some 0
+        | _ -> None
+
+      let rec declaration_tokens (declarations : Parser.declaration list) (lines : string list) : (int * int * int * int * int) list =
+        List.concat_map (fun d -> let name = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (d : Parser.declaration).Parser.name ".")) ~default:(d : Parser.declaration).Parser.name in
+           let at = fun p written kind -> Option.to_list (Option.bind (Lang.Lists.list_get_or_none lines ((p : Parser.position).Parser.line - 1)) (fun line -> Option.map (fun column -> ((p : Parser.position).Parser.line - 1, column, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) written, kind, 1)) (word_in line written ((p : Parser.position).Parser.column - 1)))) in
+           match (d : Parser.declaration).Parser.definition with
+           | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> at (d : Parser.declaration).Parser.at name 10
+           | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> at (d : Parser.declaration).Parser.at name 8
+           | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name (if annotation then 11 else 4) in
+               let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) fields in
+               fk_arg1 @ fk_arg2
+           | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name 3 in
+               let fk_arg2 = List.concat_map (fun c -> let fk_arg1 = at (c : Parser.case_definition).Parser.at (c : Parser.case_definition).Parser.name 9 in
+                    let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) (c : Parser.case_definition).Parser.fields in
+                    fk_arg1 @ fk_arg2) cases in
+               fk_arg1 @ fk_arg2
+           | Parser.AliasDefinition { type_parameters = _; target = _ } -> at (d : Parser.declaration).Parser.at name 1
+           | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> at (d : Parser.declaration).Parser.at name 3
+           | Parser.ModuleDefinition { declarations = inner; spec = _; parameters = _; application = _; type_parameters = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name 0 in
+               let fk_arg2 = declaration_tokens inner lines in
+               fk_arg1 @ fk_arg2
+           | _ -> []) declarations
+
+      let builtin_types =
+        ["Int"; "Float"; "String"; "Char"; "Boolean"; "Unit"; "Nothing"; "Byte"; "List"; "Map"; "Option"; "Result"; "Lazy"; "Array"]
+
+      let rec type_tokens (t : Parser.type_ref) (parameters : string list) : (int * int * int * int * int) list =
+        match t with
+        | Parser.NamedType { at = at; name = name; arguments = arguments } -> let own = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) name ".")) ~default:name in
+            let kind = if List.mem name parameters then 5 else if List.mem own builtin_types then 2 else 4 in
+            let fk_arg1 = [(let fk_arg1 = let fk_arg1 = (at : Parser.position).Parser.column - 1 + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name in
+                 let fk_arg2 = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) own in
+                 fk_arg1 - fk_arg2 in
+               let fk_arg2 = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) own in
+               ((at : Parser.position).Parser.line - 1, fk_arg1, fk_arg2, kind, 0))] in
+            let fk_arg2 = List.concat_map (fun it -> type_tokens it parameters) arguments in
+            fk_arg1 @ fk_arg2
+        | Parser.FunctionType { at = _; parameters = ps; result = result; effects = _ } -> let fk_arg1 = List.concat_map (fun it -> type_tokens it parameters) ps in
+            let fk_arg2 = type_tokens result parameters in
+            fk_arg1 @ fk_arg2
+        | Parser.TupleType { at = _; elements = elements } -> List.concat_map (fun it -> type_tokens it parameters) elements
+        | Parser.GivenType { at = _; name = _; given = given } -> type_tokens given parameters
+        | _ -> []
+
+      let rec written_types_in (declarations : Parser.declaration list) (outer : string list) : (int * int * int * int * int) list =
+        List.concat_map (fun d -> match (d : Parser.declaration).Parser.definition with
+           | Parser.FunctionDefinition { type_parameters = type_parameters; receiver = receiver; parameters = parameters; result = result; body = _; external_ = _; operator = _ } -> let own = outer @ type_parameters in
+               let fk_arg1 = let fk_arg1 = List.concat_map (fun it -> type_tokens it own) (Option.to_list receiver) in
+                 let fk_arg2 = List.concat_map (fun p -> let fk_arg1 = [(((p : Parser.parameter).Parser.at : Parser.position).Parser.line - 1, ((p : Parser.parameter).Parser.at : Parser.position).Parser.column - 1, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (p : Parser.parameter).Parser.name, 6, 1)] in
+                      let fk_arg2 = List.concat_map (fun it -> type_tokens it own) (Option.to_list (p : Parser.parameter).Parser.parameter_type) in
+                      fk_arg1 @ fk_arg2) (Option.value parameters ~default:[]) in
+                 fk_arg1 @ fk_arg2 in
+               let fk_arg2 = List.concat_map (fun it -> type_tokens it own) (Option.to_list result) in
+               fk_arg1 @ fk_arg2
+           | Parser.RecordDefinition { type_parameters = type_parameters; fields = fields; private_constructor = _; annotation = _; external_ = _ } -> List.concat_map (fun it -> type_tokens (it : Parser.field).Parser.field_type (outer @ type_parameters)) fields
+           | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = _ } -> List.concat_map (fun c -> List.concat_map (fun it -> type_tokens (it : Parser.field).Parser.field_type (outer @ type_parameters)) (c : Parser.case_definition).Parser.fields) cases
+           | Parser.AliasDefinition { type_parameters = type_parameters; target = target } -> type_tokens target (outer @ type_parameters)
+           | Parser.SpecDefinition { types = _; values = values; type_parameters = type_parameters; copy_of = _; parents = _ } -> List.concat_map (fun v -> let own = (outer @ type_parameters) @ (v : Parser.spec_value).Parser.type_parameters in
+                  let fk_arg1 = let fk_arg1 = [(((v : Parser.spec_value).Parser.at : Parser.position).Parser.line - 1, ((v : Parser.spec_value).Parser.at : Parser.position).Parser.column - 1, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (v : Parser.spec_value).Parser.name, 10, 1)] in
+                    let fk_arg2 = List.concat_map (fun p -> let fk_arg1 = [(((p : Parser.parameter).Parser.at : Parser.position).Parser.line - 1, ((p : Parser.parameter).Parser.at : Parser.position).Parser.column - 1, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (p : Parser.parameter).Parser.name, 6, 1)] in
+                         let fk_arg2 = List.concat_map (fun it -> type_tokens it own) (Option.to_list (p : Parser.parameter).Parser.parameter_type) in
+                         fk_arg1 @ fk_arg2) (Option.value (v : Parser.spec_value).Parser.parameters ~default:[]) in
+                    fk_arg1 @ fk_arg2 in
+                  let fk_arg2 = type_tokens (v : Parser.spec_value).Parser.value_type own in
+                  fk_arg1 @ fk_arg2) values
+           | Parser.ModuleDefinition { declarations = inner; spec = _; parameters = _; application = _; type_parameters = type_parameters } -> written_types_in inner (outer @ type_parameters)
+           | _ -> []) declarations
+
+      let interface_tokens (text : string) (lines : string list) : (int * int * int * int * int) list =
+        match Parser.Parser.parse_interface text with
+        | Ok parsed -> let fk_arg1 = declaration_tokens (parsed : Parser.source_file).Parser.declarations lines in
+            let fk_arg2 = written_types_in (parsed : Parser.source_file).Parser.declarations [] in
+            fk_arg1 @ fk_arg2
+        | Error _ -> []
+
+      let tokens_of (session : session) (uri : string) : int list =
+        let file = path_of uri in
+        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
+          let fk_arg2 = read_or_empty file in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
+        let facts = facts_in session file in
+        let parameters = List.fold_left (fun m f -> match f with
+             | Checker.Inference.Binds { file = _; at = at; length = _; name = _; t = _; written = _; parameter = parameter } -> Collections.Maps.map_put m (string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column) parameter
+             | _ -> m) (Collections.Maps.empty_map ()) facts in
+        let local = fun bound -> if Collections.Maps.map_get_or_default parameters (string_of_int (bound : Parser.position).Parser.line ^ " " ^ string_of_int (bound : Parser.position).Parser.column) false then 6 else 7 in
+        let moved = moved_lines ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (Collections.Maps.map_get_or_default (session : session).checked_texts (file : Io.path).Io.value text) "\n") lines in
+        let used = List.concat_map (fun f -> match f with
+             | Checker.Inference.Means { file = _; at = at; length = length; symbol = symbol; t = _ } -> List.map (fun kind -> let annotated = Option.bind (Lang.Lists.list_get_or_none lines ((at : Parser.position).Parser.line - 1)) (fun it -> Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) it) ((at : Parser.position).Parser.column - 2)) = Some 64 in
+                    if annotated then ((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 2, length + 1, 11, 0) else ((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, kind, 0)) (Option.to_list (token_kind_of symbol))
+             | Checker.Inference.Binds { file = _; at = at; length = length; name = _; t = _; written = _; parameter = parameter } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if parameter then 6 else 7), 1)]
+             | Checker.Inference.Reads { file = _; at = at; length = length; name = _; bound = bound; t = _ } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, local bound, 0)]
+             | Checker.Inference.TypeName { file = _; at = at; length = length; builtin = builtin } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if builtin then 2 else 5), 0)]
+             | _ -> []) facts in
+        let used_now = List.concat_map (fun token -> let (line, column, length, kind, modifiers) = token in
+             List.map (fun now -> (now, column, length, kind, modifiers)) (Option.to_list (moved line))) used in
+        let from_kiln = Lang.Strings.string_contains (file : Io.path).Io.value "/.kiln/" in
+        let declared = if String.ends_with ~suffix:".fki" (file : Io.path).Io.value then interface_tokens text lines else (match Parser.Parser.parse text with
+             | Ok parsed -> let fk_arg1 = declaration_tokens (parsed : Parser.source_file).Parser.declarations lines in
+                 let fk_arg2 = if from_kiln then written_types_in (parsed : Parser.source_file).Parser.declarations [] else [] in
+                 fk_arg1 @ fk_arg2
+             | Error _ -> []) in
+        let ordered = List.fold_left (fun seen token -> let (keys, kept) = seen in
+             let (line, column, _, _, _) = token in
+             let key = string_of_int line ^ " " ^ string_of_int column in
+             if Collections.Maps.map_contains_key keys key then seen else (Collections.Maps.map_put keys key true, [token] @ kept)) (Collections.Maps.empty_map (), []) (declared @ used_now) in
+        let (_, kept) = ordered in
+        let sorted = Lang.Lists.list_sorted_by kept (fun token -> let (line, column, _, _, _) = token in
+             line * 100000 + column) in
+        let (_, _, encoded) = List.fold_left (fun state token -> let (last_line, last_column, out) = state in
+             let (line, column, length, kind, modifiers) = token in
+             let start = if line = last_line then column - last_column else column in
+             (line, column, [[line - last_line; start; length; kind; modifiers]] @ out)) (0, 0, []) sorted in
+        List.concat_map (fun it -> it) (List.rev encoded)
+
       let editing (session : session) (source : Checker.Sources.source_text) : string =
         Option.value (Collections.Maps.map_get (session : session).open_ (uri_of (Option.value (source : Checker.Sources.source_text).Checker.Sources.path ~default:""))) ~default:(source : Checker.Sources.source_text).Checker.Sources.text
 
@@ -14105,144 +14243,6 @@ module Fckt = struct
         if (Collections.Maps.map_get (session : session).checked_texts file <> Some text && not (String.ends_with ~suffix:".fki" uri)) && not (Lang.Strings.string_contains uri "/.kiln/") then (let root = ((project_of (path_of uri) : project).root : Io.path).Io.value in
            session.changed <- List.filter (fun u -> ((project_of (path_of u) : project).root : Io.path).Io.value <> root) (session : session).changed;
            checked session uri) else ()
-
-      let moved_lines (before : string list) (after : string list) : int -> int option =
-        let same = List.length (Lang.Lists.list_take_while (Lang.Lists.list_zip before after) (fun (a, b) -> a = b)) in
-        let shorter = (let fk_arg1 = List.length before in
-           let fk_arg2 = List.length after in
-           min fk_arg1 fk_arg2) - same in
-        let end_ = List.length (Lang.Lists.list_take_while (List.take shorter (let fk_arg1 = List.rev before in
-             let fk_arg2 = List.rev after in
-             Lang.Lists.list_zip fk_arg1 fk_arg2)) (fun (a, b) -> a = b)) in
-        let shift = let fk_arg1 = List.length after in
-          let fk_arg2 = List.length before in
-          fk_arg1 - fk_arg2 in
-        fun line -> if line < same then Some line else if line >= List.length before - end_ then Some (line + shift) else None
-
-      let token_kind_of (s : Checker.Symbols.symbol) : int option =
-        let owner = Option.value (Option.map (fun o -> Option.value (Option.map (fun it -> Lang.Strings.char_is_upper_case it) (Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) o) 0)) ~default:false) (Lang.Lists.list_last_or_none (Lang.Lists.list_drop_last ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (s : Checker.Symbols.symbol).Checker.Symbols.name ".") 1))) ~default:false in
-        match ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
-        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> Some 10
-        | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> Some 8
-        | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> if owner && List.exists (fun it -> (it : Parser.field).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) fields then Some 8 else if annotation then Some 11 else Some 4
-        | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> if List.exists (fun it -> (it : Parser.case_definition).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) cases then Some 9 else Some 3
-        | Parser.AliasDefinition { type_parameters = _; target = _ } -> Some 1
-        | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> Some 3
-        | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> Some 0
-        | _ -> None
-
-      let rec declaration_tokens (declarations : Parser.declaration list) (lines : string list) : (int * int * int * int * int) list =
-        List.concat_map (fun d -> let name = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (d : Parser.declaration).Parser.name ".")) ~default:(d : Parser.declaration).Parser.name in
-           let at = fun p written kind -> Option.to_list (Option.bind (Lang.Lists.list_get_or_none lines ((p : Parser.position).Parser.line - 1)) (fun line -> Option.map (fun column -> ((p : Parser.position).Parser.line - 1, column, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) written, kind, 1)) (word_in line written ((p : Parser.position).Parser.column - 1)))) in
-           match (d : Parser.declaration).Parser.definition with
-           | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> at (d : Parser.declaration).Parser.at name 10
-           | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> at (d : Parser.declaration).Parser.at name 8
-           | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name (if annotation then 11 else 4) in
-               let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) fields in
-               fk_arg1 @ fk_arg2
-           | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name 3 in
-               let fk_arg2 = List.concat_map (fun c -> let fk_arg1 = at (c : Parser.case_definition).Parser.at (c : Parser.case_definition).Parser.name 9 in
-                    let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) (c : Parser.case_definition).Parser.fields in
-                    fk_arg1 @ fk_arg2) cases in
-               fk_arg1 @ fk_arg2
-           | Parser.AliasDefinition { type_parameters = _; target = _ } -> at (d : Parser.declaration).Parser.at name 1
-           | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> at (d : Parser.declaration).Parser.at name 3
-           | Parser.ModuleDefinition { declarations = inner; spec = _; parameters = _; application = _; type_parameters = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name 0 in
-               let fk_arg2 = declaration_tokens inner lines in
-               fk_arg1 @ fk_arg2
-           | _ -> []) declarations
-
-      let builtin_types =
-        ["Int"; "Float"; "String"; "Char"; "Boolean"; "Unit"; "Nothing"; "Byte"; "List"; "Map"; "Option"; "Result"; "Lazy"; "Array"]
-
-      let rec type_tokens (t : Parser.type_ref) (parameters : string list) : (int * int * int * int * int) list =
-        match t with
-        | Parser.NamedType { at = at; name = name; arguments = arguments } -> let own = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) name ".")) ~default:name in
-            let kind = if List.mem name parameters then 5 else if List.mem own builtin_types then 2 else 4 in
-            let fk_arg1 = [(let fk_arg1 = let fk_arg1 = (at : Parser.position).Parser.column - 1 + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name in
-                 let fk_arg2 = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) own in
-                 fk_arg1 - fk_arg2 in
-               let fk_arg2 = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) own in
-               ((at : Parser.position).Parser.line - 1, fk_arg1, fk_arg2, kind, 0))] in
-            let fk_arg2 = List.concat_map (fun it -> type_tokens it parameters) arguments in
-            fk_arg1 @ fk_arg2
-        | Parser.FunctionType { at = _; parameters = ps; result = result; effects = _ } -> let fk_arg1 = List.concat_map (fun it -> type_tokens it parameters) ps in
-            let fk_arg2 = type_tokens result parameters in
-            fk_arg1 @ fk_arg2
-        | Parser.TupleType { at = _; elements = elements } -> List.concat_map (fun it -> type_tokens it parameters) elements
-        | Parser.GivenType { at = _; name = _; given = given } -> type_tokens given parameters
-        | _ -> []
-
-      let rec written_types_in (declarations : Parser.declaration list) (outer : string list) : (int * int * int * int * int) list =
-        List.concat_map (fun d -> match (d : Parser.declaration).Parser.definition with
-           | Parser.FunctionDefinition { type_parameters = type_parameters; receiver = receiver; parameters = parameters; result = result; body = _; external_ = _; operator = _ } -> let own = outer @ type_parameters in
-               let fk_arg1 = let fk_arg1 = List.concat_map (fun it -> type_tokens it own) (Option.to_list receiver) in
-                 let fk_arg2 = List.concat_map (fun p -> let fk_arg1 = [(((p : Parser.parameter).Parser.at : Parser.position).Parser.line - 1, ((p : Parser.parameter).Parser.at : Parser.position).Parser.column - 1, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (p : Parser.parameter).Parser.name, 6, 1)] in
-                      let fk_arg2 = List.concat_map (fun it -> type_tokens it own) (Option.to_list (p : Parser.parameter).Parser.parameter_type) in
-                      fk_arg1 @ fk_arg2) (Option.value parameters ~default:[]) in
-                 fk_arg1 @ fk_arg2 in
-               let fk_arg2 = List.concat_map (fun it -> type_tokens it own) (Option.to_list result) in
-               fk_arg1 @ fk_arg2
-           | Parser.RecordDefinition { type_parameters = type_parameters; fields = fields; private_constructor = _; annotation = _; external_ = _ } -> List.concat_map (fun it -> type_tokens (it : Parser.field).Parser.field_type (outer @ type_parameters)) fields
-           | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = _ } -> List.concat_map (fun c -> List.concat_map (fun it -> type_tokens (it : Parser.field).Parser.field_type (outer @ type_parameters)) (c : Parser.case_definition).Parser.fields) cases
-           | Parser.AliasDefinition { type_parameters = type_parameters; target = target } -> type_tokens target (outer @ type_parameters)
-           | Parser.SpecDefinition { types = _; values = values; type_parameters = type_parameters; copy_of = _; parents = _ } -> List.concat_map (fun v -> let own = (outer @ type_parameters) @ (v : Parser.spec_value).Parser.type_parameters in
-                  let fk_arg1 = let fk_arg1 = [(((v : Parser.spec_value).Parser.at : Parser.position).Parser.line - 1, ((v : Parser.spec_value).Parser.at : Parser.position).Parser.column - 1, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (v : Parser.spec_value).Parser.name, 10, 1)] in
-                    let fk_arg2 = List.concat_map (fun p -> let fk_arg1 = [(((p : Parser.parameter).Parser.at : Parser.position).Parser.line - 1, ((p : Parser.parameter).Parser.at : Parser.position).Parser.column - 1, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (p : Parser.parameter).Parser.name, 6, 1)] in
-                         let fk_arg2 = List.concat_map (fun it -> type_tokens it own) (Option.to_list (p : Parser.parameter).Parser.parameter_type) in
-                         fk_arg1 @ fk_arg2) (Option.value (v : Parser.spec_value).Parser.parameters ~default:[]) in
-                    fk_arg1 @ fk_arg2 in
-                  let fk_arg2 = type_tokens (v : Parser.spec_value).Parser.value_type own in
-                  fk_arg1 @ fk_arg2) values
-           | Parser.ModuleDefinition { declarations = inner; spec = _; parameters = _; application = _; type_parameters = type_parameters } -> written_types_in inner (outer @ type_parameters)
-           | _ -> []) declarations
-
-      let interface_tokens (text : string) (lines : string list) : (int * int * int * int * int) list =
-        match Parser.Parser.parse_interface text with
-        | Ok parsed -> let fk_arg1 = declaration_tokens (parsed : Parser.source_file).Parser.declarations lines in
-            let fk_arg2 = written_types_in (parsed : Parser.source_file).Parser.declarations [] in
-            fk_arg1 @ fk_arg2
-        | Error _ -> []
-
-      let tokens_of (session : session) (uri : string) : int list =
-        let file = path_of uri in
-        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
-          let fk_arg2 = read_or_empty file in
-          Option.value fk_arg1 ~default:fk_arg2 in
-        let lines = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n" in
-        let facts = facts_in session file in
-        let parameters = List.fold_left (fun m f -> match f with
-             | Checker.Inference.Binds { file = _; at = at; length = _; name = _; t = _; written = _; parameter = parameter } -> Collections.Maps.map_put m (string_of_int (at : Parser.position).Parser.line ^ " " ^ string_of_int (at : Parser.position).Parser.column) parameter
-             | _ -> m) (Collections.Maps.empty_map ()) facts in
-        let local = fun bound -> if Collections.Maps.map_get_or_default parameters (string_of_int (bound : Parser.position).Parser.line ^ " " ^ string_of_int (bound : Parser.position).Parser.column) false then 6 else 7 in
-        let moved = moved_lines ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) (Collections.Maps.map_get_or_default (session : session).checked_texts (file : Io.path).Io.value text) "\n") lines in
-        let used = List.concat_map (fun f -> match f with
-             | Checker.Inference.Means { file = _; at = at; length = length; symbol = symbol; t = _ } -> List.map (fun kind -> let annotated = Option.bind (Lang.Lists.list_get_or_none lines ((at : Parser.position).Parser.line - 1)) (fun it -> Lang.Lists.list_get_or_none ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) it) ((at : Parser.position).Parser.column - 2)) = Some 64 in
-                    if annotated then ((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 2, length + 1, 11, 0) else ((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, kind, 0)) (Option.to_list (token_kind_of symbol))
-             | Checker.Inference.Binds { file = _; at = at; length = length; name = _; t = _; written = _; parameter = parameter } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if parameter then 6 else 7), 1)]
-             | Checker.Inference.Reads { file = _; at = at; length = length; name = _; bound = bound; t = _ } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, local bound, 0)]
-             | Checker.Inference.TypeName { file = _; at = at; length = length; builtin = builtin } -> [((at : Parser.position).Parser.line - 1, (at : Parser.position).Parser.column - 1, length, (if builtin then 2 else 5), 0)]
-             | _ -> []) facts in
-        let used_now = List.concat_map (fun token -> let (line, column, length, kind, modifiers) = token in
-             List.map (fun now -> (now, column, length, kind, modifiers)) (Option.to_list (moved line))) used in
-        let from_kiln = Lang.Strings.string_contains (file : Io.path).Io.value "/.kiln/" in
-        let declared = if String.ends_with ~suffix:".fki" (file : Io.path).Io.value then interface_tokens text lines else (match Parser.Parser.parse text with
-             | Ok parsed -> let fk_arg1 = declaration_tokens (parsed : Parser.source_file).Parser.declarations lines in
-                 let fk_arg2 = if from_kiln then written_types_in (parsed : Parser.source_file).Parser.declarations [] else [] in
-                 fk_arg1 @ fk_arg2
-             | Error _ -> []) in
-        let ordered = List.fold_left (fun seen token -> let (keys, kept) = seen in
-             let (line, column, _, _, _) = token in
-             let key = string_of_int line ^ " " ^ string_of_int column in
-             if Collections.Maps.map_contains_key keys key then seen else (Collections.Maps.map_put keys key true, [token] @ kept)) (Collections.Maps.empty_map (), []) (declared @ used_now) in
-        let (_, kept) = ordered in
-        let sorted = Lang.Lists.list_sorted_by kept (fun token -> let (line, column, _, _, _) = token in
-             line * 100000 + column) in
-        let (_, _, encoded) = List.fold_left (fun state token -> let (last_line, last_column, out) = state in
-             let (line, column, length, kind, modifiers) = token in
-             let start = if line = last_line then column - last_column else column in
-             (line, column, [[line - last_line; start; length; kind; modifiers]] @ out)) (0, 0, []) sorted in
-        List.concat_map (fun it -> it) (List.rev encoded)
 
       let spec_markers (session : session) (uri : string) : (int * int * int * string * json list) list =
         let file = (path_of uri : Io.path).Io.value in
@@ -14705,6 +14705,8 @@ module Fckt = struct
                      (JsonObject { fields = [("changes", (JsonObject { fields = [(uri_of (l : local_name).file, (JsonArray { items = changes } : json))] } : json))] } : json)) (local_at session u params)) (fun () -> Option.map (fun s -> renamed session u s new_name) (symbol_at session u params)))) ~default:(JsonNull : json))
         | "textDocument/codeAction" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let said = Option.value (Option.map (fun it -> Jsons.json_items it) (Option.bind (Jsons.json_field params "context") (fun it -> Jsons.json_field it "diagnostics"))) ~default:[] in
                 List.concat_map (fun d -> fixes session u d) said) uri) ~default:[] } : json)
+        | "fckt/tokens" -> answer id (JsonObject { fields = [("data", (JsonArray { items = List.map (fun it -> Jsons.number it) (Option.value (Option.map (fun u -> Option.iter (fun text -> session.open_ <- Collections.Maps.map_put (session : session).open_ u text) (Option.bind (Jsons.json_field params "text") (fun it -> Jsons.json_text it));
+                 tokens_of session u) uri) ~default:[]) } : json))] } : json)
         | "textDocument/semanticTokens/full" -> Option.iter (fun u -> checked_as_it_is session u) uri;
             answer id (JsonObject { fields = [("data", (JsonArray { items = List.map (fun it -> Jsons.number it) (Option.value (Option.map (fun u -> tokens_of session u) uri) ~default:[]) } : json))] } : json)
         | "textDocument/implementation" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let (line, character) = position_of params in
