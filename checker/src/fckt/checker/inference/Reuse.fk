@@ -9,4 +9,6 @@ type Reuse(
   groups: Map<String, Remembered>,
   highest: Int,
   named: Map<String, (String, List<Fact>)> = emptyMap(),
+  // What each function was found to use, for ordering the groups again.
+  uses: Map<String, KnownUses> = emptyMap(),
 )

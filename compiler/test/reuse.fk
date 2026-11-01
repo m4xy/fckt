@@ -120,3 +120,14 @@ startingFiles = [("a/Shapes.fk", shapesText), ("a/Counting.fk", countingText)]
   assertEquals(whatsSaid(Checker.check(entry, reuseTree(startingFiles), false, true)), reused)
   assertEquals(false, reused.any { it.startsWith("error ") })
 }
+
+@Test @FileSystem aBodyThatNowCallsAnotherIsOrderedAfterIt() = {
+  changed = [
+    ("a/Shapes.fk", shapesText.replace("w * h", "twice(w) * h")),
+    ("a/Counting.fk", countingText),
+  ]
+  assertEquals(
+    true,
+    reusedAndFresh(startingFiles, changed).contains("type a.Shapes.area: (Int, Int) -> Int"),
+  )
+}

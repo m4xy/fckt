@@ -16,16 +16,45 @@ module Groups {
   // methods join functions of different modules into a group, they're taken as what they may be,
   // not as calls.
   @Abandoning ordered(all: List<Symbol>, environment: Environment): List<FunctionGroup> = {
+    (groups, _) = orderedKnowing(all, environment, emptyMap()) { _ -> "" }
+    groups
+  }
+
+  // The groups, as ordered does, with what each function was found to use, for ordering them
+  // again: what one whose file's digest is as it was in earlier uses is as it was then.
+  @Abandoning orderedKnowing(
+    all: List<Symbol>,
+    environment: Environment,
+    earlier: Map<String, KnownUses>,
+    digestOf: (Symbol) -> String,
+  ): (List<FunctionGroup>, Map<String, KnownUses>) = {
     // A functor's parameter's members stand for whatever module it's given: they have no body.
     isParameterMember = (f: Symbol) -> environment.definitions.namespace.modules.parameterMembers.contains(
       f.name,
     )
     functions = all.filter { f -> !isParameterMember(f) }
     defaults = Defaults.byOwner(environment.orderedFunctions)
-    uses = functions.map { f ->
-      found = usesIn(f, environment, defaults)
-      (f.name, Uses(found.functions.filter { u -> !isParameterMember(u) }, found.guessed))
-    }.toMap()
+    found = functions.map { f ->
+      digest = digestOf(f)
+      kept = earlier.get(
+        f.name,
+      ).filter { k -> k.digest == digest && digest.isNotEmpty() }.flatMap { k ->
+        named = k.functions.map { environment.functions.get(it) }
+        if (named.all { it.isSome() }) Some(
+          Uses(named.flatMap { it.toList() }, k.guessed),
+        ) else None
+      }
+      uses = when (kept) {
+        Some(u) -> u
+        None -> {
+          found = usesIn(f, environment, defaults)
+          Uses(found.functions.filter { u -> !isParameterMember(u) }, found.guessed)
+        }
+      }
+      (f.name, uses, KnownUses(digest, uses.functions.map { it.name }, uses.guessed))
+    }
+    uses = found.map { name, u, _ -> (name, u) }.toMap()
+    known = found.map { name, _, k -> (name, k) }.toMap()
     usedBy = (f: Symbol) -> uses.get(f.name).map { u -> u.functions }.getOrElse([])
     certainlyUsedBy = (f: Symbol) -> uses.get(
       f.name,
@@ -39,7 +68,7 @@ module Groups {
         ) { f -> certainlyUsedBy(f).filter { used -> component.any { it.name == used.name } } }
       else [component]
     }
-    components.map { component ->
+    groups = components.map { component ->
       recursive = component.size > 1 || component.any { f -> usedBy(f).any { it.name == f.name } }
       component.find { f -> !Signatures.isFunction(f) && recursive }.forEach { f ->
         abandon(
@@ -57,6 +86,7 @@ module Groups {
       }
       FunctionGroup(component, recursive)
     }
+    (groups, known)
   }
 
   // What a function's body may use, from the names in it, seen from where it's written.

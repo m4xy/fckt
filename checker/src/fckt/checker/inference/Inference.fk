@@ -28,9 +28,18 @@ module Inference {
     environment = Environments.of(definitions)
     checkModulesDefine(environment)
     checkArgumentsDefine(environment)
-    groups = Groups.ordered(environment.orderedFunctions, environment)
     shape = shapeOf(environment)
     usable = earlier.filter { it.shape == shape }
+    // Each file's digest, once.
+    fileDigests = environment.orderedFunctions.fold(emptyMap()) { m, f ->
+      path = f.file.source.path.getOrElse("")
+      if (m.containsKey(path)) m else m.put(path, f.file.source.text.md5())
+    }
+    (groups, uses) = Groups.orderedKnowing(
+      environment.orderedFunctions,
+      environment,
+      usable.map { it.uses }.getOrElse(emptyMap()),
+    ) { f -> fileDigests.getOrDefault(f.file.source.path.getOrElse(""), "") }
     var digests: Map<String, String> = emptyMap()
     var texts: Map<String, String> = emptyMap()
     var remembered: Map<String, Remembered> = emptyMap()
@@ -110,7 +119,7 @@ module Inference {
       environment.orderedFunctions.mapNotNull { f -> known.schemes.get(f.name).map { s -> CheckedFunction(f, s, known.bodies.get(f.name)) } },
       metaTypes,
       groups,
-      earlier.map { _ -> Reuse(shape, remembered, highestIn(remembered)) },
+      earlier.map { _ -> Reuse(shape, remembered, highestIn(remembered), uses = uses) },
       facts.reversed().flatMap { it },
     )
   }

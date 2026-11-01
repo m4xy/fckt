@@ -1,0 +1,3 @@
+// What a function was found to use, by name, when its file's text had the digest; and which of
+// those it uses only if they're a package-mate's methods.
+type KnownUses(digest: String, functions: List<String>, guessed: List<String>)
