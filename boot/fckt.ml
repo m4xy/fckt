@@ -14093,7 +14093,7 @@ module Fckt = struct
            asked "workspace/inlayHint/refresh") else ()
 
       let checked (session : session) (uri : string) : unit =
-        if String.ends_with ~suffix:".fki" uri then () else (match Effects.Failure.attempt (fun () -> check session uri (check_default_publishing ())) with
+        if String.ends_with ~suffix:".fki" uri || Lang.Strings.string_contains uri "/.kiln/" then () else (match Effects.Failure.attempt (fun () -> check session uri (check_default_publishing ())) with
            | Ok _ -> ()
            | Error why -> Io.Channels.print_error ("fckt: can't check " ^ uri ^ ": " ^ why))
 
@@ -14102,7 +14102,7 @@ module Fckt = struct
         let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
           let fk_arg2 = read_or_empty (path_of uri) in
           Option.value fk_arg1 ~default:fk_arg2 in
-        if Collections.Maps.map_get (session : session).checked_texts file <> Some text && not (String.ends_with ~suffix:".fki" uri) then (let root = ((project_of (path_of uri) : project).root : Io.path).Io.value in
+        if (Collections.Maps.map_get (session : session).checked_texts file <> Some text && not (String.ends_with ~suffix:".fki" uri)) && not (Lang.Strings.string_contains uri "/.kiln/") then (let root = ((project_of (path_of uri) : project).root : Io.path).Io.value in
            session.changed <- List.filter (fun u -> ((project_of (path_of u) : project).root : Io.path).Io.value <> root) (session : session).changed;
            checked session uri) else ()
 
@@ -14225,8 +14225,11 @@ module Fckt = struct
              | _ -> []) facts in
         let used_now = List.concat_map (fun token -> let (line, column, length, kind, modifiers) = token in
              List.map (fun now -> (now, column, length, kind, modifiers)) (Option.to_list (moved line))) used in
+        let from_kiln = Lang.Strings.string_contains (file : Io.path).Io.value "/.kiln/" in
         let declared = if String.ends_with ~suffix:".fki" (file : Io.path).Io.value then interface_tokens text lines else (match Parser.Parser.parse text with
-             | Ok parsed -> declaration_tokens (parsed : Parser.source_file).Parser.declarations lines
+             | Ok parsed -> let fk_arg1 = declaration_tokens (parsed : Parser.source_file).Parser.declarations lines in
+                 let fk_arg2 = if from_kiln then written_types_in (parsed : Parser.source_file).Parser.declarations [] else [] in
+                 fk_arg1 @ fk_arg2
              | Error _ -> []) in
         let ordered = List.fold_left (fun seen token -> let (keys, kept) = seen in
              let (line, column, _, _, _) = token in
