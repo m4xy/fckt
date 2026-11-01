@@ -1,0 +1,23 @@
+import fckt.parser.*
+
+// What a declaration's documentation is: the // comments on the lines right above it, or above
+// its annotations, up to a blank line or anything else.
+module Docs {
+  // The comments, each line as it's written, without its indentation.
+  linesOf(text: String, d: Declaration): List<String> =
+    above(text, ([d.at.line] + d.annotations.map { it.at.line }).minOrNone().getOrElse(d.at.line))
+
+  // The comments right above the line, from 1.
+  above(text: String, line: Int): List<String> =
+    text.lines().take(
+      line - 1,
+    ).reversed().takeWhile { it.trim().startsWith("//") }.reversed().map { it.trim() }
+
+  // What the comments say, as Markdown: their text, a line of it each.
+  of(text: String, d: Declaration): Option<String> = said(linesOf(text, d))
+
+  said(lines: List<String>): Option<String> = when (lines) {
+    [] -> None
+    found -> Some(found.map { it.removePrefix("//").removePrefix(" ") }.joinToString("\n"))
+  }
+}

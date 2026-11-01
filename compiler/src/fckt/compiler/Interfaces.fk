@@ -58,7 +58,11 @@ module Interfaces {
     "import " + i.path.joinToString(".") + (if (i.wildcard) ".*" else "") + alias + "\n"
   }
 
-  private declaration(d: Declaration, indent: String, text: String): String = when (d.definition) {
+  // The declaration, with its documentation, so what uses the library can show it.
+  private declaration(d: Declaration, indent: String, text: String): String =
+    Docs.linesOf(text, d).map { "$indent$it\n" }.joinToString("") + declared(d, indent, text)
+
+  private declared(d: Declaration, indent: String, text: String): String = when (d.definition) {
     SpecDefinition(_, _, _, None, _) -> indent + verbatim(d, text) + "\n"
     ModuleDefinition(_, _, [_, *_], _, _) -> indent + verbatim(d, text) + "\n"
     definition -> {

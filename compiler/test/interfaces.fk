@@ -14,3 +14,16 @@ import fckt.parser.*
   assert(written.contains("import b.Shown\n"))
   assert(written.contains("  g(): Int\n"))
 }
+
+// A declaration's documentation, the // lines right above it and its annotations, goes with it
+// into the interface; a comment a blank line away doesn't.
+@Test documentationIsKept() = {
+  text = "// Shapes.\n\n// The area of a w by h rectangle.\n@Pure\narea(w: Int, h: Int): Int = w * h\n\nmodule M {\n  // Twice n.\n  twice(n: Int): Int = n * 2\n}\n"
+  written = when (Parser.parse(text)) {
+    Ok(file) -> Interfaces.write(file, "a/Area.fk", text)
+    Error(_) -> "unparsed"
+  }
+  assert(written.contains("// The area of a w by h rectangle.\n@Pure area(w: Int, h: Int): Int\n"))
+  assert(!written.contains("// Shapes."))
+  assert(written.contains("  // Twice n.\n  twice(n: Int): Int\n"))
+}

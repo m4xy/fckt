@@ -555,8 +555,8 @@ module LanguageServer {
         extensions = fitting.fold(emptyMap()) { m, s -> m.put(s.name, s) }.values.map { s ->
           label = s.declaration.name.split(".").lastOrNone().getOrElse(s.declaration.name)
           detail = program.functions.find { it.function.name == s.name }.map { typeOf(it) }.getOrElse("")
-          if (Signatures.isProperty(s)) item(label, 10, detail, [])
-          else called(item(label, 2, detail, []), label, Signatures.writtenParametersOf(s))
+          documented(if (Signatures.isProperty(s)) item(label, 10, detail, [])
+          else called(item(label, 2, detail, []), label, Signatures.writtenParametersOf(s)), docsOf(s))
         }
         fields = when (receiver) {
           Named(n, _, _) -> program.types.flatMap { t ->
@@ -703,11 +703,11 @@ module LanguageServer {
               FunctionDefinition(_, _, _, _, _, _, _) -> 3
               else -> 7
             }
-            called(
+            documented(called(
               item(s.declaration.name, kind, s.name, withImport(s.name)),
               s.declaration.name,
               Signatures.writtenParametersOf(s),
-            )
+            ), docsOf(s))
           }
           operations = environment.operations.entries.filter { name, _ -> name.startsWith(typed) }.flatMap { name, ops ->
             ops.filter { op ->
@@ -716,7 +716,7 @@ module LanguageServer {
                 op.effect.file.package,
               ) && op.effect.declaration.visibility == Public
             }.map { op ->
-              called(
+              documented(called(
                 item(
                   name,
                   3,
@@ -725,7 +725,7 @@ module LanguageServer {
                 ),
                 name,
                 op.value.parameters,
-              )
+              ), Docs.said(Docs.above(op.effect.file.source.text, op.value.at.line)))
             }
           }
           // A module's functions, through import module.*.
@@ -740,17 +740,31 @@ module LanguageServer {
               !loaded.imports.any { i -> i.wildcard && i.path == f.path }
           }.map { f ->
             module = f.path.joinToString(".")
-            called(
+            documented(called(
               item(f.declaration.name, 3, "from $module", withImport("$module.*")),
               f.declaration.name,
               Signatures.writtenParametersOf(f),
-            )
+            ), docsOf(f))
           }
           (declared + operations + members).take(100)
         }
         None -> []
       }
     }
+
+  // What the symbol's documentation says, as its file has it.
+  private docsOf(s: Symbol): Option<String> = Docs.of(s.file.source.text, s.declaration)
+
+  // The item, with its documentation, if it has any.
+  private documented(item: Json, docs: Option<String>): Json = when ((item, docs)) {
+    (JsonObject(fields), Some(said)) ->
+      JsonObject(
+        fields + [
+          ("documentation", JsonObject([("kind", JsonString("markdown")), ("value", JsonString(said))])),
+        ],
+      )
+    _ -> item
+  }
 
   // The item, for a function with parameters, written as a call: name(), the cursor after it, with
   // none; name { }, given only a function, as a block; or name(), the cursor in it.
@@ -1124,7 +1138,8 @@ module LanguageServer {
       }
       (signature, effects) = written
       said = "```fckt\n$signature\n```" + effects.map { "\n\n$it" }.getOrElse("") +
-        (if (does.isEmpty()) "" else "\n\nThis call does ${Doings.shown(does)}.")
+        (if (does.isEmpty()) "" else "\n\nThis call does ${Doings.shown(does)}.") +
+        docsOf(m.symbol).map { "\n\n---\n\n$it" }.getOrElse("")
       JsonObject(
         [("contents", JsonObject([("kind", JsonString("markdown")), ("value", JsonString(said))]))],
       )
@@ -1133,7 +1148,7 @@ module LanguageServer {
         JsonObject([
           ("contents", JsonObject([
             ("kind", JsonString("markdown")),
-            ("value", JsonString(hoverText(signatureOf(f)))),
+            ("value", JsonString(hoverText(signatureOf(f)) + docsOf(f.function).map { "\n\n---\n\n$it" }.getOrElse(""))),
           ])),
         ])
       }
@@ -1573,7 +1588,10 @@ module LanguageServer {
         FunctionDefinition(_, _, Some(_), _, _, _, _) -> 3
         else -> 6
       }
-      called(item(name, kind, typeOf(f), []), name, Signatures.writtenParametersOf(f.function))
+      documented(
+        called(item(name, kind, typeOf(f), []), name, Signatures.writtenParametersOf(f.function)),
+        docsOf(f.function),
+      )
     }
   }
 
