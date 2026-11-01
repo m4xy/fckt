@@ -6787,6 +6787,11 @@ module Fckt = struct
       let rec show_known (v : known) =
         "Known(" ^ "schemes=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_scheme) v.schemes ^ ", typeParameterVariables=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_type_variable)) v.type_parameter_variables ^ ", provisional=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_type) v.provisional ^ ", viewed=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_type) v.viewed ^ ", outside=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_scheme) v.outside ^ ", bodies=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Core.show_core_function) v.bodies ^ ")"
 
+      type known_uses = { digest : string; functions : string list; guessed : string list }
+
+      let rec show_known_uses (v : known_uses) =
+        "KnownUses(" ^ "digest=" ^ Fun.id v.digest ^ ", functions=" ^ fk_show_list Fun.id v.functions ^ ", guessed=" ^ fk_show_list Fun.id v.guessed ^ ")"
+
       type monad_functions =
         | Binding of { name : string; at : Parser.position; bind : Symbols.symbol; pure : Symbols.symbol }
         | Mapping of { name : string; at : Parser.position; map : Symbols.symbol; product : Symbols.symbol; pure : Symbols.symbol option }
@@ -6832,10 +6837,10 @@ module Fckt = struct
       let rec show_remembered (v : remembered) =
         "Remembered(" ^ "files=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Fun.id) v.files ^ ", uses=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Fun.id) v.uses ^ ", schemes=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_scheme) v.schemes ^ ", outside=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_scheme) v.outside ^ ", typeParameterVariables=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fun v -> Collections.Maps.map_to_string v Fun.id Types.show_type_variable)) v.type_parameter_variables ^ ", bodies=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id Core.show_core_function) v.bodies ^ ", facts=" ^ fk_show_list show_fact v.facts ^ ")"
 
-      type reuse = { shape : string; groups : (string, remembered) Collections.Maps.map; highest : int; named : (string, string * fact list) Collections.Maps.map }
+      type reuse = { shape : string; groups : (string, remembered) Collections.Maps.map; highest : int; named : (string, string * fact list) Collections.Maps.map; uses : (string, known_uses) Collections.Maps.map }
 
       let rec show_reuse (v : reuse) =
-        "Reuse(" ^ "shape=" ^ Fun.id v.shape ^ ", groups=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_remembered) v.groups ^ ", highest=" ^ string_of_int v.highest ^ ", named=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fun (x0, x1) -> "(" ^ Fun.id x0 ^ ", " ^ fk_show_list show_fact x1 ^ ")")) v.named ^ ")"
+        "Reuse(" ^ "shape=" ^ Fun.id v.shape ^ ", groups=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_remembered) v.groups ^ ", highest=" ^ string_of_int v.highest ^ ", named=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id (fun (x0, x1) -> "(" ^ Fun.id x0 ^ ", " ^ fk_show_list show_fact x1 ^ ")")) v.named ^ ", uses=" ^ (fun v -> Collections.Maps.map_to_string v Fun.id show_known_uses) v.uses ^ ")"
 
       type scope = { own : (string, local) Collections.Maps.map; outer : scope option }
 
@@ -7505,24 +7510,37 @@ module Fckt = struct
           let fk_arg2 = List.filter (fun it -> not (List.mem it named)) (List.map (fun it -> (it : Symbols.symbol).Symbols.name) (List.concat_map (fun it -> (it : name_uses).guessed) each)) in
           ({ functions = fk_arg1; guessed = fk_arg2 } : uses)
 
-        let ordered (all : Symbols.symbol list) (environment : environment) : function_group list =
+        let ordered_knowing (all : Symbols.symbol list) (environment : environment) (earlier : (string, known_uses) Collections.Maps.map) (digest_of : Symbols.symbol -> string) : function_group list * (string, known_uses) Collections.Maps.map =
           let is_parameter_member = fun f -> List.mem (f : Symbols.symbol).Symbols.name ((((environment : environment).definitions : Definitions.definitions).Definitions.namespace : Resolution.namespace).Resolution.modules : Resolution.modules).Resolution.parameter_members in
           let functions = List.filter (fun f -> not (is_parameter_member f)) all in
           let defaults = Defaults.by_owner (environment : environment).ordered_functions in
-          let uses = Collections.Maps.list_tuple_to_map (List.map (fun f -> let found = uses_in f environment defaults in
-                ((f : Symbols.symbol).Symbols.name, ({ functions = List.filter (fun u -> not (is_parameter_member u)) (found : uses).functions; guessed = (found : uses).guessed } : uses))) functions) in
+          let found = List.map (fun f -> let digest = digest_of f in
+               let kept = Option.bind (Lang.Options.option_filter (Collections.Maps.map_get earlier (f : Symbols.symbol).Symbols.name) (fun k -> (k : known_uses).digest = digest && Lang.Strings.string_is_not_empty digest)) (fun k -> let named = List.map (fun it -> Collections.Maps.map_get (environment : environment).functions it) (k : known_uses).functions in
+                    if List.for_all (fun it -> Option.is_some it) named then Some ({ functions = List.concat_map (fun it -> Option.to_list it) named; guessed = (k : known_uses).guessed } : uses) else None) in
+               let uses = match kept with
+                 | Some u -> u
+                 | None -> let found = uses_in f environment defaults in
+                     ({ functions = List.filter (fun u -> not (is_parameter_member u)) (found : uses).functions; guessed = (found : uses).guessed } : uses) in
+               ((f : Symbols.symbol).Symbols.name, uses, ({ digest = digest; functions = List.map (fun it -> (it : Symbols.symbol).Symbols.name) (uses : uses).functions; guessed = (uses : uses).guessed } : known_uses))) functions in
+          let uses = Collections.Maps.list_tuple_to_map (List.map (fun (name, u, _) -> (name, u)) found) in
+          let known = Collections.Maps.list_tuple_to_map (List.map (fun (name, _, k) -> (name, k)) found) in
           let used_by = fun f -> Option.value (Option.map (fun u -> (u : uses).functions) (Collections.Maps.map_get uses (f : Symbols.symbol).Symbols.name)) ~default:[] in
           let certainly_used_by = fun f -> Option.value (Option.map (fun u -> List.filter (fun used -> not (List.mem (used : Symbols.symbol).Symbols.name (u : uses).guessed) || (used : Symbols.symbol).Symbols.path = (f : Symbols.symbol).Symbols.path) (u : uses).functions) (Collections.Maps.map_get uses (f : Symbols.symbol).Symbols.name)) ~default:[] in
           let name_of = fun f -> (f : Symbols.symbol).Symbols.name in
           let components = List.concat_map (fun component -> if List.length (Lang.Lists.list_distinct (List.map (fun it -> (it : Symbols.symbol).Symbols.path) component)) > 1 then Components.strongly_connected component name_of (fun f -> List.filter (fun used -> List.exists (fun it -> (it : Symbols.symbol).Symbols.name = (used : Symbols.symbol).Symbols.name) component) (certainly_used_by f)) else [component]) (Components.strongly_connected functions name_of used_by) in
-          List.map (fun component -> let recursive = List.length component > 1 || List.exists (fun f -> List.exists (fun it -> (it : Symbols.symbol).Symbols.name = (f : Symbols.symbol).Symbols.name) (used_by f)) component in
-             Option.iter (fun f -> match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = ((f : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.at; message = "value '" ^ Symbols.Symbols.simple_name f ^ "' is defined in terms of itself" } : Diagnostics.diagnostic)) with
-                | _ -> (assert false)) (List.find_opt (fun f -> not (Symbols.Signatures.is_function f) && recursive) component);
-             (match component with
-              | first :: _ when List.length (Lang.Lists.list_distinct (List.map (fun it -> (it : Symbols.symbol).Symbols.path) component)) > 1 -> (match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((first : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = ((first : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.at; message = String.concat " and " (List.map Fun.id (List.map (fun it -> "'" ^ (it : Symbols.symbol).Symbols.name ^ "'") component)) ^ " call each other but are in different modules" } : Diagnostics.diagnostic)) with
-                   | _ -> (assert false))
-              | _ -> ());
-             ({ functions = component; recursive = recursive } : function_group)) components
+          let groups = List.map (fun component -> let recursive = List.length component > 1 || List.exists (fun f -> List.exists (fun it -> (it : Symbols.symbol).Symbols.name = (f : Symbols.symbol).Symbols.name) (used_by f)) component in
+               Option.iter (fun f -> match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = ((f : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.at; message = "value '" ^ Symbols.Symbols.simple_name f ^ "' is defined in terms of itself" } : Diagnostics.diagnostic)) with
+                  | _ -> (assert false)) (List.find_opt (fun f -> not (Symbols.Signatures.is_function f) && recursive) component);
+               (match component with
+                | first :: _ when List.length (Lang.Lists.list_distinct (List.map (fun it -> (it : Symbols.symbol).Symbols.path) component)) > 1 -> (match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((first : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = ((first : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.at; message = String.concat " and " (List.map Fun.id (List.map (fun it -> "'" ^ (it : Symbols.symbol).Symbols.name ^ "'") component)) ^ " call each other but are in different modules" } : Diagnostics.diagnostic)) with
+                     | _ -> (assert false))
+                | _ -> ());
+               ({ functions = component; recursive = recursive } : function_group)) components in
+          (groups, known)
+
+        let ordered (all : Symbols.symbol list) (environment : environment) : function_group list =
+          let (groups, _) = ordered_knowing all environment (Collections.Maps.empty_map ()) (fun _ -> "") in
+          groups
 
         let uses_of (f : Symbols.symbol) (environment : environment) : uses =
           uses_in f environment (Defaults.by_owner (environment : environment).ordered_functions)
@@ -10634,9 +10652,13 @@ module Fckt = struct
           let environment = Environments.of_ definitions in
           check_modules_define environment;
           check_arguments_define environment;
-          let groups = Groups.ordered (environment : environment).ordered_functions environment in
           let shape = shape_of environment in
           let usable = Lang.Options.option_filter earlier (fun it -> (it : reuse).shape = shape) in
+          let file_digests = List.fold_left (fun m f -> let path = Option.value (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path ~default:"" in
+               if Collections.Maps.map_contains_key m path then m else Collections.Maps.map_put m path ((fun t -> Digest.to_hex (Digest.string t)) (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.text)) (Collections.Maps.empty_map ()) (environment : environment).ordered_functions in
+          let (groups, uses) = Groups.ordered_knowing (environment : environment).ordered_functions environment (let fk_arg1 = Option.map (fun it -> (it : reuse).uses) usable in
+             let fk_arg2 = Collections.Maps.empty_map () in
+             Option.value fk_arg1 ~default:fk_arg2) (fun f -> Collections.Maps.map_get_or_default file_digests (Option.value (((f : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path ~default:"") "") in
           let digests = ref (Collections.Maps.empty_map ()) in
           let texts = ref (Collections.Maps.empty_map ()) in
           let remembered = ref (Collections.Maps.empty_map ()) in
@@ -10678,10 +10700,10 @@ module Fckt = struct
                        failed group k) (environment : environment).known groups in
           reporting_abandoned (fun () -> check_exposure environment known);
           let fk_arg1 = Lang.Lists.list_map_not_null (environment : environment).ordered_functions (fun f -> Option.map (fun s -> ({ function_ = f; scheme = s; body = Collections.Maps.map_get (known : known).bodies (f : Symbols.symbol).Symbols.name } : checked_function)) (Collections.Maps.map_get (known : known).schemes (f : Symbols.symbol).Symbols.name)) in
-          let fk_arg2 = Option.map (fun _ -> let fk_arg1 = ! remembered in
-               let fk_arg2 = highest_in (! remembered) in
-               let fk_arg3 = reuse_default_named () in
-               ({ shape = shape; groups = fk_arg1; highest = fk_arg2; named = fk_arg3 } : reuse)) earlier in
+          let fk_arg2 = Option.map (fun _ -> let fk_named2 = ! remembered in
+               let fk_named3 = highest_in (! remembered) in
+               let fk_named4 = reuse_default_named () in
+               ({ shape = shape; groups = fk_named2; highest = fk_named3; named = fk_named4; uses = uses } : reuse)) earlier in
           let fk_arg3 = List.concat_map (fun it -> it) (List.rev (! facts)) in
           ({ environment = environment; known = known; functions = fk_arg1; meta_types = meta_types; groups = groups; reuse = fk_arg2; facts = fk_arg3 } : inferred)
 
@@ -10700,6 +10722,9 @@ module Fckt = struct
                | _ -> problem "main must be declared as main() = ... or main(args: List<String>) = ...")
           | _ -> ()
       end
+
+      let reuse_default_uses () : (string, known_uses) Collections.Maps.map =
+        Collections.Maps.empty_map ()
 
       let rec inside_out (left : default_handler list) (does : (string, string list) Collections.Maps.map) : default_handler list =
         match left with
@@ -13958,6 +13983,36 @@ module Fckt = struct
              (line, column, [[line - last_line; start; length; kind; modifiers]] @ out)) (0, 0, []) sorted in
         List.concat_map (fun it -> it) (List.rev encoded)
 
+      let spec_markers (session : session) (uri : string) : (int * int * int * string * json list) list =
+        let file = (path_of uri : Io.path).Io.value in
+        let programs = Collections.Maps.map_get_or_default (session : session).programs ((project_of (path_of uri) : project).root : Io.path).Io.value [] in
+        Option.value (Option.map (fun environment -> let table = (((environment : Checker.Inference.environment).Checker.Inference.definitions : Checker.Definitions.definitions).Checker.Definitions.namespace : Checker.Resolution.namespace).Checker.Resolution.table in
+            let following = (environment : Checker.Inference.environment).Checker.Inference.module_specs in
+            let here = fun s -> (((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path = Some file in
+            let modules = List.concat_map (fun m -> match m with
+                 | Checker.Symbols.DeclaredModule { symbol = s } -> [s]
+                 | _ -> []) (Collections.Maps.map_values (table : Checker.Symbols.symbol_table).Checker.Symbols.modules) in
+            let values_of = fun spec -> match ((spec : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
+                | Parser.SpecDefinition { types = _; values = values; type_parameters = _; copy_of = _; parents = _ } -> values
+                | _ -> [] in
+            let named = fun s -> Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ".")) ~default:((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name in
+            let at = fun s -> Option.map (fun found -> let (_, line, column) = found in
+                   (line, column, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (named s))) (name_of session s) in
+            let value_at = fun spec v -> Option.bind (Lang.Lists.list_get_or_none (Lang.Strings.string_lines (((spec : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.text) (((v : Parser.spec_value).Parser.at : Parser.position).Parser.line - 1)) (fun line -> Option.map (fun column -> (((v : Parser.spec_value).Parser.at : Parser.position).Parser.line - 1, column, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (v : Parser.spec_value).Parser.name)) (word_in line (v : Parser.spec_value).Parser.name (((v : Parser.spec_value).Parser.at : Parser.position).Parser.column - 1))) in
+            let implemented = List.concat_map (fun spec -> let followers = List.concat_map (fun (name, _) -> List.filter (fun it -> (it : Checker.Symbols.symbol).Checker.Symbols.name = name) modules) (List.filter (fun (_, s) -> (s : Checker.Symbols.symbol).Checker.Symbols.name = (spec : Checker.Symbols.symbol).Checker.Symbols.name) (Collections.Maps.map_entries following)) in
+                 if List.is_empty followers then [] else (let own = List.map (fun place -> let (line, column, length) = place in
+                         (line, column, length, "implemented", List.concat_map (fun it -> Option.to_list (location_of it)) followers)) (Option.to_list (at spec)) in
+                    own @ List.concat_map (fun v -> let targets = List.concat_map (fun m -> Option.to_list (Collections.Maps.map_get (environment : Checker.Inference.environment).Checker.Inference.functions ((m : Checker.Symbols.symbol).Checker.Symbols.name ^ "." ^ (v : Parser.spec_value).Parser.name))) followers in
+                       if List.is_empty targets then [] else List.map (fun place -> let (line, column, length) = place in
+                            (line, column, length, "implemented", List.concat_map (fun it -> Option.to_list (location_of it)) targets)) (Option.to_list (value_at spec v))) (values_of spec))) (List.filter (fun it -> here it) (Collections.Maps.map_values (table : Checker.Symbols.symbol_table).Checker.Symbols.specs)) in
+            let implementing = List.concat_map (fun module_ -> List.concat_map (fun spec -> let own = List.map (fun place -> let (line, column, length) = place in
+                         (line, column, length, "implements", Option.to_list (location_of spec))) (Option.to_list (at module_)) in
+                    own @ List.concat_map (fun v -> List.concat_map (fun f -> let target = Option.map (fun place -> let (line, column, length) = place in
+                               location (Option.value (((spec : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.source : Checker.Sources.source_text).Checker.Sources.path ~default:"") line column length) (value_at spec v) in
+                          List.map (fun place -> let (line, column, length) = place in
+                             (line, column, length, "implements", Option.to_list target)) (Option.to_list (at f))) (Option.to_list (Collections.Maps.map_get (environment : Checker.Inference.environment).Checker.Inference.functions ((module_ : Checker.Symbols.symbol).Checker.Symbols.name ^ "." ^ (v : Parser.spec_value).Parser.name)))) (values_of spec)) (Option.to_list (Collections.Maps.map_get following (module_ : Checker.Symbols.symbol).Checker.Symbols.name))) (List.filter (fun it -> here it) modules) in
+            implemented @ implementing) (List.nth_opt (List.concat_map (fun p -> Option.to_list (p : Checker.checked_program).Checker.environment) programs) 0)) ~default:[]
+
       let hint (line : int) (column : int) (label : string) : json =
         (JsonObject { fields = [("position", (JsonObject { fields = (let fk_arg1 = ("line", Jsons.number line) in
          let fk_arg2 = ("character", Jsons.number column) in
@@ -14187,7 +14242,8 @@ module Fckt = struct
         let earlier = let fk_arg1 = Collections.Maps.map_get (session : session).reuses key in
           let fk_arg2 = let fk_arg1 = Collections.Maps.empty_map () in
             let fk_arg2 = Checker.Inference.reuse_default_named () in
-            ({ Checker.Inference.shape = ""; groups = fk_arg1; highest = 0; named = fk_arg2 } : Checker.Inference.reuse) in
+            let fk_arg3 = Checker.Inference.reuse_default_uses () in
+            ({ Checker.Inference.shape = ""; groups = fk_arg1; highest = 0; named = fk_arg2; uses = fk_arg3 } : Checker.Inference.reuse) in
           Option.value fk_arg1 ~default:fk_arg2 in
         let (program, problems) = Checker.Checker.check entry tree true true (Some earlier) in
         Option.iter (fun r -> session.reuses <- Collections.Maps.map_put (session : session).reuses key r) (Option.bind program (fun it -> (it : Checker.checked_program).Checker.reuse));
@@ -14388,7 +14444,7 @@ module Fckt = struct
         match Option.value (Option.bind (Jsons.json_field message "method") (fun it -> Jsons.json_text it)) ~default:"" with
         | "initialize" -> answer id (JsonObject { fields = [("capabilities", (JsonObject { fields = (let fk_arg1 = ("textDocumentSync", Jsons.number 1) in
              let fk_arg2 = ("semanticTokensProvider", (JsonObject { fields = [("legend", (JsonObject { fields = [("tokenTypes", (JsonArray { items = List.map (fun it -> (JsonString { value = it } : json)) token_types } : json)); ("tokenModifiers", (JsonArray { items = [(JsonString { value = "declaration" } : json)] } : json))] } : json)); ("full", (JsonBoolean { value = true } : json))] } : json)) in
-             [fk_arg1; ("documentFormattingProvider", (JsonBoolean { value = true } : json)); ("hoverProvider", (JsonBoolean { value = true } : json)); ("definitionProvider", (JsonBoolean { value = true } : json)); ("documentSymbolProvider", (JsonBoolean { value = true } : json)); ("referencesProvider", (JsonBoolean { value = true } : json)); ("documentHighlightProvider", (JsonBoolean { value = true } : json)); ("renameProvider", (JsonBoolean { value = true } : json)); ("inlayHintProvider", (JsonBoolean { value = true } : json)); ("codeActionProvider", (JsonBoolean { value = true } : json)); fk_arg2; ("completionProvider", (JsonObject { fields = [("triggerCharacters", (JsonArray { items = [(JsonString { value = "." } : json)] } : json))] } : json))]) } : json)); ("serverInfo", (JsonObject { fields = [("name", (JsonString { value = "fckt" } : json))] } : json))] } : json)
+             [fk_arg1; ("documentFormattingProvider", (JsonBoolean { value = true } : json)); ("hoverProvider", (JsonBoolean { value = true } : json)); ("definitionProvider", (JsonBoolean { value = true } : json)); ("documentSymbolProvider", (JsonBoolean { value = true } : json)); ("referencesProvider", (JsonBoolean { value = true } : json)); ("documentHighlightProvider", (JsonBoolean { value = true } : json)); ("implementationProvider", (JsonBoolean { value = true } : json)); ("renameProvider", (JsonBoolean { value = true } : json)); ("inlayHintProvider", (JsonBoolean { value = true } : json)); ("codeActionProvider", (JsonBoolean { value = true } : json)); fk_arg2; ("completionProvider", (JsonObject { fields = [("triggerCharacters", (JsonArray { items = [(JsonString { value = "." } : json)] } : json))] } : json))]) } : json)); ("serverInfo", (JsonObject { fields = [("name", (JsonString { value = "fckt" } : json))] } : json))] } : json)
         | "shutdown" -> session.stopping <- true;
             answer id (JsonNull : json)
         | "exit" -> (match Effect.perform (Io.Process_exit (if (session : session).stopping then 0 else 1)) with
@@ -14428,6 +14484,12 @@ module Fckt = struct
         | "textDocument/codeAction" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let said = Option.value (Option.map (fun it -> Jsons.json_items it) (Option.bind (Jsons.json_field params "context") (fun it -> Jsons.json_field it "diagnostics"))) ~default:[] in
                 List.concat_map (fun d -> fixes session u d) said) uri) ~default:[] } : json)
         | "textDocument/semanticTokens/full" -> answer id (JsonObject { fields = [("data", (JsonArray { items = List.map (fun it -> Jsons.number it) (Option.value (Option.map (fun u -> tokens_of session u) uri) ~default:[]) } : json))] } : json)
+        | "textDocument/implementation" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let (line, character) = position_of params in
+                List.concat_map (fun m -> let (_, _, _, _, targets) = m in
+                   targets) (List.filter (fun m -> let (l, column, length, kind, _) = m in
+                    ((kind = "implemented" && l = line) && character >= column) && character <= column + length) (spec_markers session u))) uri) ~default:[] } : json)
+        | "fckt/specMarkers" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> List.map (fun m -> let (line, column, length, kind, targets) = m in
+                   (JsonObject { fields = [("range", range line column line (column + length)); ("kind", (JsonString { value = kind } : json)); ("targets", (JsonArray { items = targets } : json))] } : json)) (spec_markers session u)) uri) ~default:[] } : json)
         | "textDocument/inlayHint" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> hints session u) uri) ~default:[] } : json)
         | "textDocument/completion" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> completions session u params) uri) ~default:[] } : json)
         | "textDocument/documentSymbol" -> answer id (JsonArray { items = Option.value (Option.map (fun u -> let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ u in
