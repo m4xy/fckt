@@ -158,7 +158,7 @@ module LanguageServer {
       }.toList()))
       "textDocument/hover" -> answer(id, uri.flatMap { u ->
         localAt(session, u, params).map { l ->
-          said = "```fckt\n${l.name}: ${Solutions.solving { TypeText.shown(l.t) }}\n```"
+          said = "```fckt\n${l.name}: ${shownType(l.t)}\n```"
           JsonObject(
             [
               ("contents", JsonObject([("kind", JsonString("markdown")), ("value", JsonString(said))])),
@@ -635,7 +635,7 @@ module LanguageServer {
           }
           else -> []
         }.filter { it.name.startsWith(typed) }.map { f ->
-          item(f.name, 5, Solutions.solving { TypeText.shown(f.t) }, [])
+          item(f.name, 5, shownType(f.t), [])
         }
         fields + extensions.take(200)
       }
@@ -726,7 +726,7 @@ module LanguageServer {
     }.fold(emptyMap()) { m, entry ->
       (name, t) = entry
       m.put(name, t)
-    }.entries.map { name, t -> item(name, 6, Solutions.solving { TypeText.shown(t) }, []) }
+    }.entries.map { name, t -> item(name, 6, shownType(t), []) }
   }
 
   // What the file doesn't import yet whose name starts with typed: each package's public types,
@@ -1436,7 +1436,7 @@ module LanguageServer {
       }
       written = when (checked) {
         Some(f) -> signatureOf(f)
-        None -> (m.symbol.declaration.name + m.t.map { t -> ": " + Solutions.solving { TypeText.shown(t) } }.getOrElse(""), None)
+        None -> (m.symbol.declaration.name + m.t.map { t -> ": " + shownType(t) }.getOrElse(""), None)
       }
       (signature, effects) = written
       said = "```fckt\n$signature\n```" + effects.map { "\n\n$it" }.getOrElse("") +
@@ -1464,7 +1464,12 @@ module LanguageServer {
   // A function as it's called, with its parameters' names and what it gives, its receiver's type
   // first if it extends one; and, if it's a function, what calling it does: its effects, and those
   // of the functions it's given that it calls, or nothing. A value as its name and type.
-  private signatureOf(f: CheckedFunction): (String, Option<String>) = Solutions.solving {
+  private signatureOf(f: CheckedFunction): (String, Option<String>) = {
+    (signature, effects) = signatureWritten(f)
+    (brief(signature), effects)
+  }
+
+  private signatureWritten(f: CheckedFunction): (String, Option<String>) = Solutions.solving {
     s = f.function
     name = s.declaration.name.split(".").lastOrNone().getOrElse(s.declaration.name)
     // Its unknowns named A, B, ... as they first come, as one signature, rather than each part
@@ -1605,7 +1610,7 @@ module LanguageServer {
     locals = factsIn(session, pathOf(uri)).flatMap { fact ->
       when (fact) {
         Binds(_, at, length, _, t, false, _) -> moved(at.line - 1).toList().map { line ->
-          hint(line, at.column - 1 + length, ": ${Solutions.solving { TypeText.shown(t) }}")
+          hint(line, at.column - 1 + length, ": ${shownType(t)}")
         }
         else -> []
       }
@@ -1641,7 +1646,7 @@ module LanguageServer {
 
   private hint(line: Int, column: Int, label: String): Json = JsonObject([
     ("position", JsonObject([("line", number(line)), ("character", number(column))])),
-    ("label", JsonString(label)),
+    ("label", JsonString(brief(label))),
   ])
 
   // Where the parameters that open at or after line and column close: just after their ).
@@ -1942,9 +1947,27 @@ module LanguageServer {
     cs.drop(column - start).take(start + end).map { it.toString() }.joinToString("")
   }
 
-  private typeOf(
-    f: CheckedFunction,
-  ): String = Solutions.solving { TypeText.shown(f.scheme.template) }
+  private typeOf(f: CheckedFunction): String = shownType(f.scheme.template)
+
+  // A type as it's written where it's used: its types by their own names, without their packages,
+  // uk.m4xy.links.domain.Link as Link, which going to it tells apart if it's not clear.
+  private shownType(t: Type): String = brief(Solutions.solving { TypeText.shown(t) })
+
+  private brief(text: String): String = {
+    (done, word) = text.toList().fold(([], [])) { state, c ->
+      (out, current) = state
+      if (isNameChar(c) || c == '.') (out, current + [c]) else (out + withoutPackage(current) + [c], [])
+    }
+    (done + withoutPackage(word)).map { it.toString() }.joinToString("")
+  }
+
+  // A dotted name without its package, the names before its first capitalised one.
+  private withoutPackage(word: List<Char>): List<Char> = {
+    parts = word.map { it.toString() }.joinToString("").split(".")
+    capital = (part: String) -> part.toList().getOrNone(0).map { it.isUpperCase() }.getOrElse(false)
+    if (parts.size > 1 && parts.any { capital(it) }) parts.dropWhile { !capital(it) }.joinToString(".").toList()
+    else word
+  }
 
   // The source's text: as it is in the editor, if it's open there.
   private editing(session: Session, source: SourceText): String =
