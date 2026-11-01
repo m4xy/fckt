@@ -10,8 +10,13 @@ import com.intellij.platform.lsp.api.customization.LspFormattingCustomizer
 import com.intellij.platform.lsp.api.customization.LspFormattingDisabled
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensCustomizer
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensSupport
+import com.intellij.platform.lsp.api.customization.LspRenameCustomizer
+import com.intellij.platform.lsp.api.customization.LspRenameSupport
+import com.intellij.platform.lsp.api.customization.LspDocumentHighlightsCustomizer
+import com.intellij.platform.lsp.api.customization.LspDocumentHighlightsSupport
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import org.eclipse.lsp4j.services.LanguageServer
+import com.intellij.psi.PsiFile
 import java.io.File
 
 /**
@@ -35,7 +40,19 @@ private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDe
 
     override val lspCustomization = object : LspCustomization() {
         override val formattingCustomizer: LspFormattingCustomizer = LspFormattingDisabled
+        // As with colours, IntelliJ renames and highlights a name's uses through the server only for
+        // plain text and TextMate unless told.
+        override val renameCustomizer: LspRenameCustomizer = object : LspRenameSupport() {
+            override fun shouldRunRename(psiFile: PsiFile) = psiFile is FcktFile
+        }
+        override val documentHighlightsCustomizer: LspDocumentHighlightsCustomizer = object : LspDocumentHighlightsSupport() {
+            override fun shouldAskServerForDocumentHighlights(psiFile: PsiFile) = psiFile is FcktFile
+        }
         override val semanticTokensCustomizer: LspSemanticTokensCustomizer = object : LspSemanticTokensSupport() {
+            // IntelliJ asks only for plain text's and TextMate's unless told: fckt's have their own
+            // language, whose names only the server can colour.
+            override fun shouldAskServerForSemanticTokens(psiFile: PsiFile) = psiFile is FcktFile
+
             override fun getTextAttributesKey(tokenType: String, modifiers: List<String>): TextAttributesKey? =
                 FcktColors.ofToken(tokenType, modifiers)
         }
