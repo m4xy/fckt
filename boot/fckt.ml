@@ -13585,6 +13585,20 @@ module Fckt = struct
           List.fold_left (fun m entry -> let (name, t) = entry in
              Collections.Maps.map_put m name t) fk_arg2 fk_arg1))
 
+      let is_function_type (t : Parser.type_ref) : bool =
+        match t with
+        | Parser.FunctionType { at = _; parameters = _; result = _; effects = _ } -> true
+        | _ -> false
+
+      let called (item : json) (name : string) (parameters : Parser.parameter list option) : json =
+        match (item, parameters) with
+        | (JsonObject { fields = fields }, Some ps) -> let call = match ps with
+              | [] -> name ^ "()$0"
+              | [p] when Option.value (Option.map (fun it -> is_function_type it) (p : Parser.parameter).Parser.parameter_type) ~default:false -> name ^ " { $0 }"
+              | _ -> name ^ "($0)" in
+            (JsonObject { fields = fields @ [("insertText", (JsonString { value = call } : json)); ("insertTextFormat", Jsons.number 2)] } : json)
+        | _ -> item
+
       let importable (session : session) (uri : string) (typed : string) (text : string) : json list =
         if String.equal "" typed then [] else (let file = path_of uri in
            let programs = Collections.Maps.map_get_or_default (session : session).programs ((project_of file : project).root : Io.path).Io.value [] in
@@ -13600,10 +13614,14 @@ module Fckt = struct
                       | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> 8
                       | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = _; result = _; body = _; external_ = _; operator = _ } -> 3
                       | _ -> 7 in
-                    item ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name kind (s : Checker.Symbols.symbol).Checker.Symbols.name (with_import (s : Checker.Symbols.symbol).Checker.Symbols.name)) (List.filter (fun s -> (((((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.visibility = (Parser.Public : Parser.visibility) && (s : Checker.Symbols.symbol).Checker.Symbols.path = ((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package) && String.starts_with ~prefix:typed ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) && Lang.Lists.list_is_not_empty ((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package) && not (imported (s : Checker.Symbols.symbol).Checker.Symbols.name ((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package)) ((((environment : Checker.Inference.environment).Checker.Inference.definitions : Checker.Definitions.definitions).Checker.Definitions.namespace : Checker.Resolution.namespace).Checker.Resolution.table : Checker.Symbols.symbol_table).Checker.Symbols.declarations) in
-               let operations = List.concat_map (fun (name, ops) -> List.map (fun op -> item name 3 ("@" ^ (((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ^ ", from " ^ ((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.name) (with_import ((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.name)) (List.filter (fun op -> not (imported ((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.name (((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package) && (((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.visibility = (Parser.Public : Parser.visibility)) ops)) (List.filter (fun (name, _) -> String.starts_with ~prefix:typed name) (Collections.Maps.map_entries (environment : Checker.Inference.environment).Checker.Inference.operations)) in
+                    let fk_arg1 = item ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name kind (s : Checker.Symbols.symbol).Checker.Symbols.name (with_import (s : Checker.Symbols.symbol).Checker.Symbols.name) in
+                    let fk_arg2 = Checker.Symbols.Signatures.written_parameters_of s in
+                    called fk_arg1 ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name fk_arg2) (List.filter (fun s -> (((((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.visibility = (Parser.Public : Parser.visibility) && (s : Checker.Symbols.symbol).Checker.Symbols.path = ((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package) && String.starts_with ~prefix:typed ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) && Lang.Lists.list_is_not_empty ((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package) && not (imported (s : Checker.Symbols.symbol).Checker.Symbols.name ((s : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package)) ((((environment : Checker.Inference.environment).Checker.Inference.definitions : Checker.Definitions.definitions).Checker.Definitions.namespace : Checker.Resolution.namespace).Checker.Resolution.table : Checker.Symbols.symbol_table).Checker.Symbols.declarations) in
+               let operations = List.concat_map (fun (name, ops) -> List.map (fun op -> called (item name 3 ("@" ^ (((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ^ ", from " ^ ((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.name) (with_import ((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.name)) name ((op : Checker.Inference.operation).Checker.Inference.value : Parser.spec_value).Parser.parameters) (List.filter (fun op -> not (imported ((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.name (((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package) && (((op : Checker.Inference.operation).Checker.Inference.effect_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.visibility = (Parser.Public : Parser.visibility)) ops)) (List.filter (fun (name, _) -> String.starts_with ~prefix:typed name) (Collections.Maps.map_entries (environment : Checker.Inference.environment).Checker.Inference.operations)) in
                let members = List.map (fun f -> let module_ = String.concat "." (List.map Fun.id (f : Checker.Symbols.symbol).Checker.Symbols.path) in
-                    item ((f : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name 3 ("from " ^ module_) (with_import (module_ ^ ".*"))) (List.filter (fun f -> ((((((((f : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.visibility = (Parser.Public : Parser.visibility) && Lang.Lists.list_is_not_empty (f : Checker.Symbols.symbol).Checker.Symbols.path) && (let fk_arg1 = List.length (f : Checker.Symbols.symbol).Checker.Symbols.path in
+                    let fk_arg1 = item ((f : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name 3 ("from " ^ module_) (with_import (module_ ^ ".*")) in
+                    let fk_arg2 = Checker.Symbols.Signatures.written_parameters_of f in
+                    called fk_arg1 ((f : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name fk_arg2) (List.filter (fun f -> ((((((((f : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.visibility = (Parser.Public : Parser.visibility) && Lang.Lists.list_is_not_empty (f : Checker.Symbols.symbol).Checker.Symbols.path) && (let fk_arg1 = List.length (f : Checker.Symbols.symbol).Checker.Symbols.path in
                            let fk_arg2 = List.length ((f : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package in
                            fk_arg1 > fk_arg2)) && String.starts_with ~prefix:typed ((f : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) && not (Checker.Symbols.Signatures.is_extension f)) && not (Lang.Strings.string_contains ((f : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name "$")) && not (imported (String.concat "." (List.map Fun.id (f : Checker.Symbols.symbol).Checker.Symbols.path) ^ ".*") ((f : Checker.Symbols.symbol).Checker.Symbols.file : Checker.Sources.loaded_file).Checker.Sources.package)) && not (List.exists (fun i -> (i : Parser.import).Parser.wildcard && (i : Parser.import).Parser.path = (f : Checker.Symbols.symbol).Checker.Symbols.path) (loaded : Checker.Sources.loaded_file).Checker.Sources.imports)) (environment : Checker.Inference.environment).Checker.Inference.ordered_functions) in
                List.take 100 ((declared @ operations) @ members)
@@ -13624,11 +13642,13 @@ module Fckt = struct
         let modules = if Option.is_some owner then [] else List.map (fun m -> (JsonObject { fields = [("label", (JsonString { value = m } : json)); ("kind", Jsons.number 9)] } : json)) (List.take 100 (Lang.Lists.list_distinct (List.filter (fun m -> (String.starts_with ~prefix:typed m && Option.value (Option.map (fun it -> Lang.Strings.char_is_upper_case it) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in if n < 0 || i >= String.length s then None else Some (Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar s i)))) m 0)) ~default:false) && not (Lang.Strings.string_contains m "__")) (Lang.Lists.list_map_not_null functions (fun it -> Lang.Lists.list_last_or_none ((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.path))))) in
         let own = if Option.is_some owner then [] else locals_above session uri line typed in
         let more = if Option.is_some owner then [] else importable session uri typed text in
-        ((own @ modules) @ more) @ List.map (fun f -> (JsonObject { fields = (let fk_arg1 = ("kind", Jsons.number (match (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
-               | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> 3
-               | _ -> 6)) in
-            let fk_arg2 = ("detail", (JsonString { value = type_of f } : json)) in
-            [("label", (JsonString { value = (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name } : json)); fk_arg1; fk_arg2]) } : json)) (List.take 200 (Collections.Maps.map_values (List.fold_left (fun m f -> Collections.Maps.map_put m (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name f) (Collections.Maps.empty_map ()) candidates)))
+        ((own @ modules) @ more) @ List.map (fun f -> let name = (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name in
+           let kind = match (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
+             | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> 3
+             | _ -> 6 in
+           let fk_arg1 = item name kind (type_of f) [] in
+           let fk_arg2 = Checker.Symbols.Signatures.written_parameters_of (f : Checker.Inference.checked_function).Checker.Inference.function_ in
+           called fk_arg1 name fk_arg2) (List.take 200 (Collections.Maps.map_values (List.fold_left (fun m f -> Collections.Maps.map_put m (((f : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name f) (Collections.Maps.empty_map ()) candidates)))
 
       let rec opener_from (chars : int list) (i : int) (open_ : int) (close : int) (depth : int) : int option =
         match Lang.Lists.list_get_or_none chars i with
@@ -13830,7 +13850,9 @@ module Fckt = struct
                     | _ -> false) (List.concat_map (fun n -> Checker.Inference.Globals.extensions_named n context) (List.filter (fun it -> String.starts_with ~prefix:typed it) (Collections.Maps.map_keys (environment : Checker.Inference.environment).Checker.Inference.extensions)))) in
             let extensions = List.map (fun s -> let label = Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name ".")) ~default:((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name in
                  let detail = Option.value (Option.map (fun it -> type_of it) (List.find_opt (fun it -> ((it : Checker.Inference.checked_function).Checker.Inference.function_ : Checker.Symbols.symbol).Checker.Symbols.name = (s : Checker.Symbols.symbol).Checker.Symbols.name) (program : Checker.checked_program).Checker.functions)) ~default:"" in
-                 item label (if Checker.Symbols.Signatures.is_property s then 10 else 2) detail []) (Collections.Maps.map_values (List.fold_left (fun m s -> Collections.Maps.map_put m (s : Checker.Symbols.symbol).Checker.Symbols.name s) (Collections.Maps.empty_map ()) fitting)) in
+                 if Checker.Symbols.Signatures.is_property s then item label 10 detail [] else (let fk_arg1 = item label 2 detail [] in
+                    let fk_arg2 = Checker.Symbols.Signatures.written_parameters_of s in
+                    called fk_arg1 label fk_arg2)) (Collections.Maps.map_values (List.fold_left (fun m s -> Collections.Maps.map_put m (s : Checker.Symbols.symbol).Checker.Symbols.name s) (Collections.Maps.empty_map ()) fitting)) in
             let fields = List.map (fun f -> item (f : Checker.Core.declared_field).Checker.Core.name 5 (Checker.Types.Solutions.solving (Checker.Types.Solutions.solving_default_from ()) (fun () -> Checker.Types.TypeText.shown (f : Checker.Core.declared_field).Checker.Core.t)) []) (List.filter (fun it -> String.starts_with ~prefix:typed (it : Checker.Core.declared_field).Checker.Core.name) (match receiver with
                 | Checker.Types.Named { name = n; arguments = _; region = _ } -> List.concat_map (fun t -> match t with
                        | Checker.Core.DeclaredRecord { record = record; type_parameters = _; fields = declared } when (record : Checker.Symbols.symbol).Checker.Symbols.name = n -> declared
@@ -13839,17 +13861,7 @@ module Fckt = struct
             fields @ List.take 200 extensions
         | _ -> []
 
-      let completions (session : session) (uri : string) (params : json) : json list =
-        let (line, character) = position_of params in
-        let file = path_of uri in
-        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
-          let fk_arg2 = read_or_empty file in
-          Option.value fk_arg1 ~default:fk_arg2 in
-        let written = Option.value (Lang.Lists.list_get_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n") line) ~default:"" in
-        let before = (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in String.sub s 0 (at 0 n)) written character) in
-        let prefix = List.rev (Lang.Lists.list_take_while (List.rev before) (fun it -> is_name_char it)) in
-        let rest = Lang.Lists.list_drop_last before (List.length prefix) in
-        let typed = String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) prefix)) in
+      let offered (session : session) (uri : string) (line : int) (character : int) (file : Io.path) (text : string) (written : string) (rest : int list) (prefix : int list) (typed : string) : json list =
         if Lang.Lists.list_last_or_none rest <> Some 46 then declared_or_bound session uri line file text None typed else (let dot = List.length rest - 1 in
            match receiver_in (Lang.Lists.list_drop_last rest 1) with
            | ModuleNamed { name = name } -> declared_or_bound session uri line file text (Some name) typed
@@ -13864,6 +13876,26 @@ module Fckt = struct
                     session.open_ <- Collections.Maps.map_put (session : session).open_ uri text;
                     type_of_receiver session file line receiver) in
                Option.value (Option.map (fun it -> members session uri it typed) t) ~default:[])
+
+      let uncalled (item : json) : json =
+        match item with
+        | JsonObject { fields = fields } -> (JsonObject { fields = List.filter (fun (key, _) -> key <> "insertText" && key <> "insertTextFormat") fields } : json)
+        | _ -> item
+
+      let completions (session : session) (uri : string) (params : json) : json list =
+        let (line, character) = position_of params in
+        let file = path_of uri in
+        let text = let fk_arg1 = Collections.Maps.map_get (session : session).open_ uri in
+          let fk_arg2 = read_or_empty file in
+          Option.value fk_arg1 ~default:fk_arg2 in
+        let written = Option.value (Lang.Lists.list_get_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) text "\n") line) ~default:"" in
+        let before = (fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in String.sub s 0 (at 0 n)) written character) in
+        let prefix = List.rev (Lang.Lists.list_take_while (List.rev before) (fun it -> is_name_char it)) in
+        let rest = Lang.Lists.list_drop_last before (List.length prefix) in
+        let typed = String.concat "" (List.map Fun.id (List.map (fun it -> fk_show_char it) prefix)) in
+        let found = offered session uri line character file text written rest prefix typed in
+        let after = List.nth_opt (Lang.Lists.list_drop_while ((fun s -> let rec go i acc = if i >= String.length s then List.rev acc else let d = String.get_utf_8_uchar s i in go (i + Uchar.utf_decode_length d) (Uchar.to_int (Uchar.utf_decode_uchar d) :: acc) in go 0 []) ((fun s n -> let rec at i n = if n <= 0 || i >= String.length s then i else at (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n - 1) in let i = at 0 n in String.sub s i (String.length s - i)) written character)) (fun it -> is_name_char it)) 0 in
+        if after = Some 40 then List.map (fun it -> uncalled it) found else found
 
       let kind_of (definition : Parser.definition) : int =
         match definition with
