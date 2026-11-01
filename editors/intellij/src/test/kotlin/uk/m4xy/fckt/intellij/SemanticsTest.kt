@@ -1,12 +1,13 @@
 package uk.m4xy.fckt.intellij
 
-import uk.m4xy.fckt.coreSource
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 
 class SemanticsTest {
-    /** [source] with each coloured name marked by its role: `Some` becomes `[DATA_CLASS:Some]`. */
+    /** [source] with each word its tokens tell marked by what it is: `var` becomes `[KEYWORD:var]`. */
     private fun marked(source: String): String {
         val out = StringBuilder()
         var at = 0
@@ -18,225 +19,22 @@ class SemanticsTest {
     }
 
     @Test
-    fun `a spec and a module that follows it`() {
-        val source = """
-            spec Monad {
-              type M<A>
-              bind<A, B>(m: M<A>, f: (A) -> M<B>): M<B>
-            }
-            module Options : Monad {
-              type M<A> = Option<A>
-              bind(m, f) = when (m) {
-                Some(x) -> f(x)
-                None -> None
-              }
-            }
-        """.trimIndent()
-        assertEquals(
-            """
-            [KEYWORD:spec] [INTERFACE:Monad] {
-              type [TYPE_ALIAS:M]<[TYPE_PARAMETER:A]>
-              [FUNCTION_DECLARATION:bind]<[TYPE_PARAMETER:A], [TYPE_PARAMETER:B]>([PARAMETER:m]: [TYPE_ALIAS:M]<[TYPE_PARAMETER:A]>, [PARAMETER:f]: ([TYPE_PARAMETER:A]) -> [TYPE_ALIAS:M]<[TYPE_PARAMETER:B]>): [TYPE_ALIAS:M]<[TYPE_PARAMETER:B]>
-            }
-            module [OBJECT:Options] : [INTERFACE:Monad] {
-              type [TYPE_ALIAS:M]<[TYPE_PARAMETER:A]> = [INTERFACE:Option]<[TYPE_PARAMETER:A]>
-              [FUNCTION_DECLARATION:bind]([PARAMETER:m], [PARAMETER:f]) = when ([PARAMETER:m]) {
-                [DATA_CLASS:Some]([PROPERTY:x]) -> [FUNCTION_CALL:f]([PROPERTY:x])
-                [DATA_CLASS:None] -> [DATA_CLASS:None]
-              }
-            }
-            """.trimIndent(),
-            marked(source),
-        )
+    fun `var is a keyword in place`() {
+        val marked = marked("type Account(var balance: Int)\ncount() = {\n  var n = 0\n  n = n + 1\n  n\n}")
+        assertContains(marked, "([KEYWORD:var] balance")
+        assertContains(marked, "  [KEYWORD:var] n = 0\n  n = n + 1")
     }
 
     @Test
-    fun `types, by, named arguments and fields`() {
-        val source = """
-            type Validation<A, E> { Valid(value: A), Invalid(errors: List<E>) }
-            type Ratio(n: Int, d: Int)
-            f(s: String): Validation<Int, String> = Validated {
-              n by check(s)
-              r = Ratio(n = 1, d = 2)
-              r.n + n
-            }
-        """.trimIndent()
-        assertEquals(
-            """
-            type [INTERFACE:Validation]<[TYPE_PARAMETER:A], [TYPE_PARAMETER:E]> { [DATA_CLASS:Valid]([PROPERTY:value]: [TYPE_PARAMETER:A]), [DATA_CLASS:Invalid]([PROPERTY:errors]: [CLASS:List]<[TYPE_PARAMETER:E]>) }
-            type [DATA_CLASS:Ratio]([PROPERTY:n]: [CLASS:Int], [PROPERTY:d]: [CLASS:Int])
-            [FUNCTION_DECLARATION:f]([PARAMETER:s]: [CLASS:String]): [INTERFACE:Validation]<[CLASS:Int], [CLASS:String]> = [OBJECT:Validated] {
-              [LOCAL_VARIABLE:n] [KEYWORD:by] [FUNCTION_CALL:check]([PARAMETER:s])
-              [LOCAL_VARIABLE:r] = [DATA_CLASS:Ratio]([NAMED_ARGUMENT:n] = 1, [NAMED_ARGUMENT:d] = 2)
-              [LOCAL_VARIABLE:r].[PROPERTY:n] + [LOCAL_VARIABLE:n]
-            }
-            """.trimIndent(),
-            marked(source),
-        )
-    }
-
-    @Test
-    fun `a parenthesis on the next line isn't a call`() {
-        val source = "pair<A, B>(ma: M.M<A>, mb: M.M<B>): M.M<(A, B)> = M {\n  a by ma\n  b by mb\n  (a, b)\n}"
-        assertEquals(
-            "[FUNCTION_DECLARATION:pair]<[TYPE_PARAMETER:A], [TYPE_PARAMETER:B]>([PARAMETER:ma]: [OBJECT:M].[TYPE_ALIAS:M]<[TYPE_PARAMETER:A]>, " +
-                "[PARAMETER:mb]: [OBJECT:M].[TYPE_ALIAS:M]<[TYPE_PARAMETER:B]>): [OBJECT:M].[TYPE_ALIAS:M]<([TYPE_PARAMETER:A], [TYPE_PARAMETER:B])> = [OBJECT:M] {\n" +
-                "  [LOCAL_VARIABLE:a] [KEYWORD:by] [PARAMETER:ma]\n  [LOCAL_VARIABLE:b] [KEYWORD:by] [PARAMETER:mb]\n  ([LOCAL_VARIABLE:a], [LOCAL_VARIABLE:b])\n}",
-            marked(source),
-        )
-    }
-
-    @Test
-    fun `a block's bindings are locals for the lines after them`() {
-        val source = """
-            user(name: String, age: Int): Validation<User, String> = Validated {
-              trimmed = name.trim()
-              n by checkName(trimmed)
-              adult = age >= 18
-              User(n, if (adult) age else 18)
-            }
-            other(n: Int) = n
-        """.trimIndent()
-        assertEquals(
-            """
-            [FUNCTION_DECLARATION:user]([PARAMETER:name]: [CLASS:String], [PARAMETER:age]: [CLASS:Int]): [INTERFACE:Validation]<[CLASS:User], [CLASS:String]> = [OBJECT:Validated] {
-              [LOCAL_VARIABLE:trimmed] = [PARAMETER:name].[FUNCTION_CALL:trim]()
-              [LOCAL_VARIABLE:n] [KEYWORD:by] [FUNCTION_CALL:checkName]([LOCAL_VARIABLE:trimmed])
-              [LOCAL_VARIABLE:adult] = [PARAMETER:age] >= 18
-              [CLASS:User]([LOCAL_VARIABLE:n], if ([LOCAL_VARIABLE:adult]) [PARAMETER:age] else 18)
-            }
-            [FUNCTION_DECLARATION:other]([PARAMETER:n]: [CLASS:Int]) = [PARAMETER:n]
-            """.trimIndent(),
-            marked(source),
-        )
-    }
-
-    /** Where the [nth] [word] on [line] of [example] goes: `file:line`, one per target. */
-    private fun goto(example: String, line: Int, word: String, nth: Int = 0): List<String> {
-        val file = java.io.File("../../examples/$example.fk").canonicalFile
-        val text = file.readText()
-        val lineStart = text.lines().take(line - 1).sumOf { it.length + 1 }
-        val offset = Regex("\\b$word\\b").findAll(text.substring(lineStart, lineStart + text.lines()[line - 1].length)).toList()[nth].range.first + lineStart
-        return declarations(text, file)[offset].orEmpty().map { "${it.file?.substringAfterLast('/') ?: "here"}:${it.pos.line}" }
-    }
-
-    @Test
-    fun `names go to their declarations`() {
-        // The checker's choice: total for a list of Ints, and for one of Floats.
-        assertEquals(listOf("here:21"), goto("extensions", 42, "total"))
-        assertEquals(listOf("here:22"), goto("extensions", 43, "total"))
-        // The core's externals, which every file imports.
-        val fold = coreSource("fckt/lang/Lists")!!.lines().indexOfFirst { "List<A>.fold" in it } + 1
-        assertEquals(listOf("Lists.fk:$fold"), goto("extensions", 21, "fold"))
-        // Through modules, each segment to its own: Shapes.Units.twice
-        assertEquals(listOf("here:19"), goto("modules", 47, "Shapes", 1))
-        assertEquals(listOf("here:27"), goto("modules", 47, "Units"))
-        assertEquals(listOf("here:28"), goto("modules", 47, "twice"))
-        // A field, and a local where it was bound.
-        assertEquals(listOf("here:7"), goto("modules", 43, "num"))
-        assertEquals(listOf("here:44"), goto("modules", 45, "r"))
-        // In a functor, M.pure is the spec's pure, and M.M<A> the spec's M; A is the function's own.
-        assertEquals(listOf("here:6"), goto("monads", 45, "pure"))
-        assertEquals(listOf("here:32"), goto("monads", 33, "M", 0))
-        assertEquals(listOf("here:5"), goto("monads", 33, "M", 1))
-        assertEquals(listOf("here:33"), goto("monads", 33, "A", 1))
-        // Cases through their type, in a declaration and in code.
-        assertEquals(listOf("here:6"), goto("shared-cases", 9, "A"))
-        assertEquals(listOf("here:6"), goto("shared-cases", 35, "A"))
-        assertEquals(listOf("here:7"), goto("shared-cases", 35, "Zero"))
-        // What's built in is described in builtins.fk.
-        val result = standardSource(BUILTINS)!!.lines().indexOfFirst { "type Result" in it } + 1
-        assertEquals(listOf("builtins.fk:$result"), goto("stdlib", 16, "Ok"))
-        assertEquals(listOf("builtins.fk:5"), goto("stdlib", 13, "Int"))
-        // A declaration's own name goes nowhere.
-        assertEquals(emptyList(), goto("monads", 33, "map"))
-    }
-
-    @Test
-    fun `every example and library file scans, colours and resolves without failing`() {
-        val dir = java.io.File("../../examples")
-        val files = dir.walk().filter { it.extension == "fk" }.toList()
-        check(files.isNotEmpty())
-        for (file in files) {
-            val text = file.readText()
-            val toks = scan(text)
-            // Every character is in exactly one token.
-            assertEquals(text.length, toks.sumOf { it.end - it.start }, file.path)
-            semantics(text, neighbourRoles(file.parentFile, file))
-            declarations(text, file)
-        }
-        // The core's files, which a search goes through too, the built-ins', and the standard library's.
-        val std = java.io.File(System.getProperty("fckt.std")).walk().filter { it.isFile && it.extension == "fk" }.map { it.readText() }.toList()
-        for (text in uk.m4xy.fckt.CORE_MODULES.map { standardSource("${uk.m4xy.fckt.CORE_PATH}$it.fk")!! } + standardSource(BUILTINS)!! + std) {
-            val name = text.lines().first()
-            assertEquals(text.length, scan(text).sumOf { it.end - it.start }, name)
-            semantics(text)
-            declarations(text, null)
-        }
-    }
-
-    @Test
-    fun `annotations`() {
-        val source = """
-            annotation type Route(path: String, handler: (String) -> String)
-            @Route("/a", handler = greet)
-            greet(@Pure s: String) = s
-        """.trimIndent()
-        assertEquals(
-            """
-            [KEYWORD:annotation] type [ANNOTATION:Route]([PROPERTY:path]: [CLASS:String], [PROPERTY:handler]: ([CLASS:String]) -> [CLASS:String])
-            @[ANNOTATION:Route]("/a", [NAMED_ARGUMENT:handler] = greet)
-            [FUNCTION_DECLARATION:greet](@[ANNOTATION:Pure] [PARAMETER:s]: [CLASS:String]) = [PARAMETER:s]
-            """.trimIndent(),
-            marked(source),
-        )
-    }
-
-    @Test
-    fun `var is a keyword in place, and changing a var refers to it`() {
-        val source = """
-            type Account(var balance: Int)
-            count() = {
-              var n = 0
-              n = n + 1
-              n
-            }
-        """.trimIndent()
-        assertEquals(
-            """
-            type [DATA_CLASS:Account]([KEYWORD:var] [PROPERTY:balance]: [CLASS:Int])
-            [FUNCTION_DECLARATION:count]() = {
-              [KEYWORD:var] [LOCAL_VARIABLE:n] = 0
-              [LOCAL_VARIABLE:n] = [LOCAL_VARIABLE:n] + 1
-              [LOCAL_VARIABLE:n]
-            }
-            """.trimIndent(),
-            marked(source),
-        )
-    }
-
-    @Test
-    fun `a type OCaml implements is a class`() {
-        assertEquals(
-            "[KEYWORD:external] type [CLASS:Array]<[TYPE_PARAMETER:A]> = \"'a array\"",
-            marked("external type Array<A> = \"'a array\""),
-        )
+    fun `external is a keyword before what OCaml implements`() {
+        assertEquals("[KEYWORD:external] type Array<A> = \"'a array\"", marked("external type Array<A> = \"'a array\""))
     }
 
     @Test
     fun `effect is a keyword where it declares one`() {
-        val source = """
-            effect Clock { now(): Int }
-            effect Database
-            effect(x: Int) = x
-        """.trimIndent()
         assertEquals(
-            """
-            [KEYWORD:effect] [INTERFACE:Clock] { [FUNCTION_DECLARATION:now](): [CLASS:Int] }
-            [KEYWORD:effect] [ANNOTATION:Database]
-            [FUNCTION_DECLARATION:effect]([PARAMETER:x]: [CLASS:Int]) = [PARAMETER:x]
-            """.trimIndent(),
-            marked(source),
+            "[KEYWORD:effect] Clock { now(): Int }\n[KEYWORD:effect] Database\neffect(x: Int) = x",
+            marked("effect Clock { now(): Int }\neffect Database\neffect(x: Int) = x"),
         )
     }
 
@@ -245,33 +43,30 @@ class SemanticsTest {
         val marked = marked("internal module Rounding { whole(n: Int): Int = n }\ninternal external half(n: Int): Int = \"n / 2\"\ninternal(x: Int) = x")
         assertContains(marked, "[KEYWORD:internal] module")
         assertContains(marked, "[KEYWORD:internal] [KEYWORD:external]")
-        assertContains(marked, "[FUNCTION_DECLARATION:internal]([PARAMETER:x]")
-    }
-
-    @Test
-    fun `a guard sees the names its patterns bind`() {
-        val source = """
-            f(x: Option<Int>) = when (x) {
-              Some(n) if n > 0 -> n
-              else -> 0
-            }
-        """.trimIndent()
-        assertEquals(
-            """
-            [FUNCTION_DECLARATION:f]([PARAMETER:x]: [INTERFACE:Option]<[CLASS:Int]>) = when ([PARAMETER:x]) {
-              [DATA_CLASS:Some]([PROPERTY:n]) if [PROPERTY:n] > 0 -> [PROPERTY:n]
-              else -> 0
-            }
-            """.trimIndent(),
-            marked(source),
-        )
+        assertContains(marked, "\ninternal(x: Int)")
     }
 
     @Test
     fun `import and as are keywords on an import line`() {
         assertEquals(
-            "[KEYWORD:import] geometry.[OBJECT:Shapes].[CLASS:Shape] [KEYWORD:as] [CLASS:Form]\n[FUNCTION_DECLARATION:as]([PARAMETER:x]: [CLASS:Int]) = [PARAMETER:x]",
+            "[KEYWORD:import] geometry.Shapes.Shape [KEYWORD:as] Form\nas(x: Int) = x",
             marked("import geometry.Shapes.Shape as Form\nas(x: Int) = x"),
         )
+    }
+
+    @Test
+    fun `named arguments, annotations and by`() {
+        val marked = marked("@Pure send(to = \"a\", body = f(x = 1))\nprinter: Printer = console by Printers\nsame = a == b")
+        assertContains(marked, "[ANNOTATION:Pure] send([NAMED_ARGUMENT:to] = \"a\", [NAMED_ARGUMENT:body] = f([NAMED_ARGUMENT:x] = 1))")
+        assertContains(marked, "console [KEYWORD:by] Printers")
+        assertFalse(marked.contains("NAMED_ARGUMENT:same"))
+    }
+
+    @Test
+    fun `every example and library file scans and colours without failing`() {
+        val root = File("../..")
+        val files = (File(root, "examples").walk() + File(root, "std/src").walk()).filter { it.extension == "fk" }.toList()
+        assert(files.size > 20)
+        for (f in files) semantics(f.readText())
     }
 }

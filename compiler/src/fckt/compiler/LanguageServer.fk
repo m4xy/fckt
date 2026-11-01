@@ -112,6 +112,13 @@ module LanguageServer {
           ("renameProvider", JsonBoolean(true)),
           ("inlayHintProvider", JsonBoolean(true)),
           ("codeActionProvider", JsonBoolean(true)),
+          ("semanticTokensProvider", JsonObject([
+            ("legend", JsonObject([
+              ("tokenTypes", JsonArray(tokenTypes.map { JsonString(it) })),
+              ("tokenModifiers", JsonArray([JsonString("declaration")])),
+            ])),
+            ("full", JsonBoolean(true)),
+          ])),
           ("completionProvider", JsonObject([("triggerCharacters", JsonArray([JsonString(".")]))])),
         ])),
         ("serverInfo", JsonObject([("name", JsonString("fckt"))])),
@@ -218,6 +225,9 @@ module LanguageServer {
         ).flatMap { it.field("diagnostics") }.map { it.items }.getOrElse([])
         said.flatMap { d -> fixes(session, u, d) }
       }.getOrElse([])))
+      "textDocument/semanticTokens/full" -> answer(id, JsonObject([
+        ("data", JsonArray(uri.map { u -> tokensOf(session, u) }.getOrElse([]).map { number(it) })),
+      ]))
       "textDocument/inlayHint" -> answer(
         id,
         JsonArray(uri.map { u -> hints(session, u) }.getOrElse([])),
@@ -233,7 +243,11 @@ module LanguageServer {
           Error(_) -> []
         }
       }.getOrElse([])))
-      method -> if (id.isSome() && !method.startsWith("$/")) refuse(id, method) else Unit
+      // What answers what this asked, as a refresh, has no method, and wants no answer.
+      method -> if (id.isSome() && method.isNotEmpty() && !method.startsWith("$/")) refuse(
+        id,
+        method,
+      ) else Unit
     }
   }
 
@@ -330,7 +344,13 @@ module LanguageServer {
       key = uriOf(d.file.getOrElse(""))
       m.put(key, m.getOrDefault(key, []) + [d])
     }
-    if (publishing) said(session, project, byFile) else Unit
+    if (publishing) {
+      said(session, project, byFile)
+      // What's coloured and hinted is what was checked: the editor asks again now it's changed.
+      asked("workspace/semanticTokens/refresh")
+      asked("workspace/inlayHint/refresh")
+    }
+    else Unit
   }
 
   // What's wrong with each file said, and that nothing is of those said to have something wrong
@@ -430,7 +450,8 @@ module LanguageServer {
     Means(f, _, _, _, _) -> f.getOrElse("")
     Does(f, _, _) -> f.getOrElse("")
     Gives(f, _, _) -> f.getOrElse("")
-    Binds(f, _, _, _, _, _) -> f.getOrElse("")
+    TypeName(f, _, _, _) -> f.getOrElse("")
+    Binds(f, _, _, _, _, _, _) -> f.getOrElse("")
     Reads(f, _, _, _, _, _) -> f.getOrElse("")
   }
 
@@ -442,7 +463,8 @@ module LanguageServer {
         Means(f, at, _, symbol, _) -> (f.getOrElse(""), "m ${at.line} ${at.column} ${symbol.name}")
         Does(f, at, _) -> (f.getOrElse(""), "d ${at.line} ${at.column}")
         Gives(f, at, _) -> (f.getOrElse(""), "g ${at.line} ${at.column}")
-        Binds(f, at, _, name, _, _) -> (f.getOrElse(""), "b ${at.line} ${at.column} $name")
+        TypeName(f, at, _, _) -> (f.getOrElse(""), "t ${at.line} ${at.column}")
+        Binds(f, at, _, name, _, _, _) -> (f.getOrElse(""), "b ${at.line} ${at.column} $name")
         Reads(f, at, _, name, _, _) -> (f.getOrElse(""), "r ${at.line} ${at.column} $name")
       }
       whole = "$file $key"
@@ -545,7 +567,15 @@ module LanguageServer {
         Reads(_, at, _, n, _, t) if n == name && at.line == line + 1 && at.column == column + 1 -> [
           t,
         ]
-        Binds(_, at, _, n, t, _) if n == name && at.line == line + 1 && at.column == column + 1 -> [
+        Binds(
+          _,
+          at,
+          _,
+          n,
+          t,
+          _,
+          _,
+        ) if n == name && at.line == line + 1 && at.column == column + 1 -> [
           t,
         ]
         else -> []
@@ -553,7 +583,7 @@ module LanguageServer {
     }.firstOrNone()
     above = facts.flatMap { f ->
       when (f) {
-        Binds(_, at, _, n, t, _) if n == name && at.line <= line + 1 -> [(at.line, t)]
+        Binds(_, at, _, n, t, _, _) if n == name && at.line <= line + 1 -> [(at.line, t)]
         else -> []
       }
     }.fold(None) { best, entry ->
@@ -594,6 +624,7 @@ module LanguageServer {
           _,
           name,
           t,
+          _,
           _,
         ) if at.line >= start && at.line <= line + 1 && name.startsWith(typed) -> [
           (name, t),
@@ -733,6 +764,124 @@ module LanguageServer {
       (if (edits.isEmpty()) [] else [("additionalTextEdits", JsonArray(edits))]),
   )
 
+  // The kinds of name the editor is told of, by their place here: LSP's own, with the colours
+  // Kotlin gives what each is like.
+  private tokenTypes: List<String> = [
+    "namespace", "type", "class", "interface", "struct", "typeParameter", "parameter", "variable",
+    "property", "enumMember", "function", "decorator",
+  ]
+
+  // Each name in the file, as LSP's semantic tokens say them: line, start and length, its kind,
+  // and whether it's where it's declared; each from where the one before it starts.
+  @FileSystem private tokensOf(session: Session, uri: String): List<Int> = {
+    file = pathOf(uri)
+    text = session.open.get(uri).getOrElse(readOrEmpty(file))
+    lines = text.split("\n")
+    facts = factsIn(session, file)
+    parameters = facts.fold(emptyMap()) { m, f ->
+      when (f) {
+        Binds(_, at, _, _, _, _, parameter) -> m.put("${at.line} ${at.column}", parameter)
+        else -> m
+      }
+    }
+    local = (bound: Position) -> if (parameters.getOrDefault("${bound.line} ${bound.column}", false)) 6 else 7
+    used = facts.flatMap { f ->
+      when (f) {
+        Means(_, at, length, symbol, _) -> tokenKindOf(symbol).toList().map { kind ->
+          // An annotation, @Name, from its @.
+          annotated = lines.getOrNone(
+            at.line - 1,
+          ).flatMap { it.toList().getOrNone(at.column - 2) } == Some('@')
+          if (annotated) (at.line - 1, at.column - 2, length + 1, 11, 0) else (at.line - 1, at.column - 1, length, kind, 0)
+        }
+        Binds(_, at, length, _, _, _, parameter) -> [
+          (at.line - 1, at.column - 1, length, if (parameter) 6 else 7, 1),
+        ]
+        Reads(_, at, length, _, bound, _) -> [(at.line - 1, at.column - 1, length, local(bound), 0)]
+        TypeName(_, at, length, builtin) -> [
+          (at.line - 1, at.column - 1, length, if (builtin) 2 else 5, 0),
+        ]
+        else -> []
+      }
+    }
+    declared = when (Parser.parse(text)) {
+      Ok(parsed) -> declarationTokens(parsed.declarations, lines)
+      Error(_) -> []
+    }
+    // Each place once, the first said of it, in order.
+    ordered = (declared + used).fold((emptyMap(), [])) { seen, token ->
+      (keys, kept) = seen
+      (line, column, _, _, _) = token
+      key = "$line $column"
+      if (keys.containsKey(key)) seen else (keys.put(key, true), [token] + kept)
+    }
+    (_, kept) = ordered
+    sorted = kept.sortedBy { token ->
+      (line, column, _, _, _) = token
+      line * 100000 + column
+    }
+    (_, _, encoded) = sorted.fold((0, 0, [])) { state, token ->
+      (lastLine, lastColumn, out) = state
+      (line, column, length, kind, modifiers) = token
+      start = if (line == lastLine) column - lastColumn else column
+      (line, column, [[line - lastLine, start, length, kind, modifiers]] + out)
+    }
+    encoded.reversed().flatMap { it }
+  }
+
+  // What a declared name is, as its kind of token: a function, a value, a type of each sort, a
+  // case, a field, a module or a spec.
+  private tokenKindOf(s: Symbol): Option<Int> = {
+    owner = s.name.split(".").dropLast(
+      1,
+    ).lastOrNone().map { o -> o.toList().getOrNone(0).map { it.isUpperCase() }.getOrElse(false) }.getOrElse(false)
+    when (s.declaration.definition) {
+      FunctionDefinition(_, _, Some(_), _, _, _, _) -> Some(10)
+      FunctionDefinition(_, _, None, _, _, _, _) -> Some(8)
+      RecordDefinition(_, fields, _, annotation, _) ->
+        if (owner && fields.any { it.name == s.declaration.name }) Some(8)
+        else if (annotation) Some(11)
+        else Some(4)
+      CasesDefinition(_, cases, _, _) -> if (cases.any { it.name == s.declaration.name }) Some(
+        9,
+      ) else Some(
+        3,
+      )
+      AliasDefinition(_, _) -> Some(1)
+      SpecDefinition(_, _, _, _, _) -> Some(3)
+      ModuleDefinition(_, _, _, _, _) -> Some(0)
+      else -> None
+    }
+  }
+
+  // Each declaration's own name, and its fields' and cases', where they're declared.
+  private declarationTokens(
+    declarations: List<Declaration>,
+    lines: List<String>,
+  ): List<(Int, Int, Int, Int, Int)> = declarations.flatMap { d ->
+    name = d.name.split(".").lastOrNone().getOrElse(d.name)
+    at = (p: Position, written: String, kind: Int) -> lines.getOrNone(p.line - 1).flatMap { line ->
+      wordIn(
+        line,
+        written,
+        p.column - 1,
+      ).map { column -> (p.line - 1, column, written.length, kind, 1) }
+    }.toList()
+    when (d.definition) {
+      FunctionDefinition(_, _, Some(_), _, _, _, _) -> at(d.at, name, 10)
+      FunctionDefinition(_, _, None, _, _, _, _) -> at(d.at, name, 8)
+      RecordDefinition(_, fields, _, annotation, _) ->
+        at(d.at, name, if (annotation) 11 else 4) + fields.flatMap { f -> at(f.at, f.name, 8) }
+      CasesDefinition(_, cases, _, _) -> at(d.at, name, 3) + cases.flatMap { c ->
+        at(c.at, c.name, 9) + c.fields.flatMap { f -> at(f.at, f.name, 8) }
+      }
+      AliasDefinition(_, _) -> at(d.at, name, 1)
+      SpecDefinition(_, _, _, _, _) -> at(d.at, name, 3)
+      ModuleDefinition(inner, _, _, _, _) -> at(d.at, name, 0) + declarationTokens(inner, lines)
+      else -> []
+    }
+  }
+
   // What would put right what the diagnostic says is wrong: an import it names, or an effect a
   // function must say it does.
   @FileSystem private fixes(session: Session, uri: String, diagnostic: Json): List<Json> = {
@@ -798,7 +947,7 @@ module LanguageServer {
       at.line == line + 1 && character + 1 >= at.column && character + 1 <= at.column + length
     factsIn(session, pathOf(uri)).flatMap { f ->
       when (f) {
-        Binds(_, at, length, name, t, _) if under(at, length) -> [LocalName(file, at, name, t)]
+        Binds(_, at, length, name, t, _, _) if under(at, length) -> [LocalName(file, at, name, t)]
         Reads(_, at, length, name, bound, t) if under(at, length) -> [
           LocalName(file, bound, name, t),
         ]
@@ -1028,7 +1177,7 @@ module LanguageServer {
     }
     locals = factsIn(session, pathOf(uri)).flatMap { fact ->
       when (fact) {
-        Binds(_, at, length, _, t, false) -> [
+        Binds(_, at, length, _, t, false, _) -> [
           hint(at.line - 1, at.column - 1 + length, ": ${Solutions.solving { TypeText.shown(t) }}"),
         ]
         else -> []
@@ -1435,6 +1584,13 @@ module LanguageServer {
     ("jsonrpc", JsonString("2.0")),
     ("method", JsonString("textDocument/publishDiagnostics")),
     ("params", JsonObject([("uri", JsonString(uri)), ("diagnostics", JsonArray(diagnostics))])),
+  ]))
+
+  // Asks the editor to do what method says, which it answers with nothing this needs.
+  @Channel private asked(method: String): Unit = sent(JsonObject([
+    ("jsonrpc", JsonString("2.0")),
+    ("id", JsonString(method)),
+    ("method", JsonString(method)),
   ]))
 
   @Channel private answer(id: Option<Json>, result: Json): Unit = sent(JsonObject([

@@ -31,7 +31,6 @@ val ideaPath = providers.gradleProperty("ideaPath")
 dependencies {
     // The compiler: its lexer and parser find what each name is, and its checker finds errors.
     // The IDE has its own Kotlin standard library.
-    implementation(project(":")) { exclude(group = "org.jetbrains.kotlin") }
     intellijPlatform {
         local(ideaPath)
         // fckt's colours default to Kotlin's, so a type with cases looks like a sealed interface.
@@ -62,8 +61,5 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     // The standard library's source, which the plugin has beside it when it's installed.
-    systemProperty("fckt.std", rootProject.file("std/src").path)
 }
 
-// The standard library's source goes beside the plugin, in std, for files outside a kiln project.
-tasks.prepareSandbox { from(rootProject.file("std/src")) { into(intellijPlatform.projectName.map { "$it/std" }) } }

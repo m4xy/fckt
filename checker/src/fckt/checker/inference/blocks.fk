@@ -245,7 +245,7 @@ private isBind(s: Statement): Boolean = when (s) {
           )
           withScope(
             soFar,
-            Bindings.bound(inner, name, Local(typed.t, region), at, valueType.isSome(), context),
+            Bindings.bound(inner, name, Local(typed.t, region), at, valueType.isSome(), false, context),
             false,
           ).copy(
             lines = soFar.lines + [step],
@@ -263,11 +263,12 @@ private isBind(s: Statement): Boolean = when (s) {
             Local(FunctionOf(parameterTypes, result, row)),
             at,
             true,
+            false,
             context,
           )
           body = ps.zip(parameterTypes).fold(Scopes.inside(withFunction)) { s, entry ->
             (p, t) = entry
-            Bindings.bound(s, p.name, Local(t), p.at, p.parameterType.isSome(), context)
+            Bindings.bound(s, p.name, Local(t), p.at, p.parameterType.isSome(), true, context)
           }
           core = doingIn(row, context) { check(value, result, body, context) }
           withScope(soFar, withFunction, false).copy(

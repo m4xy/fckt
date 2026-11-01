@@ -9,13 +9,14 @@ import com.intellij.platform.lsp.api.customization.LspCustomization
 import com.intellij.platform.lsp.api.customization.LspFormattingCustomizer
 import com.intellij.platform.lsp.api.customization.LspFormattingDisabled
 import com.intellij.platform.lsp.api.customization.LspSemanticTokensCustomizer
-import com.intellij.platform.lsp.api.customization.LspSemanticTokensDisabled
+import com.intellij.platform.lsp.api.customization.LspSemanticTokensSupport
+import com.intellij.openapi.editor.colors.TextAttributesKey
 import java.io.File
 
 /**
  * Runs `fckt --language-server` for a project's fckt files: its errors and their quick fixes,
- * completion, hover, going to a declaration, finding usages, renaming, inlay hints and outlines.
- * Formatting and colouring are the plugin's own.
+ * completion, hover, going to a declaration, finding usages, renaming, inlay hints, outlines,
+ * and each name's colour, by what it is. Formatting, and keywords' colours, are the plugin's own.
  */
 class FcktLspServerSupportProvider : LspServerSupportProvider {
     override fun fileOpened(project: Project, file: VirtualFile, serverStarter: LspServerSupportProvider.LspServerStarter) {
@@ -31,7 +32,10 @@ private class FcktLspServerDescriptor(project: Project) : ProjectWideLspServerDe
 
     override val lspCustomization = object : LspCustomization() {
         override val formattingCustomizer: LspFormattingCustomizer = LspFormattingDisabled
-        override val semanticTokensCustomizer: LspSemanticTokensCustomizer = LspSemanticTokensDisabled
+        override val semanticTokensCustomizer: LspSemanticTokensCustomizer = object : LspSemanticTokensSupport() {
+            override fun getTextAttributesKey(tokenType: String, modifiers: List<String>): TextAttributesKey? =
+                FcktColors.ofToken(tokenType, modifiers)
+        }
     }
 }
 

@@ -3,16 +3,17 @@ import fckt.parser.Position
 // Locals bound where they're written, noted for tools.
 module Bindings {
   // The name bound in scope to the local where it's written, at; whose type is written there, if
-  // written.
+  // written; a parameter, if parameter.
   @Noting bound(
     scope: Scope,
     name: String,
     local: Local,
     at: Position,
     written: Boolean,
+    parameter: Boolean,
     context: Context,
   ): Scope = {
-    note(Binds(context.place.file.source.path, at, name.length, name, local.t, written))
+    note(Binds(context.place.file.source.path, at, name.length, name, local.t, written, parameter))
     Scopes.bind(scope, name, local.copy(at = Some(at)))
   }
 

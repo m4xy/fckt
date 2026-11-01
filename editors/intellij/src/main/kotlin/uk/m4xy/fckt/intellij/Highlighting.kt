@@ -23,8 +23,6 @@ import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.tree.IElementType
 import org.jetbrains.kotlin.idea.highlighter.KotlinHighlightingColors as K
-import uk.m4xy.fckt.compile
-import uk.m4xy.fckt.syntax.CompileError
 import java.io.File
 
 /**
@@ -66,20 +64,25 @@ object FcktColors {
     val ANNOTATION = key("ANNOTATION", K.ANNOTATION)
 
     fun of(role: Role): TextAttributesKey = when (role) {
-        Role.INTERFACE -> INTERFACE
-        Role.DATA_CLASS -> DATA_CLASS
-        Role.CLASS -> CLASS
-        Role.TYPE_ALIAS -> TYPE_ALIAS
-        Role.OBJECT -> MODULE
-        Role.TYPE_PARAMETER -> TYPE_PARAMETER
-        Role.FUNCTION_DECLARATION -> FUNCTION_DECLARATION
-        Role.FUNCTION_CALL -> FUNCTION_CALL
-        Role.PARAMETER -> PARAMETER
-        Role.LOCAL_VARIABLE -> LOCAL_VARIABLE
-        Role.PROPERTY -> FIELD
         Role.NAMED_ARGUMENT -> NAMED_ARGUMENT
         Role.KEYWORD -> KEYWORD
         Role.ANNOTATION -> ANNOTATION
+    }
+
+    /** The colour of a kind of name the language server says, as LSP's semantic tokens name it. */
+    fun ofToken(type: String, modifiers: List<String>): TextAttributesKey? = when (type) {
+        "namespace" -> MODULE
+        "type" -> TYPE_ALIAS
+        "class" -> CLASS
+        "interface" -> INTERFACE
+        "struct", "enumMember" -> DATA_CLASS
+        "typeParameter" -> TYPE_PARAMETER
+        "parameter" -> PARAMETER
+        "variable" -> LOCAL_VARIABLE
+        "property" -> FIELD
+        "function" -> if ("declaration" in modifiers) FUNCTION_DECLARATION else FUNCTION_CALL
+        "decorator" -> ANNOTATION
+        else -> null
     }
 }
 
@@ -123,62 +126,13 @@ class FcktSyntaxHighlighterFactory : SyntaxHighlighterFactory() {
 class FcktAnnotator : Annotator {
     override fun annotate(element: PsiElement, holder: AnnotationHolder) {
         if (element !is FcktFile) return
-        val path = element.virtualFile?.path?.let(::File)
-        val spans = semantics(element.text, neighbourRoles(path?.parentFile, path))
+        val spans = semantics(element.text)
         for (span in spans) {
             holder.newSilentAnnotation(HighlightInfoType.SYMBOL_TYPE_SEVERITY)
                 .range(TextRange(span.start, span.end))
                 .textAttributes(FcktColors.of(span.role))
                 .create()
         }
-    }
-}
-
-/** The compiler's errors for the file, each where it is. Runs in the background as the file changes. */
-class FcktErrorAnnotator : ExternalAnnotator<FcktErrorAnnotator.Input, FcktErrorAnnotator.Found>() {
-    class Input(val text: String, val file: File?)
-    class Found(val text: String, val error: CompileError)
-
-    override fun collectInformation(file: PsiFile) = Input(file.text, file.virtualFile?.path?.let(::File))
-
-    override fun doAnnotate(input: Input): Found? {
-        val entry = input.file ?: return null
-        // A library's interface has no code to check.
-        if (entry.extension == "fki") return null
-        return try {
-            val paths = pathsOf(entry)
-            compile(input.text, entry, paths.roots, libraries = paths.libraries, others = paths.others)
-            null
-        } catch (e: CompileError) {
-            Found(input.text, e)
-        } catch (e: Exception) {
-            null
-        } catch (e: StackOverflowError) {
-            null
-        }
-    }
-
-    override fun apply(file: PsiFile, found: Found?, holder: AnnotationHolder) {
-        if (found == null || found.text != file.text) return
-        for (error in found.error.errors) mark(error, found.text, holder)
-    }
-
-    private fun mark(error: CompileError, text: String, holder: AnnotationHolder) {
-        val pos = error.pos
-        val message = error.message ?: "error"
-        if (pos == null || pos.file != null) {
-            // In another file this one uses, or nowhere in particular.
-            val where = pos?.let { "${File(it.file!!).name}:${it.line}:${it.col}: " }.orEmpty()
-            holder.newAnnotation(HighlightSeverity.ERROR, where + message).fileLevel().create()
-            return
-        }
-        val lineStart = text.lineSequence().take(pos.line - 1).sumOf { it.length + 1 }.coerceAtMost(text.length)
-        val start = (lineStart + pos.col - 1).coerceIn(0, text.length)
-        // The token there, or one character: enough to find it.
-        val end = scan(text).firstOrNull { it.start == start && it.kind != TokKind.WHITESPACE }?.end
-            ?: (start + 1).coerceAtMost(text.length)
-        val range = if (end > start) TextRange(start, end) else TextRange(maxOf(0, start - 1), start)
-        holder.newAnnotation(HighlightSeverity.ERROR, message).range(range).create()
     }
 }
 

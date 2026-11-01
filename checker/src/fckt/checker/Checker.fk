@@ -125,6 +125,8 @@ module Checker {
       typed = types.flatMap { r ->
         when (r.meaning) {
           DeclaredType(s) -> [Means(path, r.written.at, r.written.name.length, s, None)]
+          BuiltinType(_) -> [TypeName(path, r.written.at, r.written.name.length, true)]
+          TypeParameterType(_) -> [TypeName(path, r.written.at, r.written.name.length, false)]
           else -> []
         }
       }

@@ -44,7 +44,8 @@ beeping = "effect Beeping {\n  beep(): Unit\n}\n"
       Does(file, at, row) ->
         "${file.getOrElse("")}:${at.line}:${at.column} does ${row.labels.map { it.name }.joinToString(" ")}"
       Gives(file, at, _) -> "${file.getOrElse("")}:${at.line}:${at.column} gives"
-      Binds(file, at, length, name, _, written) ->
+      TypeName(file, at, _, builtin) -> "${file.getOrElse("")}:${at.line}:${at.column} names ${if (builtin) "a built-in type" else "a type parameter"}"
+      Binds(file, at, length, name, _, written, _) ->
         "${file.getOrElse("")}:${at.line}:${at.column}+$length binds $name${if (written) " as written" else ""}"
       Reads(file, at, length, name, bound, _) ->
         "${file.getOrElse("")}:${at.line}:${at.column}+$length reads $name from ${bound.line}:${bound.column}"
@@ -60,7 +61,7 @@ beeping = "effect Beeping {\n  beep(): Unit\n}\n"
       "main.fk:3:22+4 means a.Shapes.area",
       "main.fk:1:10+6 means a.Shapes",
     ],
-    facts.filter { it.startsWith("main.fk") && !it.endsWith(" gives") },
+    facts.filter { it.startsWith("main.fk") && !it.endsWith(" gives") && !it.contains(" names a ") },
   )
 }
 
@@ -80,7 +81,7 @@ beeping = "effect Beeping {\n  beep(): Unit\n}\n"
       "main.fk:1:10+6 means a.Shapes",
       "main.fk:2:10+7 means a.Beeping",
     ],
-    facts.filter { it.startsWith("main.fk") && !it.endsWith(" gives") },
+    facts.filter { it.startsWith("main.fk") && !it.endsWith(" gives") && !it.contains(" names a ") },
   )
 }
 

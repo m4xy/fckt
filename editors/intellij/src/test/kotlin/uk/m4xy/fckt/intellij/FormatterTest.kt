@@ -3,7 +3,6 @@ package uk.m4xy.fckt.intellij
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.psi.codeStyle.CodeStyleManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
-import uk.m4xy.fckt.compile
 import java.io.File
 
 /** Reformat Code lays fckt out as ktlint would Kotlin, and Enter puts the cursor where code goes next. */
@@ -201,12 +200,13 @@ class FormatterTest : BasePlatformTestCase() {
     fun `test reformatting the examples changes no program`() {
         val examples = File("../../examples").walk().filter { it.extension == "fk" }.toList()
         assertTrue(examples.size > 10)
-        // The same program, but for the line numbers in what assertEquals says when it fails.
-        fun program(text: String, file: File) = compile(text, file, emptyList()).replace(Regex("line \\d+"), "line")
+        // The same program: its tokens, but for the spaces and line breaks between them, and the
+        // comma a list laid out an item to a line ends with.
+        fun code(text: String) = scan(text).filter { it.kind != TokKind.WHITESPACE }.map { text.substring(it.start, it.end) }
+            .let { ts -> ts.filterIndexed { i, t -> !(t == "," && ts.getOrNull(i + 1) in setOf(")", "]", "}")) } }
         for (example in examples) {
-            val before = runCatching { program(example.readText(), example) }.getOrNull() ?: continue
             val formatted = reformat(example.readText())
-            assertEquals(example.name, before, program(formatted, example))
+            assertEquals(example.name, code(example.readText()), code(formatted))
             assertEquals(example.name, formatted, reformat(formatted))
         }
     }

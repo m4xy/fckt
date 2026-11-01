@@ -26,7 +26,7 @@ import fckt.parser.*
       Globals.problem(context, at, "'$name' is bound twice in this pattern"),
     )
     else CheckedPattern(
-      Bindings.bound(scope, name, Local(t), at, false, context),
+      Bindings.bound(scope, name, Local(t), at, false, false, context),
       [Coverage.anything],
       NameMatcher(name),
     )
