@@ -31,6 +31,9 @@ tasks = [
 @Building installCompiler(build: Invocation): Unit = {
   home = path(env("KILN_HOME").getOrElse(env("HOME").getOrElse(".") + "/.kiln"))
   home.resolve("bin").makeDirs()
+  // A new file, not the old one written over: macOS kills a program whose file changed under
+  // it, as one that's running, as an editor's language server is, would.
+  home.resolve("bin/fckt").delete()
   build.project.output.resolve("bin/compiler").copyTo(home.resolve("bin/fckt"))
   library = home.resolve("lib/fckt")
   library.delete()
