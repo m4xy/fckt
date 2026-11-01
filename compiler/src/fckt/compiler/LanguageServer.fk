@@ -476,7 +476,8 @@ module LanguageServer {
         extensions = fitting.fold(emptyMap()) { m, s -> m.put(s.name, s) }.values.map { s ->
           label = s.declaration.name.split(".").lastOrNone().getOrElse(s.declaration.name)
           detail = program.functions.find { it.function.name == s.name }.map { typeOf(it) }.getOrElse("")
-          item(label, if (Signatures.isProperty(s)) 10 else 2, detail, [])
+          if (Signatures.isProperty(s)) item(label, 10, detail, [])
+          else called(item(label, 2, detail, []), label, Signatures.writtenParametersOf(s))
         }
         fields = when (receiver) {
           Named(n, _, _) -> program.types.flatMap { t ->
@@ -614,7 +615,11 @@ module LanguageServer {
               FunctionDefinition(_, _, _, _, _, _, _) -> 3
               else -> 7
             }
-            item(s.declaration.name, kind, s.name, withImport(s.name))
+            called(
+              item(s.declaration.name, kind, s.name, withImport(s.name)),
+              s.declaration.name,
+              Signatures.writtenParametersOf(s),
+            )
           }
           operations = environment.operations.entries.filter { name, _ -> name.startsWith(typed) }.flatMap { name, ops ->
             ops.filter { op ->
@@ -622,7 +627,18 @@ module LanguageServer {
                 op.effect.name,
                 op.effect.file.package,
               ) && op.effect.declaration.visibility == Public
-            }.map { op -> item(name, 3, "@${op.effect.declaration.name}, from ${op.effect.name}", withImport(op.effect.name)) }
+            }.map { op ->
+              called(
+                item(
+                  name,
+                  3,
+                  "@${op.effect.declaration.name}, from ${op.effect.name}",
+                  withImport(op.effect.name),
+                ),
+                name,
+                op.value.parameters,
+              )
+            }
           }
           // A module's functions, through import module.*.
           members = environment.orderedFunctions.filter { f ->
@@ -636,13 +652,48 @@ module LanguageServer {
               !loaded.imports.any { i -> i.wildcard && i.path == f.path }
           }.map { f ->
             module = f.path.joinToString(".")
-            item(f.declaration.name, 3, "from $module", withImport("$module.*"))
+            called(
+              item(f.declaration.name, 3, "from $module", withImport("$module.*")),
+              f.declaration.name,
+              Signatures.writtenParametersOf(f),
+            )
           }
           (declared + operations + members).take(100)
         }
         None -> []
       }
     }
+
+  // The item, for a function with parameters, written as a call: name(), the cursor after it, with
+  // none; name { }, given only a function, as a block; or name(), the cursor in it.
+  private called(
+    item: Json,
+    name: String,
+    parameters: Option<List<Parameter>>,
+  ): Json = when ((item, parameters)) {
+    (JsonObject(fields), Some(ps)) -> {
+      call = when (ps) {
+        [] -> "$name()\$0"
+        [p] if p.parameterType.map { isFunctionType(it) }.getOrElse(false) -> "$name { \$0 }"
+        else -> "$name(\$0)"
+      }
+      JsonObject(fields + [("insertText", JsonString(call)), ("insertTextFormat", number(2))])
+    }
+    _ -> item
+  }
+
+  private isFunctionType(t: TypeRef): Boolean = when (t) {
+    FunctionType(_, _, _, _) -> true
+    else -> false
+  }
+
+  // The item as its name alone, where what's after it already calls it.
+  private uncalled(item: Json): Json = when (item) {
+    JsonObject(fields) -> JsonObject(
+      fields.filter { key, _ -> key != "insertText" && key != "insertTextFormat" },
+    )
+    else -> item
+  }
 
   private item(label: String, kind: Int, detail: String, edits: List<Json>): Json = JsonObject(
     [("label", JsonString(label)), ("kind", number(kind)), ("detail", JsonString(detail))] +
@@ -978,6 +1029,24 @@ module LanguageServer {
     prefix = before.reversed().takeWhile { isNameChar(it) }.reversed()
     rest = before.dropLast(prefix.size)
     typed = prefix.map { it.toString() }.joinToString("")
+    found = offered(session, uri, line, character, file, text, written, rest, prefix, typed)
+    // A name already followed by ( is called as it's written.
+    after = written.drop(character).toList().dropWhile { isNameChar(it) }.firstOrNone()
+    if (after == Some('(')) found.map { uncalled(it) } else found
+  }
+
+  @FileSystem @Channel @Process private offered(
+    session: Session,
+    uri: String,
+    line: Int,
+    character: Int,
+    file: Path,
+    text: String,
+    written: String,
+    rest: List<Char>,
+    prefix: List<Char>,
+    typed: String,
+  ): List<Json> =
     if (rest.lastOrNone() != Some('.')) declaredOrBound(session, uri, line, file, text, None, typed)
     else {
       dot = rest.size - 1
@@ -1001,7 +1070,6 @@ module LanguageServer {
         }
       }
     }
-  }
 
   private isNameChar(c: Char): Boolean = c.isLetterOrDigit() || c == '_'
 
@@ -1152,14 +1220,12 @@ module LanguageServer {
     own + modules + more + candidates.fold(
       emptyMap(),
     ) { m, f -> m.put(f.function.declaration.name, f) }.values.take(200).map { f ->
-      JsonObject([
-        ("label", JsonString(f.function.declaration.name)),
-        ("kind", number(when (f.function.declaration.definition) {
-          FunctionDefinition(_, _, Some(_), _, _, _, _) -> 3
-          else -> 6
-        })),
-        ("detail", JsonString(typeOf(f))),
-      ])
+      name = f.function.declaration.name
+      kind = when (f.function.declaration.definition) {
+        FunctionDefinition(_, _, Some(_), _, _, _, _) -> 3
+        else -> 6
+      }
+      called(item(name, kind, typeOf(f), []), name, Signatures.writtenParametersOf(f.function))
     }
   }
 
