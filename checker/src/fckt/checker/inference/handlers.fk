@@ -219,7 +219,11 @@ effectNamed(
 // The operation the name calls from here, if it's one: unqualified, it must be the only one of that
 // name, in the modules around, out to the package, or brought in by the file's imports, as import
 // fckt.io.* brings in Console's.
-@Abandoning operationNamed(name: String, at: Position, context: Context): Option<Operation> = {
+@Abandoning @Noting operationNamed(
+  name: String,
+  at: Position,
+  context: Context,
+): Option<Operation> = {
   operations = context.environment.operations
   namespace = context.environment.definitions.namespace
   aroundHere = Names.reach(name, context.place, namespace.table).map { n ->
@@ -238,14 +242,25 @@ effectNamed(
   )
   when (found) {
     [] -> None
-    [operation] -> Some(operation)
+    [operation] -> {
+      note(
+        Means(
+          context.place.file.source.path,
+          at,
+          name.length,
+          Symbols.ofOperation(operation.effect, operation.value),
+          None,
+        ),
+      )
+      Some(operation)
+    }
     else -> abandon(Globals.problem(context, at,
       "'$name' is an operation of ${found.map { Symbols.simpleName(it.effect) }.joinToString(" and ")}; write ${found.map { "${Symbols.simpleName(it.effect)}.$name" }.joinToString(" or ")}"))
   }
 }
 
 // Console.println: an operation named through its effect.
-@Abandoning qualifiedOperation(
+@Abandoning @Noting qualifiedOperation(
   at: Position,
   target: Expression,
   name: String,
@@ -254,7 +269,24 @@ effectNamed(
 ): Option<Operation> =
   dottedUnbound(target, scope).flatMap { d -> effectSpecNamed(d, context) }.map { spec ->
     when (specValues(spec).find { it.name == name }) {
-      Some(value) -> Operation(spec, value)
+      Some(value) -> {
+        note(
+          Means(
+            context.place.file.source.path,
+            at,
+            name.length,
+            Symbols.ofOperation(spec, value),
+            None,
+          ),
+        )
+        when (target) {
+          Name(written, effect) -> note(
+            Means(context.place.file.source.path, written, effect.length, spec, None),
+          )
+          _ -> Unit
+        }
+        Operation(spec, value)
+      }
       None -> abandon(
         Globals.problem(context, at, "${Symbols.simpleName(spec)} has no operation '$name'"),
       )

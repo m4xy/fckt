@@ -375,4 +375,25 @@ module Symbols {
     Declaration(field.at, field.name, record.declaration.definition),
     record.file,
   )
+
+  // An effect's operation, or a spec's value, as a symbol of its own: a function, with what it's
+  // called with, declared where it's written in the effect.
+  ofOperation(effect: Symbol, value: SpecValue): Symbol = Symbol(
+    "${effect.name}.${value.name}",
+    effect.path,
+    Declaration(
+      value.at,
+      value.name,
+      FunctionDefinition(
+        value.typeParameters,
+        None,
+        value.parameters,
+        Some(value.valueType),
+        Compiled(value.at),
+        None,
+        false,
+      ),
+    ),
+    effect.file,
+  )
 }

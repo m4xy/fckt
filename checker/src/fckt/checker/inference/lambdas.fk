@@ -40,7 +40,8 @@ import fckt.parser.*
       inner = Scopes.bind(
         Scopes.inside(scope),
         "it",
-        Local(t, None, None, Scopes.lookup(scope, "it").isSome()),
+        // Bound where the block is, for what's said of where it's read.
+        Local(t, None, None, Scopes.lookup(scope, "it").isSome(), Some(at)),
       )
       (core, drops) = doingIn(row, context) { checkLambdaBody(body, result, inner, context) }
       Typed(FunctionOf([t], result, row), None, FunctionValue([NameMatcher("it")], core, drops))

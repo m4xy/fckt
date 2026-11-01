@@ -165,7 +165,34 @@ module Checker {
           )
         }.toList()
       }
-      typed + annotated + imported
+      // The spec a module follows, module InMemoryLinks : LinkRepository.
+      followed = specsFollowedIn(file.declarations).flatMap { ref ->
+        when (ref) {
+          NamedType(at, name, _) -> Lookups.found(
+            Lookups.spec(name, place, namespace, Skipping),
+          ).toList().map { s ->
+            last = name.split(".").lastOrNone().getOrElse(name)
+            Means(
+              path,
+              Position(at.line, at.column + name.length - last.length),
+              last.length,
+              s,
+              None,
+            )
+          }
+          _ -> []
+        }
+      }
+      typed + annotated + imported + followed
+  }
+
+  private specsFollowedIn(
+    declarations: List<Declaration>,
+  ): List<TypeRef> = declarations.flatMap { d ->
+    when (d.definition) {
+      ModuleDefinition(inner, spec, _, _, _) -> spec.toList() + specsFollowedIn(inner)
+      else -> []
+    }
   }
 
   private annotationsIn(

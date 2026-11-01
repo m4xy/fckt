@@ -891,6 +891,8 @@ module LanguageServer {
       }
     }
     local = (bound: Position) -> if (parameters.getOrDefault("${bound.line} ${bound.column}", false)) 6 else 7
+    // it, a block's own parameter, is bound where the block is, by no name written there.
+    readKind = (name: String, bound: Position) -> if (name == "it") 6 else local(bound)
     // What was noted is where it was in the text as it was checked: moved to where those lines are
     // now, and left out where they've changed since.
     moved = movedLines(session.checkedTexts.getOrDefault(file.value, text).split("\n"), lines)
@@ -906,7 +908,9 @@ module LanguageServer {
         Binds(_, at, length, _, _, _, parameter) -> [
           (at.line - 1, at.column - 1, length, if (parameter) 6 else 7, 1),
         ]
-        Reads(_, at, length, _, bound, _) -> [(at.line - 1, at.column - 1, length, local(bound), 0)]
+        Reads(_, at, length, name, bound, _) -> [
+          (at.line - 1, at.column - 1, length, readKind(name, bound), 0),
+        ]
         TypeName(_, at, length, builtin) -> [
           (at.line - 1, at.column - 1, length, if (builtin) 2 else 5, 0),
         ]
@@ -918,16 +922,15 @@ module LanguageServer {
       (line, column, length, kind, modifiers) = token
       moved(line).toList().map { now -> (now, column, length, kind, modifiers) }
     }
-    // What kiln keeps isn't checked: its parameters and types are coloured as its text says them.
-    fromKiln = file.value.contains("/.kiln/")
-    declared = if (file.value.endsWith(".fki")) interfaceTokens(text, lines)
+    // What the text says of names nothing noted: an effect's operations and their parameters, the
+    // annotations and effects types are written with; after what was noted, which says it better.
+    (declared, written) = if (file.value.endsWith(".fki")) (interfaceTokens(text, lines), [])
     else when (Parser.parse(text)) {
-      Ok(parsed) -> declarationTokens(parsed.declarations, lines) +
-        (if (fromKiln) writtenTypesIn(parsed.declarations, []) else [])
-      Error(_) -> []
+      Ok(parsed) -> (declarationTokens(parsed.declarations, lines), writtenTypesIn(parsed.declarations, []))
+      Error(_) -> ([], [])
     }
     // Each place once, the first said of it, in order.
-    ordered = (declared + usedNow).fold((emptyMap(), [])) { seen, token ->
+    ordered = (declared + usedNow + written).fold((emptyMap(), [])) { seen, token ->
       (keys, kept) = seen
       (line, column, _, _, _) = token
       key = "$line $column"
@@ -969,9 +972,12 @@ module LanguageServer {
     outer: List<String>,
   ): List<(Int, Int, Int, Int, Int)> =
     declarations.flatMap { d ->
-      when (d.definition) {
-        FunctionDefinition(typeParameters, receiver, parameters, result, _, _, _) -> {
-          own = outer + typeParameters
+      own = outer + when (d.definition) {
+        FunctionDefinition(typeParameters, _, _, _, _, _, _) -> typeParameters
+        _ -> []
+      }
+      d.annotations.flatMap { annotationTokens(it, own) } + when (d.definition) {
+        FunctionDefinition(_, receiver, parameters, result, _, _, _) -> {
           receiver.toList().flatMap { typeTokens(it, own) } + parameters.getOrElse([]).flatMap { p ->
             [
               (p.at.line - 1, p.at.column - 1, p.name.length, 6, 1),
@@ -1000,6 +1006,17 @@ module LanguageServer {
       }
     }
 
+  // An annotation, from its @: an effect a function's given, @E, a type parameter; any other, as
+  // annotations are.
+  private annotationTokens(
+    a: Annotation,
+    parameters: List<String>,
+  ): List<(Int, Int, Int, Int, Int)> =
+    [
+      (a.at.line - 1, a.at.column - 1, a.name.length + 1, if (parameters.contains("@${a.name}")) 5 else 11, 0),
+    ] +
+      a.typeArguments.flatMap { typeTokens(it, parameters) }
+
   private typeTokens(
     t: TypeRef,
     parameters: List<String>,
@@ -1011,7 +1028,9 @@ module LanguageServer {
         (at.line - 1, at.column - 1 + name.length - own.length, own.length, kind, 0),
       ] + arguments.flatMap { typeTokens(it, parameters) }
     }
-    FunctionType(_, ps, result, _) -> ps.flatMap { typeTokens(it, parameters) } + typeTokens(result, parameters)
+    FunctionType(_, ps, result, effects) -> effects.flatMap { annotationTokens(it, parameters) } +
+      ps.flatMap { typeTokens(it, parameters) } + typeTokens(result, parameters)
+    EffectsType(_, effects) -> effects.flatMap { annotationTokens(it, parameters) }
     TupleType(_, elements) -> elements.flatMap { typeTokens(it, parameters) }
     GivenType(_, _, given) -> typeTokens(given, parameters)
     _ -> []
@@ -1382,7 +1401,7 @@ module LanguageServer {
 
   // Where the local is bound, and each place it's read or changed.
   @FileSystem private localUses(session: Session, l: LocalName): List<Position> =
-    [l.bound] + factsIn(session, path(l.file)).flatMap { f ->
+    (if (l.name == "it") [] else [l.bound]) + factsIn(session, path(l.file)).flatMap { f ->
       when (f) {
         Reads(_, at, _, _, bound, _) if bound == l.bound -> [at]
         else -> []
