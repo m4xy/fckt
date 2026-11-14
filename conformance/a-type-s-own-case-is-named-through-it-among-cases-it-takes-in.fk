@@ -1,0 +1,22 @@
+import fckt.io.Console
+
+type Volvo { Gas, Electric }
+type Nissan { Gas, Electric }
+type Car { *Nissan, *Volvo, Electric }
+type Quiet { Car.Electric, Volvo.Electric }
+
+describe(c: Car): String = when (c) {
+  Car.Electric -> "no make"
+  Volvo.Electric -> "electric Volvo"
+  Nissan.Electric -> "electric Nissan"
+  Volvo.Gas -> "petrol Volvo"
+  Nissan.Gas -> "petrol Nissan"
+}
+
+main() = {
+  cars: List<Car> = [Car.Electric, Volvo.Electric, Nissan.Gas]
+  q: Quiet = Car.Electric
+  println("${cars.map { describe(it) }} $q")
+}
+
+// prints: [no make, electric Volvo, petrol Nissan] Electric

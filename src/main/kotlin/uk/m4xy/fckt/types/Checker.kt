@@ -1250,7 +1250,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             if (owner.typeParams.isNotEmpty()) {
                 throw CompileError(ref.pos, "can't take single cases from the generic type ${owner.simpleName}; include it whole with *${owner.simpleName}<...>")
             }
-            val matches = computeCases(owner, visiting + s.name).filter { it.name == ref.case }
+            val matches = computeCases(owner, visiting + s.name).filter { it.name == ref.case }.ownFirst(owner.name) { it.origin.name }
             val case = matches.singleOrNull()
                 ?: throw CompileError(ref.pos, if (matches.isEmpty()) "${owner.simpleName} has no case '${ref.case}'" else "${owner.simpleName} has several cases named '${ref.case}'")
             add(case, ref.pos)
@@ -3532,7 +3532,7 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
             else -> null
         }?.takeIf { it in sealeds }
         val case: CaseDecl = if (qualifierSealed != null) {
-            val matches = caseDecls.getValue(qualifierSealed.name).filter { it.name == name }
+            val matches = caseDecls.getValue(qualifierSealed.name).filter { it.name == name }.ownFirst(qualifierSealed.name) { it.origin.name }
             matches.singleOrNull()
                 ?: throw CompileError(pos, if (matches.isEmpty()) "${qualifierSealed.simpleName} has no case '$name'" else "${qualifierSealed.simpleName} has several cases named '$name'")
         } else {
@@ -4254,19 +4254,21 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         val shape = if (subjectSealed != null) {
             // Match against the subject's own cases, so Alphabet.A matches a Vowel.
             // Through a sealed type, its cases; through a module, those of the sealed types in it.
+            // The type the qualifier names, if it names one, whose own case it means of several.
+            var qualifierType: String? = null
             val qualifierCases = p.qualifier?.let { q ->
-                lookupSealed(q, p.pos)?.let { if (abstractHere(it)) abstractError(it, p.pos); caseDecls.getValue(it.name) }
+                lookupSealed(q, p.pos)?.let { if (abstractHere(it)) abstractError(it, p.pos); qualifierType = it.name; caseDecls.getValue(it.name) }
                     ?: lookupModule(q, p.pos)?.let { m -> caseDecls.filterKeys { it.substringBeforeLast('.') == m.name }.values.flatten() }
                     ?: throw CompileError(p.pos, "unknown type or module '$q'")
             }
             val matches = cases(subjectSealed.name, subjectSealed.args, subjectSealed.region).filter { (case, _) ->
                 case.name == p.name && (qualifierCases == null || qualifierCases.any { it.sameCase(case) })
-            }
+            }.let { found -> qualifierType?.let { q -> found.ownFirst(q) { it.first.origin.name } } ?: found }
             val (case, fieldTypes) = matches.singleOrNull()
                 ?: throw CompileError(
                     p.pos,
                     if (matches.isEmpty()) "${subjectSealed.name} has no case '${p.qualifier?.let { "$it." } ?: ""}${p.name}'"
-                    else "${subjectSealed.name} has several cases named '${p.name}'; qualify it, as in ${matches.first().first.origin.name}.${p.name}",
+                    else "${subjectSealed.name} has several cases named '${p.name}'; qualify it, as in ${matches.map { "${it.first.origin.simpleName}.${p.name}" }.let { w -> w.dropLast(1).joinToString(", ") + " or " + w.last() }}",
                 )
             ConstructorShape(ConstructorRef.Variant(case.origin, case.variant, p.name), case.variant.fields.map { it.name }, fieldTypes, subjectSealed)
         } else {
@@ -4572,3 +4574,8 @@ class Checker(file: SourceFile, private val coverage: Boolean = true) {
         return whole
     }
 }
+
+// Of several cases of one name, which a type has, the one it declares itself, if it does: Car's
+// Electric, as Car.Electric names it, though Car takes in Volvo's and Nissan's too.
+private fun <C> List<C>.ownFirst(owner: String, origin: (C) -> String): List<C> =
+    if (size < 2) this else filter { origin(it) == owner }.takeIf { it.size == 1 } ?: this

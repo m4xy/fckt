@@ -8,6 +8,16 @@ import fckt.parser.*
 // then those of each type it includes, *Other. A case it has twice is one case, if its fields are
 // the same types both times.
 module Cases {
+  // Of several cases of one name, which a type has, the one it declares itself, if it does: Car's
+  // Electric, as Car.Electric names it, though Car takes in Volvo's and Nissan's too.
+  ownFirst(cases: List<CaseInfo>, owner: Symbol): List<CaseInfo> = when (cases) {
+    [_, _, *_] -> when (cases.filter { it.origin.name == owner.name }) {
+      [own] -> [own]
+      else -> cases
+    }
+    else -> cases
+  }
+
   // Every type with cases' cases, by its full name.
   @Abandoning all(namespace: Namespace): Map<String, List<CaseInfo>> = {
     computing = Computing(namespace, emptyMap())
@@ -104,7 +114,7 @@ module Cases {
             ),
           )
         } else Unit
-        when (casesOf(computing, owner, visiting).filter { it.definition.name == ref.caseName }) {
+        when (ownFirst(casesOf(computing, owner, visiting).filter { it.definition.name == ref.caseName }, owner)) {
           [c] -> CaseInfo(c.origin, c.definition, NamedCase(c))
           [] -> abandon(problem(symbol, ref.at, "$own has no case '${ref.caseName}'"))
           else -> abandon(problem(symbol, ref.at, "$own has several cases named '${ref.caseName}'"))

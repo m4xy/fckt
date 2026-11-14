@@ -180,7 +180,7 @@ opaque(s: Symbol, at: Position, context: Context): Diagnostic = {
     }.flatMap { n -> caseTypeNamed(n, context) }
     allCases = context.environment.definitions.cases
     found = when (qualifierType) {
-      Some(t) -> when (allCases.getOrDefault(t.name, []).filter { it.definition.name == name }) {
+      Some(t) -> when (Cases.ownFirst(allCases.getOrDefault(t.name, []).filter { it.definition.name == name }, t)) {
         [c] -> Some(c)
         [] -> abandon(Globals.problem(context, at, "${Symbols.simpleName(t)} has no case '$name'"))
         else -> abandon(

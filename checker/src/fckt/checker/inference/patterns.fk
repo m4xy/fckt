@@ -243,12 +243,15 @@ private literalOf(core: Core): Literal = when (core) {
 ): ConstructorShape = {
   namespace = context.environment.definitions.namespace
   allCases = context.environment.definitions.cases
+  // The type the qualifier names, if it names one, whose own case it means of several.
+  var qualifierType: Option<Symbol> = None
   qualifierCases = qualifier.map { q ->
     when (Lookups.caseType(q, context.place, namespace, Refusing)) {
       Found(s) -> {
         if (Conversion.isAbstractHere(s, context.place, context.environment.definitions)) abandon(
           opaque(s, at, context),
         ) else Unit
+        qualifierType = Some(s)
         allCases.getOrDefault(s.name, [])
       }
       Refused(why) -> abandon(Globals.problem(context, at, why))
@@ -268,7 +271,14 @@ private literalOf(core: Core): Literal = when (core) {
   ).filter { c, _ ->
     c.definition.name == name && qualifierCases.map { qs -> qs.any { Cases.same(it, c) } }.getOrElse(true)
   }
-  when (matches) {
+  owned = when (qualifierType) {
+    Some(q) if matches.size > 1 -> when (matches.filter { c, _ -> c.origin.name == q.name }) {
+      [own] -> [own]
+      else -> matches
+    }
+    else -> matches
+  }
+  when (owned) {
     [(c, fieldTypes)] -> ConstructorShape(
       CaseConstructor(CaseSymbol("${c.origin.name}.${c.definition.name}", c.origin, c.definition)),
       c.definition.fields.map { it.name },
@@ -282,8 +292,11 @@ private literalOf(core: Core): Literal = when (core) {
         "${st.name} has no case '${qualifier.map { "$it." }.getOrElse("")}$name'",
       ),
     )
-    [(first, _), *_] -> abandon(Globals.problem(context, at,
-      "${st.name} has several cases named '$name'; qualify it, as in ${first.origin.name}.$name"))
+    [_, *_] -> {
+      written = owned.map { c, _ -> "${Symbols.simpleName(c.origin)}.$name" }
+      abandon(Globals.problem(context, at,
+        "${st.name} has several cases named '$name'; qualify it, as in ${written.dropLast(1).joinToString(", ")} or ${written.lastOrNone().getOrElse("")}"))
+    }
   }
 }
 

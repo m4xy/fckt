@@ -1,0 +1,9 @@
+type Volvo { Gas, Electric }
+type Nissan { Gas, Electric }
+type Car { *Nissan, *Volvo, Electric }
+f(c: Car) = when (c) {
+  Electric -> 1
+  else -> 2
+}
+
+// error: Car has several cases named 'Electric'; qualify it, as in Car.Electric, Nissan.Electric or Volvo.Electric
