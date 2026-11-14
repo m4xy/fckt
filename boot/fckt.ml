@@ -6026,6 +6026,13 @@ module Fckt = struct
           | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _ } -> type_parameters
           | _ -> []
 
+        let own_first (cases : case_info list) (owner : Symbols.symbol) : case_info list =
+          match cases with
+          | _ :: _ :: _ -> (match List.filter (fun it -> ((it : case_info).origin : Symbols.symbol).Symbols.name = (owner : Symbols.symbol).Symbols.name) cases with
+               | [own] -> [own]
+               | _ -> cases)
+          | _ -> cases
+
         let same (a : case_info) (b : case_info) : bool =
           ((a : case_info).origin : Symbols.symbol).Symbols.name = ((b : case_info).origin : Symbols.symbol).Symbols.name && ((a : case_info).definition : Parser.case_definition).Parser.name = ((b : case_info).definition : Parser.case_definition).Parser.name
 
@@ -6080,7 +6087,7 @@ module Fckt = struct
           | Resolution.Found { value = owner } -> let own = Symbols.Symbols.simple_name owner in
               if Lang.Lists.list_is_not_empty (type_parameters_of owner) then (match Effect.perform (Diagnostics.Abandoning_abandon (problem symbol (ref : Parser.case_ref).Parser.at ("can't take single cases from the generic type " ^ own ^ "; include it whole with *" ^ own ^ "<...>"))) with
                  | _ -> (assert false)) else ();
-              match List.filter (fun it -> ((it : case_info).definition : Parser.case_definition).Parser.name = (ref : Parser.case_ref).Parser.case_name) (cases_of computing owner visiting) with
+              match own_first (List.filter (fun it -> ((it : case_info).definition : Parser.case_definition).Parser.name = (ref : Parser.case_ref).Parser.case_name) (cases_of computing owner visiting)) owner with
               | [c] -> ({ origin = (c : case_info).origin; definition = (c : case_info).definition; source = (NamedCase { from = c } : case_source) } : case_info)
               | [] -> (match Effect.perform (Diagnostics.Abandoning_abandon (problem symbol (ref : Parser.case_ref).Parser.at (own ^ " has no case '" ^ (ref : Parser.case_ref).Parser.case_name ^ "'"))) with
                    | _ -> (assert false))
@@ -8334,7 +8341,7 @@ module Fckt = struct
                   | _ -> None) (fun n -> case_type_named n context) in
                let all_cases = (((context : context).environment : environment).definitions : Definitions.definitions).Definitions.cases in
                let found = match qualifier_type with
-                 | Some t -> (match List.filter (fun it -> ((it : Definitions.case_info).Definitions.definition : Parser.case_definition).Parser.name = name) (Collections.Maps.map_get_or_default all_cases (t : Symbols.symbol).Symbols.name []) with
+                 | Some t -> (match Definitions.Cases.own_first (List.filter (fun it -> ((it : Definitions.case_info).Definitions.definition : Parser.case_definition).Parser.name = name) (Collections.Maps.map_get_or_default all_cases (t : Symbols.symbol).Symbols.name [])) t with
                       | [c] -> Some c
                       | [] -> (match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at (Symbols.Symbols.simple_name t ^ " has no case '" ^ name ^ "'"))) with
                            | _ -> (assert false))
@@ -8728,9 +8735,11 @@ module Fckt = struct
       let subject_case (at : Parser.position) (name : string) (qualifier : string option) (st : Symbols.symbol) (type_arguments : Types.type_ list) (region : Types.type_ option) (context : context) : constructor_shape =
         let namespace = (((context : context).environment : environment).definitions : Definitions.definitions).Definitions.namespace in
         let all_cases = (((context : context).environment : environment).definitions : Definitions.definitions).Definitions.cases in
+        let qualifier_type = ref None in
         let qualifier_cases = Option.map (fun q -> match Resolution.Lookups.case_type q (context : context).place namespace (Resolution.Refusing : Resolution.strictness) with
              | Resolution.Found { value = s } -> if Definitions.Conversion.is_abstract_here s (context : context).place ((context : context).environment : environment).definitions then (match Effect.perform (Diagnostics.Abandoning_abandon (opaque s at context)) with
                     | _ -> (assert false)) else ();
+                 qualifier_type := Some s;
                  Collections.Maps.map_get_or_default all_cases (s : Symbols.symbol).Symbols.name []
              | Resolution.Refused { message = why } -> (match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at why)) with
                   | _ -> (assert false))
@@ -8743,11 +8752,19 @@ module Fckt = struct
                  | Resolution.NotFound -> match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at ("unknown type or module '" ^ q ^ "'"))) with
                      | _ -> (assert false)) qualifier in
         let matches = List.filter (fun (c, _) -> ((c : Definitions.case_info).Definitions.definition : Parser.case_definition).Parser.name = name && Option.value (Option.map (fun qs -> List.exists (fun it -> Definitions.Cases.same it c) qs) qualifier_cases) ~default:true) (Definitions.Conversion.cases_with_fields st type_arguments region ((context : context).environment : environment).definitions (Some (context : context).place)) in
-        match matches with
+        let owned = match ! qualifier_type with
+          | Some q when List.length matches > 1 -> (match List.filter (fun (c, _) -> ((c : Definitions.case_info).Definitions.origin : Symbols.symbol).Symbols.name = (q : Symbols.symbol).Symbols.name) matches with
+               | [own] -> [own]
+               | _ -> matches)
+          | _ -> matches in
+        match owned with
         | [(c, field_types)] -> ({ constructor = (Core.CaseConstructor { c = ({ Symbols.name = ((c : Definitions.case_info).Definitions.origin : Symbols.symbol).Symbols.name ^ "." ^ ((c : Definitions.case_info).Definitions.definition : Parser.case_definition).Parser.name; owner = (c : Definitions.case_info).Definitions.origin; definition = (c : Definitions.case_info).Definitions.definition } : Symbols.case_symbol) } : Core.constructor); field_names = List.map (fun it -> (it : Parser.field).Parser.name) ((c : Definitions.case_info).Definitions.definition : Parser.case_definition).Parser.fields; field_types = field_types; result = (Types.Named { name = (st : Symbols.symbol).Symbols.name; arguments = type_arguments; region = region } : Types.type_) } : constructor_shape)
         | [] -> (match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at ((st : Symbols.symbol).Symbols.name ^ " has no case '" ^ Option.value (Option.map (fun it -> it ^ ".") qualifier) ~default:"" ^ name ^ "'"))) with
              | _ -> (assert false))
-        | (first, _) :: _ -> match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at ((st : Symbols.symbol).Symbols.name ^ " has several cases named '" ^ name ^ "'; qualify it, as in " ^ ((first : Definitions.case_info).Definitions.origin : Symbols.symbol).Symbols.name ^ "." ^ name))) with
+        | _ :: _ -> let written = List.map (fun (c, _) -> Symbols.Symbols.simple_name (c : Definitions.case_info).Definitions.origin ^ "." ^ name) owned in
+            match Effect.perform (Diagnostics.Abandoning_abandon (Globals.problem context at (let fk_arg1 = String.concat ", " (List.map Fun.id (Lang.Lists.list_drop_last written 1)) in
+               let fk_arg2 = Option.value (Lang.Lists.list_last_or_none written) ~default:"" in
+               (st : Symbols.symbol).Symbols.name ^ " has several cases named '" ^ name ^ "'; qualify it, as in " ^ fk_arg1 ^ " or " ^ fk_arg2))) with
             | _ -> (assert false)
 
       let is_shared (name : string) (context : context) : bool =
