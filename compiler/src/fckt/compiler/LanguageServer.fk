@@ -766,7 +766,7 @@ module LanguageServer {
             kind = when (s.declaration.definition) {
               ModuleDefinition(_, _, _, _, _) -> 9
               RecordDefinition(_, _, _, _, _) -> 7
-              CasesDefinition(_, _, _, _) -> 13
+              CasesDefinition(_, _, _, _, _) -> 13
               SpecDefinition(_, _, _, _, _) -> 8
               FunctionDefinition(_, _, _, _, _, _, _) -> 3
               else -> 7
@@ -937,9 +937,15 @@ module LanguageServer {
       if (keys.containsKey(key)) seen else (keys.put(key, true), [token] + kept)
     }
     (_, kept) = ordered
-    sorted = kept.sortedBy { token ->
+    // In order, without any that starts inside one before it, which said it first: LSP's tokens
+    // don't overlap.
+    (_, _, sorted) = kept.sortedBy { token ->
       (line, column, _, _, _) = token
       line * 100000 + column
+    }.fold((-1, 0, [])) { state, token ->
+      (lastLine, end, out) = state
+      (line, column, length, _, _) = token
+      if (line == lastLine && column < end) state else (line, column + length, out + [token])
     }
     (_, _, encoded) = sorted.fold((0, 0, [])) { state, token ->
       (lastLine, lastColumn, out) = state
@@ -985,8 +991,9 @@ module LanguageServer {
           } + result.toList().flatMap { typeTokens(it, own) }
         }
         RecordDefinition(typeParameters, fields, _, _, _) -> fields.flatMap { typeTokens(it.fieldType, outer + typeParameters) }
-        CasesDefinition(typeParameters, cases, _, _) ->
-          cases.flatMap { c -> c.fields.flatMap { typeTokens(it.fieldType, outer + typeParameters) } }
+        CasesDefinition(typeParameters, cases, _, _, nested) ->
+          cases.flatMap { c -> c.fields.flatMap { typeTokens(it.fieldType, outer + typeParameters) } } +
+            writtenTypesIn(nested, outer + typeParameters)
         AliasDefinition(typeParameters, target) -> typeTokens(target, outer + typeParameters)
         SpecDefinition(_, values, typeParameters, _, _) -> values.flatMap { v ->
           own = outer + typeParameters + v.typeParameters
@@ -1062,7 +1069,7 @@ module LanguageServer {
         if (owner && fields.any { it.name == s.declaration.name }) Some(8)
         else if (annotation) Some(11)
         else Some(4)
-      CasesDefinition(_, cases, _, _) -> if (cases.any { it.name == s.declaration.name }) Some(
+      CasesDefinition(_, cases, _, _, _) -> if (cases.any { it.name == s.declaration.name }) Some(
         9,
       ) else Some(
         3,
@@ -1092,9 +1099,9 @@ module LanguageServer {
       FunctionDefinition(_, _, None, _, _, _, _) -> at(d.at, name, 8)
       RecordDefinition(_, fields, _, annotation, _) ->
         at(d.at, name, if (annotation) 11 else 4) + fields.flatMap { f -> at(f.at, f.name, 8) }
-      CasesDefinition(_, cases, _, _) -> at(d.at, name, 3) + cases.flatMap { c ->
+      CasesDefinition(_, cases, _, _, nested) -> at(d.at, name, 3) + cases.flatMap { c ->
         at(c.at, c.name, 9) + c.fields.flatMap { f -> at(f.at, f.name, 8) }
-      }
+      } + declarationTokens(nested, lines)
       AliasDefinition(_, _) -> at(d.at, name, 1)
       SpecDefinition(_, _, _, _, _) -> at(d.at, name, 3)
       ModuleDefinition(inner, _, _, _, _) -> at(d.at, name, 0) + declarationTokens(inner, lines)
@@ -1219,7 +1226,7 @@ module LanguageServer {
     FunctionDefinition(_, _, Some(_), _, _, _, _) -> 12
     FunctionDefinition(_, _, None, _, _, _, _) -> 14
     RecordDefinition(_, _, _, _, _) -> 23
-    CasesDefinition(_, _, _, _) -> 10
+    CasesDefinition(_, _, _, _, _) -> 10
     AliasDefinition(_, _) -> 5
     SpecDefinition(_, _, _, _, _) -> 11
     ModuleDefinition(_, _, _, _, _) -> 2
@@ -1951,7 +1958,7 @@ module LanguageServer {
     FunctionDefinition(_, _, Some(_), _, _, _, _) -> 12
     FunctionDefinition(_, Some(_), None, _, _, _, _) -> 7
     FunctionDefinition(_, _, _, _, _, _, _) -> 14
-    CasesDefinition(_, _, _, _) -> 10
+    CasesDefinition(_, _, _, _, _) -> 10
     RecordDefinition(_, _, _, _, _) -> 23
     AliasDefinition(_, _) -> 26
     SpecDefinition(_, _, _, _, _) -> 11

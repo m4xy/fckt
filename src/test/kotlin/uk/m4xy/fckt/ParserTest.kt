@@ -1,5 +1,6 @@
 package uk.m4xy.fckt
 
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 import uk.m4xy.fckt.SelfHosted.quoted
@@ -32,7 +33,10 @@ class ParserTest {
 
     @TestFactory
     fun `fckt's parser, written in fckt, reads each source as this one does`() = SelfHosted.sources.map { file ->
-        DynamicTest.dynamicTest(file.path) { assertEquals(described(file.readText()), written[file.path]) }
+        DynamicTest.dynamicTest(file.path) {
+            assumeFalse(selfHostedOnly(file.readText()), "only the parser written in fckt reads it")
+            assertEquals(described(file.readText()), written[file.path])
+        }
     }
 
     /** As syntax.fk writes it: each import and declaration, a line each, or each error. */

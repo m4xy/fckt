@@ -179,10 +179,17 @@ private literalOf(core: Core): Literal = when (core) {
     (true, Some(Name(_, local))) -> Some(local)
     else -> None
   }
+  // Where the name is, after what it's qualified by, and is: Whale in Animal.Mammal.Whale.
+  start = if (isCheck) at.column + "is ".length else at.column
+  nameAt = Position(at.line, start + qualifier.map { q -> q.length + 1 }.getOrElse(0))
+  qualifier.forEach { q -> noteQualifier(q, Position(at.line, start), context) }
   when (target) {
-    Some(caseType) -> narrow(at, name, caseType, resolved(t), scope, subject, context).copy(
-      matcher = CaseTypeMatcher(caseType, narrowedLocal),
-    )
+    Some(caseType) -> {
+      note(Means(context.place.file.source.path, nameAt, name.length, caseType, None))
+      narrow(at, name, caseType, resolved(t), scope, subject, context).copy(
+        matcher = CaseTypeMatcher(caseType, narrowedLocal),
+      )
+    }
     None -> {
       shape = when (subjectType) {
         Some((st, typeArguments, region)) -> notedShape(subjectCase(
@@ -193,7 +200,7 @@ private literalOf(core: Core): Literal = when (core) {
           typeArguments,
           region,
           context,
-        ), name, at, context)
+        ), name, nameAt, context)
         None -> when (constructorShape(name, Some(t), at, false, qualifier, false, scope, context)) {
           Some(s) -> {
             expect(s.result, t, at, context)

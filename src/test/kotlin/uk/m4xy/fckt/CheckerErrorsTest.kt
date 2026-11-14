@@ -5,6 +5,7 @@ import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
 import uk.m4xy.fckt.syntax.CompileError
 import java.io.File
+import kotlin.test.assertContains
 import kotlin.test.assertEquals
 
 /**
@@ -25,9 +26,18 @@ class CheckerErrorsTest {
     @TestFactory
     fun `in each conformance case, fckt's checker finds the errors this one does`() = cases.map { file ->
         DynamicTest.dynamicTest(file.path) {
-            val errors = errorsOf(file.readText())
-            assumeTrue(errors != null, "it checks")
-            assertEquals(errors, written["errors ${file.path}"])
+            val source = file.readText()
+            if (selfHostedOnly(source)) {
+                // No other checker to compare with: what it finds has what the case says in it.
+                val found = written["errors ${file.path}"].orEmpty()
+                val expected = expectedErrors(source)
+                if (expected.isEmpty()) assertEquals("", found)
+                else expected.forEach { assertContains(found, it) }
+            } else {
+                val errors = errorsOf(source)
+                assumeTrue(errors != null, "it checks")
+                assertEquals(errors, written["errors ${file.path}"])
+            }
         }
     }
 

@@ -77,7 +77,9 @@ module Structures {
   // where its first function's group is.
   private partsAt(path: List<String>, own: OwnCode): List<Part> = {
     // An external type is its OCaml wherever it's written, so it isn't declared.
-    types = own.types.filter { t -> Declarations.declaredAt(t).path == path && t !is DeclaredExternal }
+    types = own.types.filter { t ->
+      OcamlTypes.modulesOf(Declarations.declaredAt(t).name) == path && t !is DeclaredExternal
+    }
     effects = own.effects.filter { it.effect.path == path }.map { EffectPart(it) }
     specs = own.specs.filter { it.spec.path == path }.map { SpecPart(it) }
     fromGroups = own.groups.mapNotNull { g, _ ->
@@ -180,7 +182,7 @@ module Structures {
       EffectPart(effect) -> effectTypeNames(effect)
       SpecPart(spec) -> spec.values.flatMap { _, t -> typeNames(t) }
       GroupPart(_) -> []
-      ModulePart(path) -> own.types.filter { t -> within(Declarations.declaredAt(t).path, path) }.flatMap { declaredTypeNames(it) } +
+      ModulePart(path) -> own.types.filter { t -> within(OcamlTypes.modulesOf(Declarations.declaredAt(t).name), path) }.flatMap { declaredTypeNames(it) } +
         own.effects.filter { e -> within(e.effect.path, path) }.flatMap { effectTypeNames(it) }
     }
 

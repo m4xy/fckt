@@ -1,0 +1,4 @@
+type Animal { Cat { Tabby }, Cat }
+
+// self-hosted
+// error: Animal has a case and a type named Cat; name one of them otherwise

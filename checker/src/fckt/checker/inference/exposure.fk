@@ -25,12 +25,16 @@ import fckt.parser.*
       Place(d.file, d.path),
       parameters.map { p -> (p, TypeParameter(p)) }.toMap(),
     )
-    fields = if (Symbols.isRecord(d)) recordFieldsOf(d)
-      else definitions.cases.getOrDefault(
-        d.name,
-        [],
-      ).flatMap { c -> Cases.writtenFields(c).map { t -> Field(d.declaration.at, "", t) } }
-    fields.forEach { field -> checkShows(d, Conversion.typeOf(field.fieldType, context, definitions), table) }
+    if (Symbols.isRecord(d)) recordFieldsOf(d).forEach { field ->
+      checkShows(d, Conversion.typeOf(field.fieldType, context, definitions), table)
+    }
+    // Each case's fields are named where it's declared, and given as the type's.
+    else Conversion.casesWithFields(
+      d,
+      parameters.map { TypeParameter(it) },
+      None,
+      definitions,
+    ).forEach { _, types -> types.forEach { t -> checkShows(d, t, table) } }
   }
   (types + table.declarations.filter { Symbols.isAlias(it) }).forEach { d ->
     if (d.declaration.opaque && d.path.isEmpty()) {

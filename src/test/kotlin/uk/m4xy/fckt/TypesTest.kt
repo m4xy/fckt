@@ -21,7 +21,7 @@ import kotlin.test.assertEquals
 class TypesTest {
     private val std = File("std/src")
 
-    private val cases = File("conformance").walk().filter { it.isFile && it.extension == "fk" }.sortedBy { it.path }.toList()
+    private val cases = File("conformance").walk().filter { it.isFile && it.extension == "fk" && !selfHostedOnly(it.readText()) }.sortedBy { it.path }.toList()
 
     private class Root(val dir: File, val own: Boolean = true, val uses: List<File> = emptyList())
 

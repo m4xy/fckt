@@ -19,7 +19,7 @@ import kotlin.test.assertEquals
 class NamesTest {
     private val std = File("std/src")
 
-    private val cases = File("conformance").walk().filter { it.isFile && it.extension == "fk" }.sortedBy { it.path }.toList()
+    private val cases = File("conformance").walk().filter { it.isFile && it.extension == "fk" && !selfHostedOnly(it.readText()) }.sortedBy { it.path }.toList()
 
     /** Each package, by the folder it's under and whether that's the program's own or another project's. */
     private val packages: List<Package> =

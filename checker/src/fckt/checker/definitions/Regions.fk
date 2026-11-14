@@ -23,14 +23,14 @@ module Regions {
 
   // The names found so far, with each type whose fields hold one of them, until no more are found.
   private holding(types: List<Symbol>, found: List<String>, namespace: Namespace): List<String> = {
-    more = types.filter { t -> !found.contains(t.name) && fieldsOf(t).any { holds(it.fieldType, Place(t.file, t.path), found, namespace) } }
+    more = types.filter { t -> !found.contains(t.name) && fieldsOf(t).any { holds(it.fieldType, Place(t.file, Symbols.insideOf(t)), found, namespace) } }
     if (more.isEmpty()) found else holding(types, found + more.map { it.name }, namespace)
   }
 
   // A record's fields, or a type with cases' own cases' fields.
   private fieldsOf(s: Symbol): List<Field> = when (s.declaration.definition) {
     RecordDefinition(_, fields, _, _, _) -> fields
-    CasesDefinition(_, cases, _, _) -> cases.flatMap { it.fields }
+    CasesDefinition(_, cases, _, _, _) -> cases.flatMap { it.fields }
     else -> []
   }
 

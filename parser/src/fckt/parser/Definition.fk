@@ -9,12 +9,14 @@ type Definition {
     annotation: Boolean,
     external: Option<String>,
   ),
-  // type Name<T> { Case(fields), Other.Case, *Other }
+  // type Name<T> { Case(fields), Other.Case, *Other, Inner { Cases } }: Inner, a type with cases
+  // declared in it, Name.Inner, whose cases are Name's too.
   CasesDefinition(
     typeParameters: List<String>,
     cases: List<CaseDefinition>,
     caseRefs: List<CaseRef>,
     includes: List<TypeRef>,
+    nested: List<Declaration>,
   ),
   // type Name<T> = Other<T>
   AliasDefinition(typeParameters: List<String>, target: TypeRef),

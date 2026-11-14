@@ -79,7 +79,7 @@ module Symbols {
     ownKind = when (s.declaration.definition) {
       FunctionDefinition(_, None, _, _, _, _, _) -> true
       RecordDefinition(_, _, _, _, _) -> true
-      CasesDefinition(_, _, _, _) -> true
+      CasesDefinition(_, _, _, _, _) -> true
       AliasDefinition(_, _) -> true
       _ -> false
     }
@@ -123,6 +123,17 @@ module Symbols {
     symbol = Symbol(name, pathOf(name), d, borrowed.getOrDefault(name, file))
     when (d.definition) {
       ModuleDefinition(inside, _, _, _, _) -> [symbol, *symbolsIn(inside, "$name.", file, borrowed)]
+      // The types declared among a type's cases, reached only through it, so as private as it; and
+      // as internal.
+      CasesDefinition(_, _, _, _, nested) -> [
+        symbol,
+        *symbolsIn(
+          nested.map { if (d.visibility == Internal) it.copy(visibility = Internal) else it },
+          "$name.",
+          file,
+          borrowed,
+        ),
+      ]
       else -> [symbol]
     }
   }
@@ -147,6 +158,14 @@ module Symbols {
   }
 
   // The modules a full name is inside: geometry and Shapes, for geometry.Shapes.area.
+  // Where the names in a declaration are looked up from: a type with cases', from inside it, so its
+  // cases and the types declared among them see those types by their own names, Animal's Cat as Cat;
+  // another's, from where it is.
+  insideOf(s: Symbol): List<String> = when (s.declaration.definition) {
+    CasesDefinition(_, _, _, _, _) -> s.path + [s.declaration.name]
+    else -> s.path
+  }
+
   pathOf(name: String): List<String> = name.split(".").dropLast(1)
 
   // What a declaration is called where it's written: area, for geometry.Shapes.area.
@@ -223,14 +242,27 @@ module Symbols {
 
   // That a type with cases has some, and none called what Option's are.
   @Abandoning private checkCases(symbol: Symbol): Unit = when (symbol.declaration.definition) {
-    CasesDefinition(_, [], [], []) -> abandon(
+    CasesDefinition(_, [], [], [], []) -> abandon(
       at(symbol, "type '${simpleName(symbol)}' has no cases"),
     )
-    CasesDefinition(_, cases, _, _) -> cases.forEach { c ->
-      if (c.name == "Some" || c.name == "None") abandon(
-        Diagnostic(symbol.file.source.path, c.at, "'${c.name}' is reserved for Option"),
-      )
-      else Unit
+    CasesDefinition(_, cases, _, _, nested) -> {
+      cases.forEach { c ->
+        if (c.name == "Some" || c.name == "None") abandon(
+          Diagnostic(symbol.file.source.path, c.at, "'${c.name}' is reserved for Option"),
+        )
+        else Unit
+      }
+      // Its name would mean both, as Animal.Cat does.
+      nested.forEach { d ->
+        if (cases.any { it.name == d.name }) abandon(
+          Diagnostic(
+            symbol.file.source.path,
+            d.at,
+            "${simpleName(symbol)} has a case and a type named ${d.name}; name one of them otherwise",
+          ),
+        )
+        else Unit
+      }
     }
     else -> Unit
   }
@@ -263,7 +295,7 @@ module Symbols {
 
   // The cases a type declares itself.
   casesOf(symbol: Symbol): List<CaseDefinition> = when (symbol.declaration.definition) {
-    CasesDefinition(_, cases, _, _) -> cases
+    CasesDefinition(_, cases, _, _, _) -> cases
     else -> []
   }
 
@@ -326,7 +358,7 @@ module Symbols {
   }
 
   isCaseType(s: Symbol): Boolean = when (s.declaration.definition) {
-    CasesDefinition(_, _, _, _) -> true
+    CasesDefinition(_, _, _, _, _) -> true
     else -> false
   }
 

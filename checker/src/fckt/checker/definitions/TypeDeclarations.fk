@@ -65,7 +65,7 @@ module TypeDeclarations {
         ),
       )
     }
-    CasesDefinition(typeParameters, _, _, _) -> {
+    CasesDefinition(typeParameters, _, _, _, _) -> {
       cases = Conversion.casesWithFields(
         d,
         typeParameters.map { TypeParameter(it) },

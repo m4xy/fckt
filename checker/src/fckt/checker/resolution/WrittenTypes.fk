@@ -59,7 +59,7 @@ module WrittenTypes {
     namespace: Namespace,
   ): List<WrittenType> = when (d.definition) {
     RecordDefinition(_, fields, _, _, _) -> fields.flatMap { inAnnotations(it.annotations, place, namespace) }
-    CasesDefinition(_, cases, _, _) -> cases.flatMap { c -> inAnnotations(c.annotations, place, namespace) + c.fields.flatMap { inAnnotations(it.annotations, place, namespace) } }
+    CasesDefinition(_, cases, _, _, _) -> cases.flatMap { c -> inAnnotations(c.annotations, place, namespace) + c.fields.flatMap { inAnnotations(it.annotations, place, namespace) } }
     FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters.getOrElse(
       [],
     ).flatMap { inAnnotations(it.annotations, place, namespace) }
@@ -152,9 +152,11 @@ module WrittenTypes {
       fields,
       TypeScope(place, typeParameters, []),
     )
-    CasesDefinition(typeParameters, cases, _, includes) -> {
-      scope = TypeScope(place, typeParameters, [])
-      cases.flatMap { inFields(it.fields, scope) } + includes.flatMap { inTypeRef(it, scope) }
+    CasesDefinition(typeParameters, cases, _, includes, nested) -> {
+      inside = place.copy(path = place.path + [d.name])
+      scope = TypeScope(inside, typeParameters, [])
+      cases.flatMap { inFields(it.fields, scope) } + includes.flatMap { inTypeRef(it, scope) } +
+        nested.flatMap { inDefinition(it, inside, moduleTypeParameters, namespace, borrowed) }
     }
     AliasDefinition(typeParameters, target) -> inTypeRef(
       target,

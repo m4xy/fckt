@@ -349,7 +349,7 @@ module Conversion {
   // The type parameters a type declaration declares.
   typeParametersOf(symbol: Symbol): List<String> = when (symbol.declaration.definition) {
     RecordDefinition(typeParameters, _, _, _, _) -> typeParameters
-    CasesDefinition(typeParameters, _, _, _) -> typeParameters
+    CasesDefinition(typeParameters, _, _, _, _) -> typeParameters
     AliasDefinition(typeParameters, _) -> typeParameters
     else -> []
   }
@@ -633,7 +633,7 @@ module Conversion {
     when (c.source) {
       OwnCase -> {
         context = TypeContext(
-          Place(c.origin.file, c.origin.path),
+          Place(c.origin.file, Symbols.insideOf(c.origin)),
           parameters.zip(arguments).toMap(),
           region,
           None,

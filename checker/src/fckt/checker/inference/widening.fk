@@ -58,7 +58,7 @@ private isCovariant(name: String, index: Int, table: SymbolTable): Boolean =
       index,
       lastPart(name),
     )
-    Some(CasesDefinition(parameters, cases, _, _)) -> holdsOnlyGiven(
+    Some(CasesDefinition(parameters, cases, _, _, _)) -> holdsOnlyGiven(
       parameters,
       cases.flatMap { it.fields },
       index,

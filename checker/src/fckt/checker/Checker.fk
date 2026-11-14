@@ -118,13 +118,48 @@ module Checker {
     }
   }
 
+  // Each name in a type's name as it's written, where it is and what it names: Animal, Mammal and
+  // Cat in Animal.Mammal.Cat, each a type, or a module, as in Shapes.Shape, as far as one's known.
+  private partsOf(
+    written: String,
+    at: Position,
+    named: Symbol,
+    namespace: Namespace,
+  ): List<(Position, Int, Symbol)> = {
+    parts = written.split(".")
+    table = namespace.table
+    parts.withIndex().flatMap { i, part ->
+      column = at.column + parts.take(i).fold(0) { n, p -> n + p.length + 1 }
+      after = parts.drop(i + 1)
+      full = if (after.isEmpty()) named.name else named.name.removeSuffix(
+        "." + after.joinToString("."),
+      )
+      found = if (after.isEmpty()) Some(named) else table.records.get(full).orElse {
+        table.caseTypes.get(full)
+      }.orElse { table.aliases.get(full) }.orElse {
+        when (table.modules.get(full)) {
+          Some(DeclaredModule(m)) -> Some(m)
+          else -> None
+        }
+      }
+      found.toList().map { s -> (Position(at.line, column), part.length, s) }
+    }
+  }
+
   private namesIn(file: LoadedFile, workspace: Workspace, namespace: Namespace): List<Fact> = {
       path = file.source.path
       // Their errors are said where they're checked.
       (types, _) = Diagnostics.collecting { Resolution.resolvedTypes(file, namespace, workspace.borrowed) }
       typed = types.flatMap { r ->
         when (r.meaning) {
-          DeclaredType(s) -> [Means(path, r.written.at, r.written.name.length, s, None)]
+          DeclaredType(s) -> partsOf(
+            r.written.name,
+            r.written.at,
+            s,
+            namespace,
+          ).map { at, length, named ->
+            Means(path, at, length, named, None)
+          }
           BuiltinType(_) -> [TypeName(path, r.written.at, r.written.name.length, true)]
           TypeParameterType(_) -> [TypeName(path, r.written.at, r.written.name.length, false)]
           else -> []

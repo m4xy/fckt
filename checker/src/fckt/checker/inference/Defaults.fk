@@ -70,7 +70,7 @@ module Defaults {
   }
 
   private ofCases(s: Symbol): List<Symbol> = when (s.declaration.definition) {
-    CasesDefinition(typeParameters, cases, _, _) -> cases.flatMap { c ->
+    CasesDefinition(typeParameters, cases, _, _, _) -> cases.flatMap { c ->
       c.fields.flatMap { f ->
         f.default.map { value -> made(s, "${s.name}$${c.name}", f.name, f.at, Some(f.fieldType), value, typeParameters) }.toList()
       }

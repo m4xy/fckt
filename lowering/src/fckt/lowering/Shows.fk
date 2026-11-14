@@ -68,14 +68,12 @@ module Shows {
   }
 
   // A declared type's show function's name: show_shape.
-  showName(full: String): String = "show_" + OcamlTypes.ownName(full).removeSuffix("_")
+  @Lowering showName(full: String): String = "show_" + OcamlTypes.ownName(full).removeSuffix("_")
 
   // A declared type's show function, written from the module it's used in: Geometry.show_shape.
   @Lowering private showReference(full: String): String = {
-    parts = full.split(".")
-    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [showName(full)]).joinToString(
-      ".",
-    )
+    (modules, _) = OcamlTypes.typePlace(full)
+    (Naming.relative(modules).map { Naming.moduleName(it) } + [showName(full)]).joinToString(".")
   }
 
   // The texts, joined, in order.

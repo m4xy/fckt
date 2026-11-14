@@ -1,0 +1,5 @@
+type Animal { Mammal { Whale } }
+type Zoo { Keeper(likes: Mammal) }
+
+// self-hosted
+// error: unknown type 'Mammal'

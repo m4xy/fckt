@@ -1,6 +1,7 @@
 package uk.m4xy.fckt
 
 import org.junit.jupiter.api.DynamicTest
+import org.junit.jupiter.api.Assumptions.assumeFalse
 import org.junit.jupiter.api.TestFactory
 import uk.m4xy.fckt.syntax.CompileError
 import java.io.File
@@ -18,7 +19,10 @@ class ConformanceTest {
 
     @TestFactory
     fun cases() = File("conformance").walk().filter { it.isFile && it.extension == "fk" }.sortedBy { it.path }.map { file ->
-        DynamicTest.dynamicTest(file.path.removePrefix("conformance/")) { check(Case.of(file.readText())) }
+        DynamicTest.dynamicTest(file.path.removePrefix("conformance/")) {
+            assumeFalse(selfHostedOnly(file.readText()), "only the compiler written in fckt does it")
+            check(Case.of(file.readText()))
+        }
     }.toList()
 
     private fun check(case: Case) {
@@ -58,3 +62,10 @@ class ConformanceTest {
         }
     }
 }
+
+/** Whether a conformance case is of what only the compiler written in fckt does so far. */
+internal fun selfHostedOnly(source: String): Boolean = source.lines().any { it.trim() == "// self-hosted" }
+
+/** The texts a conformance case says its errors have in them. */
+internal fun expectedErrors(source: String): List<String> =
+    source.lines().mapNotNull { Regex("^\\s*// error: ?(.*)$").find(it)?.groupValues?.get(1) }

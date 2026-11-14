@@ -82,10 +82,22 @@ module OcamlTypes {
 
   // A declared type, by its full name, written from the module it's used in: Geometry.shape.
   @Lowering typeReference(full: String): String = {
+    (modules, _) = typePlace(full)
+    (Naming.relative(modules).map { Naming.moduleName(it) } + [ownName(full)]).joinToString(".")
+  }
+
+  // Where a declared type is in OCaml: the modules it's in, and its name in them, from its own and
+  // those of the types it's declared among the cases of, as OCaml's types hold no types:
+  // shop.Animal.Mammal.Cat is shop's Animal.Mammal.Cat, which is animal__mammal__cat.
+  @Lowering typePlace(full: String): (List<String>, List<String>) = {
     parts = full.split(".")
-    (Naming.relative(parts.dropLast(1)).map { Naming.moduleName(it) } + [Naming.snake(parts.lastOrNone().getOrElse(full))]).joinToString(
-      ".",
-    )
+    owner = parts.mapIndexed { i, _ -> i }.drop(1).find { k ->
+      declarationOf(parts.take(k).joinToString(".")).isSome()
+    }
+    when (owner) {
+      Some(k) -> (parts.take(k - 1), parts.drop(k - 1))
+      None -> (parts.dropLast(1), parts.lastOrNone().toList())
+    }
   }
 
   // A spec's module type, by its full name, written from the module it's used in: Formats.Format.
@@ -109,7 +121,15 @@ module OcamlTypes {
   }
 
   // The OCaml name a declared type has where it's declared: shape.
-  ownName(full: String): String = Naming.snake(full.split(".").lastOrNone().getOrElse(full))
+  // The modules a declared type is in, in OCaml.
+  @Lowering modulesOf(full: String): List<String> = when (typePlace(full)) {
+    (modules, _) -> modules
+  }
+
+  @Lowering ownName(full: String): String = {
+    (_, names) = typePlace(full)
+    names.map { Naming.snake(it) }.joinToString("__")
+  }
 
   // A type's arguments that OCaml has: not those for its effect parameters, nor effects.
   @Lowering ocamlArguments(

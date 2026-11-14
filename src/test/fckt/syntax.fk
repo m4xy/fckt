@@ -17,7 +17,12 @@ main(args: List<String>) = when (args) {
 
 at(p: Position): String = "${p.line}:${p.column}"
 
-quoted(text: String): String = "\"" + text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\"", "\\\"") + "\""
+quoted(
+  text: String,
+): String = "\"" + text.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace(
+  "\"",
+  "\\\"",
+) + "\""
 
 listOf(items: List<String>): String = "[" + items.joinToString(" ") + "]"
 
@@ -25,7 +30,9 @@ strings(items: List<String>): String = listOf(items.map { quoted(it) })
 
 optional(o: Option<String>): String = o.getOrElse("_")
 
-importOf(i: Import): String = "(Import ${at(i.at)} ${strings(i.path)} ${i.wildcard} ${optional(i.alias.map { quoted(it) })})"
+importOf(
+  i: Import,
+): String = "(Import ${at(i.at)} ${strings(i.path)} ${i.wildcard} ${optional(i.alias.map { quoted(it) })})"
 
 declarationOf(d: Declaration): String =
   "(Declaration ${at(d.at)} ${quoted(d.name)} ${d.visibility.name} ${d.opaque} ${listOf(d.annotations.map { annotationOf(it) })} ${definitionOf(d.definition)})"
@@ -33,7 +40,7 @@ declarationOf(d: Declaration): String =
 definitionOf(d: Definition): String = when (d) {
   RecordDefinition(typeParameters, fields, privateConstructor, annotation, external) ->
     "(Record ${strings(typeParameters)} ${listOf(fields.map { fieldOf(it) })} $privateConstructor $annotation ${optional(external.map { quoted(it) })})"
-  CasesDefinition(typeParameters, cases, caseRefs, includes) ->
+  CasesDefinition(typeParameters, cases, caseRefs, includes, _) ->
     "(Cases ${strings(typeParameters)} ${listOf(cases.map { caseOf(it) })} ${listOf(caseRefs.map { caseRefOf(it) })} ${listOf(includes.map { typeOf(it) })})"
   AliasDefinition(typeParameters, target) -> "(Alias ${strings(typeParameters)} ${typeOf(target)})"
   FunctionDefinition(typeParameters, receiver, parameters, result, body, external, operator) ->
@@ -50,16 +57,22 @@ fieldOf(f: Field): String =
 parameterOf(p: Parameter): String =
   "(Parameter ${at(p.at)} ${quoted(p.name)} ${optional(p.parameterType.map { typeOf(it) })} ${listOf(p.annotations.map { annotationOf(it) })} ${optional(p.default.map { expressionOf(it) })})"
 
-caseOf(c: CaseDefinition): String = "(Case ${at(c.at)} ${quoted(c.name)} ${listOf(c.fields.map { fieldOf(it) })} ${listOf(c.annotations.map { annotationOf(it) })})"
+caseOf(
+  c: CaseDefinition,
+): String = "(Case ${at(c.at)} ${quoted(c.name)} ${listOf(c.fields.map { fieldOf(it) })} ${listOf(c.annotations.map { annotationOf(it) })})"
 
 caseRefOf(c: CaseRef): String = "(CaseRef ${at(c.at)} ${quoted(c.owner)} ${quoted(c.caseName)})"
 
-moduleParameterOf(p: ModuleParameter): String = "(ModuleParameter ${at(p.at)} ${quoted(p.name)} ${typeOf(p.spec)} ${optional(p.default.map { typeOf(it) })})"
+moduleParameterOf(
+  p: ModuleParameter,
+): String = "(ModuleParameter ${at(p.at)} ${quoted(p.name)} ${typeOf(p.spec)} ${optional(p.default.map { typeOf(it) })})"
 
 applicationOf(a: Application): String =
   "(Application ${typeOf(a.functor)} ${listOf(a.arguments.map { "(ModuleArgument ${optional(it.name.map { n -> quoted(n) })} ${typeOf(it.value)})" })})"
 
-specTypeOf(t: SpecType): String = "(SpecType ${at(t.at)} ${quoted(t.name)} ${strings(t.typeParameters)})"
+specTypeOf(
+  t: SpecType,
+): String = "(SpecType ${at(t.at)} ${quoted(t.name)} ${strings(t.typeParameters)})"
 
 specValueOf(v: SpecValue): String =
   "(SpecValue ${at(v.at)} ${quoted(v.name)} ${strings(v.typeParameters)} ${optional(v.parameters.map { ps -> listOf(ps.map { parameterOf(it) }) })} ${typeOf(v.valueType)} ${listOf(v.annotations.map { annotationOf(it) })} ${optional(v.default.map { expressionOf(it) })})"
@@ -67,7 +80,9 @@ specValueOf(v: SpecValue): String =
 annotationOf(a: Annotation): String =
   "(Annotation ${at(a.at)} ${quoted(a.name)} ${listOf(a.arguments.map { annotationArgumentOf(it) })} ${listOf(a.typeArguments.map { typeOf(it) })})"
 
-annotationArgumentOf(a: AnnotationArgument): String = "(AnnotationArgument ${optional(a.name.map { quoted(it) })} ${annotationValueOf(a.value)})"
+annotationArgumentOf(
+  a: AnnotationArgument,
+): String = "(AnnotationArgument ${optional(a.name.map { quoted(it) })} ${annotationValueOf(a.value)})"
 
 annotationValueOf(v: AnnotationValue): String = when (v) {
   Constant(e) -> "(Constant ${expressionOf(e)})"
@@ -121,7 +136,9 @@ templatePartOf(part: TemplatePart): String = when (part) {
   Interpolation(e) -> "(Interpolated ${expressionOf(e)})"
 }
 
-argumentOf(a: Argument): String = "(Argument ${optional(a.name.map { quoted(it) })} ${expressionOf(a.value)})"
+argumentOf(
+  a: Argument,
+): String = "(Argument ${optional(a.name.map { quoted(it) })} ${expressionOf(a.value)})"
 
 branchOf(b: Branch): String =
   "(Branch ${at(b.at)} ${listOf(b.patterns.map { patternOf(it) })} ${optional(b.condition.map { expressionOf(it) })} ${expressionOf(b.body)} ${optional(b.guard.map { expressionOf(it) })})"

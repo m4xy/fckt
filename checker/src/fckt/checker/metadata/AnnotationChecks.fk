@@ -39,11 +39,13 @@ module AnnotationChecks {
     (table.declarations.filter { !Symbols.isModule(it) } + table.declarations.filter { Symbols.isModule(it) }).forEach { d ->
       place = Place(d.file, d.path)
       check(place, d.declaration.annotations)
+      // A type's cases are looked into from inside it.
+      inside = Place(d.file, Symbols.insideOf(d))
       when (d.declaration.definition) {
         RecordDefinition(_, fields, _, _, _) -> fields.forEach { f -> check(place, f.annotations) }
-        CasesDefinition(_, cases, _, _) -> cases.forEach { c ->
-          check(place, c.annotations)
-          c.fields.forEach { f -> check(place, f.annotations) }
+        CasesDefinition(_, cases, _, _, _) -> cases.forEach { c ->
+          check(inside, c.annotations)
+          c.fields.forEach { f -> check(inside, f.annotations) }
         }
         FunctionDefinition(_, _, parameters, _, _, _, _) -> parameters.getOrElse(
           [],

@@ -102,14 +102,21 @@ module Interfaces {
       "type $name${typeParameterList(typeParameters)}" +
         (if (privateConstructor) " private" else "") +
         fieldList(fields)
-    CasesDefinition(typeParameters, cases, caseRefs, includes) -> {
+    CasesDefinition(typeParameters, cases, caseRefs, includes, nested) -> {
       own = cases.map { c ->
         fields = if (c.fields.isEmpty()) "" else fieldList(c.fields)
         "$indent  ${annotations(c.annotations)}${c.name}$fields,\n"
       }
       referred = caseRefs.map { c -> "$indent  ${c.owner}.${c.caseName},\n" }
       included = includes.map { t -> "$indent  *${typeText(t)},\n" }
-      items = (own + referred + included).joinToString("")
+      // A type declared among the cases, Inner { ... }, as it's written.
+      inner = nested.map { d ->
+        "$indent  ${annotations(d.annotations)}" +
+          definitionText(d.name, d.definition, false, "$indent  ", text).removePrefix(
+            "type ",
+          ) + ",\n"
+      }
+      items = (own + referred + included + inner).joinToString("")
       "type $name${typeParameterList(typeParameters)} {\n" + items + "$indent}"
     }
     AliasDefinition(typeParameters, target) ->

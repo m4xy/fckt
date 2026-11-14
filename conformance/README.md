@@ -11,4 +11,8 @@ end:
 
 A case with none of them compiles, runs, and prints nothing. The standard library is std's.
 
+A case that also says `// self-hosted` is of what only the compiler written in fckt does so far.
+The Kotlin compiler leaves it out, and isn't compared with on it; the one written in fckt is held
+to what the case's other comments say.
+
 fckt's own implementation is held to them by `ConformanceTest`.

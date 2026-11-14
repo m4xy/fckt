@@ -282,6 +282,34 @@ private importedCase(name: String, context: Context): Option<CaseSymbol> =
   }
 }
 
+// What each name in what qualifies a case, written from start, is: Animal and Mammal in
+// Animal.Mammal.Whale, each a type with cases or a module, as far as they're known.
+@Noting noteQualifier(qualifier: String, start: Position, context: Context): Unit = {
+  namespace = context.environment.definitions.namespace
+  parts = qualifier.split(".")
+  parts.withIndex().forEach { i, part ->
+    written = parts.take(i + 1).joinToString(".")
+    column = start.column + parts.take(i).fold(0) { n, p -> n + p.length + 1 }
+    named = Lookups.found(Lookups.caseType(written, context.place, namespace, Skipping)).orElse {
+      when (Lookups.found(Lookups.moduleNamed(written, context.place, namespace, Skipping))) {
+        Some(DeclaredModule(m)) -> Some(m)
+        else -> None
+      }
+    }
+    named.forEach { s ->
+      note(
+        Means(context.place.file.source.path, Position(start.line, column), part.length, s, None),
+      )
+    }
+  }
+}
+
+// Where a dotted name starts: Animal's place in Animal.Mammal.
+private leftmost(e: Expression): Position = when (e) {
+  Member(_, target, _) -> leftmost(target)
+  _ -> Positions.of(e)
+}
+
 // Alphabet.A, Ratios.Ratio or Shapes.Circle: what qualifies a constructor, if the target names a
 // type with cases or a module, and not a value.
 @Inferring qualifiedCase(target: Expression, scope: Scope, context: Context): Option<String> = {
@@ -295,9 +323,10 @@ private importedCase(name: String, context: Context): Option<CaseSymbol> =
       }
       if (isValue) None
       else if (Lookups.found(Lookups.caseType(qualifier, context.place, namespace, Skipping)).isSome() ||
-        Lookups.found(Lookups.moduleNamed(qualifier, context.place, namespace, Skipping)).isSome()) Some(
-          qualifier,
-        )
+        Lookups.found(Lookups.moduleNamed(qualifier, context.place, namespace, Skipping)).isSome()) {
+        noteQualifier(qualifier, leftmost(target), context)
+        Some(qualifier)
+      }
       else None
     }
   }

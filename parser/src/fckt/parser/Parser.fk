@@ -569,18 +569,20 @@ module Parser {
     typeParameters: List<String>,
   ): Declaration = {
     skipNewlines(s)
-    (cases, caseRefs, includes) = caseItems(s, [], [], [])
+    (cases, caseRefs, includes, nested) = caseItems(s, typeParameters, [], [], [], [])
     expect(s, RightBrace, "'}'")
-    Declaration(start, name, CasesDefinition(typeParameters, cases, caseRefs, includes))
+    Declaration(start, name, CasesDefinition(typeParameters, cases, caseRefs, includes, nested))
   }
 
   @Rejecting @Mutating private caseItems(
     s: Parsing,
+    typeParameters: List<String>,
     cases: List<CaseDefinition>,
     caseRefs: List<CaseRef>,
     includes: List<TypeRef>,
-  ): (List<CaseDefinition>, List<CaseRef>, List<TypeRef>) =
-    if (looking(s, RightBrace)) (cases, caseRefs, includes)
+    nested: List<Declaration>,
+  ): (List<CaseDefinition>, List<CaseRef>, List<TypeRef>, List<Declaration>) =
+    if (looking(s, RightBrace)) (cases, caseRefs, includes, nested)
     else {
       annotations = annotationList(s)
       at = peek(s).at
@@ -588,31 +590,39 @@ module Parser {
         peek(s).at,
         "annotate a case where it's declared",
       )
-      (moreCases, moreRefs, moreIncludes) = if (accepts(s, Star)) {
+      (moreCases, moreRefs, moreIncludes, moreNested) = if (accepts(s, Star)) {
         // *Other<T>: every case of Other
         included = when (typeRef(s)) {
           NamedType(namedAt, named, arguments) -> NamedType(namedAt, named, arguments)
           else -> reject(at, "'*' takes a type with cases")
         }
-        (cases, caseRefs, includes + [included])
+        (cases, caseRefs, includes + [included], nested)
       } else {
         caseName = upperIdent(s, "a variant name")
         if (looking(s, Dot)) {
           // Other.Case: one case of another type, which may itself be qualified
           path = casePath(s, [caseName])
-          (cases, caseRefs + [CaseRef(at, path.dropLast(1).joinToString("."), path.lastOrNone().getOrElse(caseName))], includes)
+          (cases, caseRefs + [CaseRef(at, path.dropLast(1).joinToString("."), path.lastOrNone().getOrElse(caseName))], includes, nested)
+        } else if (accepts(s, LeftBrace)) {
+          // Inner { Cases }: a type declared in this one, whose cases are this one's too
+          if (typeParameters.isNotEmpty()) reject(
+            at,
+            "a type with type parameters can't declare types among its cases; declare $caseName on its own and include it with *$caseName",
+          )
+          inner = typeWithCases(s, at, caseName, [])
+          (cases, caseRefs, includes, nested + [inner.copy(annotations = annotations)])
         } else {
           fields = if (accepts(s, LeftParen)) {
             read = fieldList(s, at, false)
             expect(s, RightParen, "')'")
             read
           } else []
-          (cases + [CaseDefinition(at, caseName, fields, annotations)], caseRefs, includes)
+          (cases + [CaseDefinition(at, caseName, fields, annotations)], caseRefs, includes, nested)
         }
       }
       accepts(s, Comma)
       skipNewlines(s)
-      caseItems(s, moreCases, moreRefs, moreIncludes)
+      caseItems(s, typeParameters, moreCases, moreRefs, moreIncludes, moreNested)
     }
 
   @Rejecting @Mutating private casePath(s: Parsing, path: List<String>): List<String> =
@@ -855,7 +865,7 @@ module Parser {
   private typeNames(declarations: List<Declaration>): List<String> = declarations.flatMap { d ->
     when (d.definition) {
       ModuleDefinition(inside, _, _, _, _) -> typeNames(inside)
-      RecordDefinition(_, _, _, _, _), CasesDefinition(_, _, _, _), AliasDefinition(_, _) -> [
+      RecordDefinition(_, _, _, _, _), CasesDefinition(_, _, _, _, _), AliasDefinition(_, _) -> [
         d.name,
       ]
       SpecDefinition(types, _, _, _, _) -> types.map { it.name }

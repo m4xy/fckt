@@ -48,7 +48,7 @@ module Cases {
 
   // The type parameters a type with cases declares.
   typeParametersOf(symbol: Symbol): List<String> = when (symbol.declaration.definition) {
-    CasesDefinition(typeParameters, _, _, _) -> typeParameters
+    CasesDefinition(typeParameters, _, _, _, _) -> typeParameters
     else -> []
   }
 
@@ -73,13 +73,15 @@ module Cases {
           ),
         )
         else Unit
-        place = Place(symbol.file, symbol.path)
+        place = Place(symbol.file, Symbols.insideOf(symbol))
         inner = visiting + [symbol.name]
         found = when (symbol.declaration.definition) {
-          CasesDefinition(_, cases, caseRefs, includes) -> {
+          CasesDefinition(_, cases, caseRefs, includes, nested) -> {
             own = cases.map { c -> (CaseInfo(symbol, c, OwnCase), c.at) }
             named = caseRefs.map { ref -> (namedCase(computing, symbol, ref, place, inner), ref.at) }
-            included = includes.flatMap { include -> includedCases(computing, symbol, include, place, inner) }
+            // A type declared among its cases has its cases in this one, as *Inner would.
+            inside = nested.map { d -> NamedType(d.at, d.name, []) }
+            included = (includes + inside).flatMap { include -> includedCases(computing, symbol, include, place, inner) }
             (own + named + included).fold([]) { result, entry ->
               (c, at) = entry
               added(symbol, result, c, at)

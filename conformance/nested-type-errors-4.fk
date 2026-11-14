@@ -1,0 +1,5 @@
+type Animal { Mammal { Cat { Tabby } }, Bird { Robin } }
+m: Animal.Mammal = Animal.Robin
+
+// self-hosted
+// error: Animal.Mammal

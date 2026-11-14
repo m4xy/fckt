@@ -1,0 +1,41 @@
+import fckt.io.Console
+
+type Animal {
+  Mammal {
+    Cat { Tabby, Siamese(blueEyes: Boolean) },
+    Dog { Collie, Terrier(chases: Cat) },
+    Whale,
+  },
+  Bird { Robin, Penguin },
+  Fish,
+}
+
+legs(m: Animal.Mammal): Int = when (m) {
+  Animal.Mammal.Whale -> 0
+  _ -> 4
+}
+
+describe(a: Animal): String = when (a) {
+  is Animal.Mammal.Cat -> "cat"
+  Animal.Mammal.Dog.Terrier(Animal.Tabby) -> "terrier chasing a tabby"
+  is Animal.Mammal -> "mammal with ${legs(a)} legs"
+  is Animal.Bird -> "bird"
+  Animal.Fish -> "fish"
+}
+
+main() = {
+  all: List<Animal> = [
+    Animal.Mammal.Cat.Tabby,
+    Animal.Terrier(Animal.Tabby),
+    Animal.Collie,
+    Animal.Mammal.Whale,
+    Animal.Bird.Penguin,
+    Animal.Fish,
+  ]
+  println(all.map { describe(it) }.toString())
+  println("${Animal.Siamese(true)} ${Animal.Bird.Robin}")
+}
+
+// self-hosted
+// prints: [cat, terrier chasing a tabby, mammal with 4 legs, mammal with 0 legs, bird, fish]
+// prints: Siamese(blueEyes=true) Robin

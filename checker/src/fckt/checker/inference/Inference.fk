@@ -215,9 +215,9 @@ module Inference {
           Conversion.recordFields(d, typeParameters.map { TypeParameter(it) }, None, definitions)
           Unit
         }
-        CasesDefinition(typeParameters, cases, _, includes) -> {
+        CasesDefinition(typeParameters, cases, _, includes, _) -> {
           context = TypeContext(
-            Place(d.file, d.path),
+            Place(d.file, Symbols.insideOf(d)),
             typeParameters.map { p -> (p, TypeParameter(p)) }.toMap(),
           )
           cases.forEach { c ->

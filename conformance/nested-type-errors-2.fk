@@ -1,0 +1,4 @@
+type Tree<A> { Leaf { Empty }, Node(value: A) }
+
+// self-hosted
+// error: a type with type parameters can't declare types among its cases

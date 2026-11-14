@@ -87,7 +87,7 @@ module Symbols {
           header(s, typeParameters, place, writing) +
           (if (privateConstructor) line(1, "private-constructor") else "") +
           fields.map { field(1, it, s.file, typeParameters, place, writing) }.joinToString("")
-      CasesDefinition(typeParameters, _, _, _) -> {
+      CasesDefinition(typeParameters, _, _, _, _) -> {
         cases = program.types.find { t ->
           when (t) {
             DeclaredCases(c, _, _) -> c.name == s.name
@@ -116,7 +116,7 @@ module Symbols {
     origin = c.owner
     place = Place(origin.file, origin.path)
     originParameters = when (origin.declaration.definition) {
-      CasesDefinition(ps, _, _, _) -> ps
+      CasesDefinition(ps, _, _, _, _) -> ps
       _ -> []
     }
     line(1, "case ${c.definition.name}") +
