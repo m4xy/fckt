@@ -1615,7 +1615,7 @@ module Fckt = struct
     type declaration = { at : position; name : string; definition : definition; visibility : visibility; opaque : bool; annotations : annotation list }
     and definition =
       | RecordDefinition of { type_parameters : string list; fields : field list; private_constructor : bool; annotation : bool; external_ : string option }
-      | CasesDefinition of { type_parameters : string list; cases : case_definition list; case_refs : case_ref list; includes : type_ref list }
+      | CasesDefinition of { type_parameters : string list; cases : case_definition list; case_refs : case_ref list; includes : type_ref list; nested : declaration list }
       | AliasDefinition of { type_parameters : string list; target : type_ref }
       | FunctionDefinition of { type_parameters : string list; receiver : type_ref option; parameters : parameter list option; result : type_ref option; body : expression; external_ : string option; operator : bool }
       | ModuleDefinition of { declarations : declaration list; spec : type_ref option; parameters : module_parameter list; application : application option; type_parameters : string list }
@@ -1626,7 +1626,7 @@ module Fckt = struct
     and show_definition (v : definition) =
       match v with
       | RecordDefinition r -> "RecordDefinition(" ^ "typeParameters=" ^ fk_show_list Fun.id r.type_parameters ^ ", fields=" ^ fk_show_list show_field r.fields ^ ", privateConstructor=" ^ string_of_bool r.private_constructor ^ ", annotation=" ^ string_of_bool r.annotation ^ ", external=" ^ fk_show_option Fun.id r.external_ ^ ")"
-      | CasesDefinition r -> "CasesDefinition(" ^ "typeParameters=" ^ fk_show_list Fun.id r.type_parameters ^ ", cases=" ^ fk_show_list show_case_definition r.cases ^ ", caseRefs=" ^ fk_show_list show_case_ref r.case_refs ^ ", includes=" ^ fk_show_list show_type_ref r.includes ^ ")"
+      | CasesDefinition r -> "CasesDefinition(" ^ "typeParameters=" ^ fk_show_list Fun.id r.type_parameters ^ ", cases=" ^ fk_show_list show_case_definition r.cases ^ ", caseRefs=" ^ fk_show_list show_case_ref r.case_refs ^ ", includes=" ^ fk_show_list show_type_ref r.includes ^ ", nested=" ^ fk_show_list show_declaration r.nested ^ ")"
       | AliasDefinition r -> "AliasDefinition(" ^ "typeParameters=" ^ fk_show_list Fun.id r.type_parameters ^ ", target=" ^ show_type_ref r.target ^ ")"
       | FunctionDefinition r -> "FunctionDefinition(" ^ "typeParameters=" ^ fk_show_list Fun.id r.type_parameters ^ ", receiver=" ^ fk_show_option show_type_ref r.receiver ^ ", parameters=" ^ fk_show_option (fk_show_list show_parameter) r.parameters ^ ", result=" ^ fk_show_option show_type_ref r.result ^ ", body=" ^ show_expression r.body ^ ", external=" ^ fk_show_option Fun.id r.external_ ^ ", operator=" ^ string_of_bool r.operator ^ ")"
       | ModuleDefinition r -> "ModuleDefinition(" ^ "declarations=" ^ fk_show_list show_declaration r.declarations ^ ", spec=" ^ fk_show_option show_type_ref r.spec ^ ", parameters=" ^ fk_show_list show_module_parameter r.parameters ^ ", application=" ^ fk_show_option show_application r.application ^ ", typeParameters=" ^ fk_show_list Fun.id r.type_parameters ^ ")"
@@ -2945,35 +2945,37 @@ module Fckt = struct
               let fk_named5 = declaration_default_opaque () in
               ({ at = start; name = name; definition = (RecordDefinition { type_parameters = []; fields = []; private_constructor = false; annotation = true; external_ = None } : definition); visibility = fk_named4; opaque = fk_named5; annotations = effect_ } : declaration)))
 
-      let rec case_items (s : parsing) (cases : case_definition list) (case_refs : case_ref list) (includes : type_ref list) : case_definition list * case_ref list * type_ref list =
-        if looking s (RightBrace : kind) then (cases, case_refs, includes) else (let annotations = annotation_list s in
-           let at = (peek s : token).at in
-           if Lang.Lists.list_is_not_empty annotations && (looking s (Star : kind) || (peek_at s 1 : token).kind = (Dot : kind)) then (match Effect.perform (Rejecting_reject ((peek s : token).at, "annotate a case where it's declared")) with
-              | _ -> (assert false)) else ();
-           let (more_cases, more_refs, more_includes) = if accepts s (Star : kind) then (let included = match type_ref s with
-                  | NamedType { at = named_at; name = named; arguments = arguments } -> (NamedType { at = named_at; name = named; arguments = arguments } : type_ref)
-                  | _ -> match Effect.perform (Rejecting_reject (at, "'*' takes a type with cases")) with
-                      | _ -> (assert false) in
-                (cases, case_refs, includes @ [included])) else (let case_name = upper_ident s "a variant name" in
-                if looking s (Dot : kind) then (let path = case_path s [case_name] in
-                   (cases, case_refs @ [(let fk_arg1 = String.concat "." (List.map Fun.id (Lang.Lists.list_drop_last path 1)) in
-                    let fk_arg2 = Option.value (Lang.Lists.list_last_or_none path) ~default:case_name in
-                    ({ at = at; owner = fk_arg1; case_name = fk_arg2 } : case_ref))], includes)) else (let fields = if accepts s (LeftParen : kind) then (let read = field_list s at false in
-                        expect s (RightParen : kind) "')'";
-                        read) else [] in
-                   (cases @ [({ at = at; name = case_name; fields = fields; annotations = annotations } : case_definition)], case_refs, includes))) in
-           accepts s (Comma : kind);
-           skip_newlines s;
-           case_items s more_cases more_refs more_includes)
-
-      let type_with_cases (s : parsing) (start : position) (name : string) (type_parameters : string list) : declaration =
+      let rec type_with_cases (s : parsing) (start : position) (name : string) (type_parameters : string list) : declaration =
         skip_newlines s;
-        let (cases, case_refs, includes) = case_items s [] [] [] in
+        let (cases, case_refs, includes, nested) = case_items s type_parameters [] [] [] [] in
         expect s (RightBrace : kind) "'}'";
         let fk_arg1 = declaration_default_visibility () in
         let fk_arg2 = declaration_default_opaque () in
         let fk_arg3 = declaration_default_annotations () in
-        ({ at = start; name = name; definition = (CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = case_refs; includes = includes } : definition); visibility = fk_arg1; opaque = fk_arg2; annotations = fk_arg3 } : declaration)
+        ({ at = start; name = name; definition = (CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = case_refs; includes = includes; nested = nested } : definition); visibility = fk_arg1; opaque = fk_arg2; annotations = fk_arg3 } : declaration)
+      and case_items (s : parsing) (type_parameters : string list) (cases : case_definition list) (case_refs : case_ref list) (includes : type_ref list) (nested : declaration list) : case_definition list * case_ref list * type_ref list * declaration list =
+        if looking s (RightBrace : kind) then (cases, case_refs, includes, nested) else (let annotations = annotation_list s in
+           let at = (peek s : token).at in
+           if Lang.Lists.list_is_not_empty annotations && (looking s (Star : kind) || (peek_at s 1 : token).kind = (Dot : kind)) then (match Effect.perform (Rejecting_reject ((peek s : token).at, "annotate a case where it's declared")) with
+              | _ -> (assert false)) else ();
+           let (more_cases, more_refs, more_includes, more_nested) = if accepts s (Star : kind) then (let included = match type_ref s with
+                  | NamedType { at = named_at; name = named; arguments = arguments } -> (NamedType { at = named_at; name = named; arguments = arguments } : type_ref)
+                  | _ -> match Effect.perform (Rejecting_reject (at, "'*' takes a type with cases")) with
+                      | _ -> (assert false) in
+                (cases, case_refs, includes @ [included], nested)) else (let case_name = upper_ident s "a variant name" in
+                if looking s (Dot : kind) then (let path = case_path s [case_name] in
+                   (cases, case_refs @ [(let fk_arg1 = String.concat "." (List.map Fun.id (Lang.Lists.list_drop_last path 1)) in
+                    let fk_arg2 = Option.value (Lang.Lists.list_last_or_none path) ~default:case_name in
+                    ({ at = at; owner = fk_arg1; case_name = fk_arg2 } : case_ref))], includes, nested)) else if accepts s (LeftBrace : kind) then (if Lang.Lists.list_is_not_empty type_parameters then (match Effect.perform (Rejecting_reject (at, "a type with type parameters can't declare types among its cases; declare " ^ case_name ^ " on its own and include it with *" ^ case_name)) with
+                        | _ -> (assert false)) else ();
+                     let inner = type_with_cases s at case_name [] in
+                     (cases, case_refs, includes, nested @ [{ (inner : declaration) with annotations = annotations }])) else (let fields = if accepts s (LeftParen : kind) then (let read = field_list s at false in
+                          expect s (RightParen : kind) "')'";
+                          read) else [] in
+                     (cases @ [({ at = at; name = case_name; fields = fields; annotations = annotations } : case_definition)], case_refs, includes, nested))) in
+           accepts s (Comma : kind);
+           skip_newlines s;
+           case_items s type_parameters more_cases more_refs more_includes more_nested)
 
       let external_function (s : parsing) (d : declaration) : declaration =
         match (d : declaration).definition with
@@ -3158,7 +3160,7 @@ module Fckt = struct
       let rec type_names (declarations : declaration list) : string list =
         List.concat_map (fun d -> match (d : declaration).definition with
            | ModuleDefinition { declarations = inside; spec = _; parameters = _; application = _; type_parameters = _ } -> type_names inside
-           | RecordDefinition { type_parameters = _; fields = _; private_constructor = _; annotation = _; external_ = _ } | CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _ } | AliasDefinition { type_parameters = _; target = _ } -> [(d : declaration).name]
+           | RecordDefinition { type_parameters = _; fields = _; private_constructor = _; annotation = _; external_ = _ } | CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = _ } | AliasDefinition { type_parameters = _; target = _ } -> [(d : declaration).name]
            | SpecDefinition { types = types; values = _; type_parameters = _; copy_of = _; parents = _ } -> List.map (fun it -> (it : spec_type).name) types
            | FunctionDefinition { type_parameters = _; receiver = _; parameters = _; result = _; body = _; external_ = _; operator = _ } -> []) declarations
 
@@ -3864,7 +3866,7 @@ module Fckt = struct
           let own_kind = match ((s : symbol).declaration : Parser.declaration).Parser.definition with
             | Parser.FunctionDefinition { type_parameters = _; receiver = None; parameters = _; result = _; body = _; external_ = _; operator = _ } -> true
             | Parser.RecordDefinition { type_parameters = _; fields = _; private_constructor = _; annotation = _; external_ = _ } -> true
-            | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _ } -> true
+            | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = _ } -> true
             | Parser.AliasDefinition { type_parameters = _; target = _ } -> true
             | _ -> false in
           ((((s : symbol).declaration : Parser.declaration).Parser.visibility = (Parser.Private : Parser.visibility) && lower_case_file) && own_kind) && (s : symbol).path = ((s : symbol).file : Sources.loaded_file).Sources.package
@@ -3913,6 +3915,7 @@ module Fckt = struct
                ({ name = name; path = fk_arg1; declaration = d; file = fk_arg2 } : symbol) in
              match (d : Parser.declaration).Parser.definition with
              | Parser.ModuleDefinition { declarations = inside; spec = _; parameters = _; application = _; type_parameters = _ } -> symbol :: symbols_in inside (name ^ ".") file borrowed
+             | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = nested } -> symbol :: symbols_in (List.map (fun it -> if (d : Parser.declaration).Parser.visibility = (Parser.Internal : Parser.visibility) then { (it : Parser.declaration) with Parser.visibility = (Parser.Internal : Parser.visibility) } else it) nested) (name ^ ".") file borrowed
              | _ -> [symbol]) declarations
 
         let prefix_of (pkg : string list) : string =
@@ -3966,7 +3969,7 @@ module Fckt = struct
 
         let is_case_type (s : symbol) : bool =
           match ((s : symbol).declaration : Parser.declaration).Parser.definition with
-          | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _ } -> true
+          | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = _ } -> true
           | _ -> false
 
         let is_alias (s : symbol) : bool =
@@ -3979,10 +3982,12 @@ module Fckt = struct
 
         let check_cases (symbol : symbol) : unit =
           match ((symbol : symbol).declaration : Parser.declaration).Parser.definition with
-          | Parser.CasesDefinition { type_parameters = _; cases = []; case_refs = []; includes = [] } -> (match Effect.perform (Diagnostics.Abandoning_abandon (at symbol ("type '" ^ simple_name symbol ^ "' has no cases"))) with
+          | Parser.CasesDefinition { type_parameters = _; cases = []; case_refs = []; includes = []; nested = [] } -> (match Effect.perform (Diagnostics.Abandoning_abandon (at symbol ("type '" ^ simple_name symbol ^ "' has no cases"))) with
                | _ -> (assert false))
-          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> List.iter (fun c -> if (c : Parser.case_definition).Parser.name = "Some" || (c : Parser.case_definition).Parser.name = "None" then (match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((symbol : symbol).file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = (c : Parser.case_definition).Parser.at; message = "'" ^ (c : Parser.case_definition).Parser.name ^ "' is reserved for Option" } : Diagnostics.diagnostic)) with
-                    | _ -> (assert false)) else ()) cases
+          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _; nested = nested } -> List.iter (fun c -> if (c : Parser.case_definition).Parser.name = "Some" || (c : Parser.case_definition).Parser.name = "None" then (match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((symbol : symbol).file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = (c : Parser.case_definition).Parser.at; message = "'" ^ (c : Parser.case_definition).Parser.name ^ "' is reserved for Option" } : Diagnostics.diagnostic)) with
+                    | _ -> (assert false)) else ()) cases;
+              List.iter (fun d -> if List.exists (fun it -> (it : Parser.case_definition).Parser.name = (d : Parser.declaration).Parser.name) cases then (match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((symbol : symbol).file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = (d : Parser.declaration).Parser.at; message = simple_name symbol ^ " has a case and a type named " ^ (d : Parser.declaration).Parser.name ^ "; name one of them otherwise" } : Diagnostics.diagnostic)) with
+                    | _ -> (assert false)) else ()) nested
           | _ -> ()
 
         let rec check_type_names (types : symbol list) (seen : string list) : unit =
@@ -4004,7 +4009,7 @@ module Fckt = struct
 
         let cases_of (symbol : symbol) : Parser.case_definition list =
           match ((symbol : symbol).declaration : Parser.declaration).Parser.definition with
-          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> cases
+          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _; nested = _ } -> cases
           | _ -> []
 
         let check_case_names (tables : type_tables) : unit =
@@ -4059,6 +4064,11 @@ module Fckt = struct
         let table (workspace : Sources.workspace) : symbol_table =
           let packages = List.map (fun pkg -> (PackageModule { name = String.concat "." (List.map Fun.id pkg) } : module_symbol)) (Lang.Lists.list_distinct (List.concat_map (fun pkg -> prefixes pkg) (List.filter (fun it -> Lang.Lists.list_is_not_empty it) (List.map (fun it -> (it : Sources.loaded_file).Sources.package) (workspace : Sources.workspace).Sources.files)))) in
           table_of (declarations workspace) packages
+
+        let inside_of (s : symbol) : string list =
+          match ((s : symbol).declaration : Parser.declaration).Parser.definition with
+          | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = _ } -> (s : symbol).path @ [((s : symbol).declaration : Parser.declaration).Parser.name]
+          | _ -> (s : symbol).path
 
         let of_field (record : symbol) (field : Parser.field) : symbol =
           ({ name = (record : symbol).name ^ "." ^ (field : Parser.field).Parser.name; path = (record : symbol).path; declaration = (let fk_arg1 = Parser.declaration_default_visibility () in
@@ -5033,7 +5043,7 @@ module Fckt = struct
         let in_annotated (d : Parser.declaration) (place : place) (namespace : namespace) : written_type list =
           match (d : Parser.declaration).Parser.definition with
           | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = _; external_ = _ } -> List.concat_map (fun it -> in_annotations (it : Parser.field).Parser.annotations place namespace) fields
-          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> List.concat_map (fun c -> let fk_arg1 = in_annotations (c : Parser.case_definition).Parser.annotations place namespace in
+          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _; nested = _ } -> List.concat_map (fun c -> let fk_arg1 = in_annotations (c : Parser.case_definition).Parser.annotations place namespace in
                  let fk_arg2 = List.concat_map (fun it -> in_annotations (it : Parser.field).Parser.annotations place namespace) (c : Parser.case_definition).Parser.fields in
                  fk_arg1 @ fk_arg2) cases
           | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = parameters; result = _; body = _; external_ = _; operator = _ } -> List.concat_map (fun it -> in_annotations (it : Parser.parameter).Parser.annotations place namespace) (Option.value parameters ~default:[])
@@ -5161,9 +5171,12 @@ module Fckt = struct
           match (d : Parser.declaration).Parser.definition with
           | Parser.RecordDefinition { type_parameters = type_parameters; fields = fields; private_constructor = _; annotation = true; external_ = _ } -> List.concat_map (fun it -> in_meta_type_ref (it : Parser.field).Parser.field_type ({ place = place; type_parameters = type_parameters; spec_types = []; parameters = type_scope_default_parameters () } : type_scope) namespace) fields
           | Parser.RecordDefinition { type_parameters = type_parameters; fields = fields; private_constructor = _; annotation = _; external_ = _ } -> in_fields fields ({ place = place; type_parameters = type_parameters; spec_types = []; parameters = type_scope_default_parameters () } : type_scope)
-          | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = includes } -> let scope = ({ place = place; type_parameters = type_parameters; spec_types = []; parameters = type_scope_default_parameters () } : type_scope) in
-              let fk_arg1 = List.concat_map (fun it -> in_fields (it : Parser.case_definition).Parser.fields scope) cases in
-              let fk_arg2 = List.concat_map (fun it -> in_type_ref it scope) includes in
+          | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = includes; nested = nested } -> let inside = { (place : place) with path = (place : place).path @ [(d : Parser.declaration).Parser.name] } in
+              let scope = ({ place = inside; type_parameters = type_parameters; spec_types = []; parameters = type_scope_default_parameters () } : type_scope) in
+              let fk_arg1 = let fk_arg1 = List.concat_map (fun it -> in_fields (it : Parser.case_definition).Parser.fields scope) cases in
+                let fk_arg2 = List.concat_map (fun it -> in_type_ref it scope) includes in
+                fk_arg1 @ fk_arg2 in
+              let fk_arg2 = List.concat_map (fun it -> in_definition it inside module_type_parameters namespace borrowed) nested in
               fk_arg1 @ fk_arg2
           | Parser.AliasDefinition { type_parameters = type_parameters; target = target } -> in_type_ref target ({ place = place; type_parameters = module_type_parameters @ type_parameters; spec_types = []; parameters = type_scope_default_parameters () } : type_scope)
           | Parser.FunctionDefinition { type_parameters = type_parameters; receiver = receiver; parameters = parameters; result = result; body = body; external_ = _; operator = _ } -> let scope = ({ place = place; type_parameters = type_parameters; spec_types = []; parameters = List.map (fun it -> (it : Parser.parameter).Parser.name) (Option.value parameters ~default:[]) } : type_scope) in
@@ -6023,7 +6036,7 @@ module Fckt = struct
 
         let type_parameters_of (symbol : Symbols.symbol) : string list =
           match ((symbol : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
-          | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _ } -> type_parameters
+          | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _; nested = _ } -> type_parameters
           | _ -> []
 
         let own_first (cases : case_info list) (owner : Symbols.symbol) : case_info list =
@@ -6067,12 +6080,13 @@ module Fckt = struct
           | Some cases -> cases
           | None -> if List.mem (symbol : Symbols.symbol).Symbols.name visiting then (match Effect.perform (Diagnostics.Abandoning_abandon (problem symbol ((symbol : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.at ("type '" ^ Symbols.Symbols.simple_name symbol ^ "' includes itself"))) with
                  | _ -> (assert false)) else ();
-              let place = ({ Resolution.file = (symbol : Symbols.symbol).Symbols.file; path = (symbol : Symbols.symbol).Symbols.path } : Resolution.place) in
+              let place = ({ Resolution.file = (symbol : Symbols.symbol).Symbols.file; path = Symbols.Symbols.inside_of symbol } : Resolution.place) in
               let inner = visiting @ [(symbol : Symbols.symbol).Symbols.name] in
               let found = match ((symbol : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
-                | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = case_refs; includes = includes } -> let own = List.map (fun c -> (({ origin = symbol; definition = c; source = (OwnCase : case_source) } : case_info), (c : Parser.case_definition).Parser.at)) cases in
+                | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = case_refs; includes = includes; nested = nested } -> let own = List.map (fun c -> (({ origin = symbol; definition = c; source = (OwnCase : case_source) } : case_info), (c : Parser.case_definition).Parser.at)) cases in
                     let named = List.map (fun ref -> (named_case computing symbol ref place inner, (ref : Parser.case_ref).Parser.at)) case_refs in
-                    let included = List.concat_map (fun include_ -> included_cases computing symbol include_ place inner) includes in
+                    let inside = List.map (fun d -> (Parser.NamedType { at = (d : Parser.declaration).Parser.at; name = (d : Parser.declaration).Parser.name; arguments = [] } : Parser.type_ref)) nested in
+                    let included = List.concat_map (fun include_ -> included_cases computing symbol include_ place inner) (includes @ inside) in
                     List.fold_left (fun result entry -> let (c, at) = entry in
                        added symbol result c at) [] ((own @ named) @ included)
                 | _ -> [] in
@@ -6114,7 +6128,7 @@ module Fckt = struct
         let fields_of (s : Symbols.symbol) : Parser.field list =
           match ((s : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
           | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = _; external_ = _ } -> fields
-          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> List.concat_map (fun it -> (it : Parser.case_definition).Parser.fields) cases
+          | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _; nested = _ } -> List.concat_map (fun it -> (it : Parser.case_definition).Parser.fields) cases
           | _ -> []
 
         let rec holds (t : Parser.type_ref) (place : Resolution.place) (found : string list) (namespace : Resolution.namespace) : bool =
@@ -6133,7 +6147,7 @@ module Fckt = struct
               | _ -> false
 
         let rec holding (types : Symbols.symbol list) (found : string list) (namespace : Resolution.namespace) : string list =
-          let more = List.filter (fun t -> not (List.mem (t : Symbols.symbol).Symbols.name found) && List.exists (fun it -> holds (it : Parser.field).Parser.field_type ({ Resolution.file = (t : Symbols.symbol).Symbols.file; path = (t : Symbols.symbol).Symbols.path } : Resolution.place) found namespace) (fields_of t)) types in
+          let more = List.filter (fun t -> not (List.mem (t : Symbols.symbol).Symbols.name found) && List.exists (fun it -> holds (it : Parser.field).Parser.field_type ({ Resolution.file = (t : Symbols.symbol).Symbols.file; path = Symbols.Symbols.inside_of t } : Resolution.place) found namespace) (fields_of t)) types in
           if List.is_empty more then found else holding types (found @ List.map (fun it -> (it : Symbols.symbol).Symbols.name) more) namespace
 
         let regioned (namespace : Resolution.namespace) : string list =
@@ -6254,7 +6268,7 @@ module Fckt = struct
         let type_parameters_of (symbol : Symbols.symbol) : string list =
           match ((symbol : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
           | Parser.RecordDefinition { type_parameters = type_parameters; fields = _; private_constructor = _; annotation = _; external_ = _ } -> type_parameters
-          | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _ } -> type_parameters
+          | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _; nested = _ } -> type_parameters
           | Parser.AliasDefinition { type_parameters = type_parameters; target = _ } -> type_parameters
           | _ -> []
 
@@ -6439,11 +6453,12 @@ module Fckt = struct
 
         let rec case_fields (c : case_info) (parameters : string list) (arguments : Types.type_ list) (region : Types.type_ option) (definitions : definitions) (seen_from : Resolution.place option) : Types.type_ list =
           match (c : case_info).source with
-          | OwnCase -> let context = let fk_arg1 = Collections.Maps.list_tuple_to_map (Lang.Lists.list_zip parameters arguments) in
-                let fk_arg2 = Collections.Maps.empty_map () in
-                let fk_arg3 = type_context_default_value_parameters () in
-                let fk_arg4 = type_context_default_later_parameters () in
-                ({ place = ({ Resolution.file = ((c : case_info).origin : Symbols.symbol).Symbols.file; path = ((c : case_info).origin : Symbols.symbol).Symbols.path } : Resolution.place); type_parameters = fk_arg1; region = region; arrow_effects = None; expanding = []; spec_types = fk_arg2; outside_view = false; seen_from = seen_from; value_parameters = fk_arg3; later_parameters = fk_arg4 } : type_context) in
+          | OwnCase -> let context = let fk_arg1 = ({ Resolution.file = ((c : case_info).origin : Symbols.symbol).Symbols.file; path = Symbols.Symbols.inside_of (c : case_info).origin } : Resolution.place) in
+                let fk_arg2 = Collections.Maps.list_tuple_to_map (Lang.Lists.list_zip parameters arguments) in
+                let fk_arg3 = Collections.Maps.empty_map () in
+                let fk_arg4 = type_context_default_value_parameters () in
+                let fk_arg5 = type_context_default_later_parameters () in
+                ({ place = fk_arg1; type_parameters = fk_arg2; region = region; arrow_effects = None; expanding = []; spec_types = fk_arg3; outside_view = false; seen_from = seen_from; value_parameters = fk_arg4; later_parameters = fk_arg5 } : type_context) in
               List.map (fun it -> type_of (it : Parser.field).Parser.field_type context definitions) ((c : case_info).definition : Parser.case_definition).Parser.fields
           | NamedCase { from = from } -> case_fields from [] [] region definitions seen_from
           | IncludedCase { included = included; arguments = written; written_at = place; from = from } -> let context = let fk_arg1 = Collections.Maps.list_tuple_to_map (Lang.Lists.list_zip parameters arguments) in
@@ -6582,7 +6597,7 @@ module Fckt = struct
                 let fk_arg2 = Conversion.record_fields_default_seen_from () in
                 Conversion.record_fields d fk_arg1 None definitions fk_arg2 in
               Some (Core.DeclaredRecord { record = d; type_parameters = type_parameters; fields = List.map (fun (f, t) -> ({ Core.name = (f : Parser.field).Parser.name; t = t; variable = (f : Parser.field).Parser.variable } : Core.declared_field)) (Lang.Lists.list_zip fields types) } : Core.type_declaration)
-          | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _ } -> let cases = List.map (fun (c, types) -> ({ Core.case = ({ Symbols.name = ((c : case_info).origin : Symbols.symbol).Symbols.name ^ "." ^ ((c : case_info).definition : Parser.case_definition).Parser.name; owner = (c : case_info).origin; definition = (c : case_info).definition } : Symbols.case_symbol); fields = List.map (fun (f, t) -> ({ Core.name = (f : Parser.field).Parser.name; t = t; variable = (f : Parser.field).Parser.variable } : Core.declared_field)) (Lang.Lists.list_zip ((c : case_info).definition : Parser.case_definition).Parser.fields types) } : Core.declared_case)) (let fk_arg1 = List.map (fun it -> (Types.TypeParameter { name = it } : Types.type_)) type_parameters in
+          | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _; nested = _ } -> let cases = List.map (fun (c, types) -> ({ Core.case = ({ Symbols.name = ((c : case_info).origin : Symbols.symbol).Symbols.name ^ "." ^ ((c : case_info).definition : Parser.case_definition).Parser.name; owner = (c : case_info).origin; definition = (c : case_info).definition } : Symbols.case_symbol); fields = List.map (fun (f, t) -> ({ Core.name = (f : Parser.field).Parser.name; t = t; variable = (f : Parser.field).Parser.variable } : Core.declared_field)) (Lang.Lists.list_zip ((c : case_info).definition : Parser.case_definition).Parser.fields types) } : Core.declared_case)) (let fk_arg1 = List.map (fun it -> (Types.TypeParameter { name = it } : Types.type_)) type_parameters in
                  let fk_arg2 = Conversion.cases_with_fields_default_seen_from () in
                  Conversion.cases_with_fields d fk_arg1 None definitions fk_arg2) in
               Some (Core.DeclaredCases { case_type = d; type_parameters = type_parameters; cases = cases } : Core.type_declaration)
@@ -6992,7 +7007,7 @@ module Fckt = struct
 
         let of_cases (s : Symbols.symbol) : Symbols.symbol list =
           match ((s : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
-          | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = _ } -> List.concat_map (fun c -> List.concat_map (fun f -> Option.to_list (Option.map (fun value -> made s ((s : Symbols.symbol).Symbols.name ^ "$" ^ (c : Parser.case_definition).Parser.name) (f : Parser.field).Parser.name (f : Parser.field).Parser.at (Some (f : Parser.field).Parser.field_type) value type_parameters) (f : Parser.field).Parser.default)) (c : Parser.case_definition).Parser.fields) cases
+          | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = _; nested = _ } -> List.concat_map (fun c -> List.concat_map (fun f -> Option.to_list (Option.map (fun value -> made s ((s : Symbols.symbol).Symbols.name ^ "$" ^ (c : Parser.case_definition).Parser.name) (f : Parser.field).Parser.name (f : Parser.field).Parser.at (Some (f : Parser.field).Parser.field_type) value type_parameters) (f : Parser.field).Parser.default)) (c : Parser.case_definition).Parser.fields) cases
           | _ -> []
 
         let rec names_in (t : Parser.type_ref) : string list =
@@ -8393,6 +8408,21 @@ module Fckt = struct
         | Core.CaseConstructor { c = c } -> Some c
         | _ -> None
 
+      let note_qualifier (qualifier : string) (start : Parser.position) (context : context) : unit =
+        let namespace = (((context : context).environment : environment).definitions : Definitions.definitions).Definitions.namespace in
+        let parts = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) qualifier "." in
+        List.iter (fun (i, part) -> let written = String.concat "." (List.map Fun.id (List.take (i + 1) parts)) in
+           let column = (start : Parser.position).Parser.column + List.fold_left (fun n p -> n + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) p + 1) 0 (List.take i parts) in
+           let named = Lang.Options.option_or_else (Resolution.Lookups.found (Resolution.Lookups.case_type written (context : context).place namespace (Resolution.Skipping : Resolution.strictness))) (fun () -> match Resolution.Lookups.found (Resolution.Lookups.module_named written (context : context).place namespace (Resolution.Skipping : Resolution.strictness)) with
+                | Some (Symbols.DeclaredModule { symbol = m }) -> Some m
+                | _ -> None) in
+           Option.iter (fun s -> Effect.perform (Noting_note (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = ({ Parser.line = (start : Parser.position).Parser.line; column = column } : Parser.position); length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) part; symbol = s; t = None } : fact))) named) (Lang.Lists.list_with_index parts)
+
+      let rec leftmost (e : Parser.expression) : Parser.position =
+        match e with
+        | Parser.Member { at = _; target = target; name = _ } -> leftmost target
+        | _ -> Symbols.Positions.of_ e
+
       let qualified_case (target : Parser.expression) (scope : scope) (context : context) : string option =
         let namespace = (((context : context).environment : environment).definitions : Definitions.definitions).Definitions.namespace in
         match dotted_unbound target scope with
@@ -8400,7 +8430,8 @@ module Fckt = struct
         | Some qualifier -> let is_value = match target with
               | Parser.Name { at = _; name = _ } -> Option.is_some (Resolution.Lookups.found (Globals.find qualifier context (Resolution.Skipping : Resolution.strictness)))
               | _ -> false in
-            if is_value then None else if Option.is_some (Resolution.Lookups.found (Resolution.Lookups.case_type qualifier (context : context).place namespace (Resolution.Skipping : Resolution.strictness))) || Option.is_some (Resolution.Lookups.found (Resolution.Lookups.module_named qualifier (context : context).place namespace (Resolution.Skipping : Resolution.strictness))) then Some qualifier else None
+            if is_value then None else if Option.is_some (Resolution.Lookups.found (Resolution.Lookups.case_type qualifier (context : context).place namespace (Resolution.Skipping : Resolution.strictness))) || Option.is_some (Resolution.Lookups.found (Resolution.Lookups.module_named qualifier (context : context).place namespace (Resolution.Skipping : Resolution.strictness))) then (note_qualifier qualifier (leftmost target) context;
+                 Some qualifier) else None
 
       let argument_expression (argument : argument_value) : Parser.expression =
         match argument with
@@ -9928,10 +9959,14 @@ module Fckt = struct
         let narrowed_local = match (is_check, subject) with
           | (true, Some (Parser.Name { at = _; name = local })) -> Some local
           | _ -> None in
+        let start = if is_check then (at : Parser.position).Parser.column + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) "is " else (at : Parser.position).Parser.column in
+        let name_at = ({ Parser.line = (at : Parser.position).Parser.line; column = start + Option.value (Option.map (fun q -> (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) q + 1) qualifier) ~default:0 } : Parser.position) in
+        Option.iter (fun q -> note_qualifier q ({ Parser.line = (at : Parser.position).Parser.line; column = start } : Parser.position) context) qualifier;
         match target with
-        | Some case_type -> { (narrow at name case_type (Types.Types.resolved t) scope subject context : checked_pattern) with matcher = (Core.CaseTypeMatcher { case_type = case_type; narrowed = narrowed_local } : Core.matcher) }
+        | Some case_type -> Effect.perform (Noting_note (Means { file = ((((context : context).place : Resolution.place).Resolution.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = name_at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) name; symbol = case_type; t = None } : fact));
+            { (narrow at name case_type (Types.Types.resolved t) scope subject context : checked_pattern) with matcher = (Core.CaseTypeMatcher { case_type = case_type; narrowed = narrowed_local } : Core.matcher) }
         | None -> let shape = match subject_type with
-              | Some (st, type_arguments, region) -> noted_shape (subject_case at name qualifier st type_arguments region context) name at context
+              | Some (st, type_arguments, region) -> noted_shape (subject_case at name qualifier st type_arguments region context) name name_at context
               | None -> match constructor_shape name (Some t) at false qualifier false scope context with
                   | Some s -> expect (s : constructor_shape).result t at context;
                       s
@@ -10125,7 +10160,7 @@ module Fckt = struct
       let is_covariant (name : string) (index : int) (table : Symbols.symbol_table) : bool =
         if List.mem name ["List"; "Option"; "Result"; "Lazy"] then true else (match Option.map (fun it -> ((it : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition) (Lang.Options.option_or_else (Collections.Maps.map_get (table : Symbols.symbol_table).Symbols.records name) (fun () -> Collections.Maps.map_get (table : Symbols.symbol_table).Symbols.case_types name)) with
            | Some (Parser.RecordDefinition { type_parameters = parameters; fields = fields; private_constructor = _; annotation = _; external_ = None }) -> holds_only_given parameters fields index (last_part name)
-           | Some (Parser.CasesDefinition { type_parameters = parameters; cases = cases; case_refs = _; includes = _ }) -> let fk_arg1 = List.concat_map (fun it -> (it : Parser.case_definition).Parser.fields) cases in
+           | Some (Parser.CasesDefinition { type_parameters = parameters; cases = cases; case_refs = _; includes = _; nested = _ }) -> let fk_arg1 = List.concat_map (fun it -> (it : Parser.case_definition).Parser.fields) cases in
                let fk_arg2 = last_part name in
                holds_only_given parameters fk_arg1 index fk_arg2
            | _ -> false)
@@ -10560,12 +10595,9 @@ module Fckt = struct
              let fk_arg8 = Definitions.type_context_default_value_parameters () in
              let fk_arg9 = Definitions.type_context_default_later_parameters () in
              ({ Definitions.place = ({ Resolution.file = (d : Symbols.symbol).Symbols.file; path = (d : Symbols.symbol).Symbols.path } : Resolution.place); type_parameters = fk_arg1; region = fk_arg2; arrow_effects = fk_arg3; expanding = fk_arg4; spec_types = fk_arg5; outside_view = fk_arg6; seen_from = fk_arg7; value_parameters = fk_arg8; later_parameters = fk_arg9 } : Definitions.type_context) in
-           let fields = if Symbols.Symbols.is_record d then record_fields_of d else List.concat_map (fun c -> List.map (fun t -> let fk_arg1 = Parser.field_default_annotations () in
-                     let fk_arg2 = Parser.field_default_variable () in
-                     let fk_arg3 = Parser.field_default_default () in
-                     let fk_arg4 = Parser.field_default_vararg () in
-                     ({ Parser.at = ((d : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.at; name = ""; field_type = t; annotations = fk_arg1; variable = fk_arg2; default = fk_arg3; vararg = fk_arg4 } : Parser.field)) (Definitions.Cases.written_fields c)) (Collections.Maps.map_get_or_default (definitions : Definitions.definitions).Definitions.cases (d : Symbols.symbol).Symbols.name []) in
-           List.iter (fun field -> check_shows d (Definitions.Conversion.type_of (field : Parser.field).Parser.field_type context definitions) table) fields) types;
+           if Symbols.Symbols.is_record d then List.iter (fun field -> check_shows d (Definitions.Conversion.type_of (field : Parser.field).Parser.field_type context definitions) table) (record_fields_of d) else List.iter (fun (_, types) -> List.iter (fun t -> check_shows d t table) types) (let fk_arg1 = List.map (fun it -> (Types.TypeParameter { name = it } : Types.type_)) parameters in
+              let fk_arg2 = Definitions.Conversion.cases_with_fields_default_seen_from () in
+              Definitions.Conversion.cases_with_fields d fk_arg1 None definitions fk_arg2)) types;
         List.iter (fun d -> if ((d : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.opaque && List.is_empty (d : Symbols.symbol).Symbols.path then (match Effect.perform (Diagnostics.Abandoning_abandon ({ Diagnostics.file = (((d : Symbols.symbol).Symbols.file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path; at = ((d : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.at; message = "an opaque type is opaque outside its module, so it needs to be in one" } : Diagnostics.diagnostic)) with
               | _ -> (assert false)) else ()) (types @ List.filter (fun it -> Symbols.Symbols.is_alias it) (table : Symbols.symbol_table).Symbols.declarations);
         let fixed = List.map (fun (_, a) -> (a : Symbols.symbol).Symbols.name) (Collections.Maps.map_to_list (((definitions : Definitions.definitions).Definitions.namespace : Resolution.namespace).Resolution.modules : Resolution.modules).Resolution.fixed_types) in
@@ -10628,16 +10660,17 @@ module Fckt = struct
                   let fk_arg2 = Definitions.Conversion.record_fields_default_seen_from () in
                   Definitions.Conversion.record_fields d fk_arg1 None definitions fk_arg2);
                  ()
-             | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = includes } -> let context = let fk_arg1 = Collections.Maps.list_tuple_to_map (List.map (fun p -> (p, (Types.TypeParameter { name = p } : Types.type_))) type_parameters) in
-                   let fk_arg2 = Definitions.type_context_default_region () in
-                   let fk_arg3 = Definitions.type_context_default_arrow_effects () in
-                   let fk_arg4 = Definitions.type_context_default_expanding () in
-                   let fk_arg5 = Definitions.type_context_default_spec_types () in
-                   let fk_arg6 = Definitions.type_context_default_outside_view () in
-                   let fk_arg7 = Definitions.type_context_default_seen_from () in
-                   let fk_arg8 = Definitions.type_context_default_value_parameters () in
-                   let fk_arg9 = Definitions.type_context_default_later_parameters () in
-                   ({ Definitions.place = ({ Resolution.file = (d : Symbols.symbol).Symbols.file; path = (d : Symbols.symbol).Symbols.path } : Resolution.place); type_parameters = fk_arg1; region = fk_arg2; arrow_effects = fk_arg3; expanding = fk_arg4; spec_types = fk_arg5; outside_view = fk_arg6; seen_from = fk_arg7; value_parameters = fk_arg8; later_parameters = fk_arg9 } : Definitions.type_context) in
+             | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = includes; nested = _ } -> let context = let fk_arg1 = ({ Resolution.file = (d : Symbols.symbol).Symbols.file; path = Symbols.Symbols.inside_of d } : Resolution.place) in
+                   let fk_arg2 = Collections.Maps.list_tuple_to_map (List.map (fun p -> (p, (Types.TypeParameter { name = p } : Types.type_))) type_parameters) in
+                   let fk_arg3 = Definitions.type_context_default_region () in
+                   let fk_arg4 = Definitions.type_context_default_arrow_effects () in
+                   let fk_arg5 = Definitions.type_context_default_expanding () in
+                   let fk_arg6 = Definitions.type_context_default_spec_types () in
+                   let fk_arg7 = Definitions.type_context_default_outside_view () in
+                   let fk_arg8 = Definitions.type_context_default_seen_from () in
+                   let fk_arg9 = Definitions.type_context_default_value_parameters () in
+                   let fk_arg10 = Definitions.type_context_default_later_parameters () in
+                   ({ Definitions.place = fk_arg1; type_parameters = fk_arg2; region = fk_arg3; arrow_effects = fk_arg4; expanding = fk_arg5; spec_types = fk_arg6; outside_view = fk_arg7; seen_from = fk_arg8; value_parameters = fk_arg9; later_parameters = fk_arg10 } : Definitions.type_context) in
                  List.iter (fun c -> check_field_names d (c : Parser.case_definition).Parser.fields;
                     List.iter (fun f -> Definitions.Conversion.type_of (f : Parser.field).Parser.field_type context definitions;
                        ()) (c : Parser.case_definition).Parser.fields) cases;
@@ -11123,10 +11156,11 @@ module Fckt = struct
                  ()) (List.nth_opt annotations 0) in
           List.iter (fun d -> let place = ({ Resolution.file = (d : Symbols.symbol).Symbols.file; path = (d : Symbols.symbol).Symbols.path } : Resolution.place) in
              check place ((d : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.annotations;
+             let inside = ({ Resolution.file = (d : Symbols.symbol).Symbols.file; path = Symbols.Symbols.inside_of d } : Resolution.place) in
              match ((d : Symbols.symbol).Symbols.declaration : Parser.declaration).Parser.definition with
              | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = _; external_ = _ } -> List.iter (fun f -> check place (f : Parser.field).Parser.annotations) fields
-             | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> List.iter (fun c -> check place (c : Parser.case_definition).Parser.annotations;
-                    List.iter (fun f -> check place (f : Parser.field).Parser.annotations) (c : Parser.case_definition).Parser.fields) cases
+             | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _; nested = _ } -> List.iter (fun c -> check inside (c : Parser.case_definition).Parser.annotations;
+                    List.iter (fun f -> check inside (f : Parser.field).Parser.annotations) (c : Parser.case_definition).Parser.fields) cases
              | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = parameters; result = _; body = _; external_ = _; operator = _ } -> List.iter (fun p -> check place (p : Parser.parameter).Parser.annotations) (Option.value parameters ~default:[])
              | Parser.SpecDefinition { types = _; values = values; type_parameters = _; copy_of = _; parents = _ } -> List.iter (fun v -> check place (v : Parser.spec_value).Parser.annotations) values
              | _ -> ()) (let fk_arg1 = List.filter (fun it -> not (Symbols.Symbols.is_module it)) (table : Symbols.symbol_table).Symbols.declarations in
@@ -11141,6 +11175,17 @@ module Fckt = struct
                 let namespace = Functors.Functors.applied (Resolution.Resolution.namespace workspace tree) in
                 List.map (fun file -> ({ Resolution.file = file; types = Resolution.Resolution.resolved_types file namespace (workspace : Sources.workspace).Sources.borrowed } : Resolution.resolved_file)) (workspace : Sources.workspace).Sources.files) in
            Option.value resolved ~default:[])
+
+      let parts_of (written : string) (at : Parser.position) (named : Symbols.symbol) (namespace : Resolution.namespace) : (Parser.position * int * Symbols.symbol) list =
+        let parts = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) written "." in
+        let table = (namespace : Resolution.namespace).Resolution.table in
+        List.concat_map (fun (i, part) -> let column = (at : Parser.position).Parser.column + List.fold_left (fun n p -> n + (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) p + 1) 0 (List.take i parts) in
+           let after = List.drop (i + 1) parts in
+           let full = if List.is_empty after then (named : Symbols.symbol).Symbols.name else Lang.Strings.string_remove_suffix (named : Symbols.symbol).Symbols.name ("." ^ String.concat "." (List.map Fun.id after)) in
+           let found = if List.is_empty after then Some named else Lang.Options.option_or_else (Lang.Options.option_or_else (Lang.Options.option_or_else (Collections.Maps.map_get (table : Symbols.symbol_table).Symbols.records full) (fun () -> Collections.Maps.map_get (table : Symbols.symbol_table).Symbols.case_types full)) (fun () -> Collections.Maps.map_get (table : Symbols.symbol_table).Symbols.aliases full)) (fun () -> match Collections.Maps.map_get (table : Symbols.symbol_table).Symbols.modules full with
+                  | Some (Symbols.DeclaredModule { symbol = m }) -> Some m
+                  | _ -> None) in
+           List.map (fun s -> (({ Parser.line = (at : Parser.position).Parser.line; column = column } : Parser.position), (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) part, s)) (Option.to_list found)) (Lang.Lists.list_with_index parts)
 
       let rec annotations_in (declarations : Parser.declaration list) : Parser.annotation list =
         List.concat_map (fun d -> (d : Parser.declaration).Parser.annotations @ (match (d : Parser.declaration).Parser.definition with
@@ -11158,7 +11203,7 @@ module Fckt = struct
         let path = ((file : Sources.loaded_file).Sources.source : Sources.source_text).Sources.path in
         let (types, _) = Diagnostics.Diagnostics.collecting (fun () -> Resolution.Resolution.resolved_types file namespace (workspace : Sources.workspace).Sources.borrowed) in
         let typed = List.concat_map (fun r -> match (r : Resolution.resolved_type).Resolution.meaning with
-             | Resolution.DeclaredType { symbol = s } -> [(Inference.Means { file = path; at = ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.name; symbol = s; t = None } : Inference.fact)]
+             | Resolution.DeclaredType { symbol = s } -> List.map (fun (at, length, named) -> (Inference.Means { file = path; at = at; length = length; symbol = named; t = None } : Inference.fact)) (parts_of ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.name ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.at s namespace)
              | Resolution.BuiltinType { name = _ } -> [(Inference.TypeName { file = path; at = ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.name; builtin = true } : Inference.fact)]
              | Resolution.TypeParameterType { name = _ } -> [(Inference.TypeName { file = path; at = ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.at; length = (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) ((r : Resolution.resolved_type).Resolution.written : Resolution.written_type).Resolution.name; builtin = false } : Inference.fact)]
              | _ -> []) types in
@@ -11887,10 +11932,25 @@ module Fckt = struct
       let ocaml_parameters (names : string list) : string list =
         List.filter (fun it -> not (String.starts_with ~prefix:"@" it)) names
 
-      let type_reference (full : string) : string =
+      let type_place (full : string) : string list * string list =
         let parts = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) full "." in
-        String.concat "." (List.map Fun.id (let fk_arg1 = List.map (fun it -> Naming.module_name it) (Naming.relative (Lang.Lists.list_drop_last parts 1)) in
-          let fk_arg2 = [Naming.snake (Option.value (Lang.Lists.list_last_or_none parts) ~default:full)] in
+        let owner = List.find_opt (fun k -> Option.is_some (Effect.perform (Lowering_declarationOf (String.concat "." (List.map Fun.id (List.take k parts)))))) (List.drop 1 (List.mapi (fun i _ -> i) parts)) in
+        match owner with
+        | Some k -> let fk_arg1 = List.take (k - 1) parts in
+            let fk_arg2 = List.drop (k - 1) parts in
+            (fk_arg1, fk_arg2)
+        | None -> let fk_arg1 = Lang.Lists.list_drop_last parts 1 in
+            let fk_arg2 = Option.to_list (Lang.Lists.list_last_or_none parts) in
+            (fk_arg1, fk_arg2)
+
+      let own_name (full : string) : string =
+        let (_, names) = type_place full in
+        String.concat "__" (List.map Fun.id (List.map (fun it -> Naming.snake it) names))
+
+      let type_reference (full : string) : string =
+        let (modules, _) = type_place full in
+        String.concat "." (List.map Fun.id (let fk_arg1 = List.map (fun it -> Naming.module_name it) (Naming.relative modules) in
+          let fk_arg2 = [own_name full] in
           fk_arg1 @ fk_arg2))
 
       let ocaml_arguments (name : string) (arguments : Checker.Types.type_ list) : Checker.Types.type_ list =
@@ -11901,9 +11961,6 @@ module Fckt = struct
         | _ -> List.filter (fun it -> match it with
                | Checker.Types.Effects it_as_effects -> false
                | _ -> true) arguments
-
-      let own_name (full : string) : string =
-        Naming.snake (Option.value (Lang.Lists.list_last_or_none ((fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) full ".")) ~default:full)
 
       let type_module_reference (full : string) : string =
         let parts = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) full "." in
@@ -11969,6 +12026,10 @@ module Fckt = struct
 
       let typexpr (t : Checker.Types.type_) : Ocaml.typexpr =
         typexpr_naming t []
+
+      let modules_of (full : string) : string list =
+        match type_place full with
+        | (modules, _) -> modules
     end
 
     module Constructors = struct
@@ -12248,8 +12309,8 @@ module Fckt = struct
         "show_" ^ Lang.Strings.string_remove_suffix (OcamlTypes.own_name full) "_"
 
       let show_reference (full : string) : string =
-        let parts = (fun s t -> let n = String.length s and m = String.length t in if m = 0 then [s] else let rec go start i acc = if i + m > n then List.rev (String.sub s start (n - start) :: acc) else if String.sub s i m = t then go (i + m) (i + m) (String.sub s start (i - start) :: acc) else go start (i + 1) acc in go 0 0 []) full "." in
-        String.concat "." (List.map Fun.id (let fk_arg1 = List.map (fun it -> Naming.module_name it) (Naming.relative (Lang.Lists.list_drop_last parts 1)) in
+        let (modules, _) = OcamlTypes.type_place full in
+        String.concat "." (List.map Fun.id (let fk_arg1 = List.map (fun it -> Naming.module_name it) (Naming.relative modules) in
           let fk_arg2 = [show_name full] in
           fk_arg1 @ fk_arg2))
 
@@ -12682,7 +12743,7 @@ module Fckt = struct
           | EffectPart { effect_ = effect_ } -> effect_type_names effect_
           | SpecPart { spec = spec } -> List.concat_map (fun (_, t) -> type_names t) (spec : Checker.Core.declared_spec).Checker.Core.values
           | GroupPart { group = _ } -> []
-          | ModulePart { path = path } -> let fk_arg1 = List.concat_map (fun it -> declared_type_names it) (List.filter (fun t -> within (Declarations.declared_at t : Checker.Symbols.symbol).Checker.Symbols.path path) (own : own_code).types) in
+          | ModulePart { path = path } -> let fk_arg1 = List.concat_map (fun it -> declared_type_names it) (List.filter (fun t -> within (OcamlTypes.modules_of (Declarations.declared_at t : Checker.Symbols.symbol).Checker.Symbols.name) path) (own : own_code).types) in
               let fk_arg2 = List.concat_map (fun it -> effect_type_names it) (List.filter (fun e -> within ((e : Checker.Core.declared_effect).Checker.Core.effect_ : Checker.Symbols.symbol).Checker.Symbols.path path) (own : own_code).effects) in
               fk_arg1 @ fk_arg2 in
         fk_arg1 @ fk_arg2
@@ -12708,7 +12769,7 @@ module Fckt = struct
         List.map (fun group -> Lang.Lists.list_map_not_null group (fun it -> Lang.Lists.list_get_or_none types it)) groups
 
       let parts_at (path : string list) (own : own_code) : part list =
-        let types = List.filter (fun t -> (Declarations.declared_at t : Checker.Symbols.symbol).Checker.Symbols.path = path && (match t with
+        let types = List.filter (fun t -> OcamlTypes.modules_of (Declarations.declared_at t : Checker.Symbols.symbol).Checker.Symbols.name = path && (match t with
               | Checker.Core.DeclaredExternal t_as_declared_external -> false
               | _ -> true)) (own : own_code).types in
         let effects = List.map (fun it -> (EffectPart { effect_ = it } : part)) (List.filter (fun it -> ((it : Checker.Core.declared_effect).Checker.Core.effect_ : Checker.Symbols.symbol).Checker.Symbols.path = path) (own : own_code).effects) in
@@ -13058,11 +13119,14 @@ module Fckt = struct
         | Parser.RecordDefinition { type_parameters = type_parameters; fields = fields; private_constructor = private_constructor; annotation = _; external_ = None } -> let fk_arg1 = ("type " ^ name ^ type_parameter_list type_parameters) ^ (if private_constructor then " private" else "") in
             let fk_arg2 = field_list fields in
             fk_arg1 ^ fk_arg2
-        | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = case_refs; includes = includes } -> let own = List.map (fun c -> let fields = if List.is_empty (c : Parser.case_definition).Parser.fields then "" else field_list (c : Parser.case_definition).Parser.fields in
+        | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = case_refs; includes = includes; nested = nested } -> let own = List.map (fun c -> let fields = if List.is_empty (c : Parser.case_definition).Parser.fields then "" else field_list (c : Parser.case_definition).Parser.fields in
                  indent ^ "  " ^ annotations (c : Parser.case_definition).Parser.annotations ^ (c : Parser.case_definition).Parser.name ^ fields ^ ",\n") cases in
             let referred = List.map (fun c -> indent ^ "  " ^ (c : Parser.case_ref).Parser.owner ^ "." ^ (c : Parser.case_ref).Parser.case_name ^ ",\n") case_refs in
             let included = List.map (fun t -> indent ^ "  *" ^ type_text t ^ ",\n") includes in
-            let items = String.concat "" (List.map Fun.id ((own @ referred) @ included)) in
+            let inner = List.map (fun d -> (let fk_arg1 = indent ^ "  " ^ annotations (d : Parser.declaration).Parser.annotations in
+                  let fk_arg2 = Lang.Strings.string_remove_prefix (definition_text (d : Parser.declaration).Parser.name (d : Parser.declaration).Parser.definition false (indent ^ "  ") text) "type " in
+                  fk_arg1 ^ fk_arg2) ^ ",\n") nested in
+            let items = String.concat "" (List.map Fun.id (((own @ referred) @ included) @ inner)) in
             (("type " ^ name ^ type_parameter_list type_parameters ^ " {\n") ^ items) ^ indent ^ "}"
         | Parser.AliasDefinition { type_parameters = type_parameters; target = target } -> let fk_arg1 = type_parameter_list type_parameters in
             let fk_arg2 = type_text target in
@@ -14031,7 +14095,7 @@ module Fckt = struct
         | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> Some 10
         | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> Some 8
         | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> if owner && List.exists (fun it -> (it : Parser.field).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) fields then Some 8 else if annotation then Some 11 else Some 4
-        | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> if List.exists (fun it -> (it : Parser.case_definition).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) cases then Some 9 else Some 3
+        | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _; nested = _ } -> if List.exists (fun it -> (it : Parser.case_definition).Parser.name = ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.name) cases then Some 9 else Some 3
         | Parser.AliasDefinition { type_parameters = _; target = _ } -> Some 1
         | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> Some 3
         | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> Some 0
@@ -14046,10 +14110,12 @@ module Fckt = struct
            | Parser.RecordDefinition { type_parameters = _; fields = fields; private_constructor = _; annotation = annotation; external_ = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name (if annotation then 11 else 4) in
                let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) fields in
                fk_arg1 @ fk_arg2
-           | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _ } -> let fk_arg1 = at (d : Parser.declaration).Parser.at name 3 in
-               let fk_arg2 = List.concat_map (fun c -> let fk_arg1 = at (c : Parser.case_definition).Parser.at (c : Parser.case_definition).Parser.name 9 in
-                    let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) (c : Parser.case_definition).Parser.fields in
-                    fk_arg1 @ fk_arg2) cases in
+           | Parser.CasesDefinition { type_parameters = _; cases = cases; case_refs = _; includes = _; nested = nested } -> let fk_arg1 = let fk_arg1 = at (d : Parser.declaration).Parser.at name 3 in
+                 let fk_arg2 = List.concat_map (fun c -> let fk_arg1 = at (c : Parser.case_definition).Parser.at (c : Parser.case_definition).Parser.name 9 in
+                      let fk_arg2 = List.concat_map (fun f -> at (f : Parser.field).Parser.at (f : Parser.field).Parser.name 8) (c : Parser.case_definition).Parser.fields in
+                      fk_arg1 @ fk_arg2) cases in
+                 fk_arg1 @ fk_arg2 in
+               let fk_arg2 = declaration_tokens nested lines in
                fk_arg1 @ fk_arg2
            | Parser.AliasDefinition { type_parameters = _; target = _ } -> at (d : Parser.declaration).Parser.at name 1
            | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> at (d : Parser.declaration).Parser.at name 3
@@ -14102,7 +14168,9 @@ module Fckt = struct
                  let fk_arg2 = List.concat_map (fun it -> type_tokens it own) (Option.to_list result) in
                  fk_arg1 @ fk_arg2
              | Parser.RecordDefinition { type_parameters = type_parameters; fields = fields; private_constructor = _; annotation = _; external_ = _ } -> List.concat_map (fun it -> type_tokens (it : Parser.field).Parser.field_type (outer @ type_parameters)) fields
-             | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = _ } -> List.concat_map (fun c -> List.concat_map (fun it -> type_tokens (it : Parser.field).Parser.field_type (outer @ type_parameters)) (c : Parser.case_definition).Parser.fields) cases
+             | Parser.CasesDefinition { type_parameters = type_parameters; cases = cases; case_refs = _; includes = _; nested = nested } -> let fk_arg1 = List.concat_map (fun c -> List.concat_map (fun it -> type_tokens (it : Parser.field).Parser.field_type (outer @ type_parameters)) (c : Parser.case_definition).Parser.fields) cases in
+                 let fk_arg2 = written_types_in nested (outer @ type_parameters) in
+                 fk_arg1 @ fk_arg2
              | Parser.AliasDefinition { type_parameters = type_parameters; target = target } -> type_tokens target (outer @ type_parameters)
              | Parser.SpecDefinition { types = _; values = values; type_parameters = type_parameters; copy_of = _; parents = _ } -> List.concat_map (fun v -> let own = (outer @ type_parameters) @ (v : Parser.spec_value).Parser.type_parameters in
                     let fk_arg1 = let fk_arg1 = [(((v : Parser.spec_value).Parser.at : Parser.position).Parser.line - 1, ((v : Parser.spec_value).Parser.at : Parser.position).Parser.column - 1, (fun s -> let rec go i n = if i >= String.length s then n else go (i + Uchar.utf_decode_length (String.get_utf_8_uchar s i)) (n + 1) in go 0 0) (v : Parser.spec_value).Parser.name, 10, 1)] in
@@ -14156,8 +14224,10 @@ module Fckt = struct
              let key = string_of_int line ^ " " ^ string_of_int column in
              if Collections.Maps.map_contains_key keys key then seen else (Collections.Maps.map_put keys key true, [token] @ kept)) (Collections.Maps.empty_map (), []) ((declared @ used_now) @ written) in
         let (_, kept) = ordered in
-        let sorted = Lang.Lists.list_sorted_by kept (fun token -> let (line, column, _, _, _) = token in
-             line * 100000 + column) in
+        let (_, _, sorted) = List.fold_left (fun state token -> let (last_line, end_, out) = state in
+             let (line, column, length, _, _) = token in
+             if line = last_line && column < end_ then state else (line, column + length, out @ [token])) ((-1), 0, []) (Lang.Lists.list_sorted_by kept (fun token -> let (line, column, _, _, _) = token in
+              line * 100000 + column)) in
         let (_, _, encoded) = List.fold_left (fun state token -> let (last_line, last_column, out) = state in
              let (line, column, length, kind, modifiers) = token in
              let start = if line = last_line then column - last_column else column in
@@ -14364,7 +14434,7 @@ module Fckt = struct
         | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> 12
         | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> 14
         | Parser.RecordDefinition { type_parameters = _; fields = _; private_constructor = _; annotation = _; external_ = _ } -> 23
-        | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _ } -> 10
+        | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = _ } -> 10
         | Parser.AliasDefinition { type_parameters = _; target = _ } -> 5
         | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> 11
         | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> 2
@@ -14542,7 +14612,7 @@ module Fckt = struct
                let declared = List.map (fun s -> let kind = match ((s : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
                       | Parser.ModuleDefinition { declarations = _; spec = _; parameters = _; application = _; type_parameters = _ } -> 9
                       | Parser.RecordDefinition { type_parameters = _; fields = _; private_constructor = _; annotation = _; external_ = _ } -> 7
-                      | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _ } -> 13
+                      | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = _ } -> 13
                       | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> 8
                       | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = _; result = _; body = _; external_ = _; operator = _ } -> 3
                       | _ -> 7 in
@@ -14719,7 +14789,7 @@ module Fckt = struct
         | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = Some _; result = _; body = _; external_ = _; operator = _ } -> 12
         | Parser.FunctionDefinition { type_parameters = _; receiver = Some _; parameters = None; result = _; body = _; external_ = _; operator = _ } -> 7
         | Parser.FunctionDefinition { type_parameters = _; receiver = _; parameters = _; result = _; body = _; external_ = _; operator = _ } -> 14
-        | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _ } -> 10
+        | Parser.CasesDefinition { type_parameters = _; cases = _; case_refs = _; includes = _; nested = _ } -> 10
         | Parser.RecordDefinition { type_parameters = _; fields = _; private_constructor = _; annotation = _; external_ = _ } -> 23
         | Parser.AliasDefinition { type_parameters = _; target = _ } -> 26
         | Parser.SpecDefinition { types = _; values = _; type_parameters = _; copy_of = _; parents = _ } -> 11
@@ -15075,7 +15145,7 @@ module Fckt = struct
         let origin = (c : Checker.Symbols.case_symbol).Checker.Symbols.owner in
         let place = ({ Checker.Resolution.file = (origin : Checker.Symbols.symbol).Checker.Symbols.file; path = (origin : Checker.Symbols.symbol).Checker.Symbols.path } : Checker.Resolution.place) in
         let origin_parameters = match ((origin : Checker.Symbols.symbol).Checker.Symbols.declaration : Parser.declaration).Parser.definition with
-          | Parser.CasesDefinition { type_parameters = ps; cases = _; case_refs = _; includes = _ } -> ps
+          | Parser.CasesDefinition { type_parameters = ps; cases = _; case_refs = _; includes = _; nested = _ } -> ps
           | _ -> [] in
         let fk_arg1 = let fk_arg1 = let fk_arg1 = let fk_arg1 = line 1 ("case " ^ ((c : Checker.Symbols.case_symbol).Checker.Symbols.definition : Parser.case_definition).Parser.name) in
               let fk_arg2 = at 2 ((c : Checker.Symbols.case_symbol).Checker.Symbols.definition : Parser.case_definition).Parser.at (origin : Checker.Symbols.symbol).Checker.Symbols.file in
@@ -15097,7 +15167,7 @@ module Fckt = struct
               fk_arg1 ^ fk_arg2 in
             let fk_arg2 = String.concat "" (List.map Fun.id (List.map (fun it -> field 1 it (s : Checker.Symbols.symbol).Checker.Symbols.file type_parameters place writing) fields)) in
             fk_arg1 ^ fk_arg2
-        | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _ } -> let cases = Option.value (Option.map (fun t -> match t with
+        | Parser.CasesDefinition { type_parameters = type_parameters; cases = _; case_refs = _; includes = _; nested = _ } -> let cases = Option.value (Option.map (fun t -> match t with
                   | Checker.Core.DeclaredCases { case_type = _; type_parameters = _; cases = cs } -> cs
                   | _ -> []) (List.find_opt (fun t -> match t with
                    | Checker.Core.DeclaredCases { case_type = c; type_parameters = _; cases = _ } -> (c : Checker.Symbols.symbol).Checker.Symbols.name = (s : Checker.Symbols.symbol).Checker.Symbols.name
